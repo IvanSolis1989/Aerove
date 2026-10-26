@@ -69,7 +69,7 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 private fun editorWidgets(items: List<DashboardWidget>): List<DashboardWidget> =
-    if (DashboardWidget.CurrentOutbound in items) items.distinct() else listOf(DashboardWidget.CurrentOutbound) + items.distinct()
+    if (DashboardWidget.CurrentOutbound in items) items.distinct().filter { it != DashboardWidget.NetworkSpeed } else listOf(DashboardWidget.CurrentOutbound) + items.distinct().filter { it != DashboardWidget.NetworkSpeed }
 
 private fun List<DashboardWidget>.move(from: Int, to: Int): List<DashboardWidget> = toMutableList().apply {
     if (from in indices && to in indices && from != to) add(to, removeAt(from))
@@ -88,7 +88,7 @@ fun DashboardEditor(
     val current by rememberUpdatedState(settings)
     var names by rememberSaveable { mutableStateOf(editorWidgets(settings.dashboardWidgets).map { it.wireName }.toTypedArray()) }
     val shown = names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } }
-    val addable = DashboardWidget.entries.filter { it !in shown }
+    val addable = DashboardWidget.entries.filter { it !in shown && it != DashboardWidget.NetworkSpeed }
     val list = rememberLazyListState()
     var dragging by remember { mutableStateOf<DashboardWidget?>(null) }
     var origin by remember { mutableFloatStateOf(0f) }

@@ -9,6 +9,12 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,7 +68,7 @@ internal fun rememberLiteMotionValue(target: Float, spec: FiniteAnimationSpec<Fl
 }
 
 @Composable
-private fun Modifier.liteInk(source: Color, role: AeroveInkRole): Modifier {
+internal fun Modifier.liteInk(source: Color, role: AeroveInkRole): Modifier {
     val visuals = LocalLiteVisuals.current
     if (!visuals.aurora || LocalLiteHighContrast.current || source.alpha < 0.70f) return this
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
@@ -161,13 +167,20 @@ internal fun LiteIconButton(
     val header = LocalLiteHeaderProgress.current
     val interaction = remember { MutableInteractionSource() }
     val size = if (header != null) 44.dp else 36.dp
-    val opacity by rememberLiteMotionValue(header ?: 1f, tween(200, easing = CubicBezierEasing(0f, 0f, 0.58f, 1f)))
+    val opacity = remember { Animatable(header?.value ?: 1f) }
+    val moving = !LocalLiteReducedMotion.current && LocalLitePageActive.current
+    LaunchedEffect(header, moving) {
+        snapshotFlow { header?.value ?: 1f }.collectLatest { target ->
+            if (moving) opacity.animateTo(target, tween(200, easing = CubicBezierEasing(0f, 0f, 0.58f, 1f)))
+            else opacity.snapTo(target)
+        }
+    }
     Box(
         modifier.size(size).alpha(if (enabled) 1f else 0.38f)
             .semantics { contentDescription = label }
             .clickable(interactionSource = interaction, indication = null, enabled = enabled, role = Role.Button, onClick = onClick),
     ) {
-        LitePane(Modifier.matchParentSize().alpha(opacity), corner = LiteCorner.Full,
+        LitePane(Modifier.matchParentSize().graphicsLayer { alpha = opacity.value; clip = opacity.value != 1f }, corner = LiteCorner.Full,
             glassStyle = AeroveGlassStyle.lens(LocalLiteVisuals.current.dark), interactionSource = interaction) {}
         LiteIcon(
             icon,
@@ -217,7 +230,7 @@ internal fun LiteSwitch(checked: Boolean, label: String, onCheckedChange: (Boole
     val inactive = if (visuals.material == MaterialTier.Frosted) 0.13f else 0.06f
     val trackTint = (if (checked) visuals.primary else visuals.ink).copy(alpha = if (!enabled) 0.03f else if (checked) 0.18f else inactive)
     val thumbTint = visuals.surface.copy(alpha = if (enabled) 0.08f else 0.03f)
-    val position by rememberLiteMotionValue(if (checked) 1f else 0f, spring())
+    val position = rememberLiteMotionValue(if (checked) 1f else 0f, spring())
     Box(
         Modifier.size(60.dp, 48.dp).alpha(if (enabled || visuals.material != MaterialTier.Solid) 1f else 0.48f)
             .semantics { contentDescription = label }
@@ -228,8 +241,8 @@ internal fun LiteSwitch(checked: Boolean, label: String, onCheckedChange: (Boole
             interactionSource = interaction,
             solidColor = if (checked) visuals.primary else androidx.compose.ui.graphics.lerp(visuals.surface, visuals.ink, 0.12f)) {
             androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(32.dp)) {
-                val offset = (maxWidth - 32.dp) * position + 4.dp
-                Row(Modifier.padding(start = offset, top = 4.dp)) {
+                val travel = maxWidth - 32.dp
+                Row(Modifier.offset { IntOffset(((travel * position.value + 4.dp).toPx()).roundToInt(), 4.dp.roundToPx()) }) {
                     LitePane(Modifier.size(24.dp), corner = LiteCorner.Full, selected = checked, glassStyle = finish, glassTint = thumbTint,
                         interactionSource = interaction,
                         solidColor = if (checked) Color.White else visuals.secondaryInk) {

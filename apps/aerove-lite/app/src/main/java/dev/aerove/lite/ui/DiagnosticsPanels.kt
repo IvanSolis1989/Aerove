@@ -67,6 +67,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.findViewTreeLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -97,9 +98,9 @@ internal fun ServiceStatusPanel(state: LiteState, actions: LiteActions, showServ
     val foreground = LocalDiagnosticsForeground.current
     val overlay = LocalLiteOverlay.current
     val view = LocalView.current
-    val watched = if (showServices && foreground && (detail.opened || (visible && overlay.content == null)))
+    val watched = if (showServices && (detail.opened || (foreground && visible && overlay.content == null)))
         state.diagnostics.services.let { if (detail.opened) it else it.take(4) }.map { it.id }.toSet() else emptySet()
-    ServiceTelemetryDemand(actions, watched)
+    ServiceTelemetryDemand(actions, watched, if (detail.opened) view.findViewTreeLifecycleOwner()?.lifecycle else null)
     val title = stringResource(titleResource)
     DiagnosticsCard(Modifier.testTag("diagnostics-services").onGloballyPositioned {
         val bounds = it.boundsInWindow()
@@ -149,14 +150,16 @@ internal fun MemoryInfoPanel(state: LiteState, actions: LiteActions) {
     val view = LocalView.current
     val foreground = LocalDiagnosticsForeground.current
     val overlay = LocalLiteOverlay.current
-    MemoryTelemetryDemand(actions, foreground && (detail.opened || (visible && overlay.content == null)))
+    MemoryTelemetryDemand(actions, detail.opened || (foreground && visible && overlay.content == null),
+        if (detail.opened) view.findViewTreeLifecycleOwner()?.lifecycle else null)
     val title = stringResource(R.string.diag_memory)
     DiagnosticsCard(Modifier.testTag("diagnostics-memory").onGloballyPositioned {
         val bounds = it.boundsInWindow()
         visible = !bounds.isEmpty && bounds.overlaps(Rect(0f, 0f, view.rootView.width.toFloat(), view.rootView.height.toFloat()))
     }.clickable(role = Role.Button) {
         detail.open { close ->
-            DiagnosticsSheet(title, close) { MemoryDetails(current.diagnostics) }
+            val diagnostics = displayValue(LocalLiteDisplayStreams.current?.diagnostics, current.diagnostics, ownedOverlay = true).value
+            DiagnosticsSheet(title, close) { MemoryDetails(diagnostics) }
         }
     }) {
         DiagnosticsHeader(DiagnosticsGlyphs.memory, title)
@@ -166,12 +169,13 @@ internal fun MemoryInfoPanel(state: LiteState, actions: LiteActions) {
 }
 
 @Composable
-private fun ServiceTelemetryDemand(actions: LiteActions, targets: Set<String>) {
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle, actions, targets) {
+private fun ServiceTelemetryDemand(actions: LiteActions, targets: Set<String>, lifecycleOverride: Lifecycle? = null) {
+    val lifecycle = lifecycleOverride ?: LocalLifecycleOwner.current.lifecycle
+    val focused = LocalLiteWindowFocused.current
+    DisposableEffect(lifecycle, actions, targets, focused) {
         var declared = emptySet<String>()
         fun update() {
-            val wanted = if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) targets else emptySet()
+            val wanted = if (focused && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) targets else emptySet()
             if (declared != wanted) { declared = wanted; actions.setServiceTelemetryTargets(wanted) }
         }
         val observer = LifecycleEventObserver { _, _ -> update() }
@@ -182,12 +186,13 @@ private fun ServiceTelemetryDemand(actions: LiteActions, targets: Set<String>) {
 }
 
 @Composable
-private fun MemoryTelemetryDemand(actions: LiteActions, visible: Boolean) {
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle, actions, visible) {
+private fun MemoryTelemetryDemand(actions: LiteActions, visible: Boolean, lifecycleOverride: Lifecycle? = null) {
+    val lifecycle = lifecycleOverride ?: LocalLifecycleOwner.current.lifecycle
+    val focused = LocalLiteWindowFocused.current
+    DisposableEffect(lifecycle, actions, visible, focused) {
         var requested = false
         fun update() {
-            val active = visible && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            val active = visible && focused && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
             if (active != requested) {
                 requested = active
                 actions.setMemoryTelemetryActive(active)
@@ -379,7 +384,9 @@ private fun ServiceResults(state: LiteState, actions: LiteActions) {
 }
 
 @Composable
-private fun ServiceDetail(state: LiteState, actions: LiteActions, close: () -> Unit) {
+private fun ServiceDetail(fallback: LiteState, actions: LiteActions, close: () -> Unit) {
+    val diagnostics = displayValue(LocalLiteDisplayStreams.current?.diagnostics, fallback.diagnostics, ownedOverlay = true).value
+    val state = fallback.copy(diagnostics = diagnostics)
     var managing by remember { mutableStateOf(false) }
     key(managing) {
     DiagnosticsSheet(stringResource(if (managing) R.string.diag_service_manage else R.string.diag_service_status),

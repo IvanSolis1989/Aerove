@@ -3,6 +3,8 @@ package dev.aerove.lite.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
@@ -30,17 +32,9 @@ import kotlin.math.sin
 
 @Composable
 internal fun rememberDashboardTime(moving: Boolean): State<Float> {
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val active = LocalLitePageActive.current && !LocalLiteReducedMotion.current
-    return produceState(0f, moving, lifecycle, active) {
-        if (moving && active) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            var previous = 0L
-            while (isActive) withFrameNanos { now ->
-                if (previous != 0L) value += ((now - previous) / 1_000_000_000f).coerceAtMost(0.05f)
-                previous = now
-            }
-        }
-    }
+    val time = rememberAuroraTime(moving && LocalLitePageActive.current && !LocalLiteHighContrast.current,
+        activity = LocalLiteMotionActivity.current)
+    return androidx.compose.runtime.remember(time) { androidx.compose.runtime.derivedStateOf { time.longValue / 1_000_000f } }
 }
 
 // The contour and standing waves match outbound_motion.dart; Backdrop still owns capture and composition.
@@ -101,112 +95,81 @@ internal class DashboardBubbleOutline(
     }
 }
 
+/** Two real channels share the card's full background; zero is the physical bottom edge. */
 @Composable
-internal fun DashboardRibbon(time: State<Float>, modifier: Modifier) {
-    val dark = LocalLiteVisuals.current.dark
-    Box(modifier.drawWithCache {
-        val bright = if (dark) 0.12f else 0.26f
-        val shade = if (dark) 0.08f else 0.13f
-        val band = Path()
-        val sheen = Path()
-        val upper = FloatArray(74)
-        val lower = FloatArray(74)
-        val brushes = ribbonStrands.map { strand ->
-            val alpha = strand[7].toFloat()
-            Brush.horizontalGradient(
-                0f to Color(0xFFD8E4EF).copy(alpha = 0.02f * alpha),
-                0.27f to Color.White.copy(alpha = bright * alpha),
-                0.5f to Color(0xFF73859B).copy(alpha = shade * alpha),
-                0.72f to Color.White.copy(alpha = 0.8f * bright * alpha),
-                1f to Color(0xFF73859B).copy(alpha = 0.02f * alpha),
-                endX = size.width,
-            )
-        }
-        fun through(path: Path, points: FloatArray, reverse: Boolean) {
-            for (index in 1 until 36) {
-                val i = if (reverse) 36 - index else index
-                val next = if (reverse) i - 1 else i + 1
-                path.quadraticBezierTo(points[i * 2], points[i * 2 + 1], (points[i * 2] + points[next * 2]) / 2, (points[i * 2 + 1] + points[next * 2 + 1]) / 2)
-            }
-            val last = if (reverse) 0 else 72
-            path.lineTo(points[last], points[last + 1])
-        }
-        onDrawBehind {
-            val phase = time.value.toDouble()
-            for ((layer, strand) in ribbonStrands.withIndex()) {
-                for (index in 0..36) {
-                    val x = -0.08 + 1.16 * index / 36
-                    val run = strand[3] * phase
-                    val center = strand[0] - 0.22 * (x - 0.5) + strand[1] * sin(strand[2] * x - run + strand[8]) +
-                        0.35 * strand[1] * sin(1.9 * strand[2] * x + 0.6 * run + 2 * strand[8])
-                    val half = strand[4] * (0.18 + 0.82 * abs(cos(strand[5] * x - strand[6] * phase + strand[8])))
-                    upper[index * 2] = (x * size.width).toFloat()
-                    lower[index * 2] = upper[index * 2]
-                    upper[index * 2 + 1] = ((center - half) * size.height).toFloat()
-                    lower[index * 2 + 1] = ((center + half) * size.height).toFloat()
-                }
-                band.reset()
-                band.moveTo(upper[0], upper[1])
-                through(band, upper, false)
-                band.lineTo(lower[72], lower[73])
-                through(band, lower, true)
-                band.close()
-                drawPath(band, brushes[layer])
-                sheen.reset()
-                sheen.moveTo(upper[0], upper[1])
-                through(sheen, upper, false)
-                drawPath(sheen, Color.White.copy(alpha = (1.6 * bright * strand[7]).toFloat()), style = Stroke(1.2.dp.toPx()))
-            }
-        }
-    })
+internal fun DashboardTrafficBackdrop(history: List<Traffic>, running: Boolean, active: Boolean,
+    modifier: Modifier) {
+    val visuals = LocalLiteVisuals.current
+    val highContrast = LocalLiteHighContrast.current
+    var held by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(emptyList<Traffic>()) }
+    if (active && running && history.isNotEmpty()) held = history
+    val lift = androidx.compose.animation.core.animateFloatAsState(
+        if (running && history.isNotEmpty()) 1f else 0f,
+        androidx.compose.animation.core.tween(if (active && !LocalLiteReducedMotion.current && !highContrast) 240 else 0),
+        label = "dashboardTrafficLift")
+    val latest = androidx.compose.runtime.remember(held) { dashboardTrafficCurves(held) }
+    var from by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(latest) }
+    var to by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(latest) }
+    val morph = androidx.compose.runtime.remember { androidx.compose.animation.core.Animatable(1f) }
+    val animateTrace = active && !LocalLiteReducedMotion.current && !highContrast
+    androidx.compose.runtime.LaunchedEffect(latest, animateTrace) {
+        if (latest != to) {
+            from = interpolateDashboardCurves(from, to, morph.value)
+            to = latest
+            if (animateTrace && lift.value > 0f && lift.value < 1f) {
+                morph.snapTo(0f)
+                morph.animateTo(1f, androidx.compose.animation.core.tween(240))
+            } else morph.snapTo(1f)
+        } else if (!animateTrace) morph.snapTo(1f)
+    }
+    val curves = androidx.compose.runtime.remember { androidx.compose.runtime.derivedStateOf { interpolateDashboardCurves(from, to, morph.value) } }
+    val opacity = if (highContrast) 0.12f else 0.34f
+    Box(modifier) {
+        TrafficPaths(curves, lift, opacity, filled = true, Modifier.matchParentSize())
+        val source = if (visuals.aurora && visuals.material != dev.aerove.lite.MaterialTier.Solid) visuals.ink else null
+        TrafficPaths(curves, lift, opacity, filled = false,
+            if (source == null) Modifier.matchParentSize() else Modifier.matchParentSize().liteInk(source, dev.aerove.lite.optics.AeroveInkRole.Icon), source)
+    }
 }
 
-private val ribbonStrands = arrayOf(
-    doubleArrayOf(0.58, 0.15, 5.2, 1.0, 0.12, 3.1, 0.8, 1.0, 0.0),
-    doubleArrayOf(0.46, 0.11, 6.6, -0.75, 0.075, 4.4, -1.1, 0.7, 2.1),
-    doubleArrayOf(0.7, 0.09, 4.3, 1.35, 0.06, 2.6, 1.4, 0.55, 4.3),
-)
-
-// Real shared traffic samples replace the ribbon in the same background bounds.
-// Geometry is cached until the history or measured card size changes; there is no sampler here.
 @Composable
-internal fun DashboardTrafficBackdrop(history: List<Traffic>, modifier: Modifier) {
-    val curves = rememberDashboardCurves(history)
-    val dark = LocalLiteVisuals.current.dark
+private fun TrafficPaths(curves: State<DashboardTrafficCurves>, lift: State<Float>, opacity: Float, filled: Boolean,
+    modifier: Modifier, source: Color? = null) {
     Box(modifier.drawWithCache {
-        fun path(points: List<DashboardCurvePoint>) = Path().apply {
-            if (points.isNotEmpty()) {
-                moveTo(points[0].x * size.width, points[0].y * size.height)
+        val stroke = Stroke(1.8.dp.toPx())
+        val path = Path()
+        onDrawBehind {
+            val amount = lift.value
+            val paths = listOf(curves.value.upload to Color(0xFF8C78D5), curves.value.download to Color(0xFF519FD8))
+            paths.forEachIndexed { series, (raw, color) ->
+                val points = raw.ifEmpty { listOf(DashboardCurvePoint(0f, 1f), DashboardCurvePoint(1f, 1f)) }
+                val baseline = size.height - stroke.width / 2
+                fun y(point: DashboardCurvePoint) = baseline - (1f - point.y) * size.height * amount
+                path.reset()
+                path.moveTo(0f, y(points.first()))
                 for (index in 1 until points.size) {
                     val previous = points[index - 1]
                     val next = points[index]
-                    val middleX = (previous.x + next.x) * size.width / 2f
-                    cubicTo(middleX, previous.y * size.height, middleX, next.y * size.height,
-                        next.x * size.width, next.y * size.height)
+                    val middle = (previous.x + next.x) * size.width / 2f
+                    path.cubicTo(middle, y(previous), middle, y(next), next.x * size.width, y(next))
                 }
-            }
-        }
-        val series = listOf(curves.upload to Color(0xFF8C78D5), curves.download to Color(0xFF519FD8)).map { (points, color) ->
-            val line = path(points)
-            val fill = Path().apply {
-                addPath(line)
-                if (points.isNotEmpty()) {
-                    lineTo(size.width, size.height)
-                    lineTo(0f, size.height)
-                    close()
-                }
-            }
-            Triple(line, fill, color)
-        }
-        val stroke = Stroke(1.8.dp.toPx())
-        onDrawBehind {
-            series.forEach { (line, fill, color) ->
-                drawPath(fill, Brush.verticalGradient(listOf(color.copy(alpha = if (dark) 0.16f else 0.12f), Color.Transparent)))
-                drawPath(line, color.copy(alpha = if (dark) 0.48f else 0.35f), style = stroke)
+                if (filled) {
+                    path.lineTo(size.width, size.height)
+                    path.lineTo(0f, size.height)
+                    path.close()
+                    drawPath(path, color.copy(alpha = opacity * 0.14f))
+                } else drawPath(path, (source ?: color).copy(alpha = opacity * if (source != null && series == 0) 0.7f else 1f), style = stroke)
             }
         }
     })
 }
 
-@Composable
-private fun rememberDashboardCurves(history: List<Traffic>) = androidx.compose.runtime.remember(history) { dashboardTrafficCurves(history) }
+internal data class DashboardClearance(val bounds: androidx.compose.ui.geometry.Rect, val outline: Path? = null) {
+    fun overlaps(other: androidx.compose.ui.geometry.Rect): Boolean {
+        if (!bounds.overlaps(other)) return false
+        val shape = outline ?: return true
+        val placed = Path().apply { addPath(shape, bounds.topLeft) }
+        val area = Path().apply { addRect(other) }
+        return !Path.combine(androidx.compose.ui.graphics.PathOperation.Intersect, placed, area).isEmpty
+    }
+}

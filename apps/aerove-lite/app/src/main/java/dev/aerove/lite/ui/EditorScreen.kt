@@ -206,6 +206,7 @@ internal fun EditorScreen(
                 Modifier.padding(horizontal = 16.dp, vertical = 6.dp), style = LiteType.Caption)
         }
         if (showMenu) Popup(alignment = Alignment.TopEnd, offset = IntOffset(0, 96), onDismissRequest = { showMenu = false }, properties = PopupProperties(focusable = true)) {
+            LiteOwnedPopupFocus()
             LitePane(Modifier.padding(12.dp).widthIn(min = 260.dp, max = 360.dp), corner = LiteCorner.Control) {
                 Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     EditorMenuRow(stringResource(R.string.editor_undo), EditorGlyphs.undo, documentState.canUndo) { document.undo(); showMenu = false }

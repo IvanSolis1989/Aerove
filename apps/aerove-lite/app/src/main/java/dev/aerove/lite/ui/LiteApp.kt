@@ -114,7 +114,8 @@ private val PageScrollSaver = mapSaver<MutableMap<String, LazyListState>>(
 )
 
 @Composable
-fun LiteApp(state: LiteState, actions: LiteActions) {
+fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.integration.LiteDisplayStreams? = null) {
+    LiteWindowFocusHost { windowFocused ->
     LiteTheme(state.settings) {
         val wallpaper = rememberLayerBackdrop()
         val page = rememberLayerBackdrop()
@@ -122,7 +123,8 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         val density = LocalDensity.current
         val topInset = with(density) { WindowInsets.statusBars.getTop(this).toDp() }
         val bottomInset = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
-        val tabs = MainTab.entries.filter { it != MainTab.Proxies || state.groups.isNotEmpty() }
+        val hasGroups = state.groups.isNotEmpty()
+        val tabs = remember(hasGroups) { MainTab.entries.filter { it != MainTab.Proxies || hasGroups } }
         var tab by rememberSaveable { mutableStateOf(MainTab.Home) }
         val activeTab = tab.takeIf { it in tabs } ?: MainTab.Home
         LaunchedEffect(tabs, tab) { if (tab !in tabs) tab = MainTab.Home }
@@ -185,7 +187,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
             lifecycle.addObserver(observer)
             onDispose { lifecycle.removeObserver(observer) }
         }
-        val providerActive = resumed && !otherCovered && !scanMounted && editorProfile == null && !dashboardEditing && builderProfile == null && scriptEditing == null
+        val providerActive = resumed && windowFocused && !otherCovered && !scanMounted && editorProfile == null && !dashboardEditing && builderProfile == null && scriptEditing == null
         DisposableEffect(providerActive, actions) {
             actions.setProviderTelemetryActive(providerActive)
             onDispose { actions.setProviderTelemetryActive(false) }
@@ -199,8 +201,8 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
             pendingScan = null
             openSubscription(value)
         }
-        DisposableEffect(detail, modal, lifecycle, actions) {
-            if (detail == DetailPage.Connections && !modal) {
+        DisposableEffect(detail, modal, lifecycle, actions, windowFocused) {
+            if (detail == DetailPage.Connections && !modal && windowFocused) {
                 var declared: Boolean? = null
                 fun declare(active: Boolean) {
                     if (declared != active) {
@@ -223,7 +225,8 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
         val pageKey = scriptEditing?.let { "script:$it" } ?: builderProfile?.let { "builder:$it" } ?: if (dashboardEditing) "dashboard-editor" else editorProfile?.let { "editor:$it:$editorReadOnly" } ?: detail?.name ?: activeTab.name
         val motionActivity = rememberAuroraMotionActivity(pageKey)
         val effectiveAurora = LocalLiteVisuals.current.aurora
-        val phase = rememberAuroraPhase(effectiveAurora && !covered && !scanMounted, activity = motionActivity)
+        val opaqueScan = scanner.isIdle && scanner.currentState && scanner.targetState
+        val auroraTime = rememberAuroraTime(effectiveAurora && liteWallpaperVisible(windowFocused, opaqueScan, requiresConsent), activity = motionActivity)
         val scroll = scrolls.getOrPut(pageKey) { LazyListState() }
         val dockScroll = remember(scroll, density.density) {
             object : NestedScrollConnection {
@@ -249,22 +252,22 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
             else detail = when (detail) { DetailPage.FontFamily -> DetailPage.Theme; DetailPage.UserAgents, DetailPage.Hosts, DetailPage.OnDemand -> DetailPage.General; DetailPage.Dns, DetailPage.Network, DetailPage.GlobalRules -> DetailPage.Advanced; DetailPage.Scripts -> DetailPage.valueOf(scriptsParent); else -> null }
         }
         BackHandler(detail != null && !modal, onBack = closeDetail)
-        Box(Modifier.fillMaxSize().auroraMotionActivity(motionActivity, effectiveAurora)) {
+        Box(Modifier.fillMaxSize().auroraMotionActivity(motionActivity, resumed)) {
             Box(Modifier.fillMaxSize().layerBackdrop(wallpaper)) {
-                LiteWallpaper(phase, Modifier.fillMaxSize(), state.settings.auroraColors, state.settings.auroraSeed)
+                LiteWallpaper(auroraTime, Modifier.fillMaxSize(), state.settings.auroraColors, state.settings.auroraSeed)
             }
-            CompositionLocalProvider(LocalLiteBackdrop provides wallpaper, LocalLiteInkBackdrop provides wallpaper, LocalLiteListState provides scroll, LocalAuroraPhase provides phase, LocalLiteOverlay provides appearanceOverlay) {
+            CompositionLocalProvider(LocalLiteDisplayStreams provides display, LocalLiteMotionActivity provides motionActivity, LocalLiteBackdrop provides wallpaper, LocalLiteInkBackdrop provides wallpaper, LocalLiteListState provides scroll, LocalLiteOverlay provides appearanceOverlay) {
                 val cardContent: @Composable (DashboardWidget) -> Unit = { widget ->
                     DashboardCard(widget, state, actions, { tab = MainTab.Profiles },
                         { detail = DetailPage.Connections }, { tab = MainTab.Proxies },
-                        serviceStatusContent = { ServiceStatusPanel(state, actions) },
-                        memoryInfoContent = { MemoryInfoPanel(state, actions) }, openProfileDetails = {
+                        serviceStatusContent = { DiagnosticsLeaf(state) { ServiceStatusPanel(it, actions) } },
+                        memoryInfoContent = { DiagnosticsLeaf(state) { MemoryInfoPanel(it, actions) } }, openProfileDetails = {
                             val selected = state.profiles.firstOrNull { it.id == state.selectedProfile }
                             if (selected?.custom == true) builderProfile = selected.id else if (selected != null) profileDetailOpen = true
                         }, openRequests = { detail = DetailPage.Requests }, openDns = { detail = DetailPage.DnsQueries })
                 }
                 CompositionLocalProvider(LocalDiagnosticsForeground provides
-                    (resumed && !covered && !scanMounted && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing)) {
+                    (resumed && windowFocused && !covered && !scanMounted && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing)) {
                 val navigationVisible = detail == null && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing
                 val floating = state.settings.floatingNavigationBar
                 val navigationEnabled = navigationVisible && resumed && !modal
@@ -273,12 +276,12 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                 val visibilityExit = CubicBezierEasing(0f, 0f, 0.7f, 1f)
                 Column(Modifier.fillMaxSize()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        CompositionLocalProvider(LocalLitePageActive provides (resumed && !covered && !scanMounted),
-                            LocalLiteReducedMotion provides (LocalLiteReducedMotion.current || !resumed || covered || scanMounted)) {
-                        Box(Modifier.fillMaxSize().layerBackdrop(page)) {
+                        CompositionLocalProvider(LocalLitePageActive provides (resumed && windowFocused && !covered && !scanMounted),
+                            LocalLiteReducedMotion provides (LocalLiteReducedMotion.current || !resumed || !windowFocused || covered || scanMounted)) {
+                        Box(Modifier.fillMaxSize().then(if (LocalLiteVisuals.current.material == dev.aerove.lite.MaterialTier.Solid) Modifier else Modifier.layerBackdrop(page))) {
                         LiteTabTransitionHost(tabs, activeTab, state.settings.tabAnimation,
-                            active = resumed && !modal, visible = navigationVisible,
-                            pageActive = navigationVisible && !covered && !scanMounted) { scene, logicalActive ->
+                            active = resumed && windowFocused && !modal, visible = navigationVisible,
+                            pageActive = navigationVisible && windowFocused && !covered && !scanMounted) { scene, logicalActive ->
                             val proxyWorkspace = if (scene == MainTab.Proxies) remember { features().proxyPresentation } else null
                             val sceneScroll = scrolls.getOrPut(scene.name) { LazyListState() }
                             val sceneBody = rememberLayerBackdrop()
@@ -286,7 +289,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                             val inset = if (floating) floatingNavigationInset(density.fontScale, bottomInset.value).dp else 0.dp
                             val padding = PaddingValues(start = 16.dp, end = 16.dp, top = topInset + LiteMetrics.PageToolbar, bottom = 20.dp + inset)
                             CompositionLocalProvider(LocalLiteListState provides sceneScroll) {
-                                Box(Modifier.fillMaxSize().then(if (logicalActive && floating) Modifier.nestedScroll(dockScroll) else Modifier).layerBackdrop(sceneBody)) {
+                                Box(Modifier.fillMaxSize().then(if (logicalActive && floating) Modifier.nestedScroll(dockScroll) else Modifier).then(if (LocalLiteVisuals.current.material == dev.aerove.lite.MaterialTier.Solid) Modifier else Modifier.layerBackdrop(sceneBody))) {
                                     pages.SaveableStateProvider(scene.name) {
                                         when (scene) {
                                             MainTab.Home -> OverviewScreen(state.settings, padding, cardContent)
@@ -356,7 +359,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                             val padding = PaddingValues(start = 16.dp, end = 16.dp, top = topInset + LiteMetrics.PageToolbar, bottom = bottomInset + 20.dp)
                             val body = rememberLayerBackdrop()
                             val headerSource = rememberCombinedBackdrop(wallpaper, body)
-                            Box(Modifier.fillMaxSize().layerBackdrop(body)) {
+                            Box(Modifier.fillMaxSize().then(if (LocalLiteVisuals.current.material == dev.aerove.lite.MaterialTier.Solid) Modifier else Modifier.layerBackdrop(body))) {
                                 val result = resources
                                 if (result?.isSuccess == true) ProfileBuilderScreen(session, padding, close,
                                     onSaved = { session.savedProfileId?.let { features().editorSaved(it) } }, resources = result.getOrThrow())
@@ -395,7 +398,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                             val body = rememberLayerBackdrop()
                             val headerSource = rememberCombinedBackdrop(wallpaper, body)
                             val padding = PaddingValues(start = 16.dp, end = 16.dp, top = topInset + LiteMetrics.PageToolbar, bottom = 20.dp + bottomInset)
-                            Box(Modifier.fillMaxSize().then(if (modal) Modifier.clearAndSetSemantics {} else Modifier).layerBackdrop(body)) {
+                            Box(Modifier.fillMaxSize().then(if (modal) Modifier.clearAndSetSemantics {} else Modifier).then(if (LocalLiteVisuals.current.material == dev.aerove.lite.MaterialTier.Solid) Modifier else Modifier.layerBackdrop(body))) {
                                 pages.SaveableStateProvider(pageKey) {
                                     when (detail) {
                                         DetailPage.Theme -> SettingsScreen(state, actions, padding, onFontFamily = { detail = DetailPage.FontFamily })
@@ -438,7 +441,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                                         }
                                         DetailPage.UserAgents -> UserAgentPreferencesScreen(state.settings.requests, { actions.changeSettings(state.settings.copy(requests = it)) }, padding, state.busy.isEmpty())
                                         DetailPage.ProxyPreferences -> ProxyPreferencesScreen(state.settings.proxyPresentation, padding, "settings" in state.busy, { actions.changeSettings(state.settings.copy(proxyPresentation = it)) })
-                                        DetailPage.Connections -> ConnectionsScreen(state, actions, padding)
+                                        DetailPage.Connections -> ConnectionsLeaf(state) { ConnectionsScreen(it, actions, padding) }
                                         DetailPage.Dns -> DnsPreferencesScreen(state.settings.dnsPreferences, "settings" in state.busy, padding,
                                             { actions.changeSettings(state.settings.copy(dnsPreferences = it)) })
                                         DetailPage.Apps -> {
@@ -560,6 +563,7 @@ fun LiteApp(state: LiteState, actions: LiteActions) {
                 }
             }
         }
+    }
     }
 }
 

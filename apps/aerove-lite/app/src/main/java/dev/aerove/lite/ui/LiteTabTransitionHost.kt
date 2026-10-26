@@ -94,10 +94,12 @@ internal fun <K : Any> LiteTabTransitionHost(
             }
         } }
     }) { children, constraints ->
-        val measured = children.map { it.measure(constraints) }
+        val measured = if (visible) listOf(from, to, target).distinct().mapNotNull { item ->
+            keys.indexOf(item).takeIf { it >= 0 }?.let { it to children[it].measure(constraints) }
+        }.toMap() else emptyMap()
         layout(constraints.maxWidth, constraints.maxHeight) {
             if (visible) (listOf(from, to).distinct()).forEach { item ->
-                keys.indexOf(item).takeIf { it >= 0 }?.let { measured[it].place(0, 0) }
+                keys.indexOf(item).takeIf { it >= 0 }?.let { measured[it]?.place(0, 0) }
             }
         }
     }

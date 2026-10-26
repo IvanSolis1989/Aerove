@@ -26,8 +26,8 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
         withOpticalFixture(compose, case, "layers-ink_$case") { state, probe, capture ->
             val source = capture.capture("source-phase-zero")
             val actual = compose.frame(state, FixtureState(FixtureStage.Production), capture, "production-phase-zero")
-            val halfSource = compose.frame(state, FixtureState(FixtureStage.Source, auroraPhase = 0.5f), capture, "source-phase-half")
-            val halfActual = compose.frame(state, FixtureState(FixtureStage.Production, auroraPhase = 0.5f), capture, "production-phase-half")
+            val halfSource = compose.frame(state, FixtureState(FixtureStage.Source, auroraTime = 45_000_000L), capture, "source-phase-half")
+            val halfActual = compose.frame(state, FixtureState(FixtureStage.Production, auroraTime = 45_000_000L), capture, "production-phase-half")
             val mask = compose.frame(state, FixtureState(FixtureStage.InkMask), capture, "opaque-glyph-mask")
             val selected = compose.frame(state, FixtureState(FixtureStage.Production, parentSelected = true), capture, "parent-selected")
             val front = compose.frame(state, FixtureState(FixtureStage.Production, parentSelected = true, frontHue = true), capture, "foreground-changed")
@@ -75,8 +75,8 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
         withOpticalFixture(compose, case, "translucent-ink_$case", initial = fixture) { state, probe, capture ->
             val source = capture.capture("source-alpha-08")
             val actual = compose.frame(state, fixture.copy(stage = FixtureStage.Production), capture, "ink-alpha-08")
-            val halfSource = compose.frame(state, fixture.copy(auroraPhase = 0.5f), capture, "source-half-alpha-08")
-            val halfActual = compose.frame(state, fixture.copy(stage = FixtureStage.Production, auroraPhase = 0.5f), capture, "ink-half-alpha-08")
+            val halfSource = compose.frame(state, fixture.copy(auroraTime = 45_000_000L), capture, "source-half-alpha-08")
+            val halfActual = compose.frame(state, fixture.copy(stage = FixtureStage.Production, auroraTime = 45_000_000L), capture, "ink-half-alpha-08")
             val mask = compose.frame(state, fixture.copy(stage = FixtureStage.InkMask), capture, "coverage-alpha-08")
             val report = JSONObject().put("sourceAlpha", Color.alpha(probe.ink))
             try {

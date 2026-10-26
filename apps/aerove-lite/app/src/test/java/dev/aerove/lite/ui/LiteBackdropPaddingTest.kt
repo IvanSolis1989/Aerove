@@ -181,8 +181,8 @@ class LiteBackdropPaddingTest {
     // The composable call sites and the Kyant blur call cannot run on the JVM; the source pins them to the replayed builders.
     @Test fun frostAndClearPanesTakeTheirEffectsFromTheReplayedBuilders() {
         val lines = File("src/main/java/dev/aerove/lite/ui/LiteOptics.kt").readText().lines().map(String::trim)
-        for (call in listOf("effects = frostBackdropEffects(LocalDensity.current, style, viewport.tracking { coordinates }),",
-            "effects = glassBackdropEffects(LocalDensity.current, style, geometry, sources.glass, glow, rim, explicitGlow, viewport.tracking { coordinates }),")) {
+        for (call in listOf("effects = frostBackdropEffects(composition, style, viewport.tracking { coordinates.value }),",
+            "effects = glassBackdropEffects(composition, style, geometry, sources.glass, glow, rim, explicitGlow, viewport.tracking { coordinates.value }))")) {
             assertEquals("composable passes the composition density to the replayed builder: $call", 1, lines.count { it == call })
         }
         assertEquals("only plainBackdropEffects reports padding", listOf("padding = pad"),

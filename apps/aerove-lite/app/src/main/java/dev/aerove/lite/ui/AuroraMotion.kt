@@ -8,8 +8,10 @@ import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.State
+import androidx.compose.runtime.LongState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,7 +40,7 @@ import kotlinx.coroutines.launch
 
 internal val LocalLiteMotionOverride = staticCompositionLocalOf<Boolean?> { null }
 internal val LocalLiteReducedMotion = staticCompositionLocalOf { false }
-internal val LocalAuroraPhase = staticCompositionLocalOf<State<Float>> { mutableStateOf(0f) }
+internal val LocalLiteMotionActivity = staticCompositionLocalOf<AuroraMotionActivity?> { null }
 
 @Composable
 internal fun rememberLiteReducedMotion(): Boolean {
@@ -84,9 +86,7 @@ internal fun rememberAuroraMotionActivity(page: Any?): AuroraMotionActivity {
     val scope = rememberCoroutineScope()
     val activity = remember(scope) { AuroraMotionActivity(scope) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    val reduced = LocalLiteReducedMotion.current
-    DisposableEffect(page, lifecycle, reduced) {
-        if (reduced) activity.reset()
+    DisposableEffect(page, lifecycle) {
         val observer = LifecycleEventObserver { _, _ ->
             if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) activity.reset()
         }
@@ -98,7 +98,7 @@ internal fun rememberAuroraMotionActivity(page: Any?): AuroraMotionActivity {
 
 @Composable
 internal fun Modifier.auroraMotionActivity(activity: AuroraMotionActivity, enabled: Boolean = true): Modifier {
-    if (!enabled || LocalLiteReducedMotion.current) return this
+    if (!enabled) return this
     val scroll = remember(activity) {
         object : NestedScrollConnection {
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
@@ -124,28 +124,29 @@ internal fun Modifier.auroraMotionActivity(activity: AuroraMotionActivity, enabl
     }
 }
 
+/** Accumulated motion time in whole microseconds, the unit of Standard's FramePacer elapsed time; reduced motion holds it at 0. */
 @Composable
-internal fun rememberAuroraPhase(enabled: Boolean, restartKey: Any? = null, activity: AuroraMotionActivity? = null): State<Float> {
+internal fun rememberAuroraTime(enabled: Boolean, restartKey: Any? = null, activity: AuroraMotionActivity? = null): LongState {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val reduced = LocalLiteReducedMotion.current
-    val phase = remember(restartKey) { mutableStateOf(0f) }
-    LaunchedEffect(enabled, lifecycle, reduced, phase) {
+    val micros = remember(restartKey) { mutableLongStateOf(0L) }
+    SideEffect { if (reduced) micros.longValue = 0L }
+    LaunchedEffect(enabled, lifecycle, reduced, micros) {
         if (enabled && !reduced) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            val base = phase.value
+            val base = micros.longValue
             var origin = -1L
-            var grid = 0L
-            var previousRate = activity?.framesPerSecond ?: 15
-            while (isActive) {
-                val now = withFrameNanos { it }
-                if (origin < 0) { origin = now; grid = now }
-                phase.value = base + (now - origin) / 90_000_000_000f
-                val fps = activity?.framesPerSecond ?: 15
-                if (previousRate != fps) { grid = now; previousRate = fps }
-                val frame = (now - grid) * fps / 1_000_000_000L
-                val due = grid + ((frame + 1) * 1_000_000_000L + fps - 1) / fps
-                delay(maxOf(1L, (due - now + 999_999L) / 1_000_000L))
-            }
+            val token = Any()
+            LiteFrameGrid.join(token)
+            try {
+                while (isActive) {
+                    val now = withFrameNanos { it }
+                    if (origin < 0) origin = now
+                    micros.longValue = base + (now - origin) / 1_000L
+                    val due = LiteFrameGrid.next(token, now, activity?.framesPerSecond ?: 15)
+                    delay(maxOf(1L, (due - now + 999_999L) / 1_000_000L))
+                }
+            } finally { LiteFrameGrid.leave(token) }
         }
     }
-    return phase
+    return micros
 }

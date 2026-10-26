@@ -44,6 +44,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -259,9 +260,9 @@ private fun ScanFrame(invalid: Boolean, running: Boolean, torch: @Composable () 
         val corner = listOf(LiteCorner.None, LiteCorner.ExtraSmall, LiteCorner.Small, LiteCorner.Control,
             LiteCorner.Block, LiteCorner.Card, LiteCorner.Sheet).last { it.value <= layout.window.width / 3 }
         val shape = rememberLiteShape(corner)
-        Canvas(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().drawWithCache {
             val width = layout.window.width.dp.toPx()
-            if (width <= 0f) return@Canvas
+            if (width <= 0f) return@drawWithCache onDrawBehind {}
             val origin = Offset(layout.window.left.dp.toPx(), layout.window.top.dp.toPx())
             val outline = shape.createOutline(Size(width, width), layoutDirection, density) as Outline.Generic
             val window = Path().apply { addPath(outline.path, origin) }
@@ -270,6 +271,7 @@ private fun ScanFrame(invalid: Boolean, running: Boolean, torch: @Composable () 
                 addRect(androidx.compose.ui.geometry.Rect(Offset.Zero, size))
                 addPath(window)
             }
+            onDrawBehind {
             drawPath(scrim, Color.Black.copy(alpha = 0.6f))
             drawPath(window, color, style = Stroke(2.5.dp.toPx()))
             if (running && !reduced) clipPath(window) {
@@ -289,7 +291,8 @@ private fun ScanFrame(invalid: Boolean, running: Boolean, torch: @Composable () 
                 }
                 drawLine(highlight.copy(alpha = opacity), Offset(origin.x, y), Offset(origin.x + width, y), 3.dp.toPx())
             }
-        }
+            }
+        })
         Text(
             stringResource(if (invalid) R.string.lite_scan_invalid else R.string.lite_scan_hint),
             Modifier.align(Alignment.TopStart).offset(layout.hint.left.dp, layout.hint.top.dp).width(layout.hint.width.dp)

@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,7 +54,7 @@ internal enum class FixtureStage { Source, Production, NoLens, InkMask, OutlineM
 internal data class FixtureState(
     val stage: FixtureStage = FixtureStage.Source,
     val revision: Int = 0,
-    val auroraPhase: Float = 0f,
+    val auroraTime: Long = 0L,
     val parentSelected: Boolean = false,
     val frontHue: Boolean = false,
     val switchMarkers: Boolean = false,
@@ -70,11 +70,11 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
         val visuals = LocalLiteVisuals.current
         val ink = visuals.ink.copy(alpha = state.inkAlpha)
         val source = rememberLayerBackdrop()
-        val phase = remember { mutableStateOf(state.auroraPhase) }
+        val auroraTime = remember { mutableLongStateOf(state.auroraTime) }
         val view = LocalView.current
         val density = LocalDensity.current
         SideEffect {
-            phase.value = state.auroraPhase
+            auroraTime.longValue = state.auroraTime
             probe.view = view
             probe.density = density.density
             probe.fontScale = density.fontScale
@@ -87,7 +87,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
         BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["root"] = it.boundsInWindow() }) {
             val paneWidth = minOf(320.dp, maxWidth - 48.dp)
             Box(Modifier.fillMaxSize().layerBackdrop(source)) {
-                LiteWallpaper(phase, Modifier.fillMaxSize())
+                LiteWallpaper(auroraTime, Modifier.fillMaxSize())
                 Canvas(Modifier.fillMaxSize()) {
                     val base = Color(if (state.revision == 0) 0xFF172432 else 0xFFBDC3CF)
                     drawRect(base, Offset.Zero, Size(size.width, 310.dp.toPx()))

@@ -232,7 +232,8 @@ private fun ProfileUsageBackground(usage: ProfileSubscriptionUsage?, modifier: M
     var visible by remember { mutableStateOf(false) }
     val view = LocalView.current
     val foreground = LocalDiagnosticsForeground.current
-    val phase = rememberAuroraPhase(share > 0 && share < 1 && visuals.material != MaterialTier.Solid && visible && foreground && overlay.content == null)
+    val motionTime = rememberAuroraTime(share > 0 && share < 1 && visuals.material != MaterialTier.Solid && visible && foreground && overlay.content == null,
+        activity = LocalLiteMotionActivity.current)
     Canvas(modifier.onGloballyPositioned {
         val bounds = it.boundsInWindow()
         visible = !bounds.isEmpty && bounds.overlaps(Rect(0f, 0f, view.rootView.width.toFloat(), view.rootView.height.toFloat()))
@@ -243,7 +244,7 @@ private fun ProfileUsageBackground(usage: ProfileSubscriptionUsage?, modifier: M
         val width = size.width - inset * 2
         val height = size.height - inset * 2
         val level = width * remaining
-        val moving = if (reduced || !glass) 0.0 else phase.value * 90 * 1.3
+        val moving = if (reduced || !glass) 0.0 else motionTime.longValue / 1_000_000.0 * 1.3
         val depth = if (remaining >= 1) 0f else min(4.dp.toPx(), min(level, width - level) / 3) * (1 + sin(moving).toFloat() * 0.05f)
         val contact = level + depth
         val shoulder = level + depth * 0.55f

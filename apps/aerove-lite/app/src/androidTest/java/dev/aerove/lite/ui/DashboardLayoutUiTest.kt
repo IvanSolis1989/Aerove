@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -154,7 +155,7 @@ class DashboardLayoutUiTest {
                     }
                     Box(Modifier.fillMaxSize()) {
                         Box(Modifier.fillMaxSize().layerBackdrop(source)) {
-                            LiteWallpaper(remember { mutableStateOf(0f) }, Modifier.fillMaxSize())
+                            LiteWallpaper(remember { mutableLongStateOf(0L) }, Modifier.fillMaxSize())
                         }
                         CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source, LocalLiteListState provides scroll) {
                             Box(Modifier.align(Alignment.TopCenter).widthIn(max = maxWidth).fillMaxSize()) {
@@ -194,7 +195,8 @@ class DashboardLayoutUiTest {
     fun persistedOrderRemovalAndOptionalMemoryControlTheActualCards() {
         launch(fixture(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.IntranetIp, DashboardWidget.Profiles)))
         compose.onNodeWithText("198.51.100.8").assertIsDisplayed()
-        compose.onNodeWithText("192.0.2.8").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-intranet").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-lan-copy").assertDoesNotExist()
         compose.onNodeWithText("Selected profile fixture").assertIsDisplayed()
         assertTrue(top(DashboardWidget.IntranetIp) < top(DashboardWidget.Profiles))
         compose.onNodeWithTag("dashboard-speed").assertDoesNotExist()
@@ -224,24 +226,18 @@ class DashboardLayoutUiTest {
     @Test
     fun sharedCardsKeepTheActualDomainValuesControlsAndRoutes() {
         val defaults = LiteSettings().dashboardWidgets
-        assertEquals(9, defaults.size)
+        assertTrue(DashboardWidget.NetworkSpeed !in dashboardPresentationWidgets(defaults))
         assertEquals(10, DashboardWidget.entries.size)
         launch(fixture(defaults))
         scroll(DashboardWidget.NetworkSpeed)
         // Standard's dashboardTraffic writes 4096 and 8192 bytes as these.
-        compose.onNodeWithContentDescription(context.getString(R.string.lite_traffic_total, "4 KB")).assertIsDisplayed()
-        compose.onNodeWithContentDescription(context.getString(R.string.lite_traffic_total, "8 KB")).assertIsDisplayed()
-        compose.onNodeWithTag("dashboard-upload-total-raw", useUnmergedTree = true).assertTextEquals("4 KB").assertIsDisplayed()
-        compose.onNodeWithTag("dashboard-download-total-raw", useUnmergedTree = true).assertTextEquals("8 KB").assertIsDisplayed()
-        scroll(DashboardWidget.OutboundMode)
-        compose.onNode(hasText(context.getString(R.string.lite_mode_global)) and hasClickAction()).performClick().assertIsSelected()
-        assertEquals(ProxyMode.Global, state.value.settings.mode)
+        compose.onNodeWithTag("dashboard-upload-value-raw", useUnmergedTree = true).assertTextEquals("1 KB/s").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-download-value-raw", useUnmergedTree = true).assertTextEquals("2 KB/s").assertIsDisplayed()
+        for (direction in listOf("upload", "download"))
+            compose.onNodeWithTag("dashboard-$direction-total", useUnmergedTree = true).assertDoesNotExist()
         scroll(DashboardWidget.VpnButton)
         compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn().performClick().assertIsOff()
         compose.onNodeWithContentDescription(context.getString(R.string.network_allow_lan)).assertIsOff().performClick().assertIsOn()
-        assertTrue(state.value.settings.network.allowLan)
-        assertTrue(!state.value.settings.network.vpnEnabled)
-        assertEquals(0, actions.events.count { it == "connect" || it == "disconnect" })
         tapCard(DashboardWidget.Profiles)
         assertEquals(1, profilesOpened)
         scroll(DashboardWidget.ProxyGroups)
@@ -341,111 +337,49 @@ class DashboardLayoutUiTest {
         }
     }
 
-    private fun assertCenteredAddressAndCopyTarget() {
-        compose.onNodeWithTag("dashboard-vpn-footer").assertDoesNotExist()
-        compose.onNodeWithText(context.getString(R.string.lite_enabled)).assertDoesNotExist()
-        compose.onNodeWithText(context.getString(R.string.lite_disabled)).assertDoesNotExist()
-        val address = statusRect("dashboard-lan-footer")
-        val copy = compose.onNodeWithTag("dashboard-lan-copy").fetchSemanticsNode()
-        val vpn = statusRect("dashboard-vpn")
-        val lan = statusRect("dashboard-intranet")
-        val measured = "address=$address copy=${copy.boundsInRoot} vpn=$vpn lan=$lan density=$density"
-        assertEquals(measured, copy.boundsInRoot.center.x, address.center.x, 0.5f)
-        assertEquals(measured, copy.boundsInRoot.center.y, address.center.y, 0.5f)
-        assertEquals(measured, vpn.left, copy.boundsInRoot.left, 0.5f)
-        assertEquals(measured, lan.right, copy.boundsInRoot.right, 0.5f)
-        assertTrue(measured, !copy.boundsInRoot.overlaps(vpn) && !copy.boundsInRoot.overlaps(lan))
-        assertTrue(measured, copy.touchBoundsInRoot.width >= 48f * density - 1f)
-        assertTrue(measured, copy.touchBoundsInRoot.height >= 48f * density - 1f)
-        if (effectiveFontScale == 1f) assertEquals(measured, 220f * density, statusRect("dashboard-network-controls").height, 1f)
-        assertEquals(context.getString(R.string.lite_copy), copy.config[SemanticsActions.OnClick].label)
-        compose.onNodeWithTag("dashboard-lan-copy").performTouchInput { click(Offset(2f, height / 2f)) }
-        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val expected = dashboardLanAddress(state.value.localAddress, state.value.settings.network.ports.mixed,
-            state.value.settings.network.allowLan)
-        compose.runOnIdle { assertEquals(expected, clipboard.primaryClip?.getItemAt(0)?.text?.toString()) }
-        assertTrue(actions.events.isEmpty())
+    @Test
+    fun threeEqualPillsCycleModeAndToggleVpnLanWithoutAnAddressRow() {
+        launch(fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp)), maxWidth = 360.dp)
+        val pills = listOf("dashboard-mode-cycle", "dashboard-vpn", "dashboard-intranet").map(::statusRect)
+        assertTrue("$pills", pills.maxOf { it.width } - pills.minOf { it.width } <= 1f)
+        compose.onNodeWithTag("dashboard-lan-copy").assertDoesNotExist()
+        compose.onNodeWithTag("dashboard-lan-footer").assertDoesNotExist()
+        for (mode in listOf(ProxyMode.Global, ProxyMode.Direct, ProxyMode.Rule)) {
+            compose.onNodeWithTag("dashboard-mode-cycle").performClick()
+            assertEquals(mode, state.value.settings.mode)
+        }
+        val old = state.value.settings.network
+        compose.onNodeWithTag("dashboard-vpn").performClick()
+        assertEquals(!old.vpnEnabled, state.value.settings.network.vpnEnabled)
+        assertEquals(old.allowLan, state.value.settings.network.allowLan)
+        compose.onNodeWithTag("dashboard-intranet").performClick()
+        assertEquals(!old.allowLan, state.value.settings.network.allowLan)
     }
 
     @Test
-    fun networkControlsCenterFullWidthCopyAddress() {
-        launch(fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp)), maxWidth = 412.dp)
-        assertCenteredAddressAndCopyTarget()
-    }
-
-    @Test
-    fun narrowLargeTextIpv6AddressRetainsCenterAndIndependentCopy() {
+    fun networkPillsKeepAllLabelsAndWordsAcrossDeviceFontLocaleMatrix() {
         val initial = fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp))
-        launch(initial.copy(localAddress = "2001:db8:1234:5678:9abc:def0:1234:5678",
-            settings = initial.settings.copy(network = initial.settings.network.copy(allowLan = true))),
-            fontScale = 2f, maxWidth = 328.dp)
-        assertCenteredAddressAndCopyTarget()
-        listOf(R.string.lite_mode_rule, R.string.lite_mode_global, R.string.lite_mode_direct).forEach { label ->
-            val layouts = mutableListOf<TextLayoutResult>()
-            compose.onNodeWithText(context.getString(label)).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-            assertTrue(!layouts.single().didOverflowHeight)
-        }
-        compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn().performClick().assertIsOff()
-        compose.onNodeWithContentDescription(context.getString(R.string.network_allow_lan)).assertIsOn().performClick().assertIsOff()
-        assertTrue(!state.value.settings.network.vpnEnabled && !state.value.settings.network.allowLan)
-    }
-
-    @Test
-    fun lanWholeRowCopiesCompleteAddressesAndDisablesMissingValues() {
-        launch(fixture(listOf(DashboardWidget.VpnButton, DashboardWidget.IntranetIp)), maxWidth = 328.dp)
-        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        data class CopyCase(val ip: String?, val enabled: Boolean, val port: Int, val expected: String?)
-        for ((ip, enabled, port, expected) in listOf(
-            CopyCase("192.0.2.8", true, 7890, "192.0.2.8:7890"),
-            CopyCase("192.0.2.8", false, 7890, "192.0.2.8"),
-            CopyCase("2001:db8::8", true, 7890, "[2001:db8::8]:7890"),
-            CopyCase("[2001:db8::8]", true, 7890, "[2001:db8::8]:7890"),
-            CopyCase("2001:db8::8", false, 7890, "2001:db8::8"),
-            CopyCase(null, true, 7890, null), CopyCase(" ", false, 7890, null),
-            CopyCase("192.0.2.8", true, 0, null), CopyCase("192.0.2.8", true, 65536, null))) {
-            compose.runOnUiThread {
-                val network = state.value.settings.network
-                state.value = state.value.copy(localAddress = ip, settings = state.value.settings.copy(
-                    network = network.copy(allowLan = enabled, ports = network.ports.copy(mixed = port))))
-            }
-            val row = compose.onNodeWithTag("dashboard-lan-copy")
-            if (expected == null) row.assertIsNotEnabled() else {
-                val before = state.value.settings.network
-                row.performTouchInput { click(Offset(width - 2f, height / 2f)) }
-                compose.runOnIdle { assertEquals(expected, clipboard.primaryClip?.getItemAt(0)?.text?.toString()) }
-                assertEquals(before, state.value.settings.network)
-            }
-        }
-    }
-
-    @Test
-    fun modePillsHaveEqualFullShapesAndCenteredActualIconTextGroups() {
-        launch(fixture(listOf(DashboardWidget.OutboundMode)), maxWidth = 412.dp, deviceDensity = 2.625f)
-        for (material in MaterialTier.entries) for (aurora in listOf(false, true))
-            for (colorMode in listOf(dev.aerove.lite.ColorMode.Light, dev.aerove.lite.ColorMode.Dark)) {
-                compose.runOnUiThread { state.value = state.value.copy(settings = state.value.settings.copy(
-                    material = material, aurora = aurora, colorMode = colorMode, mode = ProxyMode.Rule)) }
-                val pills = ProxyMode.entries.map { mode ->
-                    val pill = statusRect("dashboard-mode-${mode.name}")
-                    val icon = statusRect("dashboard-mode-${mode.name}-icon")
-                    val label = statusRect("dashboard-mode-${mode.name}-label")
-                    val content = Rect(minOf(icon.left, label.left), minOf(icon.top, label.top),
-                        maxOf(icon.right, label.right), maxOf(icon.bottom, label.bottom))
-                    val measured = "material=$material aurora=$aurora color=$colorMode mode=$mode pill=$pill icon=$icon label=$label"
-                    assertEquals(measured, pill.center.x, icon.center.x, 0.5f)
-                    assertEquals(measured, pill.center.x, label.center.x, 0.5f)
-                    assertEquals(measured, pill.center.y, content.center.y, 0.5f)
-                    assertTrue(measured, content.top >= pill.top && content.bottom <= pill.bottom)
-                    assertTrue(measured, pill.height >= 48f * density - 1f)
-                    val shape = DashboardModePillShape.geometry(pill.size, androidx.compose.ui.unit.LayoutDirection.Ltr, Density(density))
-                    assertEquals(measured, 1, shape.radii.distinct().size)
-                    assertTrue(measured, shape.radii.first() >= minOf(pill.width, pill.height) / density / 2 - 0.01)
-                    pill
+        launch(initial, maxWidth = 320.dp)
+        // Each entry rebuilds the actual Android text paragraphs using system typefaces and fallbacks.
+        for (width in listOf(320.dp, 360.dp, 412.dp)) for (scale in listOf(1f, 1.3f, 2f))
+            for (language in listOf("zh-CN", "ja", "ko", "ru", "en", "es", "fr")) {
+                launch(initial, fontScale = scale, maxWidth = width, language = language)
+                compose.onAllNodesWithTag("dashboard-control-label", useUnmergedTree = true).fetchSemanticsNodes().forEach { node ->
+                    val results = mutableListOf<TextLayoutResult>()
+                    compose.onNode(SemanticsMatcher("id") { it.id == node.id }, useUnmergedTree = true)
+                        .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+                    val text = results.single()
+                    val detail = "$width $scale $language ${text.layoutInput.text} ${text.size}"
+                    assertTrue(detail, !text.didOverflowWidth && !text.didOverflowHeight)
+                    for (line in 0 until text.lineCount) assertTrue(detail, !text.isLineEllipsized(line))
+                    if (language == "zh-CN") for (line in 0 until text.lineCount)
+                        assertTrue(detail, text.layoutInput.text.substring(text.getLineStart(line), text.getLineEnd(line)).trim() != "理")
+                    if (language in listOf("ru", "en", "es", "fr")) for (line in 0 until text.lineCount - 1) {
+                        val end = text.getLineEnd(line, visibleEnd = true)
+                        val input = text.layoutInput.text.text
+                        assertTrue(detail, end >= input.length || input[end].isWhitespace() || input[end - 1].isWhitespace())
+                    }
                 }
-                assertTrue("pill widths=$pills", pills.maxOf { it.width } - pills.minOf { it.width } <= 1f)
-                assertTrue("pill heights=$pills", pills.maxOf { it.height } - pills.minOf { it.height } <= 1f)
-                compose.onNodeWithTag("dashboard-mode-Global").performClick()
-                assertEquals(ProxyMode.Global, state.value.settings.mode)
             }
     }
 
@@ -568,13 +502,11 @@ class DashboardLayoutUiTest {
 
     private fun screenReaderStops(rootTag: String) = readScreen(rootTag) { reader -> reader.stops.map { reader.tags[it] to reader.speech.getValue(it) } }
 
-    /** Standard reads each direction as its label and figure merged by a line break, then the total once. */
+    /** Standard reads each direction as its label and figure merged by a line break, with direction, value and complete unit, without a total. */
     private fun trafficSpeech(language: String): List<String> {
         val strings = localized(language)
         // Standard's dashboardTraffic writes the fixture's 1024, 2048, 4096 and 8192 bytes as these.
-        return listOf(R.string.lite_upload to ("1 KB" to "4 KB"), R.string.lite_download to ("2 KB" to "8 KB")).flatMap { (label, values) ->
-            listOf("${strings.getString(label)}\n${values.first}/s", strings.getString(R.string.lite_traffic_total, values.second))
-        }
+        return listOf(R.string.lite_upload to "1 KB/s", R.string.lite_download to "2 KB/s").map { (label, value) -> "${strings.getString(label)}\n$value" }
     }
 
     private fun button(label: String, enabled: Boolean = true) =
@@ -583,7 +515,7 @@ class DashboardLayoutUiTest {
     /** Lite's status-card order: title, state, overlaid traffic, summary, controls, then appended traffic. */
     private fun assertStatusReadingOrder(overlay: Boolean, traffic: Boolean) {
         val heading = listOf("dashboard-status-title", "dashboard-status-chip")
-        val figures = listOf("dashboard-upload-speed", "dashboard-upload-total", "dashboard-download-speed", "dashboard-download-total")
+        val figures = listOf("dashboard-upload-speed", "dashboard-download-speed")
         val summary = listOf("ip-quality-summary", "dashboard-status-retry-hint", "dashboard-status-uptime", "dashboard-status-organization",
             "dashboard-status-listener-error", "dashboard-status-outbound-error")
         val controls = listOf("dashboard-status-flag", "dashboard-status-ip", "dashboard-status-button")
@@ -610,7 +542,7 @@ class DashboardLayoutUiTest {
     }
 
     private fun trafficTextLayouts(): Map<String, TextLayoutResult> = buildMap {
-        for (direction in listOf("upload", "download")) for (line in listOf("label", "value", "unit", "total")) {
+        for (direction in listOf("upload", "download")) for (line in listOf("value")) {
             val tag = "dashboard-$direction-$line"
             val results = mutableListOf<TextLayoutResult>()
             compose.onNodeWithTag("$tag-raw", useUnmergedTree = true)
@@ -621,7 +553,7 @@ class DashboardLayoutUiTest {
 
     private fun metricElementRects(): Map<String, Rect> = buildMap {
         val layouts = trafficTextLayouts()
-        for (direction in listOf("upload", "download")) for (part in listOf("arrow", "label", "value", "unit", "total")) {
+        for (direction in listOf("upload", "download")) for (part in listOf("arrow", "value")) {
             val tag = "dashboard-$direction-$part"
             val line = statusRect(tag)
             if (part == "arrow") put(tag, line) else {
@@ -649,7 +581,7 @@ class DashboardLayoutUiTest {
         val heading = statusRect("dashboard-status-heading")
         val body = statusRect("dashboard-status-body")
         val traffic = statusRect("dashboard-status-traffic")
-        val lines = listOf(12f, 14f, 10f).map { it * density * effectiveFontScale }
+        val lines = listOf(12f, 12f).map { it * density * effectiveFontScale }
         val ceiling = lines.sumOf { ceil(it.toDouble()).toInt() }
         val rounded = lines.sum().roundToInt()
         val candidate = Rect(traffic.left, heading.top, traffic.right, heading.top + traffic.height)
@@ -668,63 +600,38 @@ class DashboardLayoutUiTest {
     private fun addTrafficAndAssertOriginalForeground(expectedOverlay: Boolean) {
         val card = statusRect("dashboard-status")
         val before = statusForegroundRects()
-        assertStatusReadingOrder(overlay = true, traffic = false)
-        compose.runOnUiThread {
-            state.value = state.value.copy(settings = state.value.settings.copy(
-                dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)))
-        }
+        compose.runOnUiThread { state.value = state.value.copy(settings = state.value.settings.copy(
+            dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed))) }
         compose.waitForIdle()
-        val measurements = trafficMeasurements()
         val after = statusForegroundRects()
+        assertEquals(card, statusRect("dashboard-status"))
+        before.forEach { (key, rect) -> assertEquals(key, rect, after.getValue(key)) }
         val traffic = statusRect("dashboard-status-traffic")
-        val content = statusRect("dashboard-status-content")
-        val heading = before.getValue("dashboard-status-heading")
-        val candidate = Rect(content.right - traffic.width, heading.top, content.right, heading.top + traffic.height)
-        val elements = metricElementRects()
-        val candidateElements = elements.mapValues { (_, rect) -> rect.translate(Offset(0f, heading.top - traffic.top)) }
-        val collision = before.filterKeys { it != "dashboard-status-body" && it != "dashboard-status-heading" }
-            .values.any { occupied -> candidateElements.values.any(occupied::overlaps) }
-        val measuredFit = heading.width + (8 * density).roundToInt() + traffic.width <= content.width && !collision
-        val overlay = expectedOverlay
-        println("STATUS_OVERLAY expectedOverlay=$expectedOverlay measuredFit=$measuredFit $measurements")
-        trafficTextLayouts().forEach { (tag, text) ->
-            val glyph = metricGlyphBounds(text)
-            assertTrue("$tag must retain its measured glyphs: $measurements", !text.didOverflowHeight &&
-                text.firstBaseline + glyph.top >= 0 && text.firstBaseline + glyph.bottom <= text.size.height)
-            val line = elements.getValue(tag)
-            val original = statusRect("$tag-raw")
-            val inkTop = original.top + text.firstBaseline + glyph.top
-            val inkBottom = original.top + text.firstBaseline + glyph.bottom
-            assertTrue("$tag actual drawn ink must fit its compact line: inkTop=$inkTop inkBottom=$inkBottom line=$line $measurements",
-                inkTop >= line.top && inkBottom <= line.bottom)
-        }
-        if (overlay) assertEquals(measurements, card, statusRect("dashboard-status"))
-        else assertTrue(measurements, statusRect("dashboard-status").height > card.height)
-        before.forEach { (key, rect) -> assertEquals("$key $measurements", rect, after.getValue(key)) }
-        val upload = statusRect("dashboard-upload")
-        val download = statusRect("dashboard-download")
-        assertEquals(measurements, content.right, traffic.right)
-        if (overlay) {
-            assertEquals(measurements, before.getValue("dashboard-status-heading").top, traffic.top)
-            assertEquals(measurements, traffic.top, upload.top)
-            assertEquals(measurements, traffic.top, download.top)
-        } else {
-            assertTrue(measurements, traffic.top >= before.getValue("dashboard-status-body").bottom + (12 * density).roundToInt())
-            assertTrue("Fallback requires measured overflow: $measurements", !measuredFit)
-        }
-        // The body's transparent full-width box can contain unused space; its
-        // actual foreground elements, including the independent controls, cannot.
-        before.filterKeys { it != "dashboard-status-body" }.forEach { (key, rect) ->
-            elements.forEach { (metric, bounds) -> assertTrue("$key/$metric $measurements", !rect.overlaps(bounds)) }
-        }
-        elements.entries.forEachIndexed { index, first ->
-            elements.entries.drop(index + 1).forEach { second ->
-                assertTrue("${first.key}/${second.key} $measurements", !first.value.overlaps(second.value))
+        val upload = statusRect("dashboard-upload-speed")
+        val download = statusRect("dashboard-download-speed")
+        assertTrue("two vertically ordered readings: $upload $download", upload.bottom <= download.top)
+        assertEquals(traffic.right, upload.right, 0.5f)
+        assertEquals(traffic.right, download.right, 0.5f)
+        if (expectedOverlay) {
+            assertEquals(card.right - 34f * density, traffic.right, 1f)
+            fun inkCenter(tag: String): Float {
+                val node = compose.onNodeWithTag("$tag-raw", useUnmergedTree = true)
+                val results = mutableListOf<TextLayoutResult>()
+                node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+                val text = results.single()
+                val glyph = metricGlyphBounds(text)
+                return node.fetchSemanticsNode().boundsInRoot.top + text.firstBaseline + (glyph.top + glyph.bottom) / 2f
             }
+            assertEquals(inkCenter("dashboard-status-uptime-label"), inkCenter("dashboard-upload-value"), 1f)
+            assertEquals(inkCenter("dashboard-status-uptime-value"), inkCenter("dashboard-download-value"), 1f)
+        } else assertTrue("$traffic ${before.getValue("dashboard-status-body")}",
+            traffic.top >= before.getValue("dashboard-status-body").bottom)
+        trafficTextLayouts().forEach { (tag, text) ->
+            assertTrue("$tag retains full rate/unit", !text.didOverflowWidth && !text.didOverflowHeight)
+            assertTrue(!text.isLineEllipsized(0))
+            assertEquals(10f, text.layoutInput.style.fontSize.value, 0f)
         }
-        assertTrue(measurements, !upload.overlaps(download))
         assertStatusReadingOrder(expectedOverlay, traffic = true)
-        assertTrue(actions.events.isEmpty())
     }
 
     private fun assertNoValueReadTwice(stops: List<Pair<String?, String>>) = stops.forEach { (tag, said) ->
@@ -920,7 +827,7 @@ class DashboardLayoutUiTest {
     fun startingRunReadsTheRunTimeOfTheLatestIntent() {
         launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Starting, uptimeMillis = 3_000), maxWidth = 412.dp, deviceDensity = 2.625f, language = "zh-CN")
         val label = localized("zh-CN").getString(R.string.lite_uptime)
-        compose.onNodeWithTag("dashboard-status-uptime").assertTextEquals("$label 00:00:03")
+        compose.onNodeWithTag("dashboard-status-uptime-value-raw", useUnmergedTree = true).assertTextEquals("00:00:03")
         assertTrue(screenReaderStops("dashboard-status").contains("dashboard-status-uptime" to "$label\n00:00:03"))
     }
 
@@ -948,7 +855,7 @@ class DashboardLayoutUiTest {
             maxWidth = 412.dp, deviceDensity = 2.625f, language = "zh-CN")
         val strings = localized("zh-CN")
         val label = strings.getString(R.string.lite_uptime)
-        compose.onNodeWithTag("dashboard-status-uptime").assertTextEquals("$label —")
+        compose.onNodeWithTag("dashboard-status-uptime-value-raw", useUnmergedTree = true).assertTextEquals("—")
         val stops = screenReaderStops("dashboard-status")
         assertTrue("$stops", stops.contains("dashboard-status-uptime" to "$label\n—"))
         assertTrue("$stops", stops.contains("dashboard-status-button" to button(strings.getString(R.string.integration_suspended))))
@@ -986,13 +893,17 @@ class DashboardLayoutUiTest {
     }
 
     @Test
-    fun separateSpeedCardReadsTitleOnceThenTwoStopsPerDirection() {
+    fun legacyIndependentSpeedCardIsRemovedAndStatusAlwaysHasExactlyTwoReadings() {
         launch(fixture(listOf(DashboardWidget.NetworkSpeed)), language = "zh-CN")
-        val stops = screenReaderStops("dashboard-speed")
-        assertEquals("$stops", listOf(null, "dashboard-speed-upload-speed", "dashboard-speed-upload-total",
-            "dashboard-speed-download-speed", "dashboard-speed-download-total"), stops.map { it.first })
-        assertEquals("$stops", listOf(localized("zh-CN").getString(R.string.lite_network_speed)) + trafficSpeech("zh-CN"),
-            stops.map { it.second })
+        compose.onNodeWithTag("dashboard-speed").assertDoesNotExist()
+        compose.onNodeWithTag("dashboard-card-networkSpeed").assertDoesNotExist()
+        compose.runOnUiThread { state.value = fixture(listOf(DashboardWidget.CurrentOutbound)) }
+        compose.onNodeWithTag("dashboard-upload-speed", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-download-speed", useUnmergedTree = true).assertIsDisplayed()
+        for (direction in listOf("upload", "download")) {
+            compose.onNodeWithTag("dashboard-$direction-total", useUnmergedTree = true).assertDoesNotExist()
+            compose.onNodeWithTag("dashboard-$direction-label", useUnmergedTree = true).assertDoesNotExist()
+        }
     }
 
     @Test
@@ -1069,8 +980,8 @@ class DashboardLayoutUiTest {
         addTrafficAndAssertOriginalForeground(expectedOverlay = false)
         compose.onNodeWithText(context.getString(R.string.lite_status)).assertIsDisplayed()
         // The figures speak through one cleared description, so their visible labels live in the unmerged tree.
-        compose.onNodeWithText(context.getString(R.string.lite_upload), useUnmergedTree = true).assertIsDisplayed()
-        compose.onNodeWithText(context.getString(R.string.lite_download), useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-upload-value", useUnmergedTree = true).assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-download-value", useUnmergedTree = true).assertIsDisplayed()
     }
 
 }

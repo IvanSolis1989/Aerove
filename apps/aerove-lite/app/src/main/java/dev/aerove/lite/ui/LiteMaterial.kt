@@ -3,6 +3,7 @@ package dev.aerove.lite.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -128,7 +129,8 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
     val colors = remember(seed, dark, aurora, settings.colorStyle, settings.pureBlack) {
         fullColorScheme(seed.toInt(), dark, aurora, settings.colorStyle, settings.pureBlack)
     }
-    val fontConfiguration = LocalConfiguration.current.toString()
+    val configuration = LocalConfiguration.current
+    val fontConfiguration = remember(configuration) { configuration.toString() }
     val fontLifecycle = LocalLifecycleOwner.current
     val eligibleFonts by produceState<List<String>>(emptyList(), fontConfiguration, fontLifecycle, settings.fontFamily) {
         if (settings.fontFamily == null) value = emptyList()
@@ -148,7 +150,7 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
     val visuals = LiteVisuals(if (opaque) MaterialTier.Solid else settings.material, aurora, dark, colors.primary, colors.fullPage(dark), colors.fullCard(dark), colors.onSurface, colors.onSurfaceVariant)
     val view = LocalView.current
     val activity = remember(view) { view.context.activityOrNull() }
-    SideEffect {
+    DisposableEffect(activity, view, visuals.dark) {
         activity?.window?.let { window ->
             @Suppress("DEPRECATION")
             window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -161,6 +163,7 @@ internal fun LiteTheme(settings: LiteSettings, content: @Composable () -> Unit) 
                 isAppearanceLightNavigationBars = !visuals.dark
             }
         }
+        onDispose {}
     }
     DisposableEffect(resolver) {
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
@@ -234,18 +237,12 @@ internal fun LitePane(
     Box(modifier.trackLiteGlow(glow, interactionSource != null).liteOutsideShadows(shape, shadows)
         .then(if (resolvedRim != null && shape is AeroveSuperellipseShape) Modifier.liteRimLine(shape, resolvedRim) else Modifier), propagateMinConstraints = true) {
         val background = when (visuals.material) {
-            MaterialTier.Solid -> Modifier.drawPlainBackdrop(
-                backdrop = source,
-                shape = { bufferShape },
-                effects = {},
-                onDrawBackdrop = {},
-                onDrawSurface = { drawRect(solidColor ?: tint) },
-            )
+            MaterialTier.Solid -> Modifier.drawBehind { drawRect(solidColor ?: tint) }
             MaterialTier.Frosted -> Modifier.liteFrostBackdrop(source, style)
             MaterialTier.Clear -> Modifier.liteGlassBackdrop(source, shape, style, glow, resolvedRim, explicitGlow)
         }
         // A sibling plane exports before foreground children draw, so nested sampling is acyclic on the first frame.
-        Box(Modifier.matchParentSize().layerBackdrop(exported).clip(shape).then(background))
+        Box(Modifier.matchParentSize().then(if (visuals.material == MaterialTier.Solid) Modifier else Modifier.layerBackdrop(exported)).clip(shape).then(background))
         Box(if (clipContent) Modifier.clip(shape) else Modifier, propagateMinConstraints = true) {
             CompositionLocalProvider(LocalLiteBackdrop provides nestedSource) { content() }
         }

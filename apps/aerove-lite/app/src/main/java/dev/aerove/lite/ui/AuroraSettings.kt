@@ -108,8 +108,8 @@ internal fun AuroraSettings(state: LiteState, actions: LiteActions) {
 @Composable
 private fun AuroraPreview(colors: List<Long>, seed: Long) {
     val label = stringResource(R.string.lite_preview)
-    AuroraWallpaper(LocalAuroraPhase.current, colors, seed, LocalLiteVisuals.current.dark,
-        Modifier.fillMaxWidth().aspectRatio(2.6f).clip(rememberLiteShape(LiteCorner.Block)).semantics { contentDescription = label })
+    Box(Modifier.fillMaxWidth().aspectRatio(2.6f).clip(rememberLiteShape(LiteCorner.Block)).semantics { contentDescription = label }
+        .staticAuroraWallpaper(colors, seed, LocalLiteVisuals.current.dark))
 }
 
 @Composable

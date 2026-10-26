@@ -3,6 +3,7 @@ package dev.aerove.lite.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
@@ -58,7 +59,7 @@ class DashboardEditorTest {
                     LiteTheme(settings.value) {
                         val source = rememberLayerBackdrop()
                         Box(Modifier.fillMaxSize()) {
-                            Box(Modifier.fillMaxSize().layerBackdrop(source)) { LiteWallpaper(androidx.compose.runtime.remember { mutableStateOf(0f) }, Modifier.fillMaxSize()) }
+                            Box(Modifier.fillMaxSize().layerBackdrop(source)) { LiteWallpaper(androidx.compose.runtime.remember { mutableLongStateOf(0L) }, Modifier.fillMaxSize()) }
                             CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source) {
                                 if (open.value) DashboardEditor(settings.value, { value ->
                                     writes++
@@ -93,17 +94,16 @@ class DashboardEditorTest {
             CompositionLocalProvider(LocalLiteMotionOverride provides true) { LiteApp(root.value, actions) }
         }
         compose.onNodeWithTag("dashboard-card-currentOutbound").assertIsDisplayed()
-        compose.onNodeWithTag("dashboard-upload").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-upload-speed").assertIsDisplayed()
         compose.onNodeWithTag("dashboard-card-networkSpeed").assertDoesNotExist()
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).performClick()
         compose.onNodeWithTag("dashboard-row-currentOutbound").assertIsDisplayed()
-        compose.onNodeWithTag("dashboard-row-networkSpeed").assertIsDisplayed()
-        compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_remove,
-            context.getString(R.string.lite_network_speed))).performClick()
+        compose.onNodeWithTag("dashboard-row-networkSpeed").assertDoesNotExist()
+        compose.onNodeWithTag("dashboard-add-networkSpeed").assertDoesNotExist()
         confirm()
         compose.onNodeWithTag("dashboard-layout").assertIsDisplayed()
         compose.onNodeWithTag("dashboard-card-networkSpeed").assertDoesNotExist()
-        compose.onNodeWithTag("dashboard-upload").assertDoesNotExist()
+        compose.onNodeWithTag("dashboard-upload-speed").assertIsDisplayed()
         assertEquals(listOf(DashboardWidget.CurrentOutbound), root.value.settings.dashboardWidgets)
         assertEquals(1, actions.settings.size)
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).performClick()
@@ -115,17 +115,15 @@ class DashboardEditorTest {
     }
 
     @Test
-    fun tenTypesKeepNineDefaultsAndOnlyConfirmedChangesSurviveRecreation() {
+    fun legacySpeedTypeIsExcludedAndOnlyConfirmedLayoutChangesSurviveRecreation() {
         val original = LiteSettings(aurora = false)
         runBlocking(Dispatchers.IO) { store.save(original) }
         assertEquals(10, DashboardWidget.entries.size)
-        assertEquals(9, read().dashboardWidgets.size)
+        assertTrue(DashboardWidget.NetworkSpeed !in dashboardPresentationWidgets(read().dashboardWidgets))
         launch(read(), "first")
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_remove, context.getString(R.string.lite_status))).assertDoesNotExist()
         scroll("dashboard-add-memoryInfo")
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_add, context.getString(R.string.lite_dashboard_memory))).performClick()
-        scroll("dashboard-row-networkSpeed")
-        compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_remove, context.getString(R.string.lite_network_speed))).performClick()
         scroll("dashboard-row-memoryInfo")
         moveUp("dashboard-row-memoryInfo")
         assertEquals(0, writes)
@@ -142,8 +140,7 @@ class DashboardEditorTest {
         launch(read(), "recreated")
         scroll("dashboard-row-memoryInfo")
         compose.onNodeWithTag("dashboard-row-memoryInfo").assertIsDisplayed()
-        scroll("dashboard-add-networkSpeed")
-        compose.onNodeWithTag("dashboard-add-networkSpeed").assertIsDisplayed()
+        compose.onNodeWithTag("dashboard-add-networkSpeed").assertDoesNotExist()
         assertEquals(expected, read().dashboardWidgets)
         assertEquals(1, writes)
     }
@@ -190,7 +187,7 @@ class DashboardEditorTest {
         assertEquals(original, read())
         assertEquals(0, writes)
         confirm()
-        assertEquals(listOf(DashboardWidget.OutboundMode, DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed), read().dashboardWidgets)
+        assertEquals(listOf(DashboardWidget.OutboundMode, DashboardWidget.CurrentOutbound), read().dashboardWidgets)
         assertEquals(1, writes)
     }
 }

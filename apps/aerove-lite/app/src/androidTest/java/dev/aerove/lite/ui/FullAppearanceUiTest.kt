@@ -1,17 +1,22 @@
 package dev.aerove.lite.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalDensity
@@ -21,6 +26,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -34,6 +40,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.aerove.lite.ColorMode
@@ -120,6 +127,22 @@ class FullAppearanceUiTest {
     }
 
     @Test
+    fun themePreviewStaysStillWhileTheWallpaperMoves() {
+        val state = mutableStateOf(LiteState(settings = LiteSettings(auroraRotationDay = 99991231)))
+        compose.replaceAppContent { CompositionLocalProvider(LocalLiteMotionOverride provides false) { LiteApp(state.value, UiTestActions {}) } }
+        openTheme()
+        val preview = hasContentDescription(text(R.string.lite_preview))
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(preview)
+        fun centre(): List<Int> {
+            val map = compose.onNode(preview).captureToImage().toPixelMap()
+            return (map.height / 5 until map.height * 4 / 5).flatMap { y -> (map.width / 5 until map.width * 4 / 5).map { x -> map[x, y].toArgb() } }
+        }
+        val before = centre()
+        compose.mainClock.advanceTimeBy(5_000)
+        assertTrue("The preview must stay as still as Standard's SeededAuroraWallpaper(motion: false)", before == centre())
+    }
+
+    @Test
     fun wallpaperShuffleUsesTheAtomicActionWithoutRewritingSettings() {
         val initial = LiteSettings(auroraRotationDay = 99991231)
         val state = mutableStateOf(LiteState(settings = initial))
@@ -193,16 +216,16 @@ class FullAppearanceUiTest {
 
     @Test
     fun interactionCapsFramesAndReturnsToIdleAfterTheFullGracePeriod() {
-        val samples = CopyOnWriteArrayList<Float>()
+        val samples = CopyOnWriteArrayList<Long>()
         var activity: AuroraMotionActivity? = null
         compose.mainClock.autoAdvance = false
         compose.replaceAppContent {
             CompositionLocalProvider(LocalLiteMotionOverride provides false) {
                 LiteTheme(LiteSettings()) {
                     val motion = rememberAuroraMotionActivity("motion-fixture")
-                    val phase = rememberAuroraPhase(true, activity = motion)
+                    val time = rememberAuroraTime(true, activity = motion)
                     SideEffect { activity = motion }
-                    LaunchedEffect(phase) { snapshotFlow { phase.value }.collect { samples += it } }
+                    LaunchedEffect(time) { snapshotFlow { time.longValue }.collect { samples += it } }
                     Box(Modifier.fillMaxSize().auroraMotionActivity(motion).testTag("motion-fixture"))
                 }
             }
@@ -226,33 +249,64 @@ class FullAppearanceUiTest {
     }
 
     @Test
-    fun motionStopsForReducedMotionAndAnInactiveActivity() {
+    fun reducedMotionRestartsTheClockAndAnInactiveActivityHoldsIt() {
         val reduced = mutableStateOf(false)
-        var phase: androidx.compose.runtime.State<Float>? = null
+        var time: androidx.compose.runtime.LongState? = null
         compose.mainClock.autoAdvance = false
         compose.replaceAppContent {
             CompositionLocalProvider(LocalLiteMotionOverride provides reduced.value) {
                 LiteTheme(LiteSettings()) {
-                    val clock = rememberAuroraPhase(true)
-                    SideEffect { phase = clock }
+                    val clock = rememberAuroraTime(true)
+                    SideEffect { time = clock }
                     Box(Modifier.fillMaxSize())
                 }
             }
         }
         compose.mainClock.advanceTimeBy(500)
-        var moving = 0f
-        compose.runOnUiThread { moving = requireNotNull(phase).value; assertTrue(moving > 0f); reduced.value = true }
+        compose.runOnUiThread { assertTrue(requireNotNull(time).longValue > 0L); reduced.value = true }
         compose.mainClock.advanceTimeByFrame()
-        var frozen = 0f
-        compose.runOnUiThread { frozen = requireNotNull(phase).value }
+        compose.runOnUiThread { assertEquals(0L, requireNotNull(time).longValue) }
         compose.mainClock.advanceTimeBy(1000)
-        compose.runOnUiThread { assertEquals(frozen, requireNotNull(phase).value); reduced.value = false }
+        compose.runOnUiThread { assertEquals(0L, requireNotNull(time).longValue); reduced.value = false }
         compose.mainClock.advanceTimeBy(500)
-        compose.runOnUiThread { assertTrue(requireNotNull(phase).value > moving) }
+        var frozen = 0L
+        compose.runOnUiThread { frozen = requireNotNull(time).longValue; assertTrue("must restart from 0: $frozen", frozen in 1L..600_000L) }
         compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
         compose.mainClock.advanceTimeByFrame()
-        compose.runOnUiThread { frozen = requireNotNull(phase).value }
+        compose.runOnUiThread { frozen = requireNotNull(time).longValue; assertTrue(frozen > 0L) }
         compose.mainClock.advanceTimeBy(1000)
-        compose.runOnUiThread { assertEquals(frozen, requireNotNull(phase).value) }
+        compose.runOnUiThread { assertEquals(frozen, requireNotNull(time).longValue) }
+    }
+
+    @Test
+    fun wallpaperShowsTheRestPoseWheneverReducedMotionIsOn() {
+        for (reducedAtStart in listOf(true, false)) {
+            val reduced = mutableStateOf(reducedAtStart)
+            compose.mainClock.autoAdvance = false
+            compose.replaceAppContent {
+                CompositionLocalProvider(LocalLiteMotionOverride provides reduced.value) {
+                    LiteTheme(LiteSettings(colorMode = ColorMode.Dark)) {
+                        val clock = rememberAuroraTime(true)
+                        val rest = remember { mutableLongStateOf(0L) }
+                        Column {
+                            Box(Modifier.size(160.dp, 320.dp).testTag("running")) { AuroraWallpaper(clock, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
+                            Box(Modifier.size(160.dp, 320.dp).testTag("rest")) { AuroraWallpaper(rest, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
+                        }
+                    }
+                }
+            }
+            fun atRest() = compose.onNodeWithTag("running").captureToImage().toPixelMap().buffer
+                .contentEquals(compose.onNodeWithTag("rest").captureToImage().toPixelMap().buffer)
+            compose.mainClock.advanceTimeBy(5_000)
+            assertEquals("reduced from the start: $reducedAtStart", reducedAtStart, atRest())
+            compose.runOnUiThread { reduced.value = true }
+            compose.mainClock.advanceTimeByFrame()
+            assertTrue("switching reduced motion on mid-run must show the rest pose", atRest())
+            compose.mainClock.advanceTimeBy(1_000)
+            assertTrue(atRest())
+            compose.runOnUiThread { reduced.value = false }
+            compose.mainClock.advanceTimeBy(5_000)
+            assertTrue("motion resumes from the rest pose", !atRest())
+        }
     }
 }

@@ -9,10 +9,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.State
-import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.LongState
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,17 +27,20 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private data class AuroraWallpaperKey(val colors: List<Long>, val seed: Long, val dark: Boolean)
-private class AuroraWallpaperLayer(val key: AuroraWallpaperKey, val origin: Float, initialAlpha: Float) {
+private class AuroraWallpaperLayer(val key: AuroraWallpaperKey, origin: Long, initialAlpha: Float) {
+    val origin = mutableLongStateOf(origin)
     val alpha = Animatable(initialAlpha)
 }
 
 @Composable
 internal fun LiteWallpaper(
-    phase: State<Float>,
+    time: LongState,
     modifier: Modifier = Modifier,
     colors: List<Long> = FullAuroraColors,
     seed: Long = FullAuroraSeed,
@@ -46,17 +50,17 @@ internal fun LiteWallpaper(
         Box(modifier.background(visuals.page))
         return
     }
-    AuroraWallpaper(phase, colors, seed, visuals.dark, modifier)
+    AuroraWallpaper(time, colors, seed, visuals.dark, modifier)
 }
 
 @Composable
 internal fun AuroraWallpaper(
-    phase: State<Float>, colors: List<Long>, seed: Long, dark: Boolean, modifier: Modifier = Modifier,
+    time: LongState, colors: List<Long>, seed: Long, dark: Boolean, modifier: Modifier = Modifier,
 ) {
     val requested = remember(colors, seed, dark) { AuroraWallpaperKey(colors.toList(), seed, dark) }
     val layers = remember {
         fullAuroraMesh(seed, colors, dark)
-        mutableStateListOf(AuroraWallpaperLayer(requested, phase.value, 1f))
+        mutableStateListOf(AuroraWallpaperLayer(requested, time.longValue, 1f))
     }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var foreground by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
@@ -67,11 +71,13 @@ internal fun AuroraWallpaper(
     }
     LaunchedEffect(requested, foreground) {
         if (foreground && layers.last().key != requested) {
-            withContext(Dispatchers.Default) { fullAuroraMesh(requested.seed, requested.colors, requested.dark) }
-            layers.add(AuroraWallpaperLayer(requested, phase.value, 0f))
+            withContext(Dispatchers.Default) { fullAuroraMesh(requested.seed, requested.colors, requested.dark) { coroutineContext.ensureActive() } }
+            layers.add(AuroraWallpaperLayer(requested, time.longValue, 0f))
         }
     }
     val reduced = LocalLiteReducedMotion.current
+    // The clock rests at 0 under reduced motion, so every layer restarts with it from the rest pose.
+    SideEffect { if (reduced) layers.forEach { it.origin.longValue = 0L } }
     val target = layers.last()
     Box(modifier.background(LocalLiteVisuals.current.page).testTag(if (target.key == requested) "aurora-wallpaper-ready" else "aurora-wallpaper-building")) {
         layers.forEach { layer -> key(layer) {
@@ -86,9 +92,8 @@ internal fun AuroraWallpaper(
                 if (reduced && destination == 0f) layers.remove(layer)
             }
             val frame = layer.key
-            val localPhase = remember(layer, phase) { derivedStateOf { (phase.value - layer.origin).coerceAtLeast(0f) } }
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = layer.alpha.value }
-                .fullAuroraWallpaper(localPhase, frame.dark, frame.colors, frame.seed))
+                .fullAuroraWallpaper(time, layer.origin, frame.dark, frame.colors, frame.seed))
         }
         }
     }

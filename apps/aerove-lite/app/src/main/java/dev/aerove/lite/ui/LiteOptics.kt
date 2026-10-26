@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -196,12 +197,18 @@ internal fun Modifier.liteGlassBackdrop(source: Backdrop, shape: Shape, style: A
     val geometry = remember(shape) { PaneGeometry(shape) }
     val view = LocalView.current
     val viewport = remember(view) { ViewportClamp(view) }
-    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null, neverEqualPolicy()) }
-    val tracked = onGloballyPositioned { coordinates = it }
-    if (style.haze == 0f) return tracked.drawPlainBackdrop(
-        backdrop = source, shape = { BackdropBufferShape },
-        effects = glassBackdropEffects(LocalDensity.current, style, geometry, sources.glass, glow, rim, explicitGlow, viewport.tracking { coordinates }),
-    )
+    val coordinates = remember { CoordinateRef() }
+    val composition = LocalDensity.current
+    val plainPad = composition.glassBackdropPadding(style)
+    if (style.haze == 0f) {
+        val cached = remember(source, shape, style, glow, rim, explicitGlow, sources, geometry, viewport, plainPad) {
+            Modifier.onGloballyPositioned { coordinates.value = it }.drawPlainBackdrop(
+                backdrop = source, shape = { BackdropBufferShape },
+                effects = glassBackdropEffects(composition, style, geometry, sources.glass, glow, rim, explicitGlow, viewport.tracking { coordinates.value }))
+        }
+        return this.then(cached)
+    }
+    val tracked = onGloballyPositioned { coordinates.value = it }
     val sharp = rememberGraphicsLayer()
     val hazy = rememberGraphicsLayer()
     val atlas = rememberGraphicsLayer()
@@ -219,7 +226,7 @@ internal fun Modifier.liteGlassBackdrop(source: Backdrop, shape: Shape, style: A
         hazy.renderEffect = BlurEffect(style.hazeBlur * density, style.hazeBlur * density, TileMode.Clamp)
         atlas.renderEffect = android.graphics.RenderEffect.createRuntimeShaderEffect(shader.asAndroidRuntimeShader(), "content").asComposeRenderEffect()
         onDrawBehind {
-            val position = coordinates?.takeIf { it.isAttached } ?: return@onDrawBehind
+            val position = coordinates.value?.takeIf { it.isAttached } ?: return@onDrawBehind
             sharp.renderEffect = viewport.effect(tile.width, tile.height, pad, position)
             recordTile(sharp, tile) {
                 withTransform({ translate(pad, pad) }) { with(source) { drawBackdrop(this@onDrawBehind, position) } }
@@ -245,8 +252,8 @@ internal fun Modifier.liteInkLayer(backdrop: Backdrop, style: AeroveInkStyle): M
     val shader = remember(sources) { RuntimeShader(sources.ink) }
     val view = LocalView.current
     val viewport = remember(view) { ViewportClamp(view) }
-    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null, neverEqualPolicy()) }
-    return onGloballyPositioned { coordinates = it }.drawWithCache {
+    val coordinates = remember { CoordinateRef() }
+    return onGloballyPositioned { coordinates.value = it }.drawWithCache {
         val pad = ceil(2.dp.toPx())
         val tile = IntSize(max(1, ceil(size.width).toInt() + 2 * pad.toInt()), max(1, ceil(size.height).toInt() + 2 * pad.toInt()))
         shader.apply {
@@ -269,7 +276,7 @@ internal fun Modifier.liteInkLayer(backdrop: Backdrop, style: AeroveInkStyle): M
         atlas.compositingStrategy = CompositingStrategy.Offscreen
         glyphs.blendMode = BlendMode.DstIn
         onDrawWithContent {
-            val position = coordinates?.takeIf { it.isAttached }
+            val position = coordinates.value?.takeIf { it.isAttached }
             if (position == null) { drawContent(); return@onDrawWithContent }
             val viewportEffect = viewport.effect(tile.width, tile.height, pad, position)
             if (previousViewport !== viewportEffect) {
@@ -297,12 +304,24 @@ internal fun Modifier.liteInkLayer(backdrop: Backdrop, style: AeroveInkStyle): M
 internal fun Modifier.liteFrostBackdrop(source: Backdrop, style: AeroveGlassStyle): Modifier {
     val view = LocalView.current
     val viewport = remember(view) { ViewportClamp(view) }
-    var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null, neverEqualPolicy()) }
-    return onGloballyPositioned { coordinates = it }.drawPlainBackdrop(
-        backdrop = source, shape = { BackdropBufferShape },
-        effects = frostBackdropEffects(LocalDensity.current, style, viewport.tracking { coordinates }),
-        onDrawSurface = { drawRect(style.tint.composeColor()) },
-    )
+    val coordinates = remember { CoordinateRef() }
+    val composition = LocalDensity.current
+    val plainPad = composition.frostBackdropPadding(style)
+    val cached = remember(source, style, viewport, plainPad) {
+        Modifier.onGloballyPositioned { coordinates.value = it }.drawPlainBackdrop(
+            backdrop = source, shape = { BackdropBufferShape },
+            effects = frostBackdropEffects(composition, style, viewport.tracking { coordinates.value }),
+            onDrawSurface = { drawRect(style.tint.composeColor()) })
+    }
+    return this.then(cached)
+}
+
+private class CoordinateRef {
+    private var current: LayoutCoordinates? = null
+    private var bounds by mutableStateOf<Rect?>(null)
+    var value: LayoutCoordinates?
+        get() { bounds; return current }
+        set(value) { current = value; bounds = value?.takeIf { it.isAttached }?.boundsInWindow() }
 }
 
 internal typealias BackdropViewport = (width: Int, height: Int, pad: Float) -> androidx.compose.ui.graphics.RenderEffect?

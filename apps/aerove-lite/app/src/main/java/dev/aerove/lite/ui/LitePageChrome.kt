@@ -8,6 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
@@ -37,7 +44,7 @@ internal object LiteMetrics {
 }
 
 internal val LocalLiteListState = staticCompositionLocalOf<LazyListState> { error("A production page must have a scroll owner") }
-internal val LocalLiteHeaderProgress = staticCompositionLocalOf<Float?> { null }
+internal val LocalLiteHeaderProgress = staticCompositionLocalOf<androidx.compose.runtime.State<Float>?> { null }
 
 @Composable
 internal fun LitePageHeader(
@@ -51,7 +58,7 @@ internal fun LitePageHeader(
     actions: @Composable () -> Unit = {},
 ) {
     val density = LocalDensity.current.density
-    val progress by remember(scroll, density) { derivedStateOf {
+    val progress = remember(scroll, density) { derivedStateOf {
         if (scroll.layoutInfo.totalItemsCount == 0) 0f
         else if (scroll.firstVisibleItemIndex > 0) 1f
         else (scroll.firstVisibleItemScrollOffset / (24 * density)).coerceIn(0f, 1f)
@@ -93,7 +100,12 @@ private fun LiteHeaderBackdrop(topInset: Dp, modifier: Modifier) {
         })
         return
     }
-    Box(modifier.drawWithCache {
+    val blurred = rememberGraphicsLayer()
+    val position = remember { arrayOfNulls<LayoutCoordinates>(1) }
+    val cached = remember(source, topInset, visuals, blurred) { Modifier.onGloballyPositioned { position[0] = it }.drawWithCache {
+        blurred.renderEffect = BlurEffect(12.dp.toPx(), 12.dp.toPx(), TileMode.Clamp)
+        val pad = 36.dp.toPx()
+        val tile = androidx.compose.ui.unit.IntSize(kotlin.math.ceil(size.width + 2 * pad).toInt(), kotlin.math.ceil(size.height + 2 * pad).toInt())
         val full = (topInset + LiteMetrics.PageToolbar).toPx() * 0.35f / size.height
         val stops = Array(17) { i ->
             val t = i / 16f
@@ -102,13 +114,17 @@ private fun LiteHeaderBackdrop(topInset: Dp, modifier: Modifier) {
         val mask = Brush.verticalGradient(*stops)
         onDrawWithContent {
         drawContext.canvas.saveLayer(Rect(0f, 0f, size.width, size.height), layer)
+        val coordinates = position[0]
+        if (coordinates != null && coordinates.isAttached) {
+            blurred.record(tile) {
+                withTransform({ translate(pad, pad) }) { with(source) { drawBackdrop(this@onDrawWithContent, coordinates) } }
+            }
+            withTransform({ translate(-pad, -pad) }) { drawLayer(blurred) }
+        }
         drawContent()
         drawRect(mask, blendMode = BlendMode.DstIn)
         drawContext.canvas.restore()
         }
-    }.drawPlainBackdrop(
-        backdrop = source,
-        shape = { shape },
-        effects = { blur(12.dp.toPx()) },
-    ))
+    } }
+    Box(modifier.then(cached))
 }

@@ -83,7 +83,8 @@ private fun Shape.path(size: Size, direction: LayoutDirection, density: Density)
     else -> error("Surface finish requires the actual superellipse outline")
 }
 
-internal fun Modifier.liteRimLine(shape: AeroveSuperellipseShape, rim: LiteGlassRim): Modifier = drawWithCache {
+@Composable
+internal fun Modifier.liteRimLine(shape: AeroveSuperellipseShape, rim: LiteGlassRim): Modifier = this.then(remember(shape, rim) { Modifier.drawWithCache {
     if (size.minDimension <= 0f) return@drawWithCache onDrawWithContent { drawContent() }
     val width = 0.67.dp.toPx()
     val half = width / 2
@@ -95,7 +96,7 @@ internal fun Modifier.liteRimLine(shape: AeroveSuperellipseShape, rim: LiteGlass
         drawContent()
         drawPath(outline, gradient, style = androidx.compose.ui.graphics.drawscope.Stroke(width))
     }
-}
+} })
 
 internal data class LiteShadow(val alpha: Float, val y: Float, val sigma: Float, val spread: Float = 0f)
 
@@ -107,11 +108,22 @@ internal fun fullMenuShadows(dark: Boolean): List<LiteShadow> {
 internal fun fullDashboardShadows(dark: Boolean): List<LiteShadow> = if (dark) listOf(LiteShadow(128 / 255f, 1f, 1f), LiteShadow(140 / 255f, 10f, 14f, -6f))
 else listOf(LiteShadow(13 / 255f, 0.5f, 0f), LiteShadow(10 / 255f, 2f, 3f), LiteShadow(23 / 255f, 12f, 16f, -6f))
 
-@Composable
-internal fun Modifier.liteOutsideShadows(shape: Shape, shadows: List<LiteShadow>): Modifier {
-    if (shadows.isEmpty()) return this
-    val layers = shadows.map { rememberGraphicsLayer() }
-    return drawWithCache {
+internal fun Modifier.liteOutsideShadows(shape: Shape, shadows: List<LiteShadow>): Modifier =
+    if (shadows.none { it.alpha > 0f }) this else this.then(OutsideShadowsElement(shape, shadows.filter { it.alpha > 0f }))
+
+private data class OutsideShadowsElement(val shape: Shape, val shadows: List<LiteShadow>) :
+    androidx.compose.ui.node.ModifierNodeElement<OutsideShadowsNode>() {
+    override fun create() = OutsideShadowsNode(shape, shadows)
+    override fun update(node: OutsideShadowsNode) { node.update(shape, shadows) }
+    override fun androidx.compose.ui.platform.InspectorInfo.inspectableProperties() { name = "liteOutsideShadows" }
+}
+
+private class OutsideShadowsNode(var shape: Shape, var shadows: List<LiteShadow>) : androidx.compose.ui.node.DelegatingNode() {
+    fun update(shape: Shape, shadows: List<LiteShadow>) {
+        this.shape = shape; this.shadows = shadows; cache.invalidateDrawCache()
+    }
+    private val cache = delegate(androidx.compose.ui.draw.CacheDrawModifierNode {
+        val layers = shadows.map { obtainGraphicsLayer() }
         val actual = shape.path(size, layoutDirection, this)
         val pad = ceil(shadows.maxOf { it.sigma * 3 + kotlin.math.abs(it.y) + kotlin.math.abs(it.spread) } * density)
         val buffer = androidx.compose.ui.unit.IntSize(ceil(size.width + 2 * pad).toInt().coerceAtLeast(1), ceil(size.height + 2 * pad).toInt().coerceAtLeast(1))
@@ -121,16 +133,15 @@ internal fun Modifier.liteOutsideShadows(shape: Shape, shadows: List<LiteShadow>
         }
         val offsets = shadows.map { Offset(pad - it.spread * density, pad + (it.y - it.spread) * density) }
         shadows.forEachIndexed { i, shadow -> layers[i].renderEffect = if (shadow.sigma == 0f) null else BlurEffect(shadow.sigma * density, shadow.sigma * density, TileMode.Decal) }
-        onDrawBehind {
-            clipPath(actual, ClipOp.Difference) {
-                shadows.forEachIndexed { index, shadow ->
-                    val layer = layers[index]
-                    layer.record(buffer) {
-                        withTransform({ translate(offsets[index].x, offsets[index].y) }) { drawPath(paths[index], Color.Black.copy(alpha = shadow.alpha)) }
-                    }
-                    withTransform({ translate(-pad, -pad) }) { drawLayer(layer) }
-                }
+        shadows.forEachIndexed { index, shadow ->
+            layers[index].record(this, layoutDirection, buffer) {
+                withTransform({ translate(offsets[index].x, offsets[index].y) }) { drawPath(paths[index], Color.Black.copy(alpha = shadow.alpha)) }
             }
         }
-    }
+        onDrawBehind {
+            clipPath(actual, ClipOp.Difference) {
+                layers.forEach { layer -> withTransform({ translate(-pad, -pad) }) { drawLayer(layer) } }
+            }
+        }
+    })
 }

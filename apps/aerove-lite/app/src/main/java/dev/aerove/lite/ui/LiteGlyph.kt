@@ -112,7 +112,7 @@ internal fun GlyphDrawing(glyph: LiteGlyph, modifier: Modifier, color: Color, fi
             canvas.save()
             canvas.scale(size.minDimension / 24f, size.minDimension / 24f)
             if (rtl) { canvas.translate(24f, 0f); canvas.scale(-1f, 1f) }
-            canvas.saveLayer(grid, layer)
+            if (color.alpha < 1f || cut) canvas.saveLayer(grid, layer) else canvas.save()
             for (part in glyph.shapes) if (part.role == LiteGlyphRole.Body && progress > 0f) {
                 if (progress >= 1f) canvas.drawPath(part.path, area)
                 else {
