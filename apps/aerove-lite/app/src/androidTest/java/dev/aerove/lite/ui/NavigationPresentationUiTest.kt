@@ -14,6 +14,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.LiteState
 import dev.aerove.lite.MainActivity
 import dev.aerove.lite.R
@@ -95,13 +96,15 @@ class NavigationPresentationUiTest {
         val pageActive = mutableMapOf<Int, Boolean>()
         compose.mainClock.autoAdvance = false
         compose.replaceAppContent {
-            CompositionLocalProvider(LocalLiteReducedMotion provides reduced.value) {
-                LiteTabTransitionHost(listOf(0, 1, 2, 3), selected.value, TabAnimation.Slide, active.value) { page, _ ->
-                    var count by remember { mutableIntStateOf(0) }
-                    val lifecycle = LocalLifecycleOwner.current.lifecycle
-                    val selectedPage = LocalLitePageActive.current
-                    SideEffect { composed.add(page); states[page] = lifecycle.currentState; pageActive[page] = selectedPage }
-                    Box(Modifier.fillMaxSize().testTag("page-$page").clickable { count++ }) { LiteText("$page:$count") }
+            LiteTheme(LiteSettings()) {
+                CompositionLocalProvider(LocalLiteReducedMotion provides reduced.value) {
+                    LiteTabTransitionHost(listOf(0, 1, 2, 3), selected.value, TabAnimation.Slide, active.value) { page, _ ->
+                        var count by remember { mutableIntStateOf(0) }
+                        val lifecycle = LocalLifecycleOwner.current.lifecycle
+                        val selectedPage = LocalLitePageActive.current
+                        SideEffect { composed.add(page); states[page] = lifecycle.currentState; pageActive[page] = selectedPage }
+                        Box(Modifier.fillMaxSize().testTag("page-$page").clickable { count++ }) { LiteText("$page:$count") }
+                    }
                 }
             }
         }

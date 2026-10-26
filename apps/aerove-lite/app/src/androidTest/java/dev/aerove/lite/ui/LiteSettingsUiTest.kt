@@ -1,6 +1,10 @@
 package dev.aerove.lite.ui
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -21,12 +25,20 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.lifecycle.Lifecycle
-import dev.aerove.lite.AppFilterMode
+import androidx.lifecycle.ViewModelProvider
+import dev.aerove.lite.LiteController
+import dev.aerove.lite.LiteFeatureHost
 import dev.aerove.lite.ColorMode
-import dev.aerove.lite.InstalledApp
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.LiteState
 import dev.aerove.lite.MainActivity
+import dev.aerove.lite.appaccess.AppAccessFeature
+import dev.aerove.lite.appaccess.AppAccessMode
+import dev.aerove.lite.appaccess.AppAccessPreferences
+import dev.aerove.lite.appaccess.ApplicationLoader
+import dev.aerove.lite.appaccess.InstalledApplication
+import dev.aerove.lite.appaccess.InstalledApplicationSnapshot
+import dev.aerove.lite.integration.withAppAccess
 import dev.aerove.lite.OutboundIdentity
 import dev.aerove.lite.VpnPhase
 import dev.aerove.lite.R
@@ -35,6 +47,11 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+
+private class FixtureApplicationLoader(private val app: InstalledApplication) : ApplicationLoader {
+    override suspend fun load() = InstalledApplicationSnapshot(listOf(app), permissionGranted = true)
+    override suspend fun chinaPackages(applications: List<InstalledApplication>) = emptySet<String>()
+}
 
 class LiteSettingsUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -165,24 +182,50 @@ class LiteSettingsUiTest {
 
     @Test
     fun firstIncludeSelectionIsLocalUntilOneAtomicApply() {
-        val initial = LiteSettings(colorMode = ColorMode.Light)
-        val app = InstalledApp("dev.aerove.fixture.mail", "Fixture Mail")
-        val state = mutableStateOf(LiteState(settings = initial, installedApps = listOf(app)))
-        val actions = UiTestActions { state.value = state.value.copy(settings = it) }
-        compose.replaceAppContent { LiteApp(state.value, actions) }
+        val packageName = "dev.aerove.fixture.mail"
+        val app = InstalledApplication(packageName, "Fixture Mail", system = false, internet = true, lastUpdateTime = 1L)
+        val initial = LiteSettings(colorMode = ColorMode.Light).withAppAccess(
+            AppAccessPreferences(enabled = true, mode = AppAccessMode.Include))
+        val state = mutableStateOf(LiteState(settings = initial))
+        val actions = UiTestActions({ state.value = state.value.copy(settings = it) }, initial)
+        lateinit var controller: LiteController
+        compose.activityRule.scenario.onActivity { controller = ViewModelProvider(it)[LiteController::class.java] }
+        compose.replaceAppContent {
+            val scope = rememberCoroutineScope()
+            val feature = remember {
+                AppAccessFeature(scope, initial.appAccess, FixtureApplicationLoader(app)) { preferences ->
+                    actions.changeSettings(state.value.settings.withAppAccess(preferences))
+                }
+            }
+            DisposableEffect(feature) { onDispose { feature.close() } }
+            val host = remember(feature) {
+                object : LiteFeatureHost by controller {
+                    override val appAccess get() = feature
+                    override fun closeAppAccess() = feature.close()
+                }
+            }
+            CompositionLocalProvider(LocalLiteFeatures provides { host }) { LiteApp(state.value, actions) }
+        }
         openSettingsDetail(R.string.lite_app_filter)
-        compose.onNodeWithText(app.label).assertDoesNotExist()
-        click(R.string.lite_apps_include)
-        compose.onNode(hasText(text(R.string.lite_apply)) and hasClickAction()).assertIsNotEnabled()
-        compose.runOnIdle { assertTrue(actions.settings.isEmpty()) }
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(app.label))
+        compose.onNodeWithText(app.label).assertExists()
+        compose.onNodeWithContentDescription(text(R.string.access_save)).assertDoesNotExist()
+        compose.runOnIdle {
+            assertTrue("Opening app access must not persist", actions.settings.isEmpty())
+            assertEquals(initial, state.value.settings)
+        }
         val checkbox = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox)
         compose.onNode(checkbox and hasText(app.label)).performClick()
-        compose.runOnIdle { assertTrue("Picking applications must remain a local draft", actions.settings.isEmpty()) }
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(R.string.lite_apply)) and hasClickAction())
-        click(R.string.lite_apply)
+        compose.onNodeWithContentDescription(text(R.string.access_save)).assertExists()
         compose.runOnIdle {
-            assertEquals(listOf(initial.copy(appFilterMode = AppFilterMode.Include, packages = setOf(app.packageName))), actions.settings)
+            assertTrue("Selecting an application must remain a local draft", actions.settings.isEmpty())
+            assertEquals(initial, state.value.settings)
+        }
+        compose.onNodeWithContentDescription(text(R.string.access_save)).performClick()
+        compose.waitForIdle()
+        compose.runOnIdle {
+            val expected = initial.withAppAccess(initial.appAccess.copy(includePackages = setOf(packageName)))
+            assertEquals(listOf(expected), actions.settings)
+            assertEquals(expected, state.value.settings)
             assertTrue(actions.events.none { it == "connect" || it == "disconnect" })
         }
     }
