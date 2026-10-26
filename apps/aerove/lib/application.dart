@@ -173,7 +173,7 @@ class ApplicationState extends ConsumerState<Application> {
       }
       if (!mounted) return;
       _autoUpdates = ForegroundAutoUpdateScheduler(run: _runAutoUpdates);
-      ref.listenManual(appVisibleProvider, (_, visible) {
+      ref.listenManual(maintenanceVisibleProvider, (_, visible) {
         _autoUpdates?.setVisible(visible);
       }, fireImmediately: true);
       _initLink();

@@ -46,7 +46,7 @@ class ProfilesAction extends _$ProfilesAction {
   Future<void> autoUpdateProfiles({bool Function()? isCurrent}) async {
     bool canUpdate() =>
         ref.mounted &&
-        ref.read(appVisibleProvider) &&
+        ref.read(maintenanceVisibleProvider) &&
         (isCurrent?.call() ?? true);
     if (_autoUpdating || !canUpdate()) return;
     _autoUpdating = true;

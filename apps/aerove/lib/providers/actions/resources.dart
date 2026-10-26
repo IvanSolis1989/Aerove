@@ -122,7 +122,7 @@ class ResourcesAction extends _$ResourcesAction {
   Future<void> autoUpdate({bool Function()? isCurrent}) async {
     bool canUpdate() =>
         ref.mounted &&
-        ref.read(appVisibleProvider) &&
+        ref.read(maintenanceVisibleProvider) &&
         (isCurrent?.call() ?? true);
     if (!canUpdate()) return;
     final setting = ref.read(patchClashConfigProvider);

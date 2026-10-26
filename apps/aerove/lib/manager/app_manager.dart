@@ -120,6 +120,7 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
       AppLifecycleState.paused ||
       AppLifecycleState.detached => false,
     };
+    ref.read(maintenanceVisibleProvider.notifier).setLifecycle(state);
     if (initialize) {
       _auroraRotation.initialize(state);
     } else {

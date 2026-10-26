@@ -116,11 +116,18 @@ void main() {
     final action =
         scoped.read(profilesActionProvider.notifier) as _AutoProfilesAction;
     scoped.read(appVisibleProvider.notifier).value = false;
+    scoped
+        .read(maintenanceVisibleProvider.notifier)
+        .setLifecycle(AppLifecycleState.hidden);
     await action.autoUpdateProfiles();
     expect(action.updated, isEmpty);
-    scoped.read(appVisibleProvider.notifier).value = true;
+    scoped
+        .read(maintenanceVisibleProvider.notifier)
+        .setLifecycle(AppLifecycleState.inactive);
     action.duringUpdate = () async {
-      scoped.read(appVisibleProvider.notifier).value = false;
+      scoped
+          .read(maintenanceVisibleProvider.notifier)
+          .setLifecycle(AppLifecycleState.hidden);
     };
     await action.autoUpdateProfiles();
     expect(action.updated, [profiles.first.id]);

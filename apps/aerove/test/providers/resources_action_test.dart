@@ -1,3 +1,4 @@
+import 'package:fl_clash/common/maintenance_visibility.dart';
 import 'package:drift/native.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
@@ -9,7 +10,7 @@ import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/models/models.dart';
-import 'package:flutter/widgets.dart' show Locale;
+import 'package:flutter/widgets.dart' show AppLifecycleState, Locale;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:riverpod/riverpod.dart';
@@ -25,7 +26,9 @@ class _AutoResourcesAction extends ResourcesAction {
     bool Function()? isCurrent,
   }) async {
     updated.add(iconSet.id);
-    ref.read(appVisibleProvider.notifier).value = false;
+    ref
+        .read(maintenanceVisibleProvider.notifier)
+        .setLifecycle(AppLifecycleState.hidden);
   }
 }
 
@@ -80,9 +83,14 @@ void main() {
     final action =
         scoped.read(resourcesActionProvider.notifier) as _AutoResourcesAction;
     scoped.read(appVisibleProvider.notifier).value = false;
+    scoped
+        .read(maintenanceVisibleProvider.notifier)
+        .setLifecycle(AppLifecycleState.hidden);
     await action.autoUpdate();
     expect(action.updated, isEmpty);
-    scoped.read(appVisibleProvider.notifier).value = true;
+    scoped
+        .read(maintenanceVisibleProvider.notifier)
+        .setLifecycle(AppLifecycleState.inactive);
     await action.autoUpdate();
     expect(action.updated, [sets.first.id]);
   });
