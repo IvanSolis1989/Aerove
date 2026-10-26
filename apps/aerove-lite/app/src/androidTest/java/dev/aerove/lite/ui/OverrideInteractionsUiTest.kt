@@ -186,9 +186,9 @@ class OverrideInteractionsUiTest {
         scripts.value = ScriptLibraryState(scripts = snapshot().scripts)
         launch(scriptLibrary = true)
         compose.onNodeWithTag("override-script-sort").performClick()
-        val first = compose.onNodeWithTag("override-script-handle-0").fetchSemanticsNode().boundsInRoot
-        val last = compose.onNodeWithTag("override-script-handle-2").fetchSemanticsNode().boundsInRoot
-        compose.onNodeWithTag("override-script-handle-2").performTouchInput {
+        val first = compose.onNodeWithTag("override-script-handle-0", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val last = compose.onNodeWithTag("override-script-handle-2", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("override-script-handle-2", useUnmergedTree = true).performTouchInput {
             down(center); moveBy(Offset(0f, first.center.y - last.center.y)); up()
         }
         assertEquals(listOf("c", "a", "b"), snapshot().scripts.map { it.id })

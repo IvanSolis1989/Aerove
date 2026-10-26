@@ -63,7 +63,7 @@ class PublicPreferenceIntegrationUiTest {
         val before = state.value.settings.requests.userAgents
         compose.onNodeWithText(text(R.string.profile_list_sort)).performClick()
         val distance = compose.onNodeWithTag("user-agent-${before.first()}").fetchSemanticsNode().boundsInRoot.height * 1.5f
-        compose.onNodeWithTag("user-agent-drag-${before.first()}").performTouchInput {
+        compose.onNodeWithTag("user-agent-drag-${before.first()}", useUnmergedTree = true).performTouchInput {
             down(center); moveBy(Offset(0f, distance)); up()
         }
         compose.waitForIdle()

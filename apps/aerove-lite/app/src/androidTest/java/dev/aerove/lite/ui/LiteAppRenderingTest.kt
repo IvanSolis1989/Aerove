@@ -13,8 +13,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -70,11 +72,15 @@ class LiteAppRenderingTest(private val case: RenderCase) {
             compose.onNode(hasText(text(id)) and hasClickAction()).performClick()
         }
         try {
-            compose.onNodeWithContentDescription(text(R.string.lite_start)).assertIsNotEnabled()
+            val disabledStart = hasContentDescription(text(R.string.lite_start)) and
+                SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button) and hasClickAction()
+            compose.onNode(disabledStart, useUnmergedTree = true).assertIsDisplayed().assertIsNotEnabled()
             compose.onAllNodes(tab).assertCountEquals(3)
             compose.onNode(tab and hasText(text(R.string.lite_tab_proxies))).assertDoesNotExist()
             save("home")
             compose.runOnUiThread { state.value = state.value.copy(groups = listOf(ProxyGroup("Fixture group", "Selector", "DIRECT", listOf(ProxyNode("DIRECT", "Direct"))))) }
+            // Auto-advance is disabled for deterministic optical captures; let this state change recompose before querying tabs.
+            compose.mainClock.advanceTimeByFrame()
             compose.onAllNodes(tab).assertCountEquals(4)
             navigate(R.string.lite_tab_proxies)
             compose.onNodeWithText("Fixture group").assertExists()

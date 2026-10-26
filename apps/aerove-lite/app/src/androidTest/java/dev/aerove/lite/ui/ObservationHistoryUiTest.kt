@@ -112,10 +112,15 @@ class ObservationHistoryUiTest {
         compose.runOnUiThread { feature.acceptWindow(1, decodeObservationWindow(wire)) }
         compose.waitUntil { compose.onAllNodesWithTag("history-request-$requestId").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("history-request-$requestId").assertExists()
-        compose.onNodeWithTag("history-search").performTextReplacement("browser missing")
+        val searchField = compose.onNode(
+            hasContentDescription(context.getString(R.string.lite_search)) and hasSetTextAction() and
+                hasAnyAncestor(hasTestTag("history-search")),
+            useUnmergedTree = true,
+        )
+        searchField.performTextReplacement("browser missing")
         compose.waitUntil { compose.onAllNodesWithText(context.getString(R.string.lite_no_matches)).fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithText(context.getString(R.string.lite_no_matches)).assertExists()
-        compose.onNodeWithTag("history-search").performTextReplacement("browser example")
+        searchField.performTextReplacement("browser example")
         compose.waitUntil { compose.onAllNodesWithTag("history-request-$requestId").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("history-request-$requestId").performClick()
         compose.onNodeWithText("/real/browser").assertExists()

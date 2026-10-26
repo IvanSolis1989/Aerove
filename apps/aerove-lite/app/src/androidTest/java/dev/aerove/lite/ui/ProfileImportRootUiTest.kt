@@ -1,6 +1,8 @@
 package dev.aerove.lite.ui
 
 import androidx.compose.runtime.*
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -47,7 +49,8 @@ class ProfileImportRootUiTest {
     }
 
     @Test fun actualProfilesAddEntryWaitsForRealRepositoryReceiptAndDisplaysSavedProfile() = fixture { repository, _, _ ->
-        compose.onNodeWithText(context.getString(R.string.lite_tab_profiles)).performClick()
+        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab) and
+            hasText(context.getString(R.string.lite_tab_profiles))).performClick()
         compose.onNodeWithText(context.getString(R.string.lite_add_subscription)).performClick()
         compose.onNodeWithContentDescription(context.getString(R.string.age_name)).performTextInput("Root import")
         compose.onNodeWithTag("profile-import-input").performTextInput("rules: [MATCH,DIRECT]")
