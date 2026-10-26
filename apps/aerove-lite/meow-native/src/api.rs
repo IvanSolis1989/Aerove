@@ -48,6 +48,7 @@ pub struct ApiError(pub &'static str);
 pub struct CoreApi {
     pub state: Arc<AppState>,
     pub control: Arc<crate::control::RouteControl>,
+    #[cfg(test)] pub(crate) probes: Arc<crate::routed_probe::Probe>,
     private_scope: ApiLifecycle,
     user_scope: ApiLifecycle,
     private_router: Router,
@@ -119,7 +120,8 @@ impl CoreApi {
         let control = crate::control::RouteControl::with_plane(state.clone(), plane.clone());
         let counts = Router::new().route("/aerove/connections/count", axum::routing::get(connection_count_route))
             .with_state((state.clone(), control.clone()));
-        let aerove_router = aerove_router.merge(counts).merge(crate::control::router(control.clone()));
+        let probes = crate::routed_probe::Probe::new(control.clone());
+        let aerove_router = aerove_router.merge(counts).merge(crate::control::router(control.clone())).merge(probes.router());
         let authorization = HeaderValue::from_str(&format!("Bearer {private_secret}"))
             .map_err(|_| ApiError("invalidPrivateSecret"))?;
         let pages = Router::new().route("/providers/rules/{name}/rules", axum::routing::get(rule_page_route))
@@ -149,7 +151,7 @@ impl CoreApi {
             minimum: meow_api::log_stream::parse_log_level(&config.general.log_level),
         });
         private_scope.spawn(async move { plane.run_events().await; });
-        Ok(Self { state, control, private_scope, user_scope, private_router, official_router: official, private_authorization: authorization, user_router, log_sink, provider_tasks_started: std::sync::atomic::AtomicBool::new(false) })
+        Ok(Self { state, control, #[cfg(test)] probes, private_scope, user_scope, private_router, official_router: official, private_authorization: authorization, user_router, log_sink, provider_tasks_started: std::sync::atomic::AtomicBool::new(false) })
     }
 
     pub fn activate_providers(&self) -> Result<(), ApiError> {

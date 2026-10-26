@@ -406,7 +406,8 @@ impl OfflineResourceOwner {
         let producer = self.tasks.spawn_join_with(async move {
             let result: Result<T, String> = if token.is_cancelled() { Err("resourceReadCancelled".to_owned()) } else {
                 let call = token.clone();
-                match std::panic::AssertUnwindSafe(async move { work(call).await }).catch_unwind().await {
+                let work: futures::future::BoxFuture<'static, Result<T, String>> = Box::pin(async move { work(call).await });
+                match std::panic::AssertUnwindSafe(work).catch_unwind().await {
                     Err(_) => Err("native_validation_panicked".to_owned()),
                     Ok(_) if token.is_cancelled() => Err("resourceReadCancelled".to_owned()),
                     Ok(output) => output,
@@ -435,7 +436,8 @@ impl OfflineResourceOwner {
         let child = self.child_scope(context)?;
         let scope = child.clone();
         let result = self.read_async(move |cancel| async move {
-            Ok(std::panic::AssertUnwindSafe(async move { work(scope, cancel).await }).catch_unwind().await
+            let work: futures::future::BoxFuture<'static, Result<(), String>> = Box::pin(async move { work(scope, cancel).await });
+            Ok(std::panic::AssertUnwindSafe(work).catch_unwind().await
                 .unwrap_or_else(|_| Err("native_validation_panicked".to_owned())))
         }).await;
         let joined = child.close().await;
@@ -449,7 +451,7 @@ impl OfflineResourceOwner {
     pub async fn validate_config(&self, source: String) -> io::Result<Result<(), String>> {
         self.validate_owned(Arc::new(OfflineConversion), move |scope, _| async move {
             let normalized = crate::config_validation::normalize_config_fields(&source)?;
-            meow_config::validate_offline_config_with_scope(&normalized, &scope).await
+            crate::config_validation::scoped_offline_validation(&normalized, &scope).await
         }).await
     }
     pub async fn validate_prepared(&self, source: String, read_root: String, cache: String) -> io::Result<Result<(), String>> {
@@ -470,7 +472,7 @@ impl OfflineResourceOwner {
                     }
                 }
             }
-            meow_config::validate_prepared_config_with_scope(&normalized, &scope).await
+            crate::config_validation::scoped_prepared_validation(&normalized, &scope).await
         }).await
     }
     pub fn cancel(&self) {
@@ -506,6 +508,19 @@ mod offline_read_owner_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+    #[test]
+    fn offline_validation_future_layout_diagnostic() {
+        let scope = OwnedLoadScope::with_context(Arc::new(OfflineConversion));
+        let core = meow_config::validate_offline_config_with_scope("rules: ['MATCH,DIRECT']\n", &scope);
+        let inline = std::mem::size_of_val(&core);
+        drop(core);
+        let boxed = crate::config_validation::scoped_offline_validation("rules: ['MATCH,DIRECT']\n", &scope);
+        let prepared = crate::config_validation::scoped_prepared_validation("rules: ['MATCH,DIRECT']\n", &scope);
+        let owner = OfflineResourceOwner::new();
+        let owned = owner.validate_prepared("rules: ['MATCH,DIRECT']\n".into(), "unused-read".into(), "unused-cache".into());
+        eprintln!("[offline-validation-layout] core-inline={inline} offline-boxed={} prepared-boxed={} owner-prepared={} before-first-poll",
+            std::mem::size_of_val(&boxed), std::mem::size_of_val(&prepared), std::mem::size_of_val(&owned));
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancel_and_close_wait_for_actual_blocking_worker_drop_without_a_download_graph() {
         let owner = OfflineResourceOwner::new();

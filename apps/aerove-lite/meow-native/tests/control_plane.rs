@@ -18,18 +18,18 @@ async fn committed_mode_and_selector_share_route_and_cancelled_generation_is_ter
     tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
     let initial = api.control.snapshot().await.unwrap();
     assert_eq!(initial.core_epoch, u64::MAX.to_string());
-    assert_eq!(initial.picks_version, "0");
+    assert_eq!(initial.route_version, "0");
     assert_eq!(initial.picks["PICK"], "DIRECT");
     forward(tunnel.clone(), true).await;
     let selected = api.control.select("PICK", "REJECT").await.unwrap();
     assert_eq!(selected.picks["PICK"], "REJECT");
-    assert_eq!(selected.picks_version, "1");
+    assert_eq!(selected.route_version, "1");
     forward(tunnel.clone(), false).await;
     assert_eq!(tunnel.route_snapshot().proxies.get("PICK").unwrap().current().unwrap(), "REJECT");
     assert_eq!(api.control.select("PICK", "missing").await, Err(ControlError::InvalidSelection));
     assert_eq!(api.control.snapshot().await.unwrap(), selected);
     let mode = api.control.set_mode(TunnelMode::Direct).await.unwrap();
-    assert_eq!(mode.picks_version, "2");
+    assert_eq!(mode.route_version, "2");
     assert_eq!(tunnel.mode(), TunnelMode::Direct);
     forward(tunnel.clone(), true).await;
     assert_eq!(api.state.raw_config.read().mode.as_deref(), Some("direct"));
@@ -157,7 +157,7 @@ async fn fallback_same_current_selection_still_commits_auto_to_fixed() {
     let initial = api.control.snapshot().await.unwrap();
     assert_eq!(initial.picks["FALLBACK"], "REJECT");
     let receipt = api.control.select("FALLBACK", "REJECT").await.unwrap();
-    assert_eq!(receipt.picks_version, "1");
+    assert_eq!(receipt.route_version, "1");
     assert_eq!(receipt.picks, initial.picks);
     assert_eq!(tunnel.route_snapshot().proxies.get("FALLBACK").unwrap()
         .selection().unwrap().fixed().as_deref(), Some("REJECT"));

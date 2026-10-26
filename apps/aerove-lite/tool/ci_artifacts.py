@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from lite_release import download_artifact, _gh_json, PromotionError
-from verify_apk import native_identity, validate_native_receipt, CORE_LIBRARY, MEOW_ROOT, CORE_JNI_SYMBOLS, exported_functions, valid_elf64_shared_object, MEOW_SOURCE
+from verify_apk import RESOURCE_HEALTH_CASES, validate_core_test_receipt, native_identity, validate_native_receipt, CORE_LIBRARY, MEOW_ROOT, CORE_JNI_SYMBOLS, exported_functions, valid_elf64_shared_object, MEOW_SOURCE
 
 
 HOST_ASSESSMENT_ROOT = Path(__file__).with_name('regexp2-assessment')
@@ -253,6 +253,15 @@ HOST_LOCK_RESOLUTION_INPUTS = {
 }
 
 
+HOST_LOCK_RESOLUTION_PROVIDER_INPUTS = {
+    'manifestSha256': '2092489392fd24e9770908344f171ddf65c97f7e273bfc814b743202746e8417',
+    'expectedLockBeforeSha256': '8760f0367ca6596d3ac9ecf6436326b32f9ae7226adc753c58fce26ee916b0bd',
+    'overlaySha256': 'ec903175c96374d1ed7ebc82e1476ccc787af6912ff892090635d731308c8e6d',
+    'coreTestLockSha256': '96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58',
+    'sourceSpecSha256': 'f8f76d22b27f779f5b5d06a07366cd2597404fc01aa302745230cf9ee8c1220c',
+}
+
+
 def _host_resolution_inputs(phase, root, environment, *, check_seed):
     environment = os.environ if environment is None else environment
     conflicts = ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT',
@@ -275,42 +284,51 @@ def _host_resolution_inputs(phase, root, environment, *, check_seed):
     policy = load_policy(root, check_resolution_seed=check_seed)
     if policy is None or policy['resolveLock'] is not True:
         raise PromotionError('Pending host admission requires explicit resolveLock=true policy')
-    for key, expected in HOST_LOCK_RESOLUTION_INPUTS.items():
+    if policy.get('coreTests') == 'policy-runtime-resource-health-v1':
+        contract = (HOST_LOCK_RESOLUTION_INPUTS, 26, 75)
+    elif policy.get('coreTests') == 'policy-runtime-provider-reader-v1':
+        contract = (HOST_LOCK_RESOLUTION_PROVIDER_INPUTS, 31, 177)
+    else:
+        raise PromotionError('Pending host resolution requires an approved complete Core suite')
+    inputs, core_count, core_hits = contract
+    for key, expected in inputs.items():
         if key != 'sourceSpecSha256' and policy.get(key) != expected:
             raise PromotionError('Unapproved host lock-resolution input: ' + key)
     spec_path = owned_file(root, 'source.json')
     spec = json.loads(spec_path.read_text())
-    if (digest(spec_path) != HOST_LOCK_RESOLUTION_INPUTS['sourceSpecSha256']
+    if (digest(spec_path) != inputs['sourceSpecSha256']
             or spec.get('commit') != MEOW_SOURCE or spec.get('tag') != 'v0.26.1'
             or spec.get('repository') != 'https://github.com/meow-rs/meow-rs'
             or spec.get('archiveSha256') != '4273e027c5db3f7c052b255730f29165908772bf417ec89d9ab54478f81dcd9a'):
         raise PromotionError('Pending host resolution requires the fixed Meow source')
     if digest(owned_file(root, 'core-tests.lock')) != policy['coreTestLockSha256']:
         raise PromotionError('Pending host resolution changed the accepted Core test lock')
-    if policy.get('coreTests') != 'policy-runtime-resource-health-v1' or len(policy['targets']) != 42 or feature_boundary_command(policy) is None:
+    if len(policy['targets']) != 42 or feature_boundary_command(policy) is None:
         raise PromotionError('Pending host resolution requires the complete approved Native/Core suite')
     core = entries(policy['coreTests'])
-    if len(core) != 26 or sum(entry['expectedPass'] for entry in core) != 75:
+    if len(core) != core_count or sum(entry['expectedPass'] for entry in core) != core_hits:
         raise PromotionError('Pending host resolution changed the authored Core command contract')
     plan = decide_plan(True, spec['archiveSha256'], 'workflow_dispatch', phase, False, resolve_requested=True)
-    return policy, spec, plan
+    return policy, spec, plan, contract
 
 
 def host_lock_resolution_plan(phase, root=MEOW_ROOT, environment=None):
     """Plan the approved pending host resolution; do not execute or accept a lock."""
-    policy, spec, plan = _host_resolution_inputs(phase, root, environment, check_seed=True)
+    policy, spec, plan, contract = _host_resolution_inputs(phase, root, environment, check_seed=True)
+    inputs, core_count, core_hits = contract
     return dict(schema=1, planOnly=True, phase=phase, lockAcceptance='pending', acceptedLock=False,
                 **plan, policySha256=policy['policySha256'], manifestSha256=policy['manifestSha256'],
                 seedLockSha256=policy['expectedLockBeforeSha256'], coreTestLockSha256=policy['coreTestLockSha256'],
                 sourceSpecSha256=digest(Path(root) / 'source.json'), meowSource=spec['commit'], nativeTargets=policy['targets'],
-                nativeTargetCount=42, coreCommandCount=26, expectedCoreHits=75,
+                nativeTargetCount=42, coreCommandCount=core_count, expectedCoreHits=core_hits,
                 command=['python3', 'apps/aerove-lite/meow-native/build.py', '--resolve-lock'])
 
 
 def host_lock_resolution_result(plan_path, phase, root=MEOW_ROOT, environment=None):
     """Read back pending producer evidence for archive only; never use the APK acceptance gate."""
     environment = os.environ if environment is None else environment
-    policy, spec, expected_plan = _host_resolution_inputs(phase, root, environment, check_seed=False)
+    policy, spec, expected_plan, contract = _host_resolution_inputs(phase, root, environment, check_seed=False)
+    inputs, core_count, core_hits = contract
     root = Path(root)
     plan_path = Path(plan_path)
     if plan_path.is_symlink() or not plan_path.is_file():
@@ -321,8 +339,8 @@ def host_lock_resolution_result(plan_path, phase, root=MEOW_ROOT, environment=No
                     policySha256=policy['policySha256'], manifestSha256=policy['manifestSha256'],
                     seedLockSha256=policy['expectedLockBeforeSha256'], workflowIdentity=current,
                     coreTestLockSha256=policy['coreTestLockSha256'], nativeTargets=policy['targets'],
-                    sourceSpecSha256=HOST_LOCK_RESOLUTION_INPUTS['sourceSpecSha256'], meowSource=MEOW_SOURCE,
-                    nativeTargetCount=42, coreCommandCount=26, expectedCoreHits=75,
+                    sourceSpecSha256=inputs['sourceSpecSha256'], meowSource=MEOW_SOURCE,
+                    nativeTargetCount=42, coreCommandCount=core_count, expectedCoreHits=core_hits,
                     command=['python3', 'apps/aerove-lite/meow-native/build.py', '--resolve-lock'])
     if (any(plan.get(key) != value for key, value in expected.items())
             or plan.get('acceptedLock') is not False or plan.get('planOnly') is not True
@@ -346,7 +364,7 @@ def host_lock_resolution_result(plan_path, phase, root=MEOW_ROOT, environment=No
             or receipt.get('command') != command or receipt.get('representativeTargets') != policy['targets']
             or receipt.get('buildPolicySha256') != policy['policySha256']
             or receipt.get('bridgeManifestSha256') != policy['manifestSha256']
-            or receipt.get('declaredSourceSpecSha256') != HOST_LOCK_RESOLUTION_INPUTS['sourceSpecSha256']
+            or receipt.get('declaredSourceSpecSha256') != inputs['sourceSpecSha256']
             or receipt.get('lockSha256Before') != policy['expectedLockBeforeSha256']
             or receipt.get('metadataInputLockSha256') != policy['expectedLockBeforeSha256']
             or receipt.get('metadataCommand') != ['cargo', 'metadata', '--format-version', '1']
@@ -365,15 +383,21 @@ def host_lock_resolution_result(plan_path, phase, root=MEOW_ROOT, environment=No
     commands = core.get('commands', [])
     if (core.get('mode') != policy['coreTests'] or core.get('accepted') is not True or core.get('upstreamLockRestored') is not True
             or core.get('seedSha256') != policy['coreTestLockSha256'] or core.get('resolvedLockSha256') != policy['coreTestLockSha256']
-            or not isinstance(commands, list) or len(commands) != 26
+            or not isinstance(commands, list) or len(commands) != core_count
             or any(type(entry.get('exit')) is not int or entry['exit'] != 0 or type(entry.get('passed')) is not int
                    or entry['passed'] != entry.get('expectedPass') for entry in commands)
-            or sum(entry['passed'] for entry in commands) != 75
+            or sum(entry['passed'] for entry in commands) != core_hits
             or type(core.get('compileCheck', {}).get('exit')) is not int or core['compileCheck']['exit'] != 0):
         raise PromotionError('Pending host Core evidence is incomplete or its lock drifted')
+    if policy['coreTests'] == 'policy-runtime-provider-reader-v1':
+        if (receipt.get('addedNativeTests') != RESOURCE_HEALTH_CASES
+                or not str(receipt.get('toolchain', '')).startswith('rustc 1.98.1 ')
+                or source.get('archiveHashBootstrapped') is not False):
+            raise PromotionError('Pending provider resolution lacks the fixed Native/toolchain proof')
+        validate_core_test_receipt(core, policy, root)
     return dict(schema=1, archiveOnly=True, lockAcceptance='pending', acceptedLock=False, workflowIdentity=current,
                 readbackScope='pending-producer-shape-and-locks-only', planSha256=digest(plan_path), producerReceiptSha256=digest(receipt_path), seedLockSha256=digest(before),
-                resolvedLockSha256=resolved, nativeTargetCount=42, coreCommandCount=26,
+                resolvedLockSha256=resolved, nativeTargetCount=42, coreCommandCount=core_count,
                 producerAcceptedLock=receipt.get('acceptedLock'), requiresCommittedLockAndPolicyAcceptance=True)
 
 

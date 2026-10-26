@@ -69,15 +69,15 @@ impl Fixture{
 #[tokio::test(flavor="multi_thread",worker_threads=3)]
 async fn actual_http_health_commits_urltest_before_dial_and_keeps_tolerance_put_unpin_coherent(){
     let f=Fixture::new(0,1000).await;let before=f.api.control.snapshot().await.unwrap();assert_eq!(before.picks["AUTO"],"A");
-    f.group().await;let auto=f.api.control.snapshot().await.unwrap();assert_eq!(auto.picks["AUTO"],"B");assert_eq!(auto.core_epoch,"800");assert_eq!(auto.picks_version.parse::<u64>().unwrap(),before.picks_version.parse::<u64>().unwrap()+1);f.wire(b'B').await;
+    f.group().await;let auto=f.api.control.snapshot().await.unwrap();assert_eq!(auto.picks["AUTO"],"B");assert_eq!(auto.core_epoch,"800");assert_eq!(auto.route_version.parse::<u64>().unwrap(),before.route_version.parse::<u64>().unwrap()+1);f.wire(b'B').await;
     f.a.delay.store(5,Ordering::Release);f.b.delay.store(50,Ordering::Release);f.group().await;assert_eq!(f.api.control.snapshot().await.unwrap(),auto);f.wire(b'B').await;
     let r=f.command("PUT","/proxies/AUTO",r#"{"name":"A"}"#).await;assert!(r.starts_with("HTTP/1.1 204"),"{r}");assert_eq!(f.fixed(),"A");assert_eq!(f.persisted(),"A");f.wire(b'A').await;
-    let fixed=f.api.control.snapshot().await.unwrap();assert_eq!(fixed.picks["AUTO"],"A");assert_eq!(fixed.picks_version.parse::<u64>().unwrap(),auto.picks_version.parse::<u64>().unwrap()+1);
+    let fixed=f.api.control.snapshot().await.unwrap();assert_eq!(fixed.picks["AUTO"],"A");assert_eq!(fixed.route_version.parse::<u64>().unwrap(),auto.route_version.parse::<u64>().unwrap()+1);
     // URLTest's existing fixed member survives temporary failure and resumes
     // after recovery. Health publication and every route change share gate.
     f.a.failed.store(true,Ordering::Release);let r=f.command("GET","/proxies/A/delay?url=http%3A%2F%2Fprobe.invalid%2Fhealth&timeout=2000","").await;assert!(r.starts_with("HTTP/1.1 503"),"{r}");assert_eq!(f.fixed(),"A");assert_eq!(f.api.control.snapshot().await.unwrap().picks["AUTO"],"B");f.wire(b'B').await;
     f.a.failed.store(false,Ordering::Release);let r=f.command("GET","/proxies/A/delay?url=http%3A%2F%2Fprobe.invalid%2Fhealth&timeout=2000","").await;assert!(r.starts_with("HTTP/1.1 200"),"{r}");assert_eq!(f.fixed(),"A");assert_eq!(f.api.control.snapshot().await.unwrap().picks["AUTO"],"A");f.wire(b'A').await;
-    let before=f.api.control.plane.stamp();let r=f.command("DELETE","/proxies/AUTO?coreEpoch=800","").await;assert!(r.starts_with("HTTP/1.1 204"),"{r}");assert_eq!(f.fixed(),"");assert_eq!(f.persisted(),"");let after=f.api.control.snapshot().await.unwrap();assert_eq!(after.picks["AUTO"],"B");assert_eq!(after.picks_version.parse::<u64>().unwrap(),before.1+1);f.wire(b'B').await;f.close().await;
+    let before=f.api.control.plane.stamp();let r=f.command("DELETE","/proxies/AUTO?coreEpoch=800","").await;assert!(r.starts_with("HTTP/1.1 204"),"{r}");assert_eq!(f.fixed(),"");assert_eq!(f.persisted(),"");let after=f.api.control.snapshot().await.unwrap();assert_eq!(after.picks["AUTO"],"B");assert_eq!(after.route_version.parse::<u64>().unwrap(),before.1+1);f.wire(b'B').await;f.close().await;
 }
 #[tokio::test(flavor="multi_thread",worker_threads=3)]
 async fn actual_periodic_urltest_nested_route_events_and_session_owned_health_stop_join(){
@@ -96,10 +96,10 @@ async fn actual_periodic_urltest_nested_route_events_and_session_owned_health_st
         tokio::time::timeout(Duration::from_secs(5),async{
             loop{events.recv().await.unwrap();if f.api.control.snapshot().await.unwrap().picks["AUTO"]==pick{break;}}
         }).await.unwrap();
-        assert!(f.api.control.snapshot().await.unwrap().picks_version.parse::<u64>().unwrap()>before.picks_version.parse::<u64>().unwrap());
+        assert!(f.api.control.snapshot().await.unwrap().route_version.parse::<u64>().unwrap()>before.route_version.parse::<u64>().unwrap());
         f.wire(marker).await;
     }
-    let snapshot=f.api.control.snapshot().await.unwrap();assert_eq!(snapshot.picks["OUTER"],"AUTO");assert!(snapshot.picks_version.parse::<u64>().unwrap()>1);f.wire(b'B').await;
+    let snapshot=f.api.control.snapshot().await.unwrap();assert_eq!(snapshot.picks["OUTER"],"AUTO");assert!(snapshot.route_version.parse::<u64>().unwrap()>1);f.wire(b'B').await;
     let a=f.tunnel.route_snapshot().proxies["A"].clone();let b=f.tunnel.route_snapshot().proxies["B"].clone();
     f.api.control.cancel();f.scope.close().await.unwrap();assert!(health.await.unwrap_err().is_cancelled());
     let history=(a.health().delay_history().len(),b.health().delay_history().len());let stamp=f.api.control.plane.stamp();

@@ -424,7 +424,8 @@ impl ActiveLease {
         }
         let previous = gate.sources.get(&self.identity.source).ok_or("providerNotRegistered")?.revision;
         let next = previous.checked_add(1).ok_or("providerRevisionExhausted")?;
-        let epoch_next = if changed { next_core_epoch(gate.core_epoch)? } else { gate.core_epoch };
+        let route_next = if changed { gate.revision.checked_add(1).ok_or("routeVersionExhausted")? } else { gate.revision };
+        let groups_next = if changed { gate.groups_sequence.checked_add(1).ok_or("groupsSequenceExhausted")? } else { gate.groups_sequence };
         let sequence = gate.sequence.checked_add(1).ok_or("providerSequenceExhausted")?;
         let group = if self.identity.kind == ProviderKind::Proxy && changed {
             match &gate.group_control {
@@ -433,7 +434,7 @@ impl ActiveLease {
         } else { None };
         let prepared = if let Some(control) = &group {
             let members = members.ok_or("providerMembersRequired")?;
-            let revision = gate.revision.checked_add(1).ok_or("picksRevisionExhausted")?;
+            let revision = gate.revision.checked_add(1).ok_or("routeVersionExhausted")?;
             let groups_sequence = gate.groups_sequence.checked_add(1).ok_or("groupsSequenceExhausted")?;
             Some((match projection {
                 Some(projection)=>control.prepare_projected_provider_commit(projection,&gate)?,
@@ -445,7 +446,9 @@ impl ActiveLease {
             control.finish_provider_commit(prepared, &mut gate, *revision, *groups_sequence);
         }
         gate.sources.insert(self.identity.source, SourceReceipt { revision: next, changed });
-        gate.core_epoch = epoch_next;
+        // Provider/rule content moves routes; it does not reset the whole runtime epoch.
+        gate.revision = route_next;
+        gate.groups_sequence = groups_next;
         gate.sequence = sequence;
         if gate.active {
             gate.pending.insert(key, (sequence, ProviderLoaded { kind: self.identity.kind, name: self.identity.name.clone(),

@@ -57,7 +57,7 @@ async fn real_node_delay_public_get_records_committed_history_and_returns_same_p
     let (mut stream, _) = origin.accept().await.unwrap(); headers(&mut stream).await;
     stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await.unwrap();
     let response = request.await.unwrap(); assert!(response.starts_with("HTTP/1.1 200"));
-    assert!(response.contains("x-aerove-core-epoch: 91\r\n")); assert!(response.contains("x-aerove-picks-version: 0\r\n"));
+    assert!(response.contains("x-aerove-core-epoch: 91\r\n")); assert!(response.contains("x-aerove-route-version: 0\r\n"));
     let body: serde_json::Value = serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap();
     assert!(body["delay"].is_u64()); assert_eq!(body.as_object().unwrap().len(), 1);
     assert_eq!(direct.health().delay_history().len(), before + 1);

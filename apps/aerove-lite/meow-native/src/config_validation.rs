@@ -45,7 +45,19 @@ pub fn validate_config_syntax(source: &str) -> Result<(), String> {
 /// Runs the real fixed parser/converter inside an owned offline load scope; never flips CLI globals.
 pub async fn validate_config(source: &str) -> Result<(), String> {
     let normalized = normalize_config_fields(source)?;
-    meow_config::validate_offline_config(&normalized).await
+    let work: futures::future::BoxFuture<'_, Result<(), String>> = Box::pin(meow_config::validate_offline_config(&normalized));
+    work.await
+}
+
+// The Core conversion state must not expand inside Native cancellation and worker futures.
+pub(crate) fn scoped_offline_validation<'a>(source: &'a str, scope: &'a Arc<OwnedLoadScope>)
+    -> futures::future::BoxFuture<'a, Result<(), String>> {
+    Box::pin(meow_config::validate_offline_config_with_scope(source, scope))
+}
+
+pub(crate) fn scoped_prepared_validation<'a>(source: &'a str, scope: &'a Arc<OwnedLoadScope>)
+    -> futures::future::BoxFuture<'a, Result<(), String>> {
+    Box::pin(meow_config::validate_prepared_config_with_scope(source, scope))
 }
 
 /// Strict field projection only; callers must still await validate_config for real conversion.
@@ -229,9 +241,18 @@ fn invalid_rule(field: &str, reason: impl std::fmt::Display) -> String {
     format!("rule_set_invalid: {field}: {reason}")
 }
 fn read_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<AcceptedRules, String> {
-    let accepted = decode_rule_payload(bytes, behavior, format)?;
-    compile_rule_payload(&accepted)?;
+    let accepted = decode_rule_payload(bytes, behavior, format).map_err(|reason| rule_format_error(bytes, format, reason))?;
+    compile_rule_payload(&accepted).map_err(|reason| rule_format_error(bytes, format, reason))?;
     Ok(accepted)
+}
+
+fn rule_format_error(bytes: &[u8], format: Option<&str>, reason: String) -> String {
+    if format == Some("text") && bytes.len() <= MAX_RULE_TEXT_BYTES && !rules::is_mrs_bytes(bytes) {
+        if let Ok(source) = std::str::from_utf8(bytes) {
+            if yaml_payload(source).is_ok() { return invalid_rule("$.format", "rule_set_format_mismatch"); }
+        }
+    }
+    reason
 }
 fn decode_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: Option<&'static str>) -> Result<AcceptedRules, String> {
     let is_mrs = rules::is_mrs_bytes(bytes);
@@ -241,7 +262,6 @@ fn decode_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: 
     } else {
         if bytes.len() > MAX_RULE_TEXT_BYTES { return Err(format!("rule-provider text input exceeds {MAX_RULE_TEXT_BYTES} bytes")); }
         let source = std::str::from_utf8(bytes).map_err(|e| invalid_rule("$.payload.utf8", e))?;
-        // Text never pays for a YAML parse whose result it would discard.
         let (fmt, lines) = match format {
             Some("yaml") => ("yaml", yaml_payload(source).map_err(|e| invalid_rule("$.payload.yaml", e))?),
             Some("text") => ("text", text_lines(source)?),
@@ -278,19 +298,21 @@ pub fn preflight_rule_resource_controlled(path: &Path, behavior: &str, format: &
         })).map_err(|e| e.to_string());
     }
     let bytes = read_rule_input(file, canonical_format(format).ok(), magic, &cancel)?;
+    let behavior = parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?;
+    let format = canonical_format(format).map_err(|e| invalid_rule("$.format", e))?;
+    let format_error = |reason| rule_format_error(&bytes, Some(format), reason);
     let accepted = decode_rule_payload(&bytes,
-        Some(parse_behavior(behavior).map_err(|e| invalid_rule("$.behavior", e))?),
-        Some(canonical_format(format).map_err(|e| invalid_rule("$.format", e))?))?;
+        Some(behavior), Some(format)).map_err(&format_error)?;
     let required = meow_config::rule_geodata_requirements(&accepted.entries);
     let pending = required.geoip || required.asn || required.geosite;
-    if !pending { compile_rule_payload(&accepted)?; }
+    if !pending { compile_rule_payload(&accepted).map_err(&format_error)?; }
     else if accepted.behavior == RuleSetBehavior::Classical {
         for entry in &accepted.entries {
             let single = vec![entry.clone()];
             let deps = meow_config::rule_geodata_requirements(&single);
             if !(deps.geoip || deps.asn || deps.geosite) {
                 rules::build_rule_set_checked(accepted.behavior, &single, &Default::default())
-                    .map_err(|e| invalid_rule("$.payload", e))?;
+                    .map_err(|e| format_error(invalid_rule("$.payload", e)))?;
             }
         }
     }
@@ -372,7 +394,7 @@ async fn validate_offline_cancellable(normalized: &str, cancel: &CancellationTok
     let converted = std::panic::AssertUnwindSafe(async {
         tokio::select! {
             biased;
-            result = meow_config::validate_offline_config_with_scope(normalized, &scope) => result,
+            result = scoped_offline_validation(normalized, &scope) => result,
             never = forward => match never {},
         }
     }).catch_unwind().await;
