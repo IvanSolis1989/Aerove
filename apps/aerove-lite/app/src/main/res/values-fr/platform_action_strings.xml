@@ -1,0 +1,4 @@
+<resources>
+    <string name="platform_disclaimer_required">Ouvrez l’application et acceptez la clause de non-responsabilité avant de vous connecter.</string>
+    <string name="platform_notification_required">Ouvrez l’application et autorisez les notifications avant d’utiliser le mode proxy.</string>
+</resources>

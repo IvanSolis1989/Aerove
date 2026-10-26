@@ -33,7 +33,11 @@ class ProductionVpnNotificationLocaleTest {
     private val manager get() = context.getSystemService(NotificationManager::class.java)
     private val channelId = "aerove-lite-vpn"
 
-    @Test fun nativeLocaleChangeRefreshesTheAlreadyPostedVpnNotificationAndChannel() = runBlocking<Unit> {
+    @Test fun proxyNotificationRefreshesWithoutRestart() = notificationLocaleCase(false)
+
+    @Test fun runningVpnLocaleNeverRepostsAnAppNotification() = notificationLocaleCase(true)
+
+    private fun notificationLocaleCase(vpnEnabled: Boolean) = runBlocking<Unit> {
         assertNull("CI must grant ACTIVATE_VPN", VpnService.prepare(context))
         assertTrue("CI must grant POST_NOTIFICATIONS", manager.areNotificationsEnabled())
         assertEquals("Do not replace an existing VPN", VpnPhase.Stopped, graph.vpn.value.phase)
@@ -53,7 +57,7 @@ class ProductionVpnNotificationLocaleTest {
             val port = freeUserPort()
             val settings = graph.settings.save(LiteSettings(mode = ProxyMode.Direct, aurora = false,
                 material = MaterialTier.Solid, locale = "en", autoCheckUpdate = false,
-                network = NetworkSettings(systemProxy = false, ports = UserProxyPorts(port))), vpnAuthorized = true)
+                network = NetworkSettings(vpnEnabled = vpnEnabled, systemProxy = false, ports = UserProxyPorts(port))), vpnAuthorized = true)
             val launched = ActivityScenario.launch(MainActivity::class.java)
             activity = launched
             lateinit var controller: LiteController
@@ -63,7 +67,7 @@ class ProductionVpnNotificationLocaleTest {
             launched.onActivity { controller.connect() }
             val running = withTimeout(60_000) { graph.vpn.first { it.phase in setOf(VpnPhase.Running, VpnPhase.Failed) } }
             assertEquals(running.error ?: "The actual service must become ready", VpnPhase.Running, running.phase)
-            await { posted()?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "VPN is running" }
+            await { if (vpnEnabled) posted() == null else posted()?.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "VPN is running" }
             val oldImportance = checkNotNull(manager.getNotificationChannel(channelId)).importance
             val oldBadge = checkNotNull(manager.getNotificationChannel(channelId)).canShowBadge()
 
@@ -71,9 +75,9 @@ class ProductionVpnNotificationLocaleTest {
             await {
                 val notification = posted()
                 graph.resources.configuration.locales[0].language == "ja" &&
-                    notification != null && notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "VPN は実行中です" &&
+                    (if (vpnEnabled) notification == null else notification != null && notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == "VPN は実行中です" &&
                     notification.actions?.singleOrNull()?.title?.toString() == "切断" &&
-                    manager.getNotificationChannel(channelId)?.name?.toString() == "VPN 接続"
+                    manager.getNotificationChannel(channelId)?.name?.toString() == "VPN 接続")
             }
             val channel = checkNotNull(manager.getNotificationChannel(channelId))
             assertEquals(oldImportance, channel.importance)

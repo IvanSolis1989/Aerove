@@ -19,13 +19,13 @@ object LauncherActions {
             .setAction("${context.packageName}.action.${action.name}")
             .putExtra(EXTRA_ACTION, action.name)
             .putExtra(EXTRA_REQUEST_ID, UUID.randomUUID().toString())
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
 
     fun shortcutIntent(context: Context, action: LauncherAction): Intent =
         Intent(context, QuickActionActivity::class.java)
             .setAction("${context.packageName}.action.${action.name}")
             .putExtra(EXTRA_ACTION, action.name)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
 
     fun requestIdForLaunch(requestId: String?): String? {
         val candidate = requestId ?: UUID.randomUUID().toString()

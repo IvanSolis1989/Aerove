@@ -1,0 +1,4 @@
+<resources>
+    <string name="platform_disclaimer_required">请打开应用并同意免责声明后再连接。</string>
+    <string name="platform_notification_required">请打开应用并允许通知后再使用代理模式。</string>
+</resources>

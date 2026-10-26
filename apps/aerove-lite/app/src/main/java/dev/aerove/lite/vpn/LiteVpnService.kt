@@ -66,11 +66,14 @@ class LiteVpnService : VpnService() {
     private var networkKey: String? = null
     private val physicalNetworks = linkedSetOf<Network>()
     private val capabilitiesByNetwork = mutableMapOf<Network, NetworkCapabilities>()
-    private val propertiesByNetwork = mutableMapOf<Network, LinkProperties>()
+    @Volatile private var builderDns: List<String> = emptyList()
+    private var callbackIncludesLocation = false
+    private var networkListenerError: String? = null
     private var callbackRegistered = false
     private val networkObservations = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private val startupIntentChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private var notificationStopPreference = true
+    private var foregroundPosted = false
     private val locationReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) { refreshNetworkPermissions() }
     }
@@ -88,7 +91,6 @@ class LiteVpnService : VpnService() {
             physicalNetworks -= network
             capabilitiesByNetwork.remove(network)
             networkObservations.value++
-            propertiesByNetwork.remove(network)
             updateUnderlying()
         }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
@@ -97,7 +99,6 @@ class LiteVpnService : VpnService() {
             updateUnderlying()
         }
         override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
-            propertiesByNetwork[network] = properties
             updateUnderlying()
         }
     }
@@ -105,9 +106,7 @@ class LiteVpnService : VpnService() {
     override fun onCreate() {
         super.onCreate()
         owner = graph.registerVpnOwner()
-        createChannel()
-        startForeground(NOTIFICATION_ID, notification(VpnPhase.Starting))
-        notificationUpdates.started(VpnPhase.Starting, resources.configuration.locales.toLanguageTags())
+        showForeground(VpnPhase.Starting)
         connectivity = getSystemService(ConnectivityManager::class.java)
         networkRuntime = NetworkRuntimeCoordinator(coreScope, { endpoint, settings, ipv6 ->
             CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client -> client.applyNetwork(settings, ipv6) }
@@ -123,21 +122,45 @@ class LiteVpnService : VpnService() {
             coordinator.setListenerPolicy(intent.listening) { listenerPolicy.isCurrent(intent) }
         }, { failure -> coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName) })
         graph.registerMaintenanceStop(owner, ::stopForMaintenance, ::resumeAfterMaintenance)
+        graph.registerRuleReload(owner, coordinator::reloadRules)
+        graph.registerModeCleanup(owner, ::stopForModeFailure)
         val request = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
         policyPreferences = graph.settings.changes.value?.backgroundPolicy ?: BackgroundPolicyPreferences()
-        callback = makeNetworkCallback(needsSsid())
+        callbackIncludesLocation = needsSsid()
+        callback = makeNetworkCallback(callbackIncludesLocation)
         connectivity.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
         callbackRegistered = true
         registerReceiver(locationReceiver, IntentFilter(LocationManager.MODE_CHANGED_ACTION), RECEIVER_NOT_EXPORTED)
         scope.launch {
-            physical.map { it.takeIf { captured -> captured.network != null } }.filterNotNull()
-                .distinctUntilChanged { before, after -> before.networkHandle == after.networkHandle && before.dns.json() == after.dns.json() }
+            var previous: CapturedMeowPhysical? = null
+            physical.distinctUntilChanged { before, after -> before.networkHandle == after.networkHandle && before.dns == after.dns }
                 .collectLatest { captured ->
-                try { coordinator.configureNetworkDns(captured.dns) }
-                catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName) }
-            }
+                    val old = previous
+                    if (captured.network != null) previous = captured
+                    val snapshot = coordinator.state.value
+                    val action = networkChangeAction(snapshot, builderDns, old?.networkHandle,
+                        captured.networkHandle, captured.dns)
+                    if (action == NetworkChangeAction.None) return@collectLatest
+                    val endpoint = snapshot.endpoint
+                    val generation = intentGeneration
+                    fun current() = generation == intentGeneration && lastPlan != null && physical.value == captured && coordinator.state.value.endpoint === endpoint
+                    applyPhysicalNetworkChange(action, { current() && networkHotFailureReconnect(coordinator.state.value, captured.networkHandle) }, hot = {
+                        coordinator.configureNetworkDns(captured.dns)
+                        if (!current()) return@applyPhysicalNetworkChange
+                        networkListenerError?.let { coordinator.clearListenerError(it) }
+                        networkListenerError = null
+                        if (old?.networkHandle != null && old.networkHandle != captured.networkHandle && endpoint != null) {
+                            withContext(Dispatchers.IO) {
+                                CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { it.closeAllConnections() }
+                            }
+                        }
+                    }, reconnect = coordinator::reconnect, failed = { failure ->
+                        val message = failure.message ?: failure.javaClass.simpleName
+                        networkListenerError = message
+                        coordinator.recordListenerError(message)
+                    })
+                }
         }
         scope.launch {
             graph.settings.changes.filterNotNull().collect { settings ->
@@ -168,7 +191,15 @@ class LiteVpnService : VpnService() {
                 networkRuntime.bind(snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running },
                     snapshot.initialNetwork, snapshot.initialIpv6, snapshot.appliedNetwork, snapshot.appliedIpv6)
                 graph.publishVpn(owner, snapshot)
-                notificationUpdates.phase(snapshot.phase)
+                if (snapshot.phase == VpnPhase.Failed && lastPlan != null && !maintenanceHold) {
+                    requested(false)
+                    lastPlan = null
+                    syncListenerPolicy()
+                    removeNotification()
+                    stopSelf()
+                    return@collect
+                }
+                syncNotification(snapshot)
                 val endpoint = snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running }
                 if (policyObservedEndpoint !== endpoint) {
                     policyObservedEndpoint = endpoint
@@ -189,6 +220,8 @@ class LiteVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action in setOf(ACTION_START, ACTION_RECONFIGURE, SERVICE_INTERFACE) || intent == null)
+            showForeground(if (::coordinator.isInitialized) coordinator.state.value.phase else VpnPhase.Starting)
         // Restore owns the complete stop/join/write transaction, including non-UI entry points.
         if (graph.maintenanceActive && intent?.action != ACTION_STOP) {
             if (lastPlan == null && !wasRequested(this)) {
@@ -270,29 +303,36 @@ class LiteVpnService : VpnService() {
     }
 
     private fun updateUnderlying() {
+        val activeNetwork = connectivity.activeNetwork
+        fun capabilities(candidate: Network) = capabilitiesByNetwork[candidate] ?: connectivity.getNetworkCapabilities(candidate)
         val available = physicalNetworks.filter { candidate ->
-            connectivity.getNetworkCapabilities(candidate)?.let {
-                it.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
-                    it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            capabilities(candidate)?.let {
+                it.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) && it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             } == true
         }
-        val preferred = available.firstOrNull { it == connectivity.activeNetwork }
-            ?: available.firstOrNull {
-                connectivity.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            } ?: available.firstOrNull()
-        val captured = try { captureMeowPhysical(connectivity) { preferred } }
-        catch (failure: Exception) {
-            coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName)
-            return
+        val preferred = available.firstOrNull { it == activeNetwork }
+            ?: available.firstOrNull { capabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
+            ?: available.firstOrNull()
+        val captured = if (preferred == null) CapturedMeowPhysical(null, SystemDnsSnapshot(), null) else {
+            val links = connectivity.getLinkProperties(preferred) ?: return
+            if (links.dnsServers.isEmpty() || links.interfaceName.isNullOrBlank()) return
+            try {
+                CapturedMeowPhysical(preferred, capturedMeowDns(links.interfaceName, links.dnsServers.mapNotNull { it.hostAddress }),
+                    preferred.networkHandle.toULong().toString())
+            } catch (failure: Exception) {
+                coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName)
+                return
+            }
         }
         val key = captured.networkHandle?.let { "$it:${captured.dns.json()}" }
         physical.value = captured
         syncListenerPolicy()
         if (networkKey == key) return
         networkKey = key
-        // The Host changes Builder underlying networks only after Native network/old-DNS join ACK.
-        if (lastPlan != null && coordinator.state.value.phase == VpnPhase.Running && !coordinator.state.value.suspended) coordinator.reconnect()
+        mutableHostNetworkGeneration.value++
     }
+
+    internal fun recordBuilderDns(dns: List<String>) { builderDns = dns.toList() }
 
     private suspend fun initialListening(plan: VpnPlan): Boolean {
         val token = withContext(Dispatchers.Main.immediate) {
@@ -330,7 +370,7 @@ class LiteVpnService : VpnService() {
                         caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 }?.let {
                     physicalNetworks += candidate
-                    connectivity.getLinkProperties(candidate)?.let { properties -> propertiesByNetwork[candidate] = properties }
+                    capabilitiesByNetwork[candidate] = it
                 }
             }
             updateUnderlying()
@@ -354,7 +394,8 @@ class LiteVpnService : VpnService() {
 
     private fun syncListenerPolicy() {
         if (!::listenerPolicy.isInitialized) return
-        val ssid = AndroidSsidPolicy.read(network?.let(capabilitiesByNetwork::get), policyPreferences, AndroidSsidPolicy.access(this))
+        val ssid = if (policyPreferences.excludeSSIDs.isEmpty()) null else
+            AndroidSsidPolicy.read(network?.let(capabilitiesByNetwork::get), policyPreferences, AndroidSsidPolicy.access(this))
         listenerPolicy.update(policyPreferences, lastPlan != null && wasRequested(this) && !maintenanceHold, false, ssid)
     }
 
@@ -363,6 +404,8 @@ class LiteVpnService : VpnService() {
     private fun refreshNetworkPermissions() {
         if (!callbackRegistered) return
         val includeLocation = needsSsid()
+        if (includeLocation == callbackIncludesLocation) { updateUnderlying(); return }
+        callbackIncludesLocation = includeLocation
         capabilitiesByNetwork.clear()
         // Re-register the same observer so a newly granted location permission receives unredacted capabilities.
         connectivity.unregisterNetworkCallback(callback)
@@ -382,6 +425,20 @@ class LiteVpnService : VpnService() {
             }
         }
     }
+
+    private suspend fun stopForModeFailure(endpoint: CoreEndpoint, reason: String): Boolean =
+        stopModeSessionForService(endpoint, reason,
+            capture = { ModeServiceIntentReceipt(coordinator.state.value.endpoint, lastPlan?.ownerIntentToken, intentGeneration) },
+            onMain = { action -> withContext(Dispatchers.Main.immediate) { action() } },
+            stop = coordinator::stopIfCurrent,
+            clear = {
+                ++intentGeneration
+                requested(false)
+                lastPlan = null
+                syncListenerPolicy()
+                removeNotification()
+                stopSelf()
+            })
 
     private suspend fun stopForMaintenance(): MaintenanceRuntimeContext = withContext(Dispatchers.Main.immediate) {
         val previous = wasRequested(this@LiteVpnService)
@@ -416,8 +473,7 @@ class LiteVpnService : VpnService() {
         lastPlan = plan.copy(ownerIntentToken = intentGeneration)
         requested(true)
         syncListenerPolicy()
-        startForeground(NOTIFICATION_ID, notification(VpnPhase.Starting))
-        notificationUpdates.started(VpnPhase.Starting, resources.configuration.locales.toLanguageTags())
+        showForeground(VpnPhase.Starting)
         coordinator.start(checkNotNull(lastPlan))
         val expected = intentGeneration
         val resumed = coordinator.state.first {
@@ -479,7 +535,10 @@ class LiteVpnService : VpnService() {
         maintenanceHold = false
         heldMaintenance = null
         graph.clearMaintenanceStop(owner)
+        graph.clearRuleReload(owner)
+        graph.clearModeCleanup(owner)
         if (::listenerPolicy.isInitialized) listenerPolicy.close()
+        removeNotification()
         notificationUpdates.close()
         unregisterReceiver(locationReceiver)
         if (callbackRegistered) {
@@ -494,7 +553,8 @@ class LiteVpnService : VpnService() {
                     networkRuntime.close()
                 }
                 val snapshot = coordinator.state.value
-                graph.publishVpn(owner, if (snapshot.phase == VpnPhase.Failed) snapshot else VpnSnapshot())
+                graph.publishVpn(owner, if (snapshot.phase == VpnPhase.Failed ||
+                    (snapshot.phase == VpnPhase.Stopped && !snapshot.error.isNullOrBlank())) snapshot else VpnSnapshot())
             } finally {
                 coreScope.cancel()
                 scope.cancel()
@@ -507,19 +567,37 @@ class LiteVpnService : VpnService() {
         val manager = getSystemService(NotificationManager::class.java)
         val channel = manager.getNotificationChannel(CHANNEL) ?: NotificationChannel(CHANNEL,
             getString(R.string.vpn_channel_name), NotificationManager.IMPORTANCE_LOW).apply { setShowBadge(false) }
-        channel.name = getString(R.string.vpn_channel_name)
-        manager.createNotificationChannel(channel)
+        val name = getString(R.string.vpn_channel_name)
+        if (manager.getNotificationChannel(CHANNEL) == null || channel.name.toString() != name) {
+            channel.name = name
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun showForeground(phase: VpnPhase) {
+        if (foregroundPosted) { notificationUpdates.phase(phase); return }
+        createChannel()
+        startForeground(NOTIFICATION_ID, notification(phase))
+        foregroundPosted = true
+        notificationUpdates.started(phase, resources.configuration.locales.toLanguageTags())
+    }
+
+    private fun syncNotification(snapshot: VpnSnapshot) {
+        if (vpnForegroundRequired(snapshot)) showForeground(snapshot.phase) else removeNotification()
     }
 
     private fun removeNotification() {
         notificationUpdates.withdraw()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (foregroundPosted) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foregroundPosted = false
+        }
     }
 
     private fun notification(phase: VpnPhase): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, LiteVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
-        val label = when (phase) {
+        val label = if (::coordinator.isInitialized && coordinator.state.value.suspended) getString(R.string.integration_suspended) else when (phase) {
             VpnPhase.Running -> getString(R.string.vpn_running)
             VpnPhase.Starting -> getString(R.string.vpn_starting)
             VpnPhase.Stopping -> getString(R.string.vpn_stopping)
@@ -533,7 +611,7 @@ class LiteVpnService : VpnService() {
         } else graph.settings.changes.value?.network?.vpnEnabled ?: true
         return Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_vpn)
             .setContentTitle("AEROVE Lite").setContentText(label)
-            .setContentIntent(open).setOngoing(true)
+            .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSound(null).setVibrate(null)
             .apply {
                 if (notificationShowsStopAction(vpnEnabled, notificationStopPreference))
                     addAction(Notification.Action.Builder(null, getString(R.string.action_disconnect), stop).build())
@@ -551,6 +629,8 @@ class LiteVpnService : VpnService() {
     }
 
     companion object {
+        private val mutableHostNetworkGeneration = kotlinx.coroutines.flow.MutableStateFlow(0L)
+        val hostNetworkGeneration: kotlinx.coroutines.flow.StateFlow<Long> = mutableHostNetworkGeneration
         const val ACTION_START = "dev.aerove.lite.START"
         const val EXTRA_REQUESTED_AT_NANOS = "dev.aerove.lite.REQUESTED_AT_NANOS"
         const val ACTION_STOP = "dev.aerove.lite.STOP"
@@ -631,3 +711,26 @@ internal class VpnNotificationUpdates(
 }
 
 internal fun notificationShowsStopAction(vpnEnabled: Boolean, preference: Boolean): Boolean = !vpnEnabled && preference
+
+internal fun vpnForegroundRequired(snapshot: VpnSnapshot): Boolean =
+    !(snapshot.phase == VpnPhase.Running && snapshot.initialSettings?.network?.vpnEnabled == true &&
+        snapshot.listening && !snapshot.suspended && snapshot.initialDnsEnabled != null)
+
+internal data class ModeServiceIntentReceipt(val endpoint: CoreEndpoint?, val planOwner: Long?, val currentIntent: Long)
+
+internal suspend fun stopModeSessionForService(endpoint: CoreEndpoint, reason: String,
+    capture: () -> ModeServiceIntentReceipt, onMain: suspend (() -> Unit) -> Unit,
+    stop: suspend (CoreEndpoint, String) -> Boolean, clear: () -> Unit): Boolean {
+    var captured: ModeServiceIntentReceipt? = null
+    onMain { captured = capture() }
+    val before = captured ?: return false
+    if (before.endpoint !== endpoint) return false
+    val expected = before.planOwner ?: return false
+    val stopped = stop(endpoint, reason)
+    if (stopped) onMain {
+        val latest = capture()
+        if (expected == latest.currentIntent && expected == latest.planOwner &&
+            (latest.endpoint == null || latest.endpoint === endpoint)) clear()
+    }
+    return stopped
+}

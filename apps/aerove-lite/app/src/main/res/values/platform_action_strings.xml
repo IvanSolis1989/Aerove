@@ -1,0 +1,4 @@
+<resources>
+    <string name="platform_disclaimer_required">Open the app and agree to the disclaimer before connecting.</string>
+    <string name="platform_notification_required">Open the app and allow notifications before using proxy mode.</string>
+</resources>

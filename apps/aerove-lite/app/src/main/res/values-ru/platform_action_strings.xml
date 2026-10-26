@@ -1,0 +1,4 @@
+<resources>
+    <string name="platform_disclaimer_required">Откройте приложение и примите условия отказа от ответственности перед подключением.</string>
+    <string name="platform_notification_required">Откройте приложение и разрешите уведомления перед использованием режима прокси.</string>
+</resources>

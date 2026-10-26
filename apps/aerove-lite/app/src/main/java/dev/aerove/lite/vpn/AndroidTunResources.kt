@@ -43,10 +43,10 @@ internal fun establishAndroidTun(service: LiteVpnService, plan: VpnPlan, port: I
         applications.disallowed.forEach { addApplication(it, false) }
         underlying()?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
         val dns = if (dnsEnabled) listOf("198.18.0.2") + if (vpnBuilderIpv6(plan)) listOf("fdfe:dcba:9876::2") else emptyList()
-            else dnsSnapshot.interfaces[dnsSnapshot.defaultInterface].orEmpty().filter { vpnBuilderIpv6(plan) || ':' !in it }
+            else physicalBuilderDns(dnsSnapshot, vpnBuilderIpv6(plan))
         check(dns.isNotEmpty()) { "The underlying network has no DNS server while custom DNS is disabled" }
         dns.forEach(builder::addDnsServer)
-        return checkNotNull(builder.establish()) { "VPN authorization was revoked" }
+        return checkNotNull(builder.establish()) { "VPN authorization was revoked" }.also { service.recordBuilderDns(dns) }
 
 }
 

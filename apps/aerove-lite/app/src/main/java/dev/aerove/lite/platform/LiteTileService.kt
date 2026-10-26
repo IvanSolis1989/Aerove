@@ -11,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 class LiteTileService : TileService() {
@@ -22,9 +24,9 @@ class LiteTileService : TileService() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         listeningScope = scope
         scope.launch {
-            (application as LiteApplication).vpn.collect { snapshot ->
+            (application as LiteApplication).vpn.map { tileStateFor(it.phase) }.distinctUntilChanged().collect { tileState ->
                 qsTile?.apply {
-                    state = tileStateFor(snapshot.phase)
+                    state = tileState
                     updateTile()
                 }
             }

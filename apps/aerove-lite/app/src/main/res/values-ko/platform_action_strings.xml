@@ -1,0 +1,4 @@
+<resources>
+    <string name="platform_disclaimer_required">연결하기 전에 앱을 열고 면책 조항에 동의해 주세요.</string>
+    <string name="platform_notification_required">프록시 모드를 사용하기 전에 앱을 열고 알림을 허용해 주세요.</string>
+</resources>

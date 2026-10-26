@@ -1,0 +1,4 @@
+<resources>
+    <string name="platform_disclaimer_required">アプリを開き、免責事項に同意してから接続してください。</string>
+    <string name="platform_notification_required">アプリを開き、通知を許可してからプロキシモードを使用してください。</string>
+</resources>

@@ -50,6 +50,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             resources.prepared.resourceDirectory?.let { bundle ->
                 check(bundle.canonicalFile.toPath().startsWith(File(runtime,"resources/bundles").toPath())) { "Meow resource root escapes private sealed bundles" }
             }
+            resources.ruleResources = SessionRuleResources.create(application.filesDir, resources.prepared, application.profiles, resources::isCurrent)
             val directory = File(runtime, "profiles/${resources.prepared.profileId}").canonicalFile
             check(directory.toPath().startsWith(File(runtime, "profiles").toPath())) { "Invalid runtime profile directory" }
             check(directory.isDirectory || directory.mkdirs())
@@ -84,10 +85,11 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             val baseline = plan.builderSettings()
             val startup = runtimePoliciesForStart(plan.settings, application.settings.read())
             resources.startupPolicies = MeowHostPolicyTarget.from(startup, application.requestPolicy.defaultUserAgent)
-            resources.configValue = MeowRuntimeConfigComposer(runtime, application.requestPolicy.defaultUserAgent, cache)
+            val composed = MeowRuntimeConfigComposer(runtime, application.requestPolicy.defaultUserAgent, cache)
                 .compose(resources.prepared, startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
                     TunRuntimeOptions(baseline.network.mtu, baseline.network.dnsHijacking, baseline.ipv6), parked,
                     captured.networkHandle, verifiedNativeFeatures().toSet())
+            resources.configValue = checkNotNull(resources.ruleResources).configure(composed)
             val appliedFile = File(directory, "meow-${UUID.randomUUID()}.yaml")
             resources.file = appliedFile
             appliedFile.apply {
@@ -125,6 +127,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         @Volatile var failedAcquire = false
         var sharedCleaned = false
         var profileLease: ProfileLease? = null
+        var ruleResources: SessionRuleResources? = null
         var tun: ParcelFileDescriptor? = null
         var file: File? = null
         var cache: File? = null
@@ -133,8 +136,8 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         var markedUsable = false
         lateinit var preparedValue: PreparedProfile
         lateinit var configValue: MeowRuntimeConfig
-        override val prepared get() = preparedValue
-        override val configuration get() = configValue
+        override val prepared get() = ruleResources?.prepared ?: preparedValue
+        override val configuration get() = ruleResources?.configuration ?: configValue
         override val appliedConfiguration get() = AppliedConfigSnapshot(prepared.profileId, checkNotNull(file))
         override val protector: SocketProtector? get() = if(configuration.runtimeMode == NativeCore.RuntimeMode.Tun) SocketProtector(service::protect) else null
         override val connectionOwner: ConnectionOwnerLookup? get() = resolver
@@ -212,10 +215,13 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             tun?.close();tun = null
             staged.toList().forEach { it.file.close();staged -= it }
         } }
+        override suspend fun reloadRules(next: PreparedProfile, endpoint: CoreEndpoint, current: () -> Boolean): Boolean =
+            ruleResources?.reload(next, endpoint, current) ?: false
         override fun isCurrent() = admission.current()
         override suspend fun verifyControl(endpoint: CoreEndpoint) = verifyMeowControl(endpoint)
         override suspend fun release() = withContext(NonCancellable + Dispatchers.IO) { cleanup.withLock {
             admission.close()
+            ruleResources?.closeAfterNativeJoin()
             resolver?.clearPackageCache()
             packageLoader?.close(); packageLoader = null
             try {
@@ -238,7 +244,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
     }
 }
 
-class CapturedMeowPhysical internal constructor(val network: Network?, val dns: SystemDnsSnapshot, val networkHandle: String?)
+data class CapturedMeowPhysical internal constructor(val network: Network?, val dns: SystemDnsSnapshot, val networkHandle: String?)
 
 /** Select once; all following Android queries refer to that same Network, never another current supplier. */
 fun captureMeowPhysical(manager: ConnectivityManager, selected: () -> Network?): CapturedMeowPhysical {

@@ -29,32 +29,30 @@ internal class LocalNetworkMonitor(private val context: Context,
     fun addresses() = callbackFlow<String?> {
         val networks = linkedSetOf<Network>()
         val capabilitiesByNetwork = mutableMapOf<Network, NetworkCapabilities>()
+        val linksByNetwork = mutableMapOf<Network, LinkProperties>()
+        val trackSsid = policy().excludeSSIDs.isNotEmpty()
+        fun includeLocation() = trackSsid && AndroidSsidPolicy.access(context).granted
+        var includesLocation = includeLocation()
         fun publish() {
-            val ordered = networks.sortedBy { network ->
-                val capabilities = capabilitiesByNetwork[network]
-                when {
-                    network == connectivity.activeNetwork -> 0
-                    capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> 1
-                    else -> 2
-                }
+            val preferred = if (networks.size > 1) connectivity.activeNetwork else null
+            val ordered = orderLocalNetworks(networks, preferred) { network ->
+                capabilitiesByNetwork[network]?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
             }
-            val selected = ordered.firstOrNull()
-            onSsid(AndroidSsidPolicy.read(selected?.let(capabilitiesByNetwork::get), policy(), AndroidSsidPolicy.access(context)))
+            if (trackSsid) onSsid(AndroidSsidPolicy.read(ordered.firstOrNull()?.let(capabilitiesByNetwork::get), policy(), AndroidSsidPolicy.access(context)))
             val address = ordered.firstNotNullOfOrNull { network ->
-                connectivity.getLinkProperties(network)?.linkAddresses?.asSequence()?.map { it.address }
+                linksByNetwork[network]?.linkAddresses?.asSequence()?.map { it.address }
                     ?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress && !it.isLinkLocalAddress }?.hostAddress
             }
             trySend(address)
         }
-        fun makeCallback() = object : ConnectivityManager.NetworkCallback(
-            if (policy().excludeSSIDs.isNotEmpty() && AndroidSsidPolicy.access(context).granted) FLAG_INCLUDE_LOCATION_INFO else 0) {
+        fun makeCallback() = object : ConnectivityManager.NetworkCallback(if (includesLocation) FLAG_INCLUDE_LOCATION_INFO else 0) {
             override fun onAvailable(network: Network) { networks += network; publish() }
-            override fun onLost(network: Network) { networks -= network; capabilitiesByNetwork.remove(network); publish() }
+            override fun onLost(network: Network) { networks -= network; capabilitiesByNetwork.remove(network); linksByNetwork.remove(network); publish() }
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
                 capabilitiesByNetwork[network] = capabilities
                 publish()
             }
-            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) = publish()
+            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) { linksByNetwork[network] = properties; publish() }
         }
         val request = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -64,6 +62,9 @@ internal class LocalNetworkMonitor(private val context: Context,
         val active = java.util.concurrent.atomic.AtomicBoolean(true)
         fun refreshAccess() {
             if (!active.get()) return
+            val next = includeLocation()
+            if (next == includesLocation) return
+            includesLocation = next
             capabilitiesByNetwork.clear()
             publish()
             connectivity.unregisterNetworkCallback(callback)
@@ -73,11 +74,11 @@ internal class LocalNetworkMonitor(private val context: Context,
         val location = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) = refreshAccess()
         }
-        context.registerReceiver(location, IntentFilter(LocationManager.MODE_CHANGED_ACTION), Context.RECEIVER_NOT_EXPORTED)
+        if (trackSsid) context.registerReceiver(location, IntentFilter(LocationManager.MODE_CHANGED_ACTION), Context.RECEIVER_NOT_EXPORTED)
         trySend(null)
         awaitClose {
             active.set(false)
-            context.unregisterReceiver(location)
+            if (trackSsid) context.unregisterReceiver(location)
             connectivity.unregisterNetworkCallback(callback)
             onSsid(null)
         }
@@ -92,3 +93,6 @@ internal fun systemDnsSnapshot(preferred: Network?, properties: Map<Network, Lin
     val selected = preferred?.let(properties::get)?.interfaceName?.takeIf { it in interfaces }
     return SystemDnsSnapshot(selected, interfaces)
 }
+
+internal fun <T> orderLocalNetworks(networks: Set<T>, preferred: T?, wifi: (T) -> Boolean): List<T> =
+    networks.sortedBy { network -> when { network == preferred -> 0; wifi(network) -> 1; else -> 2 } }

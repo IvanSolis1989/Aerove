@@ -59,7 +59,7 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" />
             </intent-filter>
         </activity>
-        <activity android:name="dev.aerove.lite.platform.QuickActionActivity"
+        <activity android:name="dev.aerove.lite.platform.QuickActionActivity" android:taskAffinity=""
             android:exported="true" android:excludeFromRecents="true"
             android:theme="@style/LitePlatformTransparentTheme">
             <intent-filter>
