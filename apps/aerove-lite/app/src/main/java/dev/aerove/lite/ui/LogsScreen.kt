@@ -155,7 +155,8 @@ internal class HistoryDocumentResults : ViewModel() {
 @Composable
 private fun HistoryLogDocumentHost(feature: ObservabilityFeature) {
     val documents = remember(feature) { feature.state.map { it.document }.distinctUntilChanged() }
-    val document by androidx.compose.runtime.key(feature) { documents.collectAsState(initial = feature.state.value.document) }
+    val initialDocument = remember(feature) { feature.state.value.document }
+    val document by androidx.compose.runtime.key(feature) { documents.collectAsState(initial = initialDocument) }
     val active = LocalLitePageActive.current
     val currentActive by rememberUpdatedState(active)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
