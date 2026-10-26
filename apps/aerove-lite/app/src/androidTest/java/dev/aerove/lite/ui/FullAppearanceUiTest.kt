@@ -64,17 +64,64 @@ class FullAppearanceUiTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private fun text(id: Int) = context.getString(id)
 
-    private fun openTheme() {
-        val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
-        compose.onNode(tab and hasText(text(R.string.lite_tab_tools))).performClick()
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(R.string.lite_theme)) and hasClickAction())
-        compose.onNode(hasText(text(R.string.lite_theme)) and hasClickAction()).performClick()
+    private fun appearanceReceipts(name: String, stackAtFailure: Boolean = false, body: ((String, String) -> Unit) -> Unit) {
+        val sequence = java.util.concurrent.atomic.AtomicInteger()
+        val autoAdvance = compose.mainClock.autoAdvance
+        fun step(label: String, details: String) {
+            val ordinal = sequence.getAndIncrement()
+            if (ordinal >= 128) return
+            val now = System.nanoTime()
+            try {
+                val ui = Thread.currentThread() === android.os.Looper.getMainLooper().thread
+                val receipt = JSONObject().put("suite", "FullAppearanceUiTest").put("method", name)
+                    .put("ordinal", ordinal).put("step", label).put("nanoTime", now)
+                    .put("thread", Thread.currentThread().name).put("autoAdvance", autoAdvance)
+                    .put("clockMillis", if (ui) JSONObject.NULL else compose.mainClock.currentTime)
+                    .put("details", details.take(2600)).put("deadlineObservation", false)
+                android.util.Log.i("LiteUiStep", receipt.toString())
+            } catch (failure: Throwable) {
+                rethrowMatrixCancellation(failure)
+                System.err.println("LiteUiStep receipt error: ${failure.javaClass.name}")
+            }
+        }
+        step("method.body.enter", "runner deadline anchor unavailable; no scheduled sample")
+        try {
+            body(::step)
+            step("method.body.return", "original assertions returned")
+        } catch (failure: Throwable) {
+            rethrowMatrixCancellation(failure)
+            step("caught.failure", "type=${failure.javaClass.name}; original throwable rethrown")
+            if (stackAtFailure) try {
+                step("main.stack.at.catch", android.os.Looper.getMainLooper().thread.stackTrace.take(16).joinToString("\n"))
+            } catch (traceFailure: Throwable) {
+                rethrowMatrixCancellation(traceFailure, failure)
+                step("main.stack.unavailable", "type=${traceFailure.javaClass.name}")
+            }
+            throw failure
+        }
     }
 
-    private fun editFirstColor() {
+    private fun openTheme(step: ((String, String) -> Unit)? = null) {
+        val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
+        step?.invoke("tools.tab.click.before", "role=Tab")
+        compose.onNode(tab and hasText(text(R.string.lite_tab_tools))).performClick()
+        step?.invoke("tools.tab.click.after", "role=Tab")
+        step?.invoke("theme.row.scroll.before", "selector=theme+click")
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(R.string.lite_theme)) and hasClickAction())
+        step?.invoke("theme.row.scroll.after", "selector=theme+click")
+        step?.invoke("theme.row.click.before", "selector=theme+click")
+        compose.onNode(hasText(text(R.string.lite_theme)) and hasClickAction()).performClick()
+        step?.invoke("theme.row.click.after", "selector=theme+click")
+    }
+
+    private fun editFirstColor(step: ((String, String) -> Unit)? = null) {
         val description = context.getString(R.string.lite_aurora_edit_color, 1)
+        step?.invoke("color.first.scroll.before", "index=0")
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription(description))
+        step?.invoke("color.first.scroll.after", "index=0")
+        step?.invoke("color.first.click.before", "index=0")
         compose.onNodeWithContentDescription(description).performClick()
+        step?.invoke("color.first.click.after", "index=0")
     }
 
     @Test
@@ -106,40 +153,73 @@ class FullAppearanceUiTest {
 
     @Test
     fun paletteKeepsTheFullOneToThreeColorEditingBounds() {
-        val state = mutableStateOf(LiteState())
-        val actions = UiTestActions { state.value = state.value.copy(settings = it) }
-        compose.replaceAppContent { CompositionLocalProvider(LocalLiteMotionOverride provides true) { LiteApp(state.value, actions) } }
-        openTheme()
-        repeat(2) {
-            editFirstColor()
-            compose.onNodeWithText(text(R.string.lite_delete)).performClick()
+        appearanceReceipts("paletteKeepsTheFullOneToThreeColorEditingBounds", stackAtFailure = true) { step ->
+            val state = mutableStateOf(LiteState())
+            val actions = UiTestActions { state.value = state.value.copy(settings = it) }
+            step("content.replace.before", "motionOverride=true; paletteSize=${state.value.settings.auroraColors.size}")
+            compose.replaceAppContent { CompositionLocalProvider(LocalLiteMotionOverride provides true) { LiteApp(state.value, actions) } }
+            step("content.replace.after", "motionOverride=true")
+            openTheme(step)
+            repeat(2) {
+                step("delete.iteration.before", "index=$it; paletteSize=${state.value.settings.auroraColors.size}")
+                editFirstColor(step)
+                step("delete.click.before", "index=$it")
+                compose.onNodeWithText(text(R.string.lite_delete)).performClick()
+                step("delete.click.after", "index=$it; paletteSize=${state.value.settings.auroraColors.size}")
+            }
+            step("single.color.assert.before", "paletteSize=${state.value.settings.auroraColors.size}")
+            compose.runOnUiThread { assertEquals(1, state.value.settings.auroraColors.size) }
+            step("single.color.assert.after", "paletteSize=1 asserted on UI thread")
+            editFirstColor(step)
+            step("delete.absent.assert.before", "paletteSize=${state.value.settings.auroraColors.size}")
+            compose.onNodeWithText(text(R.string.lite_delete)).assertDoesNotExist()
+            step("delete.absent.assert.after", "single-color Delete absent")
+            step("editor.cancel.before", "single-color editor")
+            compose.onNodeWithText(text(R.string.lite_cancel)).performClick()
+            step("editor.cancel.after", "single-color editor")
+            repeat(2) {
+                step("add.click.before", "index=$it; paletteSize=${state.value.settings.auroraColors.size}")
+                compose.onNodeWithContentDescription(text(R.string.lite_add_color)).performClick()
+                step("add.click.after", "index=$it")
+                step("add.confirm.before", "index=$it")
+                compose.onNodeWithText(text(R.string.lite_confirm)).performClick()
+                step("add.confirm.after", "index=$it; paletteSize=${state.value.settings.auroraColors.size}")
+            }
+            step("three.colors.assert.before", "paletteSize=${state.value.settings.auroraColors.size}")
+            compose.runOnUiThread { assertEquals(3, state.value.settings.auroraColors.size) }
+            step("three.colors.assert.after", "paletteSize=3 asserted on UI thread")
+            step("add.absent.assert.before", "paletteSize=${state.value.settings.auroraColors.size}")
+            compose.onNodeWithContentDescription(text(R.string.lite_add_color)).assertDoesNotExist()
+            step("add.absent.assert.after", "three-color Add absent")
         }
-        compose.runOnUiThread { assertEquals(1, state.value.settings.auroraColors.size) }
-        editFirstColor()
-        compose.onNodeWithText(text(R.string.lite_delete)).assertDoesNotExist()
-        compose.onNodeWithText(text(R.string.lite_cancel)).performClick()
-        repeat(2) {
-            compose.onNodeWithContentDescription(text(R.string.lite_add_color)).performClick()
-            compose.onNodeWithText(text(R.string.lite_confirm)).performClick()
-        }
-        compose.runOnUiThread { assertEquals(3, state.value.settings.auroraColors.size) }
-        compose.onNodeWithContentDescription(text(R.string.lite_add_color)).assertDoesNotExist()
     }
 
     @Test
     fun themePreviewStaysStillWhileTheWallpaperMoves() {
-        val state = mutableStateOf(LiteState(settings = LiteSettings(auroraRotationDay = 99991231)))
-        compose.replaceAppContent { CompositionLocalProvider(LocalLiteMotionOverride provides false) { LiteApp(state.value, UiTestActions {}) } }
-        openTheme()
-        val preview = hasContentDescription(text(R.string.lite_preview))
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(preview)
-        fun centre(): List<Int> {
-            val map = compose.onNode(preview).captureToImage().toPixelMap()
-            return (map.height / 5 until map.height * 4 / 5).flatMap { y -> (map.width / 5 until map.width * 4 / 5).map { x -> map[x, y].toArgb() } }
+        appearanceReceipts("themePreviewStaysStillWhileTheWallpaperMoves") { step ->
+            val state = mutableStateOf(LiteState(settings = LiteSettings(auroraRotationDay = 99991231)))
+            step("content.replace.before", "motionOverride=false; seed=${state.value.settings.auroraSeed}")
+            compose.replaceAppContent { CompositionLocalProvider(LocalLiteMotionOverride provides false) { LiteApp(state.value, UiTestActions {}) } }
+            step("content.replace.after", "motionOverride=false")
+            openTheme(step)
+            val preview = hasContentDescription(text(R.string.lite_preview))
+            step("preview.scroll.before", "selector=preview content description")
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(preview)
+            step("preview.scroll.after", "selector=preview content description")
+            var captureOrdinal = 0
+            fun centre(): List<Int> {
+                step("preview.capture.before", "ordinal=${++captureOrdinal}; original captureToImage")
+                val map = compose.onNode(preview).captureToImage().toPixelMap()
+                step("preview.capture.after", "ordinal=$captureOrdinal; width=${map.width}; height=${map.height}")
+                return (map.height / 5 until map.height * 4 / 5).flatMap { y -> (map.width / 5 until map.width * 4 / 5).map { x -> map[x, y].toArgb() } }
+            }
+            val before = centre()
+            step("preview.clock.advance.before", "deltaMillis=5000")
+            compose.mainClock.advanceTimeBy(5_000)
+            step("preview.clock.advance.after", "deltaMillis=5000")
+            assertTrue("The preview must stay as still as Standard's SeededAuroraWallpaper(motion: false)", before == centre())
+            step("preview.static.assert.after", "original equality passed")
         }
-        val before = centre()
-        compose.mainClock.advanceTimeBy(5_000)
-        assertTrue("The preview must stay as still as Standard's SeededAuroraWallpaper(motion: false)", before == centre())
     }
 
     @Test
@@ -181,34 +261,50 @@ class FullAppearanceUiTest {
 
     @Test
     fun customPaletteAndSeedReachTheActualHardwareWallpaper() {
-        val settings = LiteSettings(material = MaterialTier.Clear, colorMode = ColorMode.Dark)
-        val state = mutableStateOf(LiteState(settings = settings))
-        val probe = RenderProbe()
-        compose.replaceAppContent {
-            val view = LocalView.current
-            val density = LocalDensity.current
-            SideEffect { probe.view = view; probe.density = density.density; probe.fontScale = density.fontScale }
-            CompositionLocalProvider(LocalLiteMotionOverride provides true) {
-                Box(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["app"] = it.boundsInWindow() }) { LiteApp(state.value, UiTestActions {}) }
-            }
-        }
-        HardwareCapture(compose, probe, "full-aurora-settings").use { evidence ->
-            evidence.capture("default", configuration = JSONObject().put("fixture", "production LiteApp, stopped core, reduced motion")).use { before ->
-                compose.runOnUiThread {
-                    state.value = state.value.copy(settings = settings.copy(auroraColors = listOf(0xfff47231L, 0xfff0bb50L), auroraSeed = 832838199))
+        appearanceReceipts("customPaletteAndSeedReachTheActualHardwareWallpaper") { step ->
+            val settings = LiteSettings(material = MaterialTier.Clear, colorMode = ColorMode.Dark)
+            val state = mutableStateOf(LiteState(settings = settings))
+            val probe = RenderProbe()
+            step("content.replace.before", "motionOverride=true; seed=${settings.auroraSeed}; paletteSize=${settings.auroraColors.size}")
+            compose.replaceAppContent {
+                val view = LocalView.current
+                val density = LocalDensity.current
+                SideEffect { probe.view = view; probe.density = density.density; probe.fontScale = density.fontScale }
+                CompositionLocalProvider(LocalLiteMotionOverride provides true) {
+                    Box(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["app"] = it.boundsInWindow() }) { LiteApp(state.value, UiTestActions {}) }
                 }
-                compose.waitUntil(10000) { compose.onAllNodesWithTag("aurora-wallpaper-building").fetchSemanticsNodes().isEmpty() }
-                compose.waitForIdle()
-                evidence.capture("custom", configuration = JSONObject().put("fixture", "two custom colors, seed 832838199")).use { after ->
-                    assertEquals(before.bitmap.width, after.bitmap.width)
-                    assertEquals(before.bitmap.height, after.bitmap.height)
-                    val changes = (1..8).map { sample ->
-                        val x = 2
-                        val y = before.bitmap.height * sample / 10
-                        val a = before.bitmap.getPixel(x, y); val b = after.bitmap.getPixel(x, y)
-                        (0..2).maxOf { shift -> abs((a ushr (shift * 8) and 255) - (b ushr (shift * 8) and 255)) }
+            }
+            step("content.replace.after", "original production LiteApp fixture")
+            HardwareCapture(compose, probe, "full-aurora-settings").use { evidence ->
+                step("default.capture.before", "label=default; existing FrameCommit/PixelCopy receipt")
+                evidence.capture("default", configuration = JSONObject().put("fixture", "production LiteApp, stopped core, reduced motion")).use { before ->
+                    step("default.capture.after", "width=${before.bitmap.width}; height=${before.bitmap.height}")
+                    step("custom.settings.before", "seed=832838199; paletteSize=2")
+                    compose.runOnUiThread {
+                        state.value = state.value.copy(settings = settings.copy(auroraColors = listOf(0xfff47231L, 0xfff0bb50L), auroraSeed = 832838199))
                     }
-                    assertTrue("Custom settings must change real uncovered wallpaper pixels", changes.count { it > 8 } >= 4)
+                    step("custom.settings.after", "seed=${state.value.settings.auroraSeed}; paletteSize=${state.value.settings.auroraColors.size}")
+                    step("wallpaper.build.wait.before", "original timeoutMillis=10000")
+                    compose.waitUntil(10000) { compose.onAllNodesWithTag("aurora-wallpaper-building").fetchSemanticsNodes().isEmpty() }
+                    step("wallpaper.build.wait.after", "original building nodes absent")
+                    step("custom.idle.before", "original waitForIdle")
+                    compose.waitForIdle()
+                    step("custom.idle.after", "original waitForIdle returned")
+                    step("custom.capture.before", "label=custom; existing FrameCommit/PixelCopy receipt")
+                    evidence.capture("custom", configuration = JSONObject().put("fixture", "two custom colors, seed 832838199")).use { after ->
+                        step("custom.capture.after", "width=${after.bitmap.width}; height=${after.bitmap.height}")
+                        assertEquals(before.bitmap.width, after.bitmap.width)
+                        assertEquals(before.bitmap.height, after.bitmap.height)
+                        val changes = (1..8).map { sample ->
+                            val x = 2
+                            val y = before.bitmap.height * sample / 10
+                            val a = before.bitmap.getPixel(x, y); val b = after.bitmap.getPixel(x, y)
+                            (0..2).maxOf { shift -> abs((a ushr (shift * 8) and 255) - (b ushr (shift * 8) and 255)) }
+                        }
+                        step("wallpaper.pixels.assert.before", "original channelChanges=$changes")
+                        assertTrue("Custom settings must change real uncovered wallpaper pixels", changes.count { it > 8 } >= 4)
+                        step("wallpaper.pixels.assert.after", "original threshold passed")
+                    }
                 }
             }
         }
