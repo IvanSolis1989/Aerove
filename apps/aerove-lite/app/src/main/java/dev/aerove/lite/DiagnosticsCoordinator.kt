@@ -34,6 +34,8 @@ internal class DiagnosticsCoordinator<K : Any>(
     private var key: K? = null
     private var retainedKey: K? = null
     private var backgrounded = false
+    private var readActive = true
+    val explicitPending: Boolean get() = explicit.isNotEmpty()
     private val notBefore = mutableMapOf<String, Long>()
     private val lastStarted = mutableMapOf<String, Long>()
     private val bypass = mutableSetOf<String>()
@@ -44,6 +46,13 @@ internal class DiagnosticsCoordinator<K : Any>(
         retainedKey = null; synced = false; epoch = null; version = null
         answers.clear(); failed.clear(); forced.clear(); explicit.clear()
         stopMemory(); mutableState.value = DiagnosticsState(); publishServices()
+    }
+    fun readDemand(active: Boolean) {
+        if (readActive == active) return
+        readActive = active
+        if (!active) { tasks.keys.filterNot { it in explicit }.toList().forEach(::cancelService); stopMemory() }
+        else { startMemory(); launchDue() }
+        publishServices()
     }
     fun foreground(active: Boolean) {
         if (!active) { backgrounded = true; tasks.keys.toList().forEach(::cancelService) }
@@ -78,6 +87,7 @@ internal class DiagnosticsCoordinator<K : Any>(
     private var sequence = 0L
     private var memoryWanted = false
     private var memoryTask: Job? = null
+    private val retiringMemory = mutableListOf<Job>()
     private var memoryGeneration = 0L
 
     fun settings(value: LiteSettings) {
@@ -117,7 +127,8 @@ internal class DiagnosticsCoordinator<K : Any>(
     fun needsRouteSync(coreEpoch: ULong, routeVersion: ULong): Boolean = !synced ||
         epoch == null || coreEpoch != epoch!! || (coreEpoch == epoch && routeVersion != (version ?: 0uL))
 
-    fun route(coreEpoch: ULong, routeVersion: ULong, selections: Map<String, String>, held: Map<String, Boolean> = emptyMap()) {
+    fun route(coreEpoch: ULong, routeVersion: ULong, selections: Map<String, String>, held: Map<String, Boolean> = emptyMap(),
+        verifiedServices: Set<String> = emptySet()) {
         // Independent HTTP completions must not move the host back behind a newer snapshot.
         val previousEpoch = epoch
         if (previousEpoch != null && (coreEpoch < previousEpoch ||
@@ -131,11 +142,12 @@ internal class DiagnosticsCoordinator<K : Any>(
         routeSignals.value++
         if (changed) {
             // Pending calls carry the old launch route, even when a changed group was unrelated.
-            forced += tasks.keys.filter { it in explicit }
-            tasks.keys.toList().forEach(::cancelService)
+            forced += tasks.keys.filter { it in explicit && it !in verifiedServices }
+            tasks.keys.filterNot { it in verifiedServices }.toList().forEach(::cancelService)
             answers.keys.toList().forEach { id ->
                 val answer = answers.getValue(id)
-                if (!reset && held[id] == true) answers[id] = answer.copy(coreEpoch = coreEpoch, routeVersion = routeVersion)
+                if (id in verifiedServices) answers.remove(id)
+                else if (!reset && held[id] == true) answers[id] = answer.copy(coreEpoch = coreEpoch, routeVersion = routeVersion)
                 else if (reset || held[id] == false || !fresh(answer)) { answers.remove(id); failed.remove(id) }
             }
             settings.enabledServiceIds().forEach { id ->
@@ -159,11 +171,10 @@ internal class DiagnosticsCoordinator<K : Any>(
     fun watch(ids: Set<String>) {
         val previous = watched
         watched = ids.filterTo(linkedSetOf()) { it in serviceTargetIds }
-        (previous - watched).forEach(::cancelService)
+        (previous - watched).filterNot { it in explicit }.forEach(::cancelService)
         if (watched.isEmpty()) {
-            tasks.keys.toList().forEach(::cancelService)
-            forced.clear()
-            explicit.clear()
+            tasks.keys.filterNot { it in explicit }.toList().forEach(::cancelService)
+            forced.retainAll(explicit)
         }
         publishServices()
         launchDue()
@@ -172,6 +183,7 @@ internal class DiagnosticsCoordinator<K : Any>(
     fun refresh(ids: Set<String>) {
         ids.filter { it in settings.enabledServiceIds() }.forEach { id ->
             if (id in waiting) cancelService(id)
+            explicit += id
             if (id !in tasks) {
                 failed.remove(id)
                 forced += id
@@ -193,7 +205,7 @@ internal class DiagnosticsCoordinator<K : Any>(
         val current = key?.takeIf(isCurrent) ?: return
         if (!synced) return
         settings.enabledServiceIds().filter { it !in tasks && (it in forced ||
-            (it in watched && it !in failed && it !in answers)) }.forEach {
+            (readActive && it in watched && it !in failed && it !in answers)) }.forEach {
                 forced -= it
                 startService(current, it)
             }
@@ -276,11 +288,14 @@ internal class DiagnosticsCoordinator<K : Any>(
 
     private fun startMemory() {
         val current = key?.takeIf(isCurrent) ?: return
-        if (!memoryWanted || memoryTask != null) return
+        if (!readActive || !memoryWanted || memoryTask != null) return
         val session = generation
         val request = ++memoryGeneration
+        retiringMemory.removeAll { it.isCompleted }
+        val predecessors = retiringMemory.toList()
         memoryTask = scope.launch {
-            while (isActive && memoryWanted && key == current && session == generation && isCurrent(current)) {
+            predecessors.joinAll()
+            while (isActive && readActive && memoryWanted && key == current && session == generation && isCurrent(current)) {
                 mutableState.update { it.copy(memoryLoading = true) }
                 try {
                     val sample = readMemory(current)
@@ -304,7 +319,7 @@ internal class DiagnosticsCoordinator<K : Any>(
 
     private fun stopMemory() {
         memoryGeneration++
-        memoryTask?.cancel()
+        memoryTask?.let { it.cancel(); retiringMemory += it }
         memoryTask = null
         mutableState.update { it.copy(memoryLoading = false) }
     }

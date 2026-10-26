@@ -8,6 +8,10 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit,
     initialSettings: LiteSettings) : LiteActions {
     constructor(onSettings: (LiteSettings) -> Unit) : this(onSettings, LiteSettings())
     val events = mutableListOf<String>()
+    val windowFocus = mutableListOf<Boolean>()
+    val telemetryInteraction = mutableListOf<Boolean>()
+    override fun setUiWindowFocused(focused: Boolean) { windowFocus += focused }
+    override fun setTelemetryInteractionActive(active: Boolean) { telemetryInteraction += active }
     val dashboardTelemetry = mutableListOf<Boolean>()
     val settings = mutableListOf<LiteSettings>()
     val connectionTelemetry = mutableListOf<Boolean>()

@@ -55,6 +55,9 @@ internal class OutboundProbe<K : Any>(
     private val signals = MutableStateFlow(0L)
     private var key: K? = null
     private var active = false
+    private var readActive = true
+    private var manualPending = false
+    val explicitPending: Boolean get() = manualPending
     private var synced = false
     private var routePending = true
     private var picks = emptyMap<String, String>()
@@ -79,6 +82,7 @@ internal class OutboundProbe<K : Any>(
     fun bind(key: K?, initialPicks: Map<String, String>? = null) {
         if (this.key == key) return
         this.key = key
+        manualPending = false
         cancelTask()
         cached = null
         coreEpoch = null
@@ -96,11 +100,21 @@ internal class OutboundProbe<K : Any>(
         changed()
     }
 
+    fun readDemand(active: Boolean) {
+        if (readActive == active) return
+        readActive = active
+        if (!active && !manualPending) {
+            cancelTask()
+            mutableState.value = mutableState.value.copy(loading = false)
+        }
+        changed()
+    }
+
     fun setActive(active: Boolean) {
         if (this.active == active) return
         this.active = active
         synced = false
-        if (active) failed = false else cancelTask()
+        if (active) failed = false else { manualPending = false; cancelTask() }
         changed()
     }
 
@@ -142,6 +156,12 @@ internal class OutboundProbe<K : Any>(
         changed()
     }
 
+    // Only the completing HTTP operation may use this after checking its actual hits.
+    fun confirmRoute(picks: Map<String, String>, coreEpoch: ULong, routeVersion: ULong) {
+        this.picks = picks.toMap(); this.coreEpoch = coreEpoch; this.routeVersion = routeVersion
+        routePending = false; synced = true; signals.value++
+    }
+
     fun beginSelection(): Long = (++selectionId).also { selections += it; changed() }
 
     fun endSelection(id: Long, group: String, proxy: String, succeeded: Boolean) {
@@ -157,6 +177,7 @@ internal class OutboundProbe<K : Any>(
     }
 
     fun refresh() {
+        manualPending = true
         if (task != null && requestStarted) return
         if (task != null) cancelTask()
         forced = true
@@ -179,7 +200,7 @@ internal class OutboundProbe<K : Any>(
             mutableState.value = OutboundProbeState(mutableState.value.identity)
         }
         if (cached != null && task == null && !forced) mutableState.value = OutboundProbeState(cached?.identity)
-        if (active && task == null && (forced || (cached == null && !failed))) start(current)
+        if (active && (readActive || manualPending) && task == null && (forced || (cached == null && !failed))) start(current)
     }
 
     private fun fresh(answer: OutboundAnswer): Boolean = if (answer.hits.isNotEmpty())
@@ -218,6 +239,7 @@ internal class OutboundProbe<K : Any>(
                     failed = false
                     failedChain = null
                     staleUnder = null
+                    manualPending = false
                     mutableState.value = OutboundProbeState(answer.identity)
                 } else {
                     cached = null
@@ -236,6 +258,7 @@ internal class OutboundProbe<K : Any>(
                     failedChain = cached?.chains ?: failedChain
                     cached = null
                     failed = true
+                    manualPending = false
                     mutableState.value = OutboundProbeState(mutableState.value.identity, error = failure.message ?: failure.javaClass.simpleName)
                 }
             } finally {
@@ -260,6 +283,7 @@ internal class OutboundProbe<K : Any>(
 
     override fun close() {
         key = null
+        manualPending = false
         cancelTask()
         scope.cancel()
     }

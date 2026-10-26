@@ -25,6 +25,7 @@ import dev.aerove.lite.data.ServiceTarget
 import dev.aerove.lite.telemetry.CoreTelemetry
 import dev.aerove.lite.telemetry.GroupRefresh
 import dev.aerove.lite.telemetry.OutboundProbe
+import dev.aerove.lite.telemetry.OutboundAnswer
 import dev.aerove.lite.telemetry.RouteSnapshotDemand
 import dev.aerove.lite.telemetry.withDashboardHistory
 import dev.aerove.lite.telemetry.TelemetrySession
@@ -107,6 +108,15 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     private var dashboardTrafficActive = false
     private var statusTrafficActive = false
     private val stateGate = Any()
+    private val uiReadSignals = dev.aerove.lite.telemetry.UiReadSignals()
+    private val readDemand get() = uiReadSignals.state.value
+    private var memoryTelemetryRequested = false
+    private var connectionTelemetryRequested = false
+    private var routeSyncPending = false
+    private val uiPublication = dev.aerove.lite.telemetry.UiTelemetryPublication(viewModelScope, { snapshot ->
+        publishState { it.copy(traffic = snapshot.traffic, trafficHistory = snapshot.history,
+            trafficHistoryRevision = snapshot.historyRevision, dashboardCounts = snapshot.counts) }
+    })
     private fun publishState(change: (LiteState) -> LiteState) = synchronized(stateGate) {
         val next = change(displayOwner.attach(mutableState.value))
         displayOwner.publish(next)
@@ -186,7 +196,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             { withContext(Dispatchers.Main.immediate) { invalidateOutboundConfiguration() } }, application::startIntentEpoch,
             { id -> application.overrideRepository.snapshot().profiles.firstOrNull { it.profileId == id }?.mode
                 ?: dev.aerove.lite.overrides.OverrideMode.Standard },
-            dev.aerove.lite.integration.ProfileDetailResources(application.profiles, resourceRepository, application.builderResourceLibrary, application.globalRulePayloads)).also { it.foreground(visible.value.active); it.telemetryActive(providerTelemetryRequested) }
+            dev.aerove.lite.integration.ProfileDetailResources(application.profiles, resourceRepository, application.builderResourceLibrary, application.globalRulePayloads)).also { it.foreground(visible.value.active); it.telemetryActive(providerTelemetryRequested && readDemand.active) }
     }
     override val profileDetails get() = profileDetailsOwner.value
 
@@ -449,6 +459,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             }
         }) }, {},
             IpQualityStore(File(application.filesDir, "ipquality/last-exit.json"))).also {
+            it.readDemand(readDemand.active)
             it.setForeground(visible.value.active)
             it.bind(state.value.selectedProfile, state.value.phase == VpnPhase.Running, outbound.state.value.identity?.address,
                 outbound.state.value.identity?.countryCode)
@@ -468,15 +479,13 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                     application.getString(R.string.error_api_unavailable)
                 }
             }).also {
-            it.lease(dev.aerove.lite.observability.HistoryKind.Requests)
-            it.setForeground(visible.value.active)
+            it.lease(dev.aerove.lite.observability.HistoryKind.Requests, visible = false)
+            it.setForeground(readDemand.active)
             it.bindSession(observationRuntime?.let { observationToken })
             val feature = it
             viewModelScope.launch {
-                feature.state.collect { history ->
-                    if (feature.state.value === history) publishState { current ->
-                        current.copy(dashboardCounts = current.dashboardCounts.withDashboardHistory(history))
-                    }
+                feature.counts.collect { counts ->
+                    if (feature.counts.value === counts) uiPublication.history(counts)
                 }
             }
         }
@@ -486,6 +495,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (observationRuntime === endpoint) return
         observationRuntime = endpoint
         observationToken++
+        uiPublication.reset()
         diagnostics.runtimeChanged()
         publishState { it.resetDashboardRuntime().copy(groups = emptyList(), connections = emptyList(), traffic = Traffic()) }
         if (observabilityOwner.isInitialized()) observabilityOwner.value.bindSession(endpoint?.let { observationToken })
@@ -501,7 +511,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         readServices = ::readDiagnosticServices,
         readMemory = { it.client.memorySnapshot() }, isCurrent = ::diagnosticsBindingCurrent,
         sameSession = { a, b -> a.endpoint === b.endpoint && a.configuration == b.configuration &&
-            a.proxied == b.proxied && a.suspended == b.suspended })
+            a.proxied == b.proxied && a.suspended == b.suspended }).also { it.readDemand(readDemand.active) }
     private var diagnosticsRouteJob: Job? = null
     private var diagnosticsRouteRequest = 0L
     private var diagnosticsBinding: DiagnosticsBinding? = null
@@ -567,18 +577,24 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     private data class AcceptedRoute(val client: CoreApiClient, val epoch: ULong, val version: ULong, val picks: Map<String, String>)
     private var acceptedRoute: AcceptedRoute? = null
     private val outbound = OutboundProbe<OutboundKey>(viewModelScope, { key ->
-        CoreApiClient(ControlEndpoint(key.endpoint.port, key.endpoint.secret)).use { it.outboundProbe(forceDirect = !key.proxied) }
-    }, { it == outboundKey() })
+        val answer = CoreApiClient(ControlEndpoint(key.endpoint.port, key.endpoint.secret)).use { it.outboundProbe(forceDirect = !key.proxied) }
+        if (readDemand.active) answer else confirmExplicitOutbound(key, answer)
+    }, { it == outboundKey() }).also { it.readDemand(readDemand.active) }
     var filePicker: (() -> Unit)? = null
 
     init {
         viewModelScope.launch {
             dashboardConnections.state.collect { count ->
-                publishState { it.copy(dashboardCounts = it.dashboardCounts.copy(connectionCount = count)) }
+                if (count != null || (readDemand.active && dashboardTrafficActive) || application.vpn.value.endpoint == null) {
+                    uiPublication.connections(count)
+                }
             }
         }
         viewModelScope.launch {
-            diagnostics.state.collect { snapshot -> publishState { it.copy(diagnostics = snapshot) } }
+            diagnostics.state.collect { snapshot ->
+                publishState { it.copy(diagnostics = snapshot) }
+                reconcileRouteDemand()
+            }
         }
         viewModelScope.launch {
             profileMaintenance.runningProfileIds.collect { ids -> publishState { it.copy(updatingProfileIds = ids) } }
@@ -588,6 +604,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                 publishState { it.copy(outboundIdentity = snapshot.identity,
                     outboundLoading = snapshot.loading, outboundError = snapshot.error) }
                 bindIpQuality(snapshot.identity?.address)
+                reconcileRouteDemand()
             }
         }
         perform("load") {
@@ -623,16 +640,16 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             }
         }
         viewModelScope.launch {
-            visible.collectLatest { foreground ->
+            uiReadSignals.state.collectLatest { foreground ->
                 if (foreground.active) LocalNetworkMonitor(application).addresses().collect { address ->
                     publishState { it.copy(localAddress = address) }
                 }
             }
         }
         viewModelScope.launch {
-            combine(visible, application.vpn) { foreground, snapshot ->
-                snapshot.uptimeStartNanos(foreground.active)
-            }.distinctUntilChanged().collectLatest { started ->
+            combine(uiReadSignals.state, application.vpn) { foreground, snapshot ->
+                snapshot.uptimeStartNanos(foreground.active) to foreground.generation
+            }.distinctUntilChanged().collectLatest { (started, _) ->
                 if (started == 0L) {
                     if (application.vpn.value.uptimeStartNanos(true) == 0L) publishState { it.copy(uptimeMillis = 0) }
                 } else while (true) {
@@ -696,21 +713,27 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                                     }
                                 })
                                 currentGroupRefresh = groups
+                                groups.readDemand(readDemand.active)
                                 groups.initial()
-                                session.observe("logs", mutableState.map { it.settings.openLogs }, {
-                                    client.logs().flowOn(Dispatchers.Default)
-                                }, ::report) { line ->
+                                session.observeReadOnly("logs", combine(uiReadSignals.state, mutableState.map { it.settings.openLogs }) { lease, enabled ->
+                                    lease.copy(active = lease.active && enabled)
+                                }, { client.logs().flowOn(Dispatchers.Default) },
+                                    { it.generation == readDemand.generation && readDemand.active && state.value.settings.openLogs }, ::report) { line ->
                                     if (state.value.settings.openLogs) {
                                         observability.acceptLog(historyToken, line)
                                     }
                                 }
-                                session.launch("observation-demand") { observability.observationsEnabled.collect { client.setTelemetryObservations(it) } }
-                                session.observe("telemetry", flowOf(true), client::telemetry, ::report) { event ->
+                                session.launch("observation-demand") {
+                                    combine(uiReadSignals.state, observability.observationsEnabled) { lease, enabled -> lease.active && enabled }
+                                        .distinctUntilChanged().collect { client.setTelemetryObservations(it) }
+                                }
+                                session.observeReadOnly("telemetry", uiReadSignals.state, client::telemetry,
+                                    { it == readDemand && it.active }, ::report) { event ->
                                     when (event) {
                                         is CoreTelemetry.ProvidersLoaded -> profileDetails.providersLoaded(endpoint,event)
                                         is CoreTelemetry.Observations -> observability.acceptWindow(historyToken, event.value)
-                                        is CoreTelemetry.TrafficSample -> if (dashboardTrafficActive || statusTrafficActive || connectionTelemetryActive.value) publishState {
-                                            if (dashboardTrafficActive) it.acceptDashboardTraffic(event.value) else it.copy(traffic = event.value)
+                                        is CoreTelemetry.TrafficSample -> if (readDemand.active && (dashboardTrafficActive || statusTrafficActive || connectionTelemetryRequested)) {
+                                            uiPublication.traffic(event.value, dashboardTrafficActive)
                                         }
                                         is CoreTelemetry.GroupsChanged -> if (groups.changed(event.revision, event.routeVersion)) {
                                             diagnosticsRouteDemand.invalidate()
@@ -721,7 +744,10 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                                         }
                                     }
                                 }
-                                session.observe("connections", connectionTelemetryActive, client::connectionUpdates, ::report) { connections ->
+                                session.observeReadOnly("connections", combine(uiReadSignals.state, connectionTelemetryActive) { lease, enabled ->
+                                    lease.copy(active = lease.active && enabled)
+                                }, client::connectionUpdates,
+                                    { it.generation == readDemand.generation && readDemand.active && connectionTelemetryRequested }, ::report) { connections ->
                                     if (connectionTelemetryActive.value) {
                                         publishState { it.copy(connections = connections) }
                                     }
@@ -746,11 +772,13 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     fun setVisible(value: Boolean) {
         visible.update { it.changed(value) }
+        uiReadSignals.foreground(value)
+        updateReadDemand()
         if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.foreground(value)
         if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.foreground(value)
         outbound.setActive(value)
         diagnostics.foreground(value)
-        if (observabilityOwner.isInitialized()) observabilityOwner.value.setForeground(value)
+        if (observabilityOwner.isInitialized()) observabilityOwner.value.setForeground(readDemand.active)
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.setForeground(value)
         profileMaintenance.setForeground(value)
         autoCheckUpdates()
@@ -781,6 +809,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     }
 
     override fun onCleared() {
+        uiPublication.close()
         backup.close()
         if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.close()
         if (resourcesOwner.isInitialized()) resourcesOwner.value.close()
@@ -817,15 +846,51 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun setProviderTelemetryActive(active: Boolean) {
         providerTelemetryRequested=active
-        if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.telemetryActive(active)
+        if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.telemetryActive(active && readDemand.active)
     }
-    override fun setConnectionTelemetryActive(active: Boolean) { connectionTelemetryActive.value = active }
+    override fun setUiWindowFocused(focused: Boolean) {
+        val previous = readDemand
+        uiReadSignals.focused(focused)
+        if (previous != readDemand) updateReadDemand()
+    }
+    override fun setTelemetryInteractionActive(active: Boolean) { uiPublication.interacting(active) }
+    private fun updateReadDemand() {
+        val active = readDemand.active
+        if (!active) { uiPublication.active(false); outbound.awaitingGroups(); diagnostics.awaitingRoute(); routeSyncPending = true }
+        if (observabilityOwner.isInitialized()) {
+            observabilityOwner.value.setForeground(active)
+            uiPublication.history(observabilityOwner.value.counts.value)
+        }
+        currentGroupRefresh?.readDemand(active)
+        outbound.readDemand(active); diagnostics.readDemand(active)
+        if (ipQualityOwner.isInitialized()) ipQualityOwner.value.readDemand(active)
+        if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.telemetryActive(providerTelemetryRequested && active)
+        connectionTelemetryActive.value = connectionTelemetryRequested && active
+        val counts = dashboardTrafficActive && active
+        dashboardConnections.active(counts)
+        diagnostics.memory(memoryTelemetryRequested && active)
+        if (active) uiPublication.active(true)
+        reconcileRouteDemand()
+    }
+    private fun routeReadsAllowed() = readDemand.active || diagnostics.explicitPending || outbound.explicitPending
+    private fun reconcileRouteDemand() {
+        if (!routeReadsAllowed()) {
+            if (diagnosticsRouteJob?.isActive == true) routeSyncPending = true
+            diagnosticsRouteRequest++; diagnosticsRouteDemand.invalidate(); diagnosticsRouteJob?.cancel(); diagnosticsRouteJob = null
+        } else if (routeSyncPending && !readDemand.active) synchronizeDiagnosticsRoute()
+    }
+    override fun setConnectionTelemetryActive(active: Boolean) {
+        connectionTelemetryRequested = active; connectionTelemetryActive.value = active && readDemand.active
+    }
     override fun setDashboardTelemetryActive(active: Boolean) {
         dashboardTrafficActive = active
-        dashboardConnections.active(active)
+        val demand = active && readDemand.active
+        dashboardConnections.active(demand)
     }
     override fun setStatusTrafficActive(active: Boolean) { statusTrafficActive = active }
-    override fun setMemoryTelemetryActive(active: Boolean) { diagnostics.memory(active) }
+    override fun setMemoryTelemetryActive(active: Boolean) {
+        memoryTelemetryRequested = active; diagnostics.memory(active && readDemand.active)
+    }
     override fun setServiceTelemetryTargets(ids: Set<String>) { serviceTelemetryTargets = ids.toSet(); diagnostics.watch(serviceTelemetryTargets) }
     override fun refreshServiceChecks() {
         diagnostics.refresh(serviceTelemetryTargets)
@@ -1008,6 +1073,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun refreshOutbound() {
         outbound.refresh()
+        synchronizeDiagnosticsRoute()
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.retryIfFailed()
     }
 
@@ -1253,14 +1319,40 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             application.vpn.value.endpoint === binding.endpoint && binding.configuration == outboundConfiguration &&
             binding.proxied == (outboundKey()?.proxied == true) && binding.suspended == application.vpn.value.suspended
 
+    private suspend fun confirmExplicitOutbound(key: OutboundKey, answer: OutboundAnswer): OutboundAnswer {
+        val binding = diagnosticsBinding ?: throw CancellationException("Diagnostic binding changed")
+        if (key != outboundKey() || !diagnosticsBindingCurrent(binding)) throw CancellationException("Diagnostic binding changed")
+        return diagnosticsRouteRead.withLock {
+            val route = binding.client.routeSnapshot()
+            val services = diagnostics.routeHits()
+            val verdict = binding.client.checkRoutes(services.values.toList() + listOf(answer.hits))
+            if (key != outboundKey() || !diagnosticsBindingCurrent(binding)) throw CancellationException("Diagnostic binding changed")
+            if (verdict.coreEpoch != route.coreEpoch || verdict.routeVersion != route.routeVersion ||
+                answer.coreEpoch != verdict.coreEpoch || !verdict.held.last())
+                throw java.io.IOException("Outbound route changed during lookup")
+            acceptDiagnosticsRoute(binding, route.coreEpoch, route.routeVersion, route.picks,
+                services.keys.zip(verdict.held).toMap(), verifiedOutbound = true)
+            answer.copy(coreEpoch = verdict.coreEpoch, routeVersion = verdict.routeVersion)
+        }
+    }
+
     private suspend fun readDiagnosticServices(binding: DiagnosticsBinding, targets: List<ServiceTarget>): List<ServiceCheck> {
         val checks = binding.client.serviceChecks(targets)
         if (!diagnosticsBindingCurrent(binding)) throw CancellationException("Diagnostic binding changed")
         return diagnosticsRouteRead.withLock {
-            val verdict = binding.client.checkRoutes(checks.map { it.hits })
+            // A user operation can finish while UI telemetry is paused. Confirm it once against
+            // the current route without starting an observer or canceling this completing task.
+            val route = if (!readDemand.active) binding.client.routeSnapshot() else null
+            val previous = if (route != null) diagnostics.routeHits() else emptyMap()
+            val hits = checks.map { it.hits } + previous.values.toList() + if (route != null) listOf(outbound.routeHits()) else emptyList()
+            val verdict = binding.client.checkRoutes(hits)
             if (!diagnosticsBindingCurrent(binding)) throw CancellationException("Diagnostic binding changed")
-            if (checks.indices.any { !verdict.held[it] || checks[it].coreEpoch != verdict.coreEpoch })
+            if (checks.indices.any { !verdict.held[it] || checks[it].coreEpoch != verdict.coreEpoch } ||
+                (route != null && (route.coreEpoch != verdict.coreEpoch || route.routeVersion != verdict.routeVersion)))
                 throw java.io.IOException("Service route changed during check")
+            if (route != null) acceptDiagnosticsRoute(binding, route.coreEpoch, route.routeVersion, route.picks,
+                previous.keys.zip(verdict.held.drop(checks.size)).toMap(), verdict.held.last(),
+                verifiedServices = targets.mapTo(linkedSetOf()) { it.id })
             checks.map { it.copy(coreEpoch = verdict.coreEpoch, routeVersion = verdict.routeVersion) }
         }
     }
@@ -1276,17 +1368,21 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     }
 
     private fun acceptDiagnosticsRoute(binding: DiagnosticsBinding, epoch: ULong, version: ULong,
-        picks: Map<String, String>, held: Map<String, Boolean> = emptyMap(), outboundHeld: Boolean? = null) {
+        picks: Map<String, String>, held: Map<String, Boolean> = emptyMap(), outboundHeld: Boolean? = null,
+        verifiedOutbound: Boolean = false, verifiedServices: Set<String> = emptySet()) {
         if (diagnosticsBinding != binding || !diagnosticsBindingCurrent(binding)) return
         val previous = acceptedRoute?.takeIf { it.client === binding.client }
         if (previous != null && (epoch < previous.epoch || (epoch == previous.epoch && version < previous.version))) return
         acceptedRoute = AcceptedRoute(binding.client, epoch, version, picks.toMap())
-        diagnostics.route(epoch, version, picks, held)
-        outbound.synchronize(picks, epoch, version, outboundHeld)
+        diagnostics.route(epoch, version, picks, held, verifiedServices)
+        if (verifiedOutbound) outbound.confirmRoute(picks, epoch, version)
+        else outbound.synchronize(picks, epoch, version, outboundHeld)
         if (proxyPresentationOwner.isInitialized()) proxyPresentationOwner.value.routeEpoch(binding.client, epoch)
     }
 
     private fun synchronizeDiagnosticsRoute() {
+        if (!routeReadsAllowed()) { routeSyncPending = true; return }
+        routeSyncPending = false
         val binding = diagnosticsBinding ?: return
         if (!diagnosticsBindingCurrent(binding)) return
         val request = ++diagnosticsRouteRequest

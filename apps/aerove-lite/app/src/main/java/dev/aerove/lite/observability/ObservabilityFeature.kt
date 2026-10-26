@@ -20,6 +20,10 @@ data class ObservabilityState(val snapshot: HistorySnapshot = HistorySnapshot(),
     val clearingDns: Boolean = false, val notice: HistoryNotice? = null,
     val observationsAvailable: Boolean = false)
 
+data class HistoryCounts(val requestCount: Long? = null, val dnsCount: Long? = null,
+    val sessionRevision: Long = 0, val observationsAvailable: Boolean = false,
+    val boundaryRevision: Long = 0)
+
 class ObservabilityFeature(scope: CoroutineScope, private val documents: HistoryDocuments,
     private val clearDnsCache: suspend () -> Unit) : Closeable {
     private val owner = SupervisorJob(scope.coroutineContext[Job])
@@ -28,6 +32,9 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
     private val repository = HistoryRepository()
     private val mutableState = MutableStateFlow(ObservabilityState())
     val state = mutableState.asStateFlow()
+    private val mutableCounts = MutableStateFlow(HistoryCounts())
+    val counts = mutableCounts.asStateFlow()
+    private var countsBoundary = 0L
     private val enabled = MutableStateFlow(false)
     val observationsEnabled = enabled.asStateFlow()
     private val leases = mutableMapOf<Long, Pair<HistoryKind, Boolean>>()
@@ -49,6 +56,7 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
         cancelPublication(); binding = token; repository.bindSession(token); cancelExport()
         dnsEpoch++; dnsJob?.cancel(); dnsJob = null
         publish { it.copy(snapshot = repository.snapshot(visibleKinds()), clearingDns = false, observationsAvailable = false) }
+        publishCounts(available = false, immediate = true)
         updateDemand()
     }
 
@@ -71,7 +79,9 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
 
     fun acceptWindow(token: Long, window: ObservationWindow) = synchronized(gate) {
         if (!enabled.value || !repository.accept(token, window)) return@synchronized
-        if (!state.value.observationsAvailable || state.value.snapshot.sessionRevision != repository.snapshot(emptySet()).sessionRevision) publishHistory(true)
+        val first = !counts.value.observationsAvailable || counts.value.sessionRevision != repository.snapshot(emptySet()).sessionRevision
+        publishCounts(available = true, immediate = first)
+        if (first) publishHistory(true)
         else schedulePublication()
     }
 
@@ -88,6 +98,7 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
 
     fun clear(kind: HistoryKind) = synchronized(gate) {
         repository.clear(kind); cancelPublication(); publishHistory()
+        publishCounts(immediate = true)
     }
 
     private fun visibleKinds(): Set<HistoryKind> = if (foreground) leases.values.filter { it.second }.map { it.first }.toSet() else emptySet()
@@ -96,6 +107,13 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
 
     private fun publishHistory(available: Boolean = state.value.observationsAvailable) {
         publish { it.copy(snapshot = repository.snapshot(visibleKinds()), observationsAvailable = available) }
+    }
+
+    private fun publishCounts(available: Boolean = counts.value.observationsAvailable, immediate: Boolean = false) {
+        if (immediate) countsBoundary++
+        val snapshot = repository.snapshot(emptySet())
+        mutableCounts.value = HistoryCounts(snapshot.requestCount, snapshot.dnsCount, snapshot.sessionRevision,
+            available, countsBoundary)
     }
 
     /** One trailing publication per burst; later arrivals update the rings without resetting the timer. */

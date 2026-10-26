@@ -51,6 +51,10 @@ class IpQualityFeature(
     private var confirmedIp: String? = null
     private var confirmedCountry: String? = null
     private var foreground = false
+    private var readActive = true
+    private var manualPending = false
+    private var taskManual = false
+    private val retiring = mutableListOf<Job>()
     private var observers = 0
     private var loaded = store == null
     @Volatile private var closed = false
@@ -102,6 +106,13 @@ class IpQualityFeature(
         update()
     }
 
+    fun readDemand(value: Boolean) {
+        if (closed || readActive == value) return
+        readActive = value
+        if (!value) { if (!manualPending) cancelTask(resetManual = false); cancelExpiry() }
+        update()
+    }
+
     fun setForeground(value: Boolean) {
         if (closed || foreground == value) return
         foreground = value
@@ -118,14 +129,16 @@ class IpQualityFeature(
             if (!released) {
                 released = true
                 observers--
-                if (observers == 0) { cancelTask(); cancelExpiry() }
+                if (observers == 0) { if (!manualPending) cancelTask(resetManual = false); cancelExpiry() }
                 if (!closed) update()
             }
         }
     }
 
     fun retry() {
-        if (closed || quiesced || task != null) return
+        if (closed || quiesced) return
+        manualPending = true
+        if (task != null) { taskManual = true; return }
         confirmedIp?.let { successes.remove(it); failures.remove(it) }
         persist()
         update()
@@ -153,7 +166,7 @@ class IpQualityFeature(
     private fun cachedQuality(ip: String): IpQuality? {
         val entry = successes[ip] ?: return null
         if (!validCacheEntry(entry, wallClockNow())) { staleQualityIp = ip; successes.remove(ip); return null }
-        if (foreground && observers > 0) scheduleExpiry(entry)
+        if (foreground && readActive && observers > 0) scheduleExpiry(entry)
         return entry.quality
     }
 
@@ -166,7 +179,7 @@ class IpQualityFeature(
         expiryTask = scope.launch {
             try {
                 awaitExpiry(waitMs)
-                if (closed || quiesced || !foreground || observers == 0 || successes[entry.ip] != entry) return@launch
+                if (closed || quiesced || !foreground || !readActive || observers == 0 || successes[entry.ip] != entry) return@launch
                 if (validCacheEntry(entry, wallClockNow())) {
                     expiryEntry = null
                     expiryTask = null
@@ -198,7 +211,7 @@ class IpQualityFeature(
         val cached = ip?.let(::cachedQuality)
         val failure = ip?.let(failures::get)
         val previous = last?.takeIf { it.profileId == profile && it.proxied == proxied && (ip == null || it.ip == ip) }
-        val eligible = loaded && foreground && observers > 0 && profile != null && ip != null
+        val eligible = loaded && foreground && (manualPending || (readActive && observers > 0)) && profile != null && ip != null
         if (eligible && cached == null && task == null && (failure == null || now() >= failure.expires)) {
             failures.remove(ip)
             start(requireNotNull(ip))
@@ -217,14 +230,18 @@ class IpQualityFeature(
 
     private fun start(ip: String) {
         val token = ++run
+        taskManual = manualPending
+        retiring.removeAll { it.isCompleted }
+        val predecessors = retiring.toList()
         val pending = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                predecessors.joinAll()
                 val value = lookup(ip)
                 require(value.ip == ip)
-                if (token != run || closed || quiesced || confirmedIp != ip || !foreground || observers == 0) return@launch
+                if (token != run || closed || quiesced || confirmedIp != ip || !foreground || (!taskManual && (!readActive || observers == 0))) return@launch
                 successes[ip] = IpQualityCheck(ip, value, wallClockNow())
                 if (staleQualityIp == ip) staleQualityIp = null
-                task = null
+                task = null; taskManual = false; manualPending = false
                 rememberConfirmed()
                 persist()
                 update()
@@ -233,7 +250,7 @@ class IpQualityFeature(
                 if (token != run || closed || quiesced || confirmedIp != ip) return@launch
                 val rows = (failure as? IpQualityLookupException)?.failures.orEmpty()
                 failures[ip] = Failure(rows, now() + 5 * 60_000)
-                task = null
+                task = null; taskManual = false; manualPending = false
                 update()
             }
         }
@@ -242,7 +259,10 @@ class IpQualityFeature(
         pending.start()
     }
 
-    private fun cancelTask() { run++; task?.cancel(); task = null }
+    private fun cancelTask(resetManual: Boolean = true) {
+        run++; task?.let { it.cancel(); retiring += it }; task = null; taskManual = false
+        if (resetManual) manualPending = false
+    }
 
     private fun persist() {
         if (closed || quiesced) return

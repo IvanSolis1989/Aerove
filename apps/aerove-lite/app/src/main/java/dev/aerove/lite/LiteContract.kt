@@ -295,6 +295,8 @@ interface LiteActions {
     fun setConnectionTelemetryActive(active: Boolean)
     fun setDashboardTelemetryActive(active: Boolean)
     fun setStatusTrafficActive(active: Boolean) {}
+    fun setUiWindowFocused(focused: Boolean)
+    fun setTelemetryInteractionActive(active: Boolean)
     fun closeConnection(id: String)
     fun closeAllConnections()
     fun shuffleAurora()

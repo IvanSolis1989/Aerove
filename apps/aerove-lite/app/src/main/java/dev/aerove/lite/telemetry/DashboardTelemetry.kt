@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.joinAll
 
 internal const val DASHBOARD_TRAFFIC_SAMPLE_LIMIT = 30
 
@@ -29,6 +30,7 @@ internal class DashboardConnectionSummary<K : Any>(parent: CoroutineScope,
     private var key: K? = null
     private var active = false
     private var task: Job? = null
+    private val retiring = mutableListOf<Job>()
     private var generation = 0L
 
     fun bind(value: K?) {
@@ -41,15 +43,18 @@ internal class DashboardConnectionSummary<K : Any>(parent: CoroutineScope,
     fun active(value: Boolean) {
         if (active == value) return
         active = value
-        if (!value) cancel() else restart()
+        if (!value) cancel(clear = false) else restart()
     }
 
     private fun restart() {
         val current = key?.takeIf(isCurrent) ?: return
         if (!active || task != null || !scope.isActive) return
         val requested = ++generation
+        retiring.removeAll { it.isCompleted }
+        val predecessors = retiring.toList()
         val pending = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                predecessors.joinAll()
                 while (owns(current, requested)) {
                     try {
                         val count = read(current)
@@ -69,11 +74,11 @@ internal class DashboardConnectionSummary<K : Any>(parent: CoroutineScope,
     private fun owns(value: K, requested: Long): Boolean =
         scope.isActive && active && generation == requested && key == value && isCurrent(value)
 
-    private fun cancel() {
+    private fun cancel(clear: Boolean = true) {
         generation++
-        task?.cancel()
+        task?.let { it.cancel(); retiring += it }
         task = null
-        mutable.value = null
+        if (clear) mutable.value = null
     }
 
     override fun close() { active = false; key = null; cancel(); scope.cancel() }

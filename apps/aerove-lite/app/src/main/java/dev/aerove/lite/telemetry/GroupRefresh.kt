@@ -2,6 +2,9 @@ package dev.aerove.lite.telemetry
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 
@@ -24,24 +27,38 @@ internal class GroupRefresh<T>(
     private var healthPending = false
     private var testing = false
     private var trailing: Job? = null
+    private var readActive = true
+    private val readSignal = MutableStateFlow(true)
+    private var reading: Job? = null
 
     init {
         val job = session.launch("groups-refresh", { requests.close() }) {
             for (request in requests) {
+                readSignal.first { it }
                 for (attempt in 0 until 3) {
-                    if (!session.current || request.stamp != requested) break
+                    if (!session.current || !readActive || request.stamp != requested) break
                     try {
-                        val value = read()
-                        if (!session.current || request.stamp != requested) break
+                        val value = supervisorScope {
+                            val task = async(start = CoroutineStart.LAZY) { read() }
+                            reading = task; task.start()
+                            try { task.await() } finally {
+                                if (!task.isCompleted) { task.cancel(); withContext(NonCancellable) { task.join() } }
+                                if (reading === task) reading = null
+                            }
+                        }
+                        if (!session.current || !readActive || request.stamp != requested) break
                         if (attempt == 2 || !retryIf(value)) {
                             failed = false
                             if (request.route) refreshedRoute = request.version
                             session.accept { if (request.route) update(value) else healthUpdate(value) }
                             break
                         }
-                    } catch (cancelled: CancellationException) { throw cancelled }
+                    } catch (cancelled: CancellationException) {
+                        if (!currentCoroutineContext().isActive || (readActive && request.stamp == requested)) throw cancelled
+                        break
+                    }
                     catch (error: Exception) {
-                        if (!session.current || request.stamp != requested) break
+                        if (!session.current || !readActive || request.stamp != requested) break
                         if (attempt == 2) { failed = true; session.accept { failure(error) }; break }
                     }
                     delay(200)
@@ -49,6 +66,14 @@ internal class GroupRefresh<T>(
             }
         }
         if (job == null) requests.close()
+    }
+
+    fun readDemand(value: Boolean) {
+        if (readActive == value) return
+        readActive = value; requested++
+        reading?.cancel(); trailing?.cancel(); trailing = null
+        readSignal.value = value
+        if (value) { healthPending = false; request() }
     }
 
     fun initial() { if (!initialized) { initialized = true; request() } }
@@ -79,7 +104,7 @@ internal class GroupRefresh<T>(
 
     private fun trail() {
         trailing?.cancel(); trailing = null
-        if (testing || !healthPending) return
+        if (!readActive || testing || !healthPending) return
         trailing = session.launch("groups-health-$revision") {
             delay(300)
             trailing = null

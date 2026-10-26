@@ -144,7 +144,7 @@ class IpQualityFeatureTest {
             val ip = "1.1.1.1"; val now = System.currentTimeMillis(); val maxBytes = 1024 * 1024
             fun expectedSize(organization: String): Int {
                 val encodedQuality = org.json.JSONObject().put("ip", ip).put("source", IpQualitySource.IdentMe.name)
-                    .put("type", IpType.Residential.name).put("organization", organization).put("asn", null)
+                    .put("type", IpType.Residential.name).put("organization", organization).put("asn", null as Any?)
                     .put("proxy", false).put("vpn", false).put("tor", false).put("abuser", false)
                 val row = org.json.JSONObject().put("ip", ip).put("checkedAtWallClock", now).put("quality", encodedQuality)
                 return org.json.JSONObject().put("hidden", true).put("cache", org.json.JSONArray().put(row))
@@ -241,11 +241,13 @@ class IpQualityFeatureTest {
             quality(ip)
         })
         owner.bind("profile", true, "1.1.1.1"); owner.setForeground(true); val lease = owner.observe()
-        old.await(); owner.setForeground(false); owner.bind("profile", true, "8.8.8.8"); owner.setForeground(true)
-        withTimeout(1000) { owner.state.first { it.quality?.ip == "8.8.8.8" } }
-        release.complete(Unit); delay(10)
-        assertEquals("8.8.8.8", owner.state.value.quality?.ip)
-        lease.close(); owner.close()
+        try {
+            old.await(); owner.setForeground(false); owner.bind("profile", true, "8.8.8.8"); owner.setForeground(true)
+            delay(10); assertEquals(1, calls); assertNull(owner.state.value.quality)
+            release.complete(Unit)
+            withTimeout(1000) { owner.state.first { it.quality?.ip == "8.8.8.8" } }
+            assertEquals(2, calls); assertEquals("8.8.8.8", owner.state.value.quality?.ip)
+        } finally { release.complete(Unit); lease.close(); owner.close() }
     }
 
     @Test fun rememberedExitIsScopedProvisionalAndHiddenClearsSavedIdentity() = runBlocking {

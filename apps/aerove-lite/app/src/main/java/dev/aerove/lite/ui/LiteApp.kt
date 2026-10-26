@@ -116,6 +116,10 @@ private val PageScrollSaver = mapSaver<MutableMap<String, LazyListState>>(
 @Composable
 fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.integration.LiteDisplayStreams? = null) {
     LiteWindowFocusHost { windowFocused ->
+    DisposableEffect(windowFocused, actions) {
+        actions.setUiWindowFocused(windowFocused)
+        onDispose { actions.setUiWindowFocused(false) }
+    }
     LiteTheme(state.settings) {
         val wallpaper = rememberLayerBackdrop()
         val page = rememberLayerBackdrop()
@@ -224,6 +228,11 @@ fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.int
         val scrolls = rememberSaveable(saver = PageScrollSaver) { mutableMapOf<String, LazyListState>() }
         val pageKey = scriptEditing?.let { "script:$it" } ?: builderProfile?.let { "builder:$it" } ?: if (dashboardEditing) "dashboard-editor" else editorProfile?.let { "editor:$it:$editorReadOnly" } ?: detail?.name ?: activeTab.name
         val motionActivity = rememberAuroraMotionActivity(pageKey)
+        val interactionActive = resumed && windowFocused && motionActivity.active
+        DisposableEffect(interactionActive, actions) {
+            actions.setTelemetryInteractionActive(interactionActive)
+            onDispose { actions.setTelemetryInteractionActive(false) }
+        }
         val effectiveAurora = LocalLiteVisuals.current.aurora
         val opaqueScan = scanner.isIdle && scanner.currentState && scanner.targetState
         val auroraTime = rememberAuroraTime(effectiveAurora && liteWallpaperVisible(windowFocused, opaqueScan, requiresConsent), activity = motionActivity)

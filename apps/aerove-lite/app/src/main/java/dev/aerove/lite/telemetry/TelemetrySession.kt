@@ -76,5 +76,20 @@ internal class TelemetrySession(parent: CoroutineScope, private val isCurrent: (
         }
     }
 
+    fun <T> observeReadOnly(key: String, demand: Flow<TelemetryVisibility>,
+        source: () -> Flow<T>, valid: (TelemetryVisibility) -> Boolean,
+        failure: (Throwable) -> Unit, update: (T) -> Unit): Job? = launch(key) {
+        demand.distinctUntilChanged().collectLatest { lease ->
+            if (lease.active && current && valid(lease)) source()
+                .retryWhen { _, attempt ->
+                    if (!current || !valid(lease) || attempt >= 3) false else {
+                        delay(1000); current && valid(lease)
+                    }
+                }
+                .catch { error -> if (valid(lease)) accept { failure(error) } }
+                .collect { value -> if (valid(lease)) accept { update(value) } }
+        }
+    }
+
     override fun close() { scope.cancel() }
 }

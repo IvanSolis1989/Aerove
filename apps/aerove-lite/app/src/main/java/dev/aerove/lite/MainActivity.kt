@@ -72,6 +72,8 @@ class MainActivity : ComponentActivity() {
     }
     private val actions by lazy {
         object : LiteActions by controller {
+            override fun setUiWindowFocused(focused: Boolean) = controller.setUiWindowFocused(focused)
+            override fun setTelemetryInteractionActive(active: Boolean) = controller.setTelemetryInteractionActive(active)
             override fun connect() {
                 if ((application as LiteApplication).maintenanceActive) return
                 pendingStartToken = controller.beginStartRequest()
