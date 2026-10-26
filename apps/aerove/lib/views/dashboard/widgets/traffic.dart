@@ -520,17 +520,20 @@ class _FigureMetrics {
     this.column,
     this.rowHeight,
     this.arrow,
+    this.pixelRatio,
     this._key,
   );
   factory _FigureMetrics.of(BuildContext context, {_FigureMetrics? previous}) {
     final speed = AppTextStyle.custom(context, size: 10, leading: 10).toTabular;
     final scaler = MediaQuery.textScalerOf(context);
     final arrow = scaler.scale(10);
+    final pixelRatio = MediaQuery.devicePixelRatioOf(context);
     final key = (
       speed,
       scaler,
       Localizations.maybeLocaleOf(context),
       Directionality.of(context),
+      pixelRatio,
     );
     if (previous != null && previous._key == key) return previous;
     final extent = _extentOf(
@@ -543,6 +546,7 @@ class _FigureMetrics {
       (extent.width + arrow + 3).ceilToDouble(),
       math.max(extent.height, arrow).ceilToDouble(),
       arrow,
+      pixelRatio,
       key,
     );
   }
@@ -550,6 +554,7 @@ class _FigureMetrics {
   final double column;
   final double rowHeight;
   final double arrow;
+  final double pixelRatio;
   final Object _key;
   double columnFor(BuildContext context, Traffic latest) {
     var width = column;
@@ -649,6 +654,7 @@ class _OutboundTrafficFiguresState extends State<OutboundTrafficFigures> {
         final width = metrics.columnFor(context, latest);
         final ink = context.colorScheme.onSurface;
         final rows = TrafficReadings(
+          pixelRatio: metrics.pixelRatio,
           children: [
             for (final direction in TrafficDirection.values)
               DashboardStop(
@@ -707,11 +713,25 @@ class _OutboundTrafficFiguresState extends State<OutboundTrafficFigures> {
 }
 
 class TrafficReadings extends MultiChildRenderObjectWidget {
-  const TrafficReadings({super.key, required super.children});
+  const TrafficReadings({
+    super.key,
+    this.pixelRatio = 1,
+    required super.children,
+  });
+
+  final double pixelRatio;
 
   @override
   RenderTrafficReadings createRenderObject(BuildContext context) =>
-      RenderTrafficReadings();
+      RenderTrafficReadings(pixelRatio);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    RenderTrafficReadings renderObject,
+  ) {
+    renderObject.pixelRatio = pixelRatio;
+  }
 }
 
 class _ReadingParentData extends ContainerBoxParentData<RenderBox> {}
@@ -720,9 +740,52 @@ class RenderTrafficReadings extends RenderBox
     with
         ContainerRenderObjectMixin<RenderBox, _ReadingParentData>,
         RenderBoxContainerDefaultsMixin<RenderBox, _ReadingParentData> {
+  RenderTrafficReadings([this._pixelRatio = 1]);
+  double _pixelRatio;
+  set pixelRatio(double value) {
+    if (value == _pixelRatio) return;
+    _pixelRatio = value;
+    markNeedsLayout();
+  }
+
   double _gap = 0;
   double get firstRowHeight => _firstHeight;
   double _firstHeight = 0;
+  List<Rect> get inkBounds {
+    final bounds = <Rect>[];
+    void visit(RenderObject node) {
+      if (node is RenderParagraph) {
+        for (final word in RegExp(
+          r'\S+',
+        ).allMatches(node.text.toPlainText(includeSemanticsLabels: false))) {
+          for (final box in node.getBoxesForSelection(
+            TextSelection(baseOffset: word.start, extentOffset: word.end),
+          )) {
+            bounds.add(
+              MatrixUtils.transformRect(
+                node.getTransformTo(this),
+                box.toRect(),
+              ),
+            );
+          }
+        }
+      } else if (node is RenderCustomPaint && node.painter is GlyphPainter) {
+        bounds.add(
+          MatrixUtils.transformRect(
+            node.getTransformTo(this),
+            (node.painter! as GlyphPainter).paintedBounds(
+              node.size,
+              pixelRatio: _pixelRatio,
+            ),
+          ),
+        );
+      }
+      node.visitChildren(visit);
+    }
+
+    visit(this);
+    return bounds;
+  }
 
   void alignLineCenters(double distance) {
     final gap = math.max(0.0, distance - _firstHeight);

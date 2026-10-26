@@ -20,6 +20,7 @@ class StatusCardLayout extends MultiChildRenderObjectWidget {
     this.bleed = 8,
     this.overlaidOrder = 0,
     this.appendedOrder = 0,
+    this.allowAppend = false,
   }) : super(
          children: [
            RepaintBoundary(child: backdrop),
@@ -40,6 +41,7 @@ class StatusCardLayout extends MultiChildRenderObjectWidget {
   /// [appendedOrder] under the body.
   final int overlaidOrder;
   final int appendedOrder;
+  final bool allowAppend;
 
   @override
   RenderStatusCardLayout createRenderObject(BuildContext context) {
@@ -52,6 +54,7 @@ class StatusCardLayout extends MultiChildRenderObjectWidget {
       bleed: bleed,
       overlaidOrder: overlaidOrder,
       appendedOrder: appendedOrder,
+      allowAppend: allowAppend,
       textDirection: textDirection,
     );
   }
@@ -70,6 +73,7 @@ class StatusCardLayout extends MultiChildRenderObjectWidget {
       ..bleed = bleed
       ..overlaidOrder = overlaidOrder
       ..appendedOrder = appendedOrder
+      ..allowAppend = allowAppend
       ..textDirection = textDirection;
   }
 }
@@ -88,6 +92,7 @@ class RenderStatusCardLayout extends RenderBox
     required double bleed,
     required int overlaidOrder,
     required int appendedOrder,
+    required bool allowAppend,
     required TextDirection textDirection,
   }) : _padding = padding,
        _shape = shape,
@@ -96,6 +101,7 @@ class RenderStatusCardLayout extends RenderBox
        _bleed = bleed,
        _overlaidOrder = overlaidOrder,
        _appendedOrder = appendedOrder,
+       _allowAppend = allowAppend,
        _textDirection = textDirection;
 
   final _foreground = <_RenderStatusForeground>{};
@@ -158,6 +164,15 @@ class RenderStatusCardLayout extends RenderBox
 
   bool? get overlaid => _overlaid;
   bool? _overlaid;
+  bool? get footerSlotAvailable => _footerSlotAvailable;
+  bool? _footerSlotAvailable;
+
+  bool _allowAppend;
+  set allowAppend(bool value) {
+    if (value == _allowAppend) return;
+    _allowAppend = value;
+    markNeedsLayout();
+  }
 
   /// The backdrop's zero line, from the card's top edge.
   double? get baseline => _baseline;
@@ -226,8 +241,7 @@ class RenderStatusCardLayout extends RenderBox
       BoxConstraints(maxWidth: inner.maxWidth),
       parentUsesSize: true,
     );
-    final rtl = _textDirection == TextDirection.rtl;
-    final bleed = math.min(_bleed, rtl ? _padding.left : _padding.right);
+    final bleed = math.min(_bleed, _padding.right);
     final provisional = constraints.constrain(_padding.inflateSize(body.size));
     final anchor = _cornerCenter(provisional);
     final centers = _footerCenters(body);
@@ -250,31 +264,31 @@ class RenderStatusCardLayout extends RenderBox
     final top = centers == null || readings == null
         ? anchor.dy - _padding.top
         : centers.$1 - readings!.firstRowHeight / 2;
-    var corner = _rightSlotFor(
-      figures.size,
-      body,
-      anchor.dx - _padding.left,
-      top,
-    );
-    if (corner == null && inner.hasBoundedHeight) {
+    Rect? corner;
+    invokeLayoutCallback<BoxConstraints>((_) {
+      final rows = [
+        for (final row in readings?.inkBounds ?? const <Rect>[])
+          MatrixUtils.transformRect(readings!.getTransformTo(figures), row),
+      ];
       corner = _cornerFor(
         figures.size,
         body,
-        rtl,
         bleed,
         top,
+        rows: rows,
         right: anchor.dx - _padding.left,
       );
+    });
+    _footerSlotAvailable = corner != null;
+    if (corner == null && !_allowAppend) {
+      corner =
+          Offset(
+            math.max(0, anchor.dx - _padding.left - figures.size.width),
+            top,
+          ) &
+          figures.size;
     }
     final overlaid = corner != null;
-    if (!overlaid && inner.hasBoundedHeight) {
-      body.layout(
-        loose.copyWith(
-          maxHeight: math.max(0, inner.maxHeight - _gap - figures.size.height),
-        ),
-        parentUsesSize: true,
-      );
-    }
     final origin = _padding.topLeft;
     _parentDataOf(body).offset = origin;
     _parentDataOf(figures).offset =
@@ -333,32 +347,30 @@ class RenderStatusCardLayout extends RenderBox
   Rect? _cornerFor(
     Size figures,
     RenderBox body,
-    bool rtl,
     double bleed,
     double top, {
+    required List<Rect> rows,
     double? right,
   }) {
     if (figures.width > body.size.width + bleed ||
         figures.height > body.size.height) {
       return null;
     }
-    var left = rtl
-        ? -bleed
-        : (right ?? body.size.width + bleed) - figures.width;
-    for (var step = 0; step < _foreground.length + 1; step++) {
+    var left = (right ?? body.size.width + bleed) - figures.width;
+    while (left >= 0 && left + figures.width <= body.size.width + bleed) {
       final corner = Offset(left, top) & figures;
-      final blocking = [
+      final stops = [
         for (final mark in _foreground)
-          if (mark.blocks(corner, body)) mark.markIn(body)!,
+          for (final row in rows.isEmpty ? [Offset.zero & figures] : rows)
+            for (final block in mark.blockingBounds(
+              row.shift(corner.topLeft),
+              body,
+            ))
+              block.left - row.right,
       ];
-      if (blocking.isEmpty) return corner;
-      left = rtl
-          ? blocking.map((rect) => rect.right).reduce(math.max) + _gap
-          : blocking.map((rect) => rect.left).reduce(math.min) -
-                _gap -
-                figures.width;
-      if (left < (rtl ? -bleed : 0) ||
-          left + figures.width > body.size.width + (rtl ? 0 : bleed)) {
+      if (stops.isEmpty) return corner;
+      left = stops.reduce(math.min);
+      if (left < 0 || left + figures.width > body.size.width + bleed) {
         return null;
       }
     }
@@ -407,35 +419,6 @@ class RenderStatusCardLayout extends RenderBox
     }
 
     return (center(paragraphs[0]), center(paragraphs[1]));
-  }
-
-  Rect? _rightSlotFor(
-    Size figures,
-    RenderBox body,
-    double right,
-    double preferredTop,
-  ) {
-    final left = right - figures.width;
-    if (left < 0 || figures.height > body.size.height) return null;
-    final tops = <double>{preferredTop, 0, body.size.height - figures.height};
-    for (final mark in _foreground) {
-      if (mark.markIn(body) case final rect?) {
-        tops.add(rect.top - _gap - figures.height);
-        tops.add(rect.bottom + _gap);
-      }
-    }
-    final ordered = tops.toList()
-      ..sort(
-        (a, b) => (a - preferredTop).abs().compareTo((b - preferredTop).abs()),
-      );
-    for (final top in ordered) {
-      if (top < 0 || top + figures.height > body.size.height) continue;
-      final candidate = Offset(left, top) & figures;
-      if (_foreground.every((mark) => !mark.blocks(candidate, body))) {
-        return candidate;
-      }
-    }
-    return null;
   }
 
   _StatusLayoutParentData _parentDataOf(RenderBox child) =>
@@ -584,10 +567,9 @@ class _RenderStatusForeground extends RenderProxyBox with _StatusMark {
     return rect == null ? null : _margin.inflateRect(rect);
   }
 
-  /// Whether [corner], in [body]'s space, covers this mark.
-  bool blocks(Rect corner, RenderBox body) {
+  List<Rect> blockingBounds(Rect corner, RenderBox body) {
     final mark = markIn(body);
-    if (mark == null) return false;
+    if (mark == null) return const [];
     if (!text) {
       OutboundDropletPainter? painter;
       void visit(RenderObject node) {
@@ -605,11 +587,42 @@ class _RenderStatusForeground extends RenderProxyBox with _StatusMark {
           bubble.pathOf(_laidOut),
           Path()..addRect(corner.shift(-mark.topLeft)),
         ).getBounds();
-        return overlap.width > 0.01 && overlap.height > 0.01;
+        return overlap.width > 0 && overlap.height > 0
+            ? [overlap.shift(mark.topLeft)]
+            : const [];
       }
     }
-    final overlap = mark.intersect(corner);
-    return overlap.width > 0.01 && overlap.height > 0.01;
+    final bounds = <Rect>[];
+    if (_text && _outline == null) {
+      void visit(RenderObject node) {
+        if (node is RenderParagraph) {
+          final text = node.text.toPlainText(includeSemanticsLabels: false);
+          for (final word in RegExp(r'\S+').allMatches(text)) {
+            for (final box in node.getBoxesForSelection(
+              TextSelection(baseOffset: word.start, extentOffset: word.end),
+            )) {
+              bounds.add(
+                _margin.inflateRect(
+                  MatrixUtils.transformRect(
+                    node.getTransformTo(body),
+                    box.toRect(),
+                  ),
+                ),
+              );
+            }
+          }
+        }
+        node.visitChildren(visit);
+      }
+
+      visit(this);
+    }
+    return [
+      for (final bound in bounds.isEmpty ? [mark] : bounds)
+        if (bound.intersect(corner) case final overlap
+            when overlap.width > 0 && overlap.height > 0)
+          bound,
+    ];
   }
 }
 

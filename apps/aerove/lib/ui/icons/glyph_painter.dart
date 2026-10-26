@@ -25,14 +25,34 @@ class GlyphPainter extends CustomPainter {
   final double fill;
   final Color color;
 
+  double get _lineWidth =>
+      lerpDouble(Glyph.strokeWidth, _filledLineWidth, fill.clamp(0, 1))!;
+
+  Rect paintedBounds(Size size, {double pixelRatio = 1}) {
+    assert(pixelRatio > 0 && pixelRatio.isFinite);
+    Rect? bounds;
+    for (final shape in glyph.shapes) {
+      final stroke = shape.solid
+          ? 0.0
+          : (shape.role == GlyphRole.line ? _lineWidth : Glyph.strokeWidth) / 2;
+      final rect = shape.path.getBounds().inflate(stroke);
+      bounds = bounds == null ? rect : bounds.expandToInclude(rect);
+    }
+    if (bounds == null) return Rect.zero;
+    final scale = size.shortestSide / Glyph.size;
+    return Rect.fromLTRB(
+      bounds.left * scale,
+      bounds.top * scale,
+      bounds.right * scale,
+      bounds.bottom * scale,
+    ).inflate(1 / pixelRatio);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     final opaque = color.withValues(alpha: 1);
     final stroke = _stroke(opaque, Glyph.strokeWidth);
-    final line = _stroke(
-      opaque,
-      lerpDouble(Glyph.strokeWidth, _filledLineWidth, fill.clamp(0, 1))!,
-    );
+    final line = _stroke(opaque, _lineWidth);
     final area = Paint()..color = opaque;
     Paint paintFor(GlyphShape shape) => shape.solid
         ? area

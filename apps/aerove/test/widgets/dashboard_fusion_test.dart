@@ -20,6 +20,7 @@ import 'package:fl_clash/views/dashboard/widgets/status_layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/service_status.dart';
 import 'package:fl_clash/views/dashboard/widgets/connection_stats.dart';
 import 'package:fl_clash/ui/ui.dart';
+import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -87,6 +88,28 @@ final _suspended = NotifierProvider<_TestFlag, bool>(() => _TestFlag(false));
 /// The default test font draws every glyph a full em wide; figures need real
 /// proportions to measure as on a phone.
 const _font = 'FusionRoboto';
+
+Iterable<Rect> _paintedBounds(WidgetTester tester, Finder finder) sync* {
+  if (tester.widget(finder) is! Text) {
+    yield tester.getRect(finder);
+    return;
+  }
+  for (final paragraph in tester.renderObjectList<RenderParagraph>(
+    find.descendant(of: finder, matching: find.byType(RichText)),
+  )) {
+    for (final box in paragraph.getBoxesForSelection(
+      TextSelection(
+        baseOffset: 0,
+        extentOffset: paragraph.text.toPlainText().length,
+      ),
+    )) {
+      yield MatrixUtils.transformRect(
+        paragraph.getTransformTo(null),
+        box.toRect(),
+      );
+    }
+  }
+}
 
 void main() {
   setUpAll(() async {
@@ -224,41 +247,81 @@ void main() {
         find.byType(OutboundBubble),
       ];
       final figuresRect = tester.getRect(find.byType(OutboundTrafficFigures));
+      final mainRects = [for (final part in mainParts) tester.getRect(part)];
       for (final part in [
         ...mainParts,
         for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
           find.byType(DashboardChip).at(i),
       ]) {
-        expect(figuresRect.overlaps(tester.getRect(part)), isFalse);
+        for (final bound in _paintedBounds(tester, part)) {
+          expect(figuresRect.overlaps(bound), isFalse);
+        }
       }
       final status = tester.getRect(find.text('状态'));
-      final upload = tester.getRect(find.text('上传'));
-      final download = tester.getRect(find.text('下载'));
+      final figureTexts = find.descendant(
+        of: find.byType(OutboundTrafficFigures),
+        matching: find.byType(GlassText),
+      );
+      expect(figureTexts, findsNWidgets(2));
+      final upload = tester.getRect(figureTexts.at(0));
+      final download = tester.getRect(figureTexts.at(1));
       expect(upload.height, 10);
       expect(download.height, 10);
       expect(upload.height, lessThan(status.height));
+      expect(
+        upload.center.dy,
+        closeTo(tester.getCenter(find.text(l10n.runTime)).dy, 0.01),
+      );
+      expect(
+        download.center.dy,
+        closeTo(
+          tester
+              .getCenter(
+                find.text(getTimeText(container.read(runTimeProvider))),
+              )
+              .dy,
+          0.01,
+        ),
+      );
+      for (final text in tester.widgetList<GlassText>(figureTexts)) {
+        expect(text.style?.fontSize, 10);
+        expect(text.style?.fontWeight, FontWeight.w400);
+      }
+      final arrows = tester.widgetList<GlyphIcon>(
+        find.descendant(
+          of: find.byType(OutboundTrafficFigures),
+          matching: find.byType(GlyphIcon),
+        ),
+      );
+      expect(arrows.map((icon) => icon.glyph), [
+        AppGlyphs.arrowUp,
+        AppGlyphs.arrowDown,
+      ]);
+      for (final direction in TrafficDirection.values) {
+        expect(
+          find.descendant(
+            of: find.byType(OutboundTrafficFigures),
+            matching: find.text(
+              direction.labelOf(tester.element(figureTexts.first)),
+            ),
+          ),
+          findsNothing,
+        );
+      }
       final totals = container.read(totalTrafficProvider);
       final totalValues = [
         for (final direction in TrafficDirection.values)
           trafficAmount(direction.of(totals)),
       ];
       for (final value in totalValues.toSet()) {
-        final count = totalValues.where((item) => item == value).length;
         expect(
           find.descendant(
             of: find.byType(OutboundTrafficFigures),
             matching: find.text(value),
           ),
-          findsNWidgets(count),
+          findsNothing,
         );
-        final totalLabel = find.bySemanticsLabel(l10n.trafficTotal(value));
-        if (totalLabel.evaluate().length != count) {
-          debugDumpSemanticsTree(DebugSemanticsDumpOrder.traversalOrder);
-        }
-        expect(
-          find.bySemanticsLabel(l10n.trafficTotal(value)),
-          findsNWidgets(count),
-        );
+        expect(find.bySemanticsLabel(l10n.trafficTotal(value)), findsNothing);
         expect(find.text(l10n.trafficTotal(value)), findsNothing);
       }
 
@@ -285,6 +348,9 @@ void main() {
       expect(charts.map((chart) => chart.minScale).toSet(), {8192.0});
       expect(find.byType(OutboundTrafficFigures), findsOneWidget);
       expect(tester.getSize(find.byType(DashboardCard)).height, originalHeight);
+      for (var i = 0; i < mainParts.length; i++) {
+        expect(tester.getRect(mainParts[i]), mainRects[i]);
+      }
       container.read(trafficsProvider.notifier).clear();
       container.read(trafficsProvider.notifier).addTraffic(const Traffic());
       await tester.pumpAndSettle();
@@ -340,23 +406,19 @@ void main() {
     ];
   }
 
-  /// Upload before download, each its label with its speed, then its total.
+  /// Upload before download, with direction and full speed in each stop.
   List<String> trafficStops(
     BuildContext context,
     ProviderContainer container, {
     required String Function(num speed) speed,
   }) {
     final latest = container.read(trafficsProvider).list.last;
-    final totals = container.read(totalTrafficProvider);
+    final l10n = AppLocalizations.of(context);
     final stops = [
-      for (final direction in TrafficDirection.values) ...[
-        '${direction.labelOf(context)}\n${speed(direction.of(latest))}',
-        AppLocalizations.of(
-          context,
-        ).trafficTotal(trafficAmount(direction.of(totals))),
-      ],
+      l10n.trafficUploadSpeed(speed(latest.up)),
+      l10n.trafficDownloadSpeed(speed(latest.down)),
     ];
-    expect(stops.toSet(), hasLength(4));
+    expect(stops.toSet(), hasLength(2));
     return stops;
   }
 
@@ -385,7 +447,7 @@ void main() {
 
   for (final (label, width, scale, density, overlay) in const [
     ('mobile overlay', 360.0, 1.0, DashboardDensity.mobile, true),
-    ('mobile stacked', 328.0, 2.0, DashboardDensity.mobile, false),
+    ('mobile a11y append', 328.0, 2.0, DashboardDensity.mobile, false),
     ('desktop overlay', 600.0, 0.9, DashboardDensity.standard, true),
   ]) {
     testWidgets(
@@ -652,11 +714,18 @@ void main() {
   testWidgets(
     'status speed and button do not overlap at narrow double text scale',
     (tester) async {
-      await pump(tester, const CurrentOutboundCard(), scale: 2, width: 328);
+      await pump(
+        tester,
+        const CurrentOutboundCard(),
+        scale: 2,
+        width: 328,
+        fontFamily: _font,
+      );
       final layout = tester.renderObject<RenderStatusCardLayout>(
         find.byType(StatusCardLayout),
       );
       expect(layout.overlaid, isFalse);
+      expect(layout.footerSlotAvailable, isFalse);
       final body = layout.childAfter(layout.firstChild!)!;
       final bodyRect = body.localToGlobal(Offset.zero) & body.size;
       final mainParts = [
@@ -683,8 +752,14 @@ void main() {
         tester.getSize(find.byType(DashboardCard)).height,
         closeTo(body.size.height + 36 + 8 + figures.height, 0.01),
       );
-      expect(tester.getRect(find.text('上传')).height, 20);
-      expect(tester.getRect(find.text('下载')).height, 20);
+      final speeds = find.descendant(
+        of: find.byType(OutboundTrafficFigures),
+        matching: find.byType(GlassText),
+      );
+      expect(speeds, findsNWidgets(2));
+      for (final element in speeds.evaluate()) {
+        expect(tester.getSize(find.byWidget(element.widget)).height, 20);
+      }
       expect(
         figures.overlaps(chip),
         isFalse,

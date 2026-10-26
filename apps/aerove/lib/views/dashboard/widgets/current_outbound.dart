@@ -42,7 +42,10 @@ enum _SummaryStop { quality, runTime, organization, retry, address }
 /// The address the proxied traffic leaves by, next to the start button, with
 /// the traffic in its corner and its speed lines behind it.
 class CurrentOutboundCard extends ConsumerStatefulWidget {
-  const CurrentOutboundCard({super.key});
+  const CurrentOutboundCard({super.key, this.showTraffic = true});
+
+  @visibleForTesting
+  final bool showTraffic;
 
   @override
   ConsumerState<CurrentOutboundCard> createState() =>
@@ -223,7 +226,12 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         baselineRatio: OutboundTrafficBackground.baselineRatio,
         backdrop: OutboundTrafficBackground(running: isStart && !suspended),
         body: body,
-        figures: const OutboundTrafficFigures(),
+        figures: widget.showTraffic
+            ? const OutboundTrafficFigures()
+            : const SizedBox.shrink(),
+        allowAppend:
+            !density.isDesktop &&
+            MediaQuery.textScalerOf(context).scale(1) > 1.3,
         overlaidOrder: _CardStop.overlaidTraffic.index,
         appendedOrder: _CardStop.appendedTraffic.index,
       ),
