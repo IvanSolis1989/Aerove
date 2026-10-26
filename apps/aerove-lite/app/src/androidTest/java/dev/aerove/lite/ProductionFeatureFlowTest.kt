@@ -66,7 +66,7 @@ class ProductionFeatureFlowTest {
             graph.profiles.select(owned.id)
             graph.settings.save(LiteSettings(mode = ProxyMode.Direct, aurora = false, material = MaterialTier.Solid, autoCheckUpdate = false,
                 dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.MemoryInfo,
-                    DashboardWidget.NetworkSpeed)), vpnAuthorized = true)
+                    DashboardWidget.OutboundMode)), vpnAuthorized = true)
             val launched = ActivityScenario.launch(MainActivity::class.java)
             activity = launched
             lateinit var controller: LiteController
@@ -85,9 +85,9 @@ class ProductionFeatureFlowTest {
             assertEquals("Consent must persist through the production settings owner",
                 dev.aerove.lite.maintenance.CURRENT_DISCLAIMER_VERSION, graph.settings.read().acceptedDisclaimerVersion)
             compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).assertIsDisplayed().performClick()
-            compose.onNodeWithTag("dashboard-editor").performScrollToNode(hasTestTag("dashboard-row-networkSpeed"))
+            compose.onNodeWithTag("dashboard-editor").performScrollToNode(hasTestTag("dashboard-row-outboundMode"))
             compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_remove,
-                context.getString(R.string.lite_network_speed))).performClick()
+                context.getString(R.string.lite_proxy_mode))).performClick()
             compose.onNodeWithContentDescription(context.getString(R.string.lite_confirm)).performClick()
             val expectedLayout = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.MemoryInfo)
             withTimeout(15_000) { controller.state.first { it.settings.dashboardWidgets == expectedLayout && it.busy.isEmpty() } }

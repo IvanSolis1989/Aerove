@@ -168,11 +168,14 @@ class DashboardEditorTest {
 
     @Test
     fun longPressDragChangesOrderBeforeOneConfirmationWrite() {
-        val original = LiteSettings(aurora = false, dashboardWidgets = listOf(
+        val legacy = LiteSettings(aurora = false, dashboardWidgets = listOf(
             DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed, DashboardWidget.OutboundMode,
+            DashboardWidget.ServiceStatus, DashboardWidget.ConnectionStats,
         ))
-        runBlocking(Dispatchers.IO) { store.save(original) }
-        launch(original, "drag")
+        val initialSnapshot = runBlocking(Dispatchers.IO) { store.save(legacy) }
+        assertEquals(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.OutboundMode,
+            DashboardWidget.ServiceStatus, DashboardWidget.ConnectionStats), initialSnapshot.dashboardWidgets)
+        launch(initialSnapshot, "drag")
         val first = compose.onNodeWithTag("dashboard-row-currentOutbound").fetchSemanticsNode().boundsInRoot
         val last = compose.onNodeWithTag("dashboard-row-outboundMode").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("dashboard-row-outboundMode").performTouchInput {
@@ -184,10 +187,12 @@ class DashboardEditorTest {
         val moved = compose.onNodeWithTag("dashboard-row-outboundMode").fetchSemanticsNode().boundsInRoot
         val current = compose.onNodeWithTag("dashboard-row-currentOutbound").fetchSemanticsNode().boundsInRoot
         assertTrue("The actual long-pressed row must move above the status row", moved.top < current.top)
-        assertEquals(original, read())
         assertEquals(0, writes)
+        assertEquals(initialSnapshot.dashboardWidgets, read().dashboardWidgets)
         confirm()
-        assertEquals(listOf(DashboardWidget.OutboundMode, DashboardWidget.CurrentOutbound), read().dashboardWidgets)
+        val expectedWidgets = listOf(DashboardWidget.OutboundMode, DashboardWidget.CurrentOutbound,
+            DashboardWidget.ServiceStatus, DashboardWidget.ConnectionStats)
+        assertEquals(initialSnapshot.copy(dashboardWidgets = expectedWidgets), read())
         assertEquals(1, writes)
     }
 }
