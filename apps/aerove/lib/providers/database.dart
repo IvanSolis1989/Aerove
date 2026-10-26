@@ -136,6 +136,12 @@ Stream<Set<String>> customGroupNames(Ref ref) {
   return database.proxyGroupsDao.names().watch().map(Set.of);
 }
 
+class _ProfileUiWrites {
+  final pending = <int>{};
+  final committed = <int, Profile>{};
+  final latest = <int, Profile>{};
+}
+
 @Riverpod(keepAlive: true)
 class Profiles extends _$Profiles {
   late final _writes = _Writes(_reread);
@@ -174,12 +180,75 @@ class Profiles extends _$Profiles {
     return run;
   }
 
-  Future<void> _putLatest(Iterable<int> ids) async {
+  Future<void> _putLatest(
+    Iterable<int> ids, {
+    void Function(Profile profile)? onWritten,
+  }) async {
     for (final id in ids) {
       if (state.getProfile(id) case final profile?) {
         await database.profiles.put(profile.toCompanion());
+        onWritten?.call(profile);
       }
     }
+  }
+
+  _ProfileUiWrites? _pendingUi;
+
+  bool _sameUi(Profile left, Profile right) =>
+      left.currentGroupName == right.currentGroupName &&
+      const SetEquality<String>().equals(left.unfoldSet, right.unfoldSet);
+
+  void _rollbackUi(_ProfileUiWrites batch) {
+    if (!ref.mounted) return;
+    state = [
+      for (final profile in state)
+        if (batch.latest[profile.id] case final latest?
+            when _sameUi(profile, latest))
+          profile.copyWith(
+            currentGroupName: batch.committed[profile.id]!.currentGroupName,
+            unfoldSet: batch.committed[profile.id]!.unfoldSet,
+          )
+        else
+          profile,
+    ];
+  }
+
+  /// No timer: an in-flight write keeps only the latest pending UI intent.
+  void _putUi(List<Profile> next, Profile previous, Profile updated) {
+    final existing = _pendingUi;
+    final batch = existing ?? _ProfileUiWrites();
+    batch.committed.putIfAbsent(updated.id, () => previous);
+    batch.latest[updated.id] = updated;
+    batch.pending.add(updated.id);
+    if (existing == null) _pendingUi = batch;
+    state = next;
+    if (existing != null) return;
+    unawaited(
+      _writes
+          .track(
+            () => _serial(() async {
+              try {
+                while (batch.pending.isNotEmpty) {
+                  final ids = batch.pending.toList();
+                  batch.pending.clear();
+                  await _putLatest(
+                    ids,
+                    onWritten: (profile) {
+                      batch.committed[profile.id] = profile;
+                    },
+                  );
+                }
+              } catch (error, stack) {
+                // Roll back only our UI fields before the next serial write begins.
+                _rollbackUi(batch);
+                Error.throwWithStackTrace(error, stack);
+              } finally {
+                if (identical(_pendingUi, batch)) _pendingUi = null;
+              }
+            }),
+          )
+          .catchError(_reportOptimisticFailure),
+    );
   }
 
   Future<void> _optimisticAsync(
@@ -203,6 +272,20 @@ class Profiles extends _$Profiles {
   void put(Profile profile) {
     final newProfile = labeled(profile);
     final previous = state.getProfile(profile.id);
+    if (newProfile == previous) return;
+    if (previous != null &&
+        newProfile.copyWith(
+              currentGroupName: previous.currentGroupName,
+              unfoldSet: previous.unfoldSet,
+            ) ==
+            previous) {
+      _putUi(
+        state.copyAndPut(newProfile, (item) => item.id == newProfile.id),
+        previous,
+        newProfile,
+      );
+      return;
+    }
     final previousLabel = previous?.realLabel;
     // A new profile goes where the query sorts it, so the read-back after the
     // write does not move it.

@@ -19,8 +19,7 @@ import 'profile_detail.dart';
 
 typedef _Usage = ({int used, int total, double share});
 
-_Usage? _usageOf(Profile? profile) {
-  final info = profile?.subscriptionInfo;
+_Usage? _usageOf(SubscriptionInfo? info) {
   if (info == null || info.total <= 0) {
     return null;
   }
@@ -32,8 +31,8 @@ _Usage? _usageOf(Profile? profile) {
   );
 }
 
-DateTime? _expiryOf(Profile? profile) {
-  final expire = profile?.subscriptionInfo?.expire ?? 0;
+DateTime? _expiryOf(SubscriptionInfo? info) {
+  final expire = info?.expire ?? 0;
   return expire > 0 ? DateTime.fromMillisecondsSinceEpoch(expire * 1000) : null;
 }
 
@@ -75,12 +74,25 @@ class ProfilesCard extends ConsumerWidget {
     final mobile = !density.isDesktop;
     final compact = density.isCompact;
     final appLocalizations = context.appLocalizations;
-    final profile = ref.watch(currentProfileProvider);
+    final profile = ref.watch(
+      currentProfileProvider.select(
+        (profile) => profile == null
+            ? null
+            : (
+                id: profile.id,
+                type: profile.type,
+                realLabel: profile.realLabel,
+                subscriptionInfo: profile.subscriptionInfo,
+                lastUpdateDate: profile.lastUpdateDate,
+                updatingKey: profile.updatingKey,
+              ),
+      ),
+    );
     final switchable = ref.watch(
       profilesProvider.select((profiles) => profiles.length > 1),
     );
-    final usage = _usageOf(profile);
-    final expiry = _expiryOf(profile);
+    final usage = _usageOf(profile?.subscriptionInfo);
+    final expiry = _expiryOf(profile?.subscriptionInfo);
     final updatedAt = profile?.lastUpdateDate;
     final label = DashboardText.label(context);
     final figure = mobile
@@ -109,7 +121,7 @@ class ProfilesCard extends ConsumerWidget {
       _ => null,
     };
     final sync = profile != null && profile.type == ProfileType.url
-        ? _SyncButton(profile: profile)
+        ? _SyncButton(profileId: profile.id, updatingKey: profile.updatingKey)
         : null;
     final nameRow = Row(
       children: [
@@ -139,7 +151,7 @@ class ProfilesCard extends ConsumerWidget {
     return DashboardCard(
       semanticLabel: appLocalizations.profile,
       onTap: mobile || profile == null
-          ? () => _openProfile(context, profile)
+          ? () => _openProfile(context, ref.read(currentProfileProvider))
           : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -164,7 +176,10 @@ class ProfilesCard extends ConsumerWidget {
                         tooltip: appLocalizations.details(
                           appLocalizations.profile,
                         ),
-                        onPressed: () => _openProfile(context, profile),
+                        onPressed: () => _openProfile(
+                          context,
+                          ref.read(currentProfileProvider),
+                        ),
                       ),
                     ],
                   ),
@@ -229,13 +244,14 @@ double _widthOf(String text, TextStyle style) =>
     globalState.measure.computeTextSize(Text(text, style: style)).width;
 
 class _SyncButton extends ConsumerWidget {
-  const _SyncButton({required this.profile});
+  const _SyncButton({required this.profileId, required this.updatingKey});
 
-  final Profile profile;
+  final int profileId;
+  final String updatingKey;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isUpdating = ref.watch(isUpdatingProvider(profile.updatingKey));
+    final isUpdating = ref.watch(isUpdatingProvider(updatingKey));
     if (isUpdating) {
       return const SizedBox.square(
         dimension: 32,
@@ -245,7 +261,10 @@ class _SyncButton extends ConsumerWidget {
     return DashboardIconButton(
       glyph: AppGlyphs.sync,
       tooltip: context.appLocalizations.update,
-      onPressed: () => syncProfile(ref, profile),
+      onPressed: () {
+        final latest = ref.read(profilesProvider).getProfile(profileId);
+        if (latest != null) syncProfile(ref, latest);
+      },
     );
   }
 }

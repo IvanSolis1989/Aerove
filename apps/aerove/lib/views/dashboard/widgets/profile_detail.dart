@@ -163,7 +163,21 @@ class _ProfileDetailSheetState extends ConsumerState<ProfileDetailSheet>
   @override
   Widget build(BuildContext context) {
     watchConfigCounts();
-    final profile = ref.watch(currentProfileProvider);
+    final profile = ref.watch(
+      currentProfileProvider.select(
+        (profile) => profile == null
+            ? null
+            : (
+                id: profile.id,
+                type: profile.type,
+                realLabel: profile.realLabel,
+                subscriptionInfo: profile.subscriptionInfo,
+                lastUpdateDate: profile.lastUpdateDate,
+                extendType: profile.extendType,
+                updatingKey: profile.updatingKey,
+              ),
+      ),
+    );
     if (profile == null) {
       return const SizedBox.shrink();
     }
@@ -179,12 +193,18 @@ class _ProfileDetailSheetState extends ConsumerState<ProfileDetailSheet>
             glyph: AppGlyphs.sync,
             tooltip: appLocalizations.sync,
             isLoading: isUpdating,
-            onPressed: () => syncProfile(ref, profile),
+            onPressed: () {
+              final latest = ref.read(currentProfileProvider);
+              if (latest?.id == profile.id) syncProfile(ref, latest!);
+            },
           ),
         IconButtonData(
           glyph: AppGlyphs.eye,
           tooltip: appLocalizations.runtimeConfig,
-          onPressed: () => _handlePreview(profile),
+          onPressed: () {
+            final latest = ref.read(currentProfileProvider);
+            if (latest?.id == profile.id) _handlePreview(latest!);
+          },
         ),
       ],
       body: CustomScrollView(

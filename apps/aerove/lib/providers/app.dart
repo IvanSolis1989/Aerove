@@ -51,40 +51,75 @@ class Logs extends _$Logs with AutoDisposeNotifierMixin {
 
 @Riverpod(keepAlive: true)
 class Requests extends _$Requests with AutoDisposeNotifierMixin {
+  final _indices = <String, int>{};
+  var _appends = 0;
+  FixedList<TrackerInfo>? _indexed;
+  var _indexedMutations = -1;
+
   @override
   FixedList<TrackerInfo> build() {
-    return FixedList(maxRequestsLength);
+    final initial = FixedList<TrackerInfo>(maxRequestsLength);
+    _rebuildIndex(initial);
+    return initial;
+  }
+
+  void _rebuildIndex(FixedList<TrackerInfo> items) {
+    _indices.clear();
+    for (var index = 0; index < items.length; index++) {
+      _indices[items[index].id] = _appends++;
+    }
+    _indexed = items;
+    _indexedMutations = items.mutations;
+  }
+
+  void _ensureIndex() {
+    if (!identical(_indexed, state) || _indexedMutations != state.mutations) {
+      _rebuildIndex(state);
+    }
+  }
+
+  @override
+  set value(FixedList<TrackerInfo> items) {
+    _rebuildIndex(items);
+    state = items;
+  }
+
+  void _publish(FixedList<TrackerInfo> items) {
+    _indexed = items;
+    _indexedMutations = items.mutations;
+    state = items;
   }
 
   void addRequest(TrackerInfo value) {
-    if (!ref.mounted) {
-      return;
+    if (!ref.mounted) return;
+    _ensureIndex();
+    if (state.length == state.maxLength) {
+      final evicted = state[0];
+      if (_indices[evicted.id] == _appends - state.length) {
+        _indices.remove(evicted.id);
+      }
     }
-    this.value = state.append(value);
+    _indices[value.id] = _appends++;
+    _publish(state.append(value));
   }
 
   void updateTraffic(Map<String, RequestTraffic> traffic) {
-    if (!ref.mounted) {
-      return;
-    }
-    final pending = Map.of(traffic);
+    if (!ref.mounted) return;
+    _ensureIndex();
+    final first = _appends - state.length;
     final updated = <int, TrackerInfo>{};
-    for (
-      var index = state.length - 1;
-      index >= 0 && pending.isNotEmpty;
-      index--
-    ) {
-      final request = state[index];
-      final item = pending.remove(request.id);
-      if (item != null) {
-        updated[index] = request.copyWith(
-          upload: item.upload,
-          download: item.download,
-        );
-      }
+    for (final MapEntry(:key, :value) in traffic.entries) {
+      final absolute = _indices[key];
+      if (absolute == null) continue;
+      final index = absolute - first;
+      if (index < 0 || index >= state.length) continue;
+      updated[index] = state[index].copyWith(
+        upload: value.upload,
+        download: value.download,
+      );
     }
     if (updated.isNotEmpty) {
-      value = state.replace(updated);
+      _publish(state.replace(updated));
     }
   }
 }
