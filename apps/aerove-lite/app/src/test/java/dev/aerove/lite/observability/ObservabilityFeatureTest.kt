@@ -36,6 +36,7 @@ class ObservabilityFeatureTest {
         try {
             feature.bindSession(1); feature.setForeground(true)
             val applicationLease = feature.lease(HistoryKind.Requests)
+            feature.lease(HistoryKind.Logs)
             val page = feature.lease(HistoryKind.Dns); page.close()
             assertTrue(feature.observationsEnabled.value)
             feature.acceptLog(1, LogLine(0, "info", "before first window")); feature.acceptWindow(1, window())
@@ -72,7 +73,7 @@ class ObservabilityFeatureTest {
     @Test fun cancellingAnExportAllowsImmediateRetryAndLatePickerCannotConsumeTheNewIntent() = runBlocking {
         val documents = DiskDocuments(); val feature = ObservabilityFeature(this, documents) {}
         try {
-            feature.bindSession(1); feature.setForeground(true); feature.acceptLog(1, LogLine(0, "info", "kept"))
+            feature.bindSession(1); feature.setForeground(true); feature.lease(HistoryKind.Logs); feature.acceptLog(1, LogLine(0, "info", "kept"))
             documents.entered = CompletableDeferred(); documents.hold = CompletableDeferred()
             feature.requestLogExport(); val old = feature.state.value.document!!
             feature.documentLaunched(old.id); feature.documentResult(old.id, "cancelled.txt")
@@ -90,6 +91,7 @@ class ObservabilityFeatureTest {
             feature.documentResult(late.id, "late.txt")
             withTimeout(3000) { while (documents.file("late.txt").exists()) yield() }
             assertEquals(current.id, feature.state.value.document!!.id)
+            feature.until { it.snapshot.logs.size == 1 }
             assertEquals(1, feature.state.value.snapshot.logs.size)
         } finally { feature.close() }
     }

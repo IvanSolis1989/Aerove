@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.aerove.lite.R
 import dev.aerove.lite.observability.*
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -22,7 +23,8 @@ import kotlinx.coroutines.withContext
 internal fun DnsQueriesScreen(feature: ObservabilityFeature, padding: PaddingValues, tables: HistoryTablePreferences,
     onTableChange: (HistoryTableChange) -> Unit) {
     HistoryVisibility(feature, HistoryKind.Dns)
-    val state by feature.state.collectAsStateWithLifecycle()
+    val state by rememberHistoryState(feature)
+    val active = LocalLitePageActive.current
     var query by rememberSaveable { mutableStateOf("") }
     var filters by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var sort by rememberSaveable { mutableStateOf<DnsHistorySort?>(null) }
@@ -38,9 +40,12 @@ internal fun DnsQueriesScreen(feature: ObservabilityFeature, padding: PaddingVal
         "Direct" to stringResource(R.string.history_direct), "Proxy" to stringResource(R.string.history_proxy),
         "Other" to stringResource(R.string.history_other), "cache" to stringResource(R.string.history_cached))
     val anchor = remember(feature, state.snapshot.sessionRevision) { HistoryAnchor<DnsHistoryEntry>(3000) { it.id } }
-    val projection by produceState(HistoryProjection<DnsHistoryEntry>(emptyList(), emptyList()), anchor, state.snapshot.dns, query, filters, sort, descending, following, labels) {
-        value = withContext(Dispatchers.Default) { projectDns(anchor.update(state.snapshot.dns, following), query, filters.toSet(), sort, descending, labels) }
-    }
+    val projection by key(state.snapshot.sessionRevision) { produceState(HistoryProjection<DnsHistoryEntry>(emptyList(), emptyList()), anchor, state.snapshot.dnsRevision, active, query, filters, sort, descending, following, labels) {
+        if (active) value = withContext(Dispatchers.Default) {
+            val context = coroutineContext
+            projectDns(anchor.update(state.snapshot.dns, following), query, filters.toSet(), sort, descending, labels, checkActive = { context.ensureActive() })
+        }
+    } }
     val list = rememberLazyListState()
     HistoryFollow(list, projection.rows.firstOrNull()?.id, following) { following = false }
     val overlay = LocalLiteOverlay.current

@@ -4,6 +4,7 @@ import dev.aerove.lite.LogLine
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -17,6 +18,7 @@ class LocalHistoryLogsTest {
     @Test fun explicitDeveloperBatchWorksWithoutRuntimeAndDoesNotCreateTelemetryOrRequestData() = runBlocking<Unit> {
         val feature = ObservabilityFeature(this, documents) { error("No cache flush requested") }
         try {
+            feature.setForeground(true); feature.lease(HistoryKind.Logs)
             assertTrue(feature.state.value.snapshot.logs.isEmpty())
             feature.appendLocalLogs(samples())
             val snapshot = feature.state.value.snapshot
@@ -27,6 +29,7 @@ class LocalHistoryLogsTest {
             assertTrue(snapshot.requests.isEmpty()); assertTrue(snapshot.dns.isEmpty()); assertFalse(snapshot.truncated)
             assertFalse(feature.observationsEnabled.value)
             feature.setForeground(false); feature.appendLocalLogs(listOf(LogLine(1000, "info", "explicit app action")))
+            feature.setForeground(true)
             assertEquals(1001, feature.state.value.snapshot.logs.size)
             assertFalse(feature.observationsEnabled.value)
         } finally { feature.close() }
@@ -55,11 +58,12 @@ class LocalHistoryLogsTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val feature = ObservabilityFeature(scope, documents) {}
         try {
-            feature.bindSession(1); feature.setForeground(true)
+            feature.bindSession(1); feature.setForeground(true); feature.lease(HistoryKind.Logs)
             val start = CompletableDeferred<Unit>()
             val local = async(Dispatchers.Default) { start.await(); feature.appendLocalLogs(samples()) }
             val core = async(Dispatchers.Default) { start.await(); repeat(1000) { feature.acceptLog(1, LogLine(it.toLong(), "debug", "core $it")) } }
             start.complete(Unit); local.await(); core.await()
+            withTimeout(3000) { feature.state.first { it.snapshot.logs.size == 2000 } }
             val logs = feature.state.value.snapshot.logs
             assertEquals(2000, logs.size)
             assertEquals((1L..2000L).toList(), logs.map { it.id })
@@ -73,6 +77,7 @@ class LocalHistoryLogsTest {
         val feature = ObservabilityFeature(this, documents) {}
         var current = false
         try {
+            feature.setForeground(true); feature.lease(HistoryKind.Logs)
             feature.appendLocalLogs(samples()) { current }
             assertTrue(feature.state.value.snapshot.logs.isEmpty())
             current = true; feature.appendLocalLogs(samples()) { current }

@@ -45,27 +45,34 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 @Composable
 internal fun LogsScreen(feature: ObservabilityFeature, padding: PaddingValues) {
     HistoryVisibility(feature, HistoryKind.Logs)
-    val state by feature.state.collectAsStateWithLifecycle()
+    val state by rememberHistoryState(feature)
+    val active = LocalLitePageActive.current
     var query by rememberSaveable { mutableStateOf("") }
     var levels by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var following by rememberSaveable { mutableStateOf(true) }
     val anchor = remember(feature, state.snapshot.sessionRevision) { HistoryAnchor<HistoryLogEntry>(5000) { it.id } }
-    val rows by produceState(emptyList<HistoryLogEntry>(), anchor, state.snapshot.logs, query, levels, following) {
-        value = withContext(Dispatchers.Default) { projectLogs(anchor.update(state.snapshot.logs, following), query, levels.toSet()) }
-    }
+    val projection by androidx.compose.runtime.key(state.snapshot.sessionRevision) { produceState(HistoryProjection<HistoryLogEntry>(emptyList(), emptyList()), anchor, state.snapshot.logRevision, active, query, levels, following) {
+        if (active) value = withContext(Dispatchers.Default) {
+            val context = coroutineContext
+            HistoryProjection(projectLogs(anchor.update(state.snapshot.logs, following), query, levels.toSet()) { context.ensureActive() },
+                logKeywords(state.snapshot.logs) { context.ensureActive() })
+        }
+    } }
+    val rows = projection.rows
     val list = rememberLazyListState()
     HistoryFollow(list, rows.firstOrNull()?.id, following) { following = false }
     HistoryLogDocumentHost(feature)
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(padding), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        HistoryControls(query, { query = it }, levels, state.snapshot.logs.map { it.level.lowercase(java.util.Locale.ROOT) }.distinct().sorted(),
+        HistoryControls(query, { query = it }, levels, projection.keywords,
             following, { following = !following }, rows.size, onFilters = { levels = it })
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             LiteButton(stringResource(R.string.history_export_logs), feature::requestLogExport,
@@ -104,7 +111,7 @@ internal fun LogsScreen(feature: ObservabilityFeature, padding: PaddingValues) {
 
 @Composable
 private fun HistoryLogDocumentHost(feature: ObservabilityFeature) {
-    val state by feature.state.collectAsStateWithLifecycle()
+    val state by rememberHistoryState(feature)
     val active = LocalLitePageActive.current
     val currentActive by rememberUpdatedState(active)
     val lifecycle = LocalLifecycleOwner.current.lifecycle

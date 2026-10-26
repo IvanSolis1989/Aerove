@@ -30,7 +30,9 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
     val state = mutableState.asStateFlow()
     private val enabled = MutableStateFlow(false)
     val observationsEnabled = enabled.asStateFlow()
-    private val leases = mutableMapOf<Long, HistoryKind>()
+    private val leases = mutableMapOf<Long, Pair<HistoryKind, Boolean>>()
+    private var publication: Job? = null
+    private var publicationEpoch = 0L
     private val retiredCreates = linkedSetOf<Long>()
     private var serial = 0L
     private var binding: Long? = null
@@ -44,42 +46,70 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
 
     fun bindSession(token: Long?) = synchronized(gate) {
         if (binding == token) return@synchronized
-        binding = token; repository.bindSession(token); cancelExport()
+        cancelPublication(); binding = token; repository.bindSession(token); cancelExport()
         dnsEpoch++; dnsJob?.cancel(); dnsJob = null
-        publish { it.copy(snapshot = repository.snapshot(), clearingDns = false, observationsAvailable = false) }
+        publish { it.copy(snapshot = repository.snapshot(visibleKinds()), clearingDns = false, observationsAvailable = false) }
         updateDemand()
     }
 
-    fun setForeground(value: Boolean) = synchronized(gate) { foreground = value; updateDemand() }
+    fun setForeground(value: Boolean) = synchronized(gate) {
+        if (foreground == value) return@synchronized
+        foreground = value; cancelPublication(); updateDemand()
+        if (value) publishHistory()
+    }
 
-    fun lease(kind: HistoryKind): Closeable = synchronized(gate) {
+    fun lease(kind: HistoryKind, visible: Boolean = true): Closeable = synchronized(gate) {
         val id = ++serial
-        if (!closed) leases[id] = kind
+        if (!closed) leases[id] = kind to visible
         updateDemand()
+        if (foreground && visible) publishHistory()
         val released = AtomicBoolean(false)
         Closeable { if (released.compareAndSet(false, true)) synchronized(gate) { leases.remove(id); updateDemand() } }
     }
 
-    private fun updateDemand() { enabled.value = !closed && foreground && binding != null && leases.values.any { it != HistoryKind.Logs } }
+    private fun updateDemand() { enabled.value = !closed && foreground && binding != null && leases.values.any { it.first != HistoryKind.Logs } }
 
     fun acceptWindow(token: Long, window: ObservationWindow) = synchronized(gate) {
         if (!enabled.value || !repository.accept(token, window)) return@synchronized
-        publish { it.copy(snapshot = repository.snapshot(), observationsAvailable = true) }
+        if (!state.value.observationsAvailable || state.value.snapshot.sessionRevision != repository.snapshot(emptySet()).sessionRevision) publishHistory(true)
+        else schedulePublication()
     }
 
     fun acceptLog(token: Long, line: LogLine) = synchronized(gate) {
         if (!foreground || closed || !repository.acceptLog(token, line)) return@synchronized
-        publish { it.copy(snapshot = repository.snapshot()) }
+        schedulePublication()
     }
 
     fun appendLocalLogs(lines: List<LogLine>, isCurrent: () -> Boolean = { true }) = synchronized(gate) {
         if (closed || !isCurrent() || lines.isEmpty()) return@synchronized
         repository.appendLocalLogs(lines)
-        publish { it.copy(snapshot = repository.snapshot()) }
+        publishHistory()
     }
 
     fun clear(kind: HistoryKind) = synchronized(gate) {
-        repository.clear(kind); publish { it.copy(snapshot = repository.snapshot()) }
+        repository.clear(kind); cancelPublication(); publishHistory()
+    }
+
+    private fun visibleKinds(): Set<HistoryKind> = if (foreground) leases.values.filter { it.second }.map { it.first }.toSet() else emptySet()
+
+    private fun cancelPublication() { publicationEpoch++; publication?.cancel(); publication = null }
+
+    private fun publishHistory(available: Boolean = state.value.observationsAvailable) {
+        publish { it.copy(snapshot = repository.snapshot(visibleKinds()), observationsAvailable = available) }
+    }
+
+    /** One trailing publication per burst; later arrivals update the rings without resetting the timer. */
+    private fun schedulePublication() {
+        if (!foreground || publication != null) return
+        val epoch = publicationEpoch
+        publication = jobs.launch(start = CoroutineStart.LAZY) {
+            delay(300)
+            synchronized(gate) {
+                if (epoch == publicationEpoch && foreground && !closed) {
+                    publication = null; publishHistory()
+                }
+            }
+        }.also { it.start() }
     }
 
     fun flushDnsCache() = synchronized(gate) {
@@ -97,7 +127,7 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
 
     fun requestLogExport() = synchronized(gate) {
         if (closed || state.value.document != null || exportJob?.isCompleted == false) return@synchronized
-        exportLines = repository.snapshot().logs.map { "${java.time.Instant.ofEpochMilli(it.time)} [${it.level}] ${it.message}" }
+        exportLines = repository.snapshot(setOf(HistoryKind.Logs)).logs.map { "${java.time.Instant.ofEpochMilli(it.time)} [${it.level}] ${it.message}" }
         publish { it.copy(document = HistoryDocumentRequest(++serial), notice = null) }
     }
 
@@ -156,6 +186,6 @@ class ObservabilityFeature(scope: CoroutineScope, private val documents: History
     }
 
     override fun close() = synchronized(gate) {
-        if (!closed) { cancelExport(); closed = true; leases.clear(); enabled.value = false; owner.cancel(); documents.close() }
+        if (!closed) { cancelPublication(); cancelExport(); closed = true; leases.clear(); enabled.value = false; owner.cancel(); documents.close() }
     }
 }

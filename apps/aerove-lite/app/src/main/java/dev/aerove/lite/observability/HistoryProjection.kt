@@ -6,9 +6,11 @@ import java.util.Locale
 data class HistoryProjection<T>(val rows: List<T>, val keywords: List<String>)
 
 fun projectRequests(source: List<RequestHistoryEntry>, query: String = "", keywords: Set<String> = emptySet(),
-    sort: RequestHistorySort? = null, descending: Boolean = true): HistoryProjection<RequestHistoryEntry> {
-    val rows = source.asReversed().filter { entry -> keywords.all { it == entry.process || it in entry.chains } && historyMatches(query, entry.searchFields) }
+    sort: RequestHistorySort? = null, descending: Boolean = true, checkActive: () -> Unit = {}): HistoryProjection<RequestHistoryEntry> {
+    val checkpoint = projectionCheckpoint(checkActive)
+    val rows = source.asReversed().filter { entry -> checkpoint(); keywords.all { it == entry.process || it in entry.chains } && historyMatches(query, entry.searchFields) }
     val comparator = Comparator<RequestHistoryEntry> { a, b ->
+        checkpoint()
         val order = when (sort) {
             RequestHistorySort.Time -> a.time.compareTo(b.time)
             RequestHistorySort.Process -> a.process.compareTo(b.process, true)
@@ -23,16 +25,18 @@ fun projectRequests(source: List<RequestHistoryEntry>, query: String = "", keywo
         }
         if (descending) -order else order
     }
-    return HistoryProjection(rows.sortedWith(comparator), source.flatMap { listOf(it.process) + it.chains }.filter(String::isNotBlank).distinct().sorted())
+    return HistoryProjection(rows.sortedWith(comparator), source.flatMap { checkpoint(); listOf(it.process) + it.chains }.filter(String::isNotBlank).distinct().sorted())
 }
 
 fun projectDns(source: List<DnsHistoryEntry>, query: String = "", keywords: Set<String> = emptySet(),
     sort: DnsHistorySort? = null, descending: Boolean = true,
-    labels: Map<String, String> = emptyMap()): HistoryProjection<DnsHistoryEntry> {
+    labels: Map<String, String> = emptyMap(), checkActive: () -> Unit = {}): HistoryProjection<DnsHistoryEntry> {
     fun tags(entry: DnsHistoryEntry) = listOfNotNull(entry.type, entry.initiator, entry.rcode.takeIf { it.isNotEmpty() && it != "NOERROR" }, "cache".takeIf { entry.cached })
-    val rows = source.asReversed().filter { entry -> keywords.all { it in tags(entry) } && historyMatches(query,
+    val checkpoint = projectionCheckpoint(checkActive)
+    val rows = source.asReversed().filter { entry -> checkpoint(); keywords.all { it in tags(entry) } && historyMatches(query,
         entry.searchFields + tags(entry).mapNotNull(labels::get)) }
     val comparator = Comparator<DnsHistoryEntry> { a, b ->
+        checkpoint()
         val order = when (sort) {
             DnsHistorySort.Time -> a.time.compareTo(b.time)
             DnsHistorySort.Domain -> a.domain.compareTo(b.domain, true)
@@ -45,11 +49,25 @@ fun projectDns(source: List<DnsHistoryEntry>, query: String = "", keywords: Set<
         }
         if (descending) -order else order
     }
-    return HistoryProjection(rows.sortedWith(comparator), source.flatMap(::tags).distinct().sorted())
+    return HistoryProjection(rows.sortedWith(comparator), source.flatMap { checkpoint(); tags(it) }.distinct().sorted())
 }
 
-fun projectLogs(source: List<HistoryLogEntry>, query: String = "", levels: Set<String> = emptySet()): List<HistoryLogEntry> =
-    source.filter { (levels.isEmpty() || levels.all { level -> level == it.level.lowercase(Locale.ROOT) }) && historyMatches(query, listOf(it.level, it.message)) }.asReversed()
+fun projectLogs(source: List<HistoryLogEntry>, query: String = "", levels: Set<String> = emptySet(),
+    checkActive: () -> Unit = {}): List<HistoryLogEntry> {
+    val checkpoint = projectionCheckpoint(checkActive)
+    return source.filter { checkpoint(); (levels.isEmpty() || levels.all { level -> level == it.level.lowercase(Locale.ROOT) }) && historyMatches(query, listOf(it.level, it.message)) }.asReversed()
+}
+
+fun logKeywords(source: List<HistoryLogEntry>, checkActive: () -> Unit = {}): List<String> {
+    val checkpoint = projectionCheckpoint(checkActive)
+    return source.map { checkpoint(); it.level.lowercase(Locale.ROOT) }.distinct().sorted()
+}
+
+private fun projectionCheckpoint(checkActive: () -> Unit): () -> Unit {
+    checkActive()
+    var count = 0
+    return { if (++count % 128 == 0) checkActive() }
+}
 
 private fun total(entry: RequestHistoryEntry): BigInteger = BigInteger(entry.upload.toString()).add(BigInteger(entry.download.toString()))
 

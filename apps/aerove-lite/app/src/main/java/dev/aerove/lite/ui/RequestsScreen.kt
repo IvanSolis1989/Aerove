@@ -28,6 +28,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -37,7 +38,8 @@ import kotlinx.coroutines.withContext
 internal fun RequestsScreen(feature: ObservabilityFeature, padding: PaddingValues, tables: HistoryTablePreferences,
     onTableChange: (HistoryTableChange) -> Unit) {
     HistoryVisibility(feature, HistoryKind.Requests)
-    val state by feature.state.collectAsStateWithLifecycle()
+    val state by rememberHistoryState(feature)
+    val active = LocalLitePageActive.current
     var query by rememberSaveable { mutableStateOf("") }
     var filters by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var sort by rememberSaveable { mutableStateOf<RequestHistorySort?>(null) }
@@ -50,9 +52,12 @@ internal fun RequestsScreen(feature: ObservabilityFeature, padding: PaddingValue
         next?.let { descending = it.descending }
     }
     val anchor = remember(feature, state.snapshot.sessionRevision) { HistoryAnchor<RequestHistoryEntry>(2000) { it.id } }
-    val projection by produceState(HistoryProjection<RequestHistoryEntry>(emptyList(), emptyList()), anchor, state.snapshot.requests, query, filters, sort, descending, following) {
-        value = withContext(Dispatchers.Default) { projectRequests(anchor.update(state.snapshot.requests, following), query, filters.toSet(), sort, descending) }
-    }
+    val projection by key(state.snapshot.sessionRevision) { produceState(HistoryProjection<RequestHistoryEntry>(emptyList(), emptyList()), anchor, state.snapshot.requestRevision, active, query, filters, sort, descending, following) {
+        if (active) value = withContext(Dispatchers.Default) {
+            val context = coroutineContext
+            projectRequests(anchor.update(state.snapshot.requests, following), query, filters.toSet(), sort, descending, checkActive = { context.ensureActive() })
+        }
+    } }
     val list = rememberLazyListState()
     HistoryFollow(list, projection.rows.firstOrNull()?.id, following) { following = false }
     val overlay = LocalLiteOverlay.current
@@ -111,6 +116,18 @@ internal fun RequestsScreen(feature: ObservabilityFeature, padding: PaddingValue
             }
             }
             }
+        }
+    }
+}
+
+/** A retained page does not collect presentation changes while another route covers it. */
+@Composable
+internal fun rememberHistoryState(feature: ObservabilityFeature): State<ObservabilityState> {
+    val active = LocalLitePageActive.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    return produceState(feature.state.value, feature, active, lifecycle) {
+        if (active) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            feature.state.collect { value = it }
         }
     }
 }

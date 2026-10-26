@@ -10,6 +10,9 @@ data class HistorySnapshot(
     val sessionRevision: Long = 0,
     val requestCount: Long? = null,
     val dnsCount: Long? = null,
+    val requestRevision: Long = 0,
+    val dnsRevision: Long = 0,
+    val logRevision: Long = 0,
 )
 
 /** Consumes only the existing stream; it owns no timer, network client or coroutine. */
@@ -31,10 +34,20 @@ class HistoryRepository {
     private var dnsCount = 0L
     private var countsReady = false
     private var countsComplete = true
+    private var requestRevision = 0L
+    private var dnsRevision = 0L
+    private var logRevision = 0L
+    private var requestCacheRevision = -1L
+    private var dnsCacheRevision = -1L
+    private var logCacheRevision = -1L
+    private var requestCache = emptyList<RequestHistoryEntry>()
+    private var dnsCache = emptyList<DnsHistoryEntry>()
+    private var logCache = emptyList<HistoryLogEntry>()
+    private fun invalidateAll() { requestRevision++; dnsRevision++; logRevision++; requestCache = emptyList(); dnsCache = emptyList(); logCache = emptyList(); requestCacheRevision = -1; dnsCacheRevision = -1; logCacheRevision = -1 }
 
     @Synchronized fun bindSession(value: Long?) {
         if (token == value) return
-        sessionRevision++
+        sessionRevision++; invalidateAll()
         token = value; runtime = null; generation = null; cursor = 0uL; dropped = 0uL
         retiredRuntimes.clear(); requests.clear(); dns.clear(); logs.clear(); truncated = false
         resetCounts()
@@ -51,7 +64,7 @@ class HistoryRepository {
             (runtime != window.sessionId || generation != window.generation) &&
             window.cursor != window.activationCursor) return false
         if (runtime != window.sessionId) {
-            runtime?.let { retiredRuntimes += it; requests.clear(); dns.clear(); logs.clear(); truncated = false; sessionRevision++ }
+            runtime?.let { retiredRuntimes += it; requests.clear(); dns.clear(); logs.clear(); truncated = false; sessionRevision++; invalidateAll() }
             while (retiredRuntimes.size > 16) retiredRuntimes.remove(retiredRuntimes.first())
             runtime = window.sessionId; generation = null
             resetCounts()
@@ -82,14 +95,14 @@ class HistoryRepository {
                 }
             }
             when (event) {
-                is ObservationEvent.Request -> requests[event.value.id] = event.value
+                is ObservationEvent.Request -> { requests[event.value.id] = event.value; requestRevision++ }
                 is ObservationEvent.Traffic -> requests[event.id]?.let {
-                    requests[event.id] = it.copy(upload = event.upload, download = event.download)
+                    requestRevision++; requests[event.id] = it.copy(upload = event.upload, download = event.download)
                 }
                 is ObservationEvent.Closed -> requests[event.id]?.let {
-                    requests[event.id] = it.copy(upload = event.upload, download = event.download, end = event.end)
+                    requestRevision++; requests[event.id] = it.copy(upload = event.upload, download = event.download, end = event.end)
                 }
-                is ObservationEvent.Dns -> dns["${window.sessionId}:${event.value.id}"] = event.value.copy(id = "${window.sessionId}:${event.value.id}")
+                is ObservationEvent.Dns -> { dnsRevision++; dns["${window.sessionId}:${event.value.id}"] = event.value.copy(id = "${window.sessionId}:${event.value.id}") }
             }
             while (requests.size > 2000) requests.remove(requests.keys.first())
             while (dns.size > 3000) dns.remove(dns.keys.first())
@@ -112,14 +125,28 @@ class HistoryRepository {
     }
 
     private fun appendLog(line: LogLine) {
+        logRevision++
         logs.addLast(HistoryLogEntry(++logSerial, line.time, line.level, line.message))
         while (logs.size > 5000) logs.removeFirst()
     }
 
     @Synchronized fun clear(kind: HistoryKind) {
-        when (kind) { HistoryKind.Requests -> requests.clear(); HistoryKind.Dns -> dns.clear(); HistoryKind.Logs -> logs.clear() }
+        when (kind) { HistoryKind.Requests -> { requests.clear(); requestRevision++; requestCache = emptyList(); requestCacheRevision = requestRevision }; HistoryKind.Dns -> { dns.clear(); dnsRevision++; dnsCache = emptyList(); dnsCacheRevision = dnsRevision }; HistoryKind.Logs -> { logs.clear(); logRevision++; logCache = emptyList(); logCacheRevision = logRevision } }
     }
 
-    @Synchronized fun snapshot(): HistorySnapshot = HistorySnapshot(requests.values.toList(), dns.values.toList(), logs.toList(), truncated, sessionRevision,
-        requestCount.takeIf { countsReady && countsComplete }, dnsCount.takeIf { countsReady && countsComplete })
+    /** Hidden categories retain their last immutable view without copying their live rings. */
+    @Synchronized fun snapshot(visible: Set<HistoryKind> = HistoryKind.entries.toSet()): HistorySnapshot {
+        if (HistoryKind.Requests in visible && requestCacheRevision != requestRevision) {
+            requestCache = java.util.Collections.unmodifiableList(requests.values.toList()); requestCacheRevision = requestRevision
+        }
+        if (HistoryKind.Dns in visible && dnsCacheRevision != dnsRevision) {
+            dnsCache = java.util.Collections.unmodifiableList(dns.values.toList()); dnsCacheRevision = dnsRevision
+        }
+        if (HistoryKind.Logs in visible && logCacheRevision != logRevision) {
+            logCache = java.util.Collections.unmodifiableList(logs.toList()); logCacheRevision = logRevision
+        }
+        return HistorySnapshot(requestCache, dnsCache, logCache, truncated, sessionRevision,
+            requestCount.takeIf { countsReady && countsComplete }, dnsCount.takeIf { countsReady && countsComplete },
+            requestCacheRevision, dnsCacheRevision, logCacheRevision)
+    }
 }
