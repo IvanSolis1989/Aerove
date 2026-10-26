@@ -205,9 +205,16 @@ async fn initially_parked_has_only_private_api_then_same_core_attaches_parks_and
     let owner = session.owned_runtime().unwrap(); assert!(owner.status().core_ready); assert!(!owner.listener_status().listening); assert!(owner.listener_status().active_ports.is_empty());
     assert!(TcpListener::bind(ports[1]).await.is_ok()); assert!(TcpListener::bind(ports[2]).await.is_ok()); assert!(UdpSocket::bind(ports[2]).await.is_ok());
     let before = http_json(&http(ports[0],"/aerove/route").await);
+    let dormant=http_json(&http(ports[0],"/aerove/network").await);assert_eq!(dormant["activePorts"],serde_json::json!([]));
+    let held=editable_ports(1,&ports.map(|address|address.port())).await;let edited=held[0].local_addr().unwrap();drop(held);
+    let deferred=network_body("77777777-7777-4777-8777-777777777777",dormant["coreEpoch"].as_str().unwrap(),edited.port(),0,0,false,&["parked:deferred"]);
+    let rejected=network_http(ports[0],"POST",&deferred.to_string(),SECRET).await;
+    assert!(rejected.starts_with(b"HTTP/1.1 409"));assert_eq!(http_json(&rejected)["error"],"listenersParked");
+    assert_eq!(dormant,http_json(&http(ports[0],"/aerove/network").await));assert!(TcpListener::bind(edited).await.is_ok());
     let (caller,peer) = pair();
     let active = timeout(Duration::from_secs(5),owner.resume(Some(caller.try_clone().unwrap().into()))).await.unwrap().unwrap();
     assert!(active.tun_ready && active.user_listeners_ready && active.listening);
+    let resumed_network=http_json(&http(ports[0],"/aerove/network").await);assert_eq!(resumed_network["network"]["mixed-port"],ports[1].port());assert_eq!(resumed_network["network"]["authEnabled"],false);
     assert!(TcpListener::bind(ports[1]).await.is_err()); assert!(UdpSocket::bind(ports[2]).await.is_err());
     assert!(owner.resume(None).await.is_err()); assert!(owner.status().core_ready);
     assert!(owner.resume(Some(caller.try_clone().unwrap().into())).await.is_err());
@@ -263,4 +270,180 @@ async fn stop_during_actual_bootstrap_query_joins_load_without_late_ready_or_fd_
     for address in ports { assert!(TcpListener::bind(address).await.is_ok()); }
     caller.send(b"fd-during-load").unwrap(); let mut bytes = [0;32]; assert_eq!(peer.recv(&mut bytes).await.unwrap(),14);
     assert!(calls.load(Ordering::Relaxed)>0);
+}
+
+// UI-editable ports intentionally use the same 1024..49151 range as Kotlin;
+// existing bootstrap fixtures may still request OS-assigned ephemeral ports.
+async fn editable_ports(count: usize, excluded: &[u16]) -> Vec<TcpListener> {
+    let mut bound = Vec::new();
+    for port in 30000..=49151 {
+        if !excluded.contains(&port) {
+            if let Ok(listener) = TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await { bound.push(listener); }
+        }
+        if bound.len() == count { return bound; }
+    }
+    panic!("not enough available UI-editable fixture ports");
+}
+async fn network_http(address: SocketAddr, method: &str, body: &str, secret: &str) -> Vec<u8> {
+    let mut socket = TcpStream::connect(address).await.unwrap();
+    socket.write_all(format!("{method} /aerove/network HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {secret}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    let read = timeout(Duration::from_secs(5), socket.read_to_end(&mut response)).await.unwrap();
+    // A fatal bind failure can close private HTTP as part of joined exit.
+    if let Err(cause) = read { assert!(matches!(cause.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::UnexpectedEof)); }
+    response
+}
+fn network_body(id: &str, epoch: &str, mixed: u16, http: u16, socks: u16, lan: bool, credentials: &[&str]) -> serde_json::Value {
+    serde_json::json!({"requestId":id,"expectedCoreEpoch":epoch,"network":{
+        "mixed-port":mixed,"port":http,"socks-port":socks,"allow-lan":lan,
+        "bind-address":if lan {"0.0.0.0"} else {"127.0.0.1"},"authentication":credentials}})
+}
+async fn apply_network(address: SocketAddr, value: &serde_json::Value) -> String {
+    let bytes = network_http(address,"POST",&value.to_string(),SECRET).await;
+    assert!(bytes.starts_with(b"HTTP/1.1 200"),"{}",String::from_utf8_lossy(&bytes));
+    let receipt = http_json(&bytes);
+    assert_eq!(receipt.as_object().unwrap().len(),2);
+    assert_eq!(receipt["requestId"],value["requestId"]);
+    let epoch = receipt["coreEpoch"].as_str().unwrap();
+    assert!(epoch.parse::<u64>().unwrap() > value["expectedCoreEpoch"].as_str().unwrap().parse::<u64>().unwrap());
+    epoch.to_owned()
+}
+async fn proxy_request(address: SocketAddr, target: SocketAddr, authorization: Option<&str>) -> Vec<u8> {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let header = authorization.map_or(String::new(),|value|format!("Proxy-Authorization: Basic {value}\r\n"));
+    stream.write_all(format!("GET http://{target}/network-hot HTTP/1.1\r\nHost: {target}\r\n{header}Connection: close\r\n\r\n").as_bytes()).await.unwrap();
+    let mut bytes = Vec::new(); timeout(Duration::from_secs(5),stream.read_to_end(&mut bytes)).await.unwrap().unwrap(); bytes
+}
+
+#[tokio::test]
+async fn private_network_hot_apply_joins_user_ingress_and_preserves_actual_tun_api_and_identity() {
+    let _serial = LOCK.lock().await; let roots = Roots::new();
+    let fixtures = CancellationToken::new(); let (dns,dns_task,_) = dns_fixture(fixtures.clone()).await;
+    let ports = ports().await; let held = editable_ports(3,&ports.map(|address|address.port())).await;
+    let next: Vec<_> = held.iter().map(|listener|listener.local_addr().unwrap()).collect(); drop(held);
+    let target = TcpListener::bind("127.0.0.1:0").await.unwrap(); let target_address = target.local_addr().unwrap();
+    let target_cancel = fixtures.clone();
+    let target_task = tokio::spawn(async move { loop { tokio::select! { biased;
+        _ = target_cancel.cancelled() => break,
+        accepted = target.accept() => {
+            let (mut stream,_) = accepted.unwrap(); let mut request = Vec::new(); let mut byte = [0];
+            while !request.ends_with(b"\r\n\r\n") { stream.read_exact(&mut byte).await.unwrap(); request.push(byte[0]); }
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await.unwrap();
+        },
+    } } });
+    let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap(); let udp_address = udp.local_addr().unwrap(); let udp_cancel = fixtures.clone();
+    let udp_task = tokio::spawn(async move { let mut bytes = [0;4096]; loop { tokio::select! { biased;
+        _ = udp_cancel.cancelled() => break,
+        received = udp.recv_from(&mut bytes) => { let (n,peer) = received.unwrap(); udp.send_to(&bytes[..n],peer).await.unwrap(); },
+    } } });
+    let (caller,peer) = pair(); let cancel = CancellationToken::new();
+    let session = Registry::start_owned(plan(ports,dns,false,&roots).to_string(),Some(caller.try_clone().unwrap().into()),
+        network(&cancel,Arc::new(AtomicUsize::new(0)),dns),None).unwrap();
+    timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap();
+    let owner = session.owned_runtime().unwrap(); let generation = session.generation(); let api = owner.status().api_address;
+    let before = http_json(&http(ports[0],"/aerove/network").await);
+    assert_eq!(before.as_object().unwrap().len(),3); assert_eq!(before["network"].as_object().unwrap().len(),6);
+    assert_eq!(before["activePorts"],serde_json::json!([ports[1].port()]));
+    peer.send(&udp_frame(udp_address,41003,b"before-hot")).await.unwrap(); assert_eq!(udp_reply(&peer,41003).await,b"before-hot");
+    let connections = http_json(&http(ports[0],"/connections").await);
+    let flow = connections["connections"].as_array().unwrap().iter().find(|connection|connection["metadata"]["sourcePort"]==41003).unwrap()["id"].clone();
+    let mut accepted = TcpStream::connect(ports[1]).await.unwrap();
+    accepted.write_all(&[5,1,0]).await.unwrap(); let mut greeting=[0;2]; accepted.read_exact(&mut greeting).await.unwrap(); assert_eq!(greeting,[5,0]);
+    let mut udp_control=TcpStream::connect(ports[1]).await.unwrap();udp_control.write_all(&[5,1,0]).await.unwrap();udp_control.read_exact(&mut greeting).await.unwrap();assert_eq!(greeting,[5,0]);
+    udp_control.write_all(&[5,3,0,1,127,0,0,1,0,0]).await.unwrap();let mut associated=[0;10];udp_control.read_exact(&mut associated).await.unwrap();assert_eq!(&associated[..4],&[5,0,0,1]);
+    let relay=SocketAddr::from(([associated[4],associated[5],associated[6],associated[7]],u16::from_be_bytes([associated[8],associated[9]])));
+    let user_udp=UdpSocket::bind("127.0.0.1:0").await.unwrap();let mut packet=vec![0,0,0,1,127,0,0,1];packet.extend_from_slice(&udp_address.port().to_be_bytes());packet.extend_from_slice(b"old-user-udp");user_udp.send_to(&packet,relay).await.unwrap();
+    let mut udp_bytes=[0;4096];let (n,_)=timeout(Duration::from_secs(5),user_udp.recv_from(&mut udp_bytes)).await.unwrap().unwrap();assert_eq!(&udp_bytes[10..n],b"old-user-udp");
+    let body = network_body("11111111-1111-4111-8111-111111111111",before["coreEpoch"].as_str().unwrap(),next[0].port(),next[1].port(),next[2].port(),false,&[]);
+    let epoch = apply_network(ports[0],&body).await;
+    let mut byte=[0]; assert_eq!(timeout(Duration::from_secs(5),accepted.read(&mut byte)).await.unwrap().unwrap(),0);
+    assert_eq!(timeout(Duration::from_secs(5),udp_control.read(&mut byte)).await.unwrap().unwrap(),0);assert!(UdpSocket::bind(relay).await.is_ok());
+    assert!(TcpListener::bind(ports[1]).await.is_ok());
+    assert!(proxy_request(next[0],target_address,None).await.starts_with(b"HTTP/1.1 200"));
+    assert!(proxy_request(next[1],target_address,None).await.starts_with(b"HTTP/1.1 200"));
+    let non_localhost=SocketAddr::from(([127,0,0,2],next[0].port()));
+    assert!(TcpStream::connect(non_localhost).await.is_err());
+    let mut socks = TcpStream::connect(next[2]).await.unwrap(); socks.write_all(&[5,1,0]).await.unwrap(); socks.read_exact(&mut greeting).await.unwrap(); assert_eq!(greeting,[5,0]); drop(socks);
+    let lan = network_body("22222222-2222-4222-8222-222222222222",&epoch,next[0].port(),next[1].port(),next[2].port(),true,&["alice:secret"]);
+    let epoch = apply_network(ports[0],&lan).await;
+    let actual = http_json(&http(ports[0],"/aerove/network").await);
+    assert_eq!(actual["coreEpoch"],epoch); assert_eq!(actual["network"]["bind-address"],"0.0.0.0");
+    assert_eq!(actual["network"]["allow-lan"],true); assert_eq!(actual["network"]["authEnabled"],true);
+    let official=http_json(&http(ports[0],"/configs").await);
+    assert_eq!(official["mixed-port"],next[0].port()); assert_eq!(official["allow-lan"],true); assert_eq!(official["bind-address"],"0.0.0.0");
+    let mut sorted: Vec<_> = next.iter().map(|address|address.port()).collect(); sorted.sort_unstable(); assert_eq!(actual["activePorts"],serde_json::json!(sorted));
+    assert!(!actual.to_string().contains("alice")); assert!(!actual.to_string().contains("secret"));
+    assert!(proxy_request(non_localhost,target_address,None).await.starts_with(b"HTTP/1.1 407"));
+    assert!(proxy_request(next[0],target_address,None).await.starts_with(b"HTTP/1.1 407"));
+    assert!(proxy_request(next[0],target_address,Some("YWxpY2U6d3Jvbmc=")).await.starts_with(b"HTTP/1.1 407"));
+    assert!(proxy_request(next[0],target_address,Some("YWxpY2U6c2VjcmV0")).await.starts_with(b"HTTP/1.1 200"));
+    let mut socks=TcpStream::connect(next[2]).await.unwrap(); socks.write_all(&[5,1,0]).await.unwrap(); socks.read_exact(&mut greeting).await.unwrap(); assert_eq!(greeting,[5,255]); drop(socks);
+    let mut authenticating=TcpStream::connect(next[0]).await.unwrap();authenticating.write_all(&[5,1,2]).await.unwrap();authenticating.read_exact(&mut greeting).await.unwrap();assert_eq!(greeting,[5,2]);
+    let replay=network_body("55555555-5555-4555-8555-555555555555",&epoch,next[0].port(),next[1].port(),next[2].port(),true,&["alice:secret"]);
+    let epoch=apply_network(ports[0],&replay).await;
+    authenticating.write_all(b"\x01\x05alice\x06secret").await.unwrap();authenticating.read_exact(&mut greeting).await.unwrap();assert_eq!(greeting,[1,0]);
+    assert_eq!(http_json(&http(ports[0],"/aerove/network").await)["coreEpoch"],epoch);
+    for address in &next {assert!(TcpListener::bind(*address).await.is_err());}
+    let changed=network_body("66666666-6666-4666-8666-666666666666",&epoch,next[0].port(),next[1].port(),next[2].port(),true,&["alice:newsecret"]);
+    let epoch=apply_network(ports[0],&changed).await;
+    assert_eq!(timeout(Duration::from_secs(5),authenticating.read(&mut byte)).await.unwrap().unwrap(),0);
+    assert!(proxy_request(next[0],target_address,Some("YWxpY2U6c2VjcmV0")).await.starts_with(b"HTTP/1.1 407"));
+    assert!(proxy_request(next[0],target_address,Some("YWxpY2U6bmV3c2VjcmV0")).await.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(session.generation(),generation); assert_eq!(owner.status().api_address,api); assert!(owner.status().tun_ready);
+    assert!(unsafe {libc::fcntl(caller.as_raw_fd(),libc::F_GETFD)}>=0);
+    peer.send(&udp_frame(udp_address,41003,b"after-hot")).await.unwrap(); assert_eq!(udp_reply(&peer,41003).await,b"after-hot");
+    let connections=http_json(&http(ports[0],"/connections").await);
+    assert!(connections["connections"].as_array().unwrap().iter().any(|connection|connection["id"]==flow));
+    let dns_client=UdpSocket::bind("127.0.0.1:0").await.unwrap();dns_client.send_to(&question("after-hot.invalid"),ports[2]).await.unwrap();
+    let (n,_)=timeout(Duration::from_secs(5),dns_client.recv_from(&mut udp_bytes)).await.unwrap().unwrap();assert_eq!(Message::from_bytes(&udp_bytes[..n]).unwrap().answers.len(),1);
+    // Park/resume must use the committed listener/auth state, not the startup plan.
+    owner.park().await.unwrap(); assert_eq!(http_json(&http(ports[0],"/aerove/network").await)["activePorts"],serde_json::json!([]));
+    owner.resume(Some(caller.try_clone().unwrap().into())).await.unwrap();
+    assert!(proxy_request(next[0],target_address,None).await.starts_with(b"HTTP/1.1 407"));
+    assert!(proxy_request(next[0],target_address,Some("YWxpY2U6bmV3c2VjcmV0")).await.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(http_json(&http(ports[0],"/aerove/network").await)["coreEpoch"],epoch);
+    timeout(Duration::from_secs(5),session.stop()).await.unwrap().unwrap(); assert!(owner.cleanup_confirmed());
+    for address in ports.into_iter().chain(next) { assert!(TcpListener::bind(address).await.is_ok()); }
+    fixtures.cancel(); dns_task.await.unwrap(); target_task.await.unwrap(); udp_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn private_network_rejects_stale_and_invalid_without_side_effects_then_bind_conflict_fails_and_joins() {
+    let _serial=LOCK.lock().await; let roots=Roots::new(); let fixtures=CancellationToken::new(); let (dns,task,_)=dns_fixture(fixtures.clone()).await;
+    let ports=ports().await; let held=editable_ports(1,&ports.map(|address|address.port())).await; let occupied=held[0].local_addr().unwrap();
+    let (caller,peer)=pair(); let cancel=CancellationToken::new();
+    let session=Registry::start_owned(plan(ports,dns,false,&roots).to_string(),Some(caller.try_clone().unwrap().into()),network(&cancel,Arc::new(AtomicUsize::new(0)),dns),None).unwrap();
+    timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap(); let owner=session.owned_runtime().unwrap();
+    let before=http_json(&http(ports[0],"/aerove/network").await); let epoch=before["coreEpoch"].as_str().unwrap();
+    let body=network_body("33333333-3333-4333-8333-333333333333",epoch,occupied.port(),0,0,false,&[]);
+    assert!(network_http(ports[0],"POST",&body.to_string(),"wrong-private-secret").await.starts_with(b"HTTP/1.1 401"));
+    let mut stale=body.clone(); stale["expectedCoreEpoch"]=(epoch.parse::<u64>().unwrap()+1).to_string().into();
+    assert!(network_http(ports[0],"POST",&stale.to_string(),SECRET).await.starts_with(b"HTTP/1.1 409"));
+    for invalid in [
+        {let mut value=body.clone();value["network"]["authentication"]=serde_json::json!(["missing-colon"]);value},
+        {let mut value=body.clone();value["network"]["skip-auth-prefixes"]=serde_json::json!(["127.0.0.1/32"]);value},
+        {let mut value=body.clone();value["expectedCoreEpoch"]="01".into();value},
+        {let mut value=body.clone();value["network"]["mixed-port"]=65535.into();value},
+        {let mut value=body.clone();value["network"]["mixed-port"]=ports[0].port().into();value},
+    ] { assert!(network_http(ports[0],"POST",&invalid.to_string(),SECRET).await.starts_with(b"HTTP/1.1 400")); }
+    assert_eq!(before,http_json(&http(ports[0],"/aerove/network").await)); assert!(owner.status().tun_ready);
+    assert!(TcpListener::bind(ports[1]).await.is_err());
+    let response=network_http(ports[0],"POST",&body.to_string(),SECRET).await;
+    assert!(response.starts_with(b"HTTP/1.1 503"),"{}",String::from_utf8_lossy(&response));
+    assert_eq!(http_json(&response)["error"],"userListenerBindFailed");
+    assert!(timeout(Duration::from_secs(5),session.exited()).await.unwrap().is_err());
+    assert_eq!(session.snapshot().phase,Phase::Failed); assert!(owner.cleanup_confirmed());
+    assert!(owner.status().api_address.is_none()); assert!(!owner.status().tun_ready);
+    for address in ports {assert!(TcpListener::bind(address).await.is_ok());} assert!(UdpSocket::bind(ports[2]).await.is_ok());
+    assert!(TcpListener::bind(occupied).await.is_err()); drop(held); assert!(TcpListener::bind(occupied).await.is_ok());
+    caller.send(b"caller-after-hot-bind-failure").unwrap(); let mut bytes=[0;64]; assert_eq!(timeout(Duration::from_secs(5),peer.recv(&mut bytes)).await.unwrap().unwrap(),29);
+    assert!(unsafe {libc::fcntl(caller.as_raw_fd(),libc::F_GETFD)}>=0);
+    let mut recovery=plan(ports,dns,false,&roots);
+    recovery["inbounds"]["configYaml"]=format!("mixed-port: {}\nbind-address: 127.0.0.1\ndns-listen: '{}'\n",occupied.port(),ports[2]).into();
+    let next_cancel=CancellationToken::new();
+    let next=Registry::start_owned(recovery.to_string(),Some(caller.try_clone().unwrap().into()),network(&next_cancel,Arc::new(AtomicUsize::new(0)),dns),None).unwrap();
+    assert!(timeout(Duration::from_secs(5),next.ready()).await.unwrap().unwrap().tun_ready);assert!(next.generation()>session.generation());
+    let mut socks=TcpStream::connect(occupied).await.unwrap();socks.write_all(&[5,1,0]).await.unwrap();let mut greeting=[0;2];socks.read_exact(&mut greeting).await.unwrap();assert_eq!(greeting,[5,0]);drop(socks);
+    timeout(Duration::from_secs(5),next.stop()).await.unwrap().unwrap();assert!(next.owned_runtime().unwrap().cleanup_confirmed());
+    fixtures.cancel();task.await.unwrap();
 }

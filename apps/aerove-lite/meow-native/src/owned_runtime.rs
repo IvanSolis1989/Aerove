@@ -6,7 +6,7 @@ use meow_tunnel::Tunnel;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::{io, net::SocketAddr, os::fd::{AsFd, AsRawFd, OwnedFd}, panic::AssertUnwindSafe, sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}}, time::Duration};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UdpSocket}, sync::{mpsc, oneshot, watch}, task::{JoinHandle, JoinSet}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream, UdpSocket}, sync::{mpsc, oneshot, watch, Notify}, task::{JoinHandle, JoinSet}};
 use tokio_util::sync::CancellationToken;
 use crate::flow_owner::FlowOwnerLookup;
 use crate::providers::provider_health;
@@ -26,7 +26,15 @@ pub struct ListenerStatus {
     pub tcp_concurrent: bool, pub find_process_mode: &'static str,
 }
 pub(crate) type RegisterControl = Arc<dyn Fn(Arc<RouteControl>, Tunnel) -> bool + Send + Sync>;
-enum Command { HostPolicy(String, oneshot::Sender<io::Result<String>>), Park(oneshot::Sender<io::Result<()>>), Resume(Option<OwnedFd>, oneshot::Sender<io::Result<()>>) }
+enum Command { Network(crate::network_api::Apply, CancellationToken, u64, Option<Arc<crate::network_api::ConnectionExit>>, oneshot::Sender<Result<crate::network_api::Receipt, crate::network_api::Failure>>), HostPolicy(String, oneshot::Sender<io::Result<String>>), Park(oneshot::Sender<io::Result<()>>), Resume(Option<OwnedFd>, oneshot::Sender<io::Result<()>>) }
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NetworkApplyBoundary { Joined, Bound }
+#[cfg(test)]
+struct NetworkApplyBarrier {
+    boundary: NetworkApplyBoundary, reached: oneshot::Sender<Option<Arc<UserActivation>>>, release: oneshot::Receiver<()>,
+}
 
 #[derive(Default)]
 struct CleanupState { confirmed: AtomicBool, uncertain: AtomicBool }
@@ -60,6 +68,12 @@ pub struct OwnedRuntime {
     startup_diagnostic: AtomicBool,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     listener_intents: AtomicU64,
+    network_state: Mutex<crate::network_api::StateValue>,
+    network_fence: Arc<Mutex<()>>,
+    #[cfg(test)]
+    network_apply_barrier: Mutex<Option<NetworkApplyBarrier>>,
+    #[cfg(test)]
+    network_bind_attempts: AtomicU64,
     cleanup: CleanupState,
     transports: Arc<crate::transport_tasks::TransportTasks>,
     transport_scope: crate::transport_tasks::ScopeSlot,
@@ -141,7 +155,10 @@ impl OwnedRuntime {
             status, commands, failure: Mutex::new(None), startup_diagnostic: AtomicBool::new(false), listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
                 user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
                 only_statistics_proxy: crate::statistics_policies::StatisticsPolicies::from_host(&plan.host_policy_yaml)?, unified_delay: initial_probe.unified_delay, tcp_concurrent: initial_probe.tcp_concurrent, find_process_mode: find_mode }),
-            task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0), cleanup: CleanupState::default(), transports, transport_scope });
+            task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0), network_state: Mutex::new(crate::network_api::StateValue::default()), network_fence: Arc::new(Mutex::new(())),
+            #[cfg(test)] network_apply_barrier: Mutex::new(None),
+            #[cfg(test)] network_bind_attempts: AtomicU64::new(0),
+            cleanup: CleanupState::default(), transports, transport_scope });
         // Register before spawn so cancellation always sees the typed-error owner.
         install_owner(owner.clone());
         let worker = owner.clone();
@@ -320,18 +337,20 @@ impl OwnedRuntime {
         Ok(self.listener_status())
     }
     fn admit_listener_intent(&self) -> io::Result<()> {
+        let _fence = self.network_fence.lock();
         if self.cancel.is_cancelled() { return Err(error("runtimeExited")); }
         self.listener_intents.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| value.checked_add(1))
             .map_err(|_| error("listenerIntentExhausted"))?;
         Ok(())
     }
     fn publish_inactive(&self) {
+        { let mut state = self.network_state.lock(); state.active_ports.clear(); state.applying = false; }
         let mut listeners = self.listeners.lock(); listeners.listening = false; listeners.tun_ready = false;
         listeners.user_listeners_ready = false; listeners.active_ports.clear();
         self.status.send_modify(|status| { status.listening = false; status.tun_ready = false; status.user_listeners_ready = false; });
     }
 
-    async fn serve(&self, json: String, plan: Arc<RuntimePlan>, fd: Option<OwnedFd>, network: NetworkContext,
+    async fn serve(self: &Arc<Self>, json: String, plan: Arc<RuntimePlan>, fd: Option<OwnedFd>, network: NetworkContext,
         scope: Arc<OwnedLoadScope>, _generation: u64, register: RegisterControl,
         mut commands: mpsc::Receiver<Command>, core_slot: &mut Option<RunningCore>) -> io::Result<()> {
         let engine = managed_yaml(&plan)?;
@@ -353,7 +372,7 @@ impl OwnedRuntime {
             })?,
         };
         if self.cancel.is_cancelled() { return Ok(()); }
-        let specs = config.listeners.named.clone();
+        let mut specs = config.listeners.named.clone();
         for spec in &specs { if !matches!(spec.spec, ListenerSpec::Mixed | ListenerSpec::Http | ListenerSpec::Socks5) { return Err(error("managedListenerNotIntegrated")); } }
         let mixed = specs.iter().find(|spec| matches!(spec.spec, ListenerSpec::Mixed)).ok_or_else(|| error("mixedListenerRequired"))?;
         let mixed_address = listener_address(mixed)?;
@@ -390,7 +409,7 @@ impl OwnedRuntime {
         let listener = TcpListener::bind(plan.private_control.address).await.map_err(|_| error("privateApiBindFailed"))?;
         let address = listener.local_addr()?;
         let api = Arc::new(CoreApi::assemble_with_plane(&config, tunnel.clone(), mixed_address,
-            &plan.private_control.secret, None, Router::new(), self.plane.clone()).map_err(|_| error("apiAssemblyFailed"))?);
+            &plan.private_control.secret, None, crate::network_api::router(Arc::downgrade(self)), self.plane.clone()).map_err(|_| error("apiAssemblyFailed"))?);
         let user = crate::user_controller::Owner::new(api.clone(),address,Arc::new(network.clone()))?;
         let mut user_failure = user.subscribe_failure();
         *self.user_controller.lock() = Some(user.clone());
@@ -400,7 +419,10 @@ impl OwnedRuntime {
         *core_slot = Some(RunningCore { tunnel: tunnel.clone(), api: api.clone(), private_task: None,
             private_cancel: api_cancel.clone(), active: None, fault: fault.clone(), dns_enabled: config.dns.enabled, group_events: None, health: Vec::new(), _capture: capture });
         api.install_log_sink().map_err(|_| error("logSinkFailed"))?;
-        let auth = config.auth.clone();
+        // Standard also forbids implicit loopback exemptions for explicit credentials.
+        let mut auth = Arc::new(meow_common::AuthConfig::new(config.auth.credentials.clone(), Vec::new()));
+        self.network_state.lock().settings = Some(crate::network_api::initial(
+            &specs, config.general.allow_lan, &config.general.bind_address, &auth));
         let health_specs = meow_config::extract_health_check_specs(config.raw.proxy_groups.as_deref().unwrap_or(&[]));
         tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
         let group_events = api.control.activate_groups(&scope).map_err(group_activation_error)?;
@@ -449,6 +471,22 @@ impl OwnedRuntime {
             changed = user_failure.changed() => { if changed.is_err() { return Err(error("userControllerFailureChannelClosed")); } if let Some(cause) = user.failure() { return Err(error(cause)); } },
             fault = faults.recv() => return Err(error(fault.unwrap_or("listenerOwnerExited"))),
             command = commands.recv() => match command {
+                Some(Command::Network(request, cancelled, intent, connection, reply)) => {
+                    let result = self.apply_network(core_slot.as_mut().expect("installed core"),
+                        request, cancelled, intent, &mut specs, &mut auth).await;
+                    let fatal = result.as_ref().err().filter(|cause| cause.fatal).map(|cause| cause.code);
+                    let _ = reply.send(result);
+                    if let Some(cause) = fatal {
+                        // Finish the response before cancelling/joining its own HTTP scope.
+                        if let Some(connection) = connection { tokio::select! { biased;
+                            _ = self.cancel.cancelled() => {},
+                            completed = tokio::time::timeout(Duration::from_secs(5),connection.wait()) => {
+                                if completed.is_err() { tracing::warn!(code=cause,"networkFailureResponseCompletionUnconfirmed"); }
+                            },
+                        } }
+                        return Err(error(cause));
+                    }
+                },
                 Some(Command::HostPolicy(json, reply)) => {
                     let result = crate::host_policies::execute(self, &json).await;
                     let _ = reply.send(result);
@@ -473,20 +511,159 @@ impl OwnedRuntime {
         } }
     }
 
+    pub(crate) fn network_snapshot(&self) -> Result<crate::network_api::Snapshot, crate::network_api::Failure> {
+        use crate::network_api::{Failure, Snapshot};
+        let gate = self.plane.gate.lock();
+        if gate.closed || self.cancel.is_cancelled() { return Err(Failure::exited()); }
+        let state = self.network_state.lock();
+        if state.applying { return Err(Failure::conflict("networkApplying")); }
+        let settings = state.settings.clone().ok_or_else(|| Failure::conflict("runtimeNotReady"))?;
+        Ok(Snapshot { core_epoch: gate.core_epoch.to_string(), network: settings, active_ports: state.active_ports.clone() })
+    }
+    pub(crate) async fn network_command(&self, request: crate::network_api::Apply)
+        -> Result<crate::network_api::Receipt, crate::network_api::Failure> {
+        use crate::network_api::{Failure, Lease};
+        request.expected()?; request.network.validate()?;
+        let lease = Lease::new(self.network_fence.clone());
+        let intent = self.listener_intents.load(Ordering::Acquire);
+        let (reply, receipt) = oneshot::channel();
+        tokio::select! { biased;
+            _ = self.cancel.cancelled() => return Err(Failure::exited()),
+            sent = self.commands.send(Command::Network(request, lease.cancel.clone(), intent, crate::network_api::connection_exit(), reply)) => sent.map_err(|_| Failure::exited())?,
+        }
+        tokio::select! { biased;
+            _ = self.cancel.cancelled() => Err(Failure::exited()),
+            result = receipt => result.map_err(|_| Failure::exited())?,
+        }
+    }
+    async fn apply_network(&self, core: &mut RunningCore, request: crate::network_api::Apply,
+        cancelled: CancellationToken, intent: u64, specs: &mut Vec<NamedListener>, auth: &mut Arc<meow_common::AuthConfig>)
+        -> Result<crate::network_api::Receipt, crate::network_api::Failure> {
+        use crate::network_api::{Failure, Receipt};
+        let expected = request.expected()?;
+        request.network.validate()?;
+        let next_specs = request.network.listeners(specs);
+        let readback = request.network.readback();
+        let reuse = {
+            let gate = self.plane.gate.lock();
+            if gate.closed || self.cancel.is_cancelled() || cancelled.is_cancelled() { return Err(Failure::exited()); }
+            if gate.core_epoch != expected { return Err(Failure::conflict("staleCoreEpoch")); }
+            if expected == u64::MAX { return Err(Failure::conflict("coreEpochExhausted")); }
+            if intent != self.listener_intents.load(Ordering::Acquire) { return Err(Failure::conflict("listenerIntentSuperseded")); }
+            let active = core.active.as_ref().ok_or_else(|| Failure::conflict("listenersParked"))?;
+            let private = self.status().api_address.ok_or_else(Failure::exited)?.port();
+            if [request.network.mixed_port, request.network.port, request.network.socks_port].iter()
+                .any(|port| *port != 0 && (*port == private || active.background_ports.contains(port))) { return Err(Failure::invalid()); }
+            let mut state = self.network_state.lock();
+            let same = state.settings.as_ref() == Some(&readback)
+                && active.users.as_ref().is_some_and(|users| !users.cancel.is_cancelled())
+                && specs.len() == next_specs.len() && specs.iter().zip(&next_specs).all(|(old,new)|
+                    old.name == new.name && old.spec == new.spec && old.port == new.port
+                    && old.listen == new.listen && old.max_connections == new.max_connections)
+                && core.api.state.raw_config.read().authentication.as_deref().unwrap_or(&[]) == request.network.authentication.as_slice();
+            if !same { state.applying = true; }
+            same
+        };
+        if reuse {
+            let _fence = self.network_fence.lock();
+            if self.transports.panicked() { return Err(Failure::fatal("transportTaskPanicked")); }
+            if self.cancel.is_cancelled() || cancelled.is_cancelled() { return Err(Failure::exited()); }
+            if intent != self.listener_intents.load(Ordering::Acquire) { return Err(Failure::conflict("listenerIntentSuperseded")); }
+            let committed = self.plane.commit_policy(expected, true, || ())
+                .map_err(|_| Failure::conflict("staleCoreEpoch"))?;
+            return Ok(Receipt { request_id: request.request_id, core_epoch: committed.0.0.to_string() });
+        }
+        let active = core.active.as_mut().expect("admitted active listeners");
+        if let Some(users) = active.users.as_mut() {
+            if users.close().await.is_err() {
+                self.cleanup.uncertain.store(true, Ordering::Release);
+                return Err(Failure::fatal("userListenerJoinFailed"));
+            }
+        }
+        active.users.take();
+        #[cfg(test)] self.network_apply_boundary(NetworkApplyBoundary::Joined,None).await;
+        self.check_network_rebind(expected, &cancelled, intent)?;
+        let next_auth = request.network.auth();
+        #[cfg(test)] self.network_bind_attempts.fetch_add(1,Ordering::AcqRel);
+        let bound = bind_users(&next_specs).await.map_err(|_| Failure::fatal("userListenerBindFailed"))?;
+        let network = active.network.as_ref().ok_or_else(|| Failure::fatal("activeNetworkMissing"))?;
+        active.users = Some(UserListeners::pending(bound, network, &self.transport_scope,
+            &active.transports, &core.tunnel, &next_auth, &core.fault).map_err(|_| Failure::fatal("userListenerStartFailed"))?);
+        #[cfg(test)] self.network_apply_boundary(NetworkApplyBoundary::Bound,
+            Some(active.users.as_ref().expect("registered pending owner").activation.clone())).await;
+        let ports = active.users.as_ref().expect("registered user owner").ports.clone();
+        let mut all = active.background_ports.clone(); all.extend_from_slice(&ports); all.sort_unstable(); all.dedup();
+        let _fence = self.network_fence.lock();
+        if self.transports.panicked() { return Err(Failure::fatal("transportTaskPanicked")); }
+        if cancelled.is_cancelled() || self.cancel.is_cancelled()
+            || intent != self.listener_intents.load(Ordering::Acquire) {
+            return Err(Failure::fatal("networkApplyCancelled"));
+        }
+        let ((epoch,_),retired) = self.plane.commit_policy(expected, true, || {
+            let retired_raw = {
+                let mut raw = core.api.state.raw_config.write();
+                raw.mixed_port = Some(request.network.mixed_port); raw.port = Some(request.network.port);
+                raw.socks_port = Some(request.network.socks_port); raw.allow_lan = Some(request.network.allow_lan);
+                (raw.bind_address.replace(request.network.bind_address),
+                    raw.authentication.replace(request.network.authentication),
+                    raw.skip_auth_prefixes.replace(Vec::new()),raw.listeners.take())
+            };
+            let mut state = self.network_state.lock();
+            let retired_state = (state.settings.replace(readback),std::mem::replace(&mut state.active_ports,ports));
+            let retired_ports = std::mem::replace(&mut self.listeners.lock().active_ports,all);
+            (retired_raw,retired_state,retired_ports,std::mem::replace(specs,next_specs),std::mem::replace(auth,next_auth))
+        }).map_err(|_| Failure::fatal("networkCommitInvalidated"))?;
+        {
+            let gate = self.plane.gate.lock();
+            if gate.closed || self.cancel.is_cancelled() || cancelled.is_cancelled()
+                || intent != self.listener_intents.load(Ordering::Acquire) || gate.core_epoch != epoch {
+                return Err(Failure::fatal("networkActivationInvalidated"));
+            }
+            active.users.as_ref().expect("committed pending owner").activation.commit();
+            self.network_state.lock().applying = false;
+        }
+        active.users.as_ref().expect("activated user owner").activation.wake();
+        drop(_fence);drop(retired);
+        Ok(Receipt { request_id: request.request_id, core_epoch: epoch.to_string() })
+    }
+
+    fn check_network_rebind(&self, expected: u64, cancelled: &CancellationToken, intent: u64)
+        -> Result<(), crate::network_api::Failure> {
+        use crate::network_api::Failure;
+        let _fence = self.network_fence.lock(); let gate = self.plane.gate.lock();
+        if gate.closed || self.cancel.is_cancelled() || cancelled.is_cancelled() { return Err(Failure::fatal("networkApplyCancelled")); }
+        if intent != self.listener_intents.load(Ordering::Acquire) { return Err(Failure::fatal("networkIntentSuperseded")); }
+        if gate.core_epoch != expected { return Err(Failure::fatal("networkCommitInvalidated")); }
+        if self.transports.panicked() { return Err(Failure::fatal("transportTaskPanicked")); }
+        Ok(())
+    }
+    #[cfg(test)]
+    async fn network_apply_boundary(&self, boundary: NetworkApplyBoundary, activation: Option<Arc<UserActivation>>) {
+        let barrier = {
+            let mut slot = self.network_apply_barrier.lock();
+            if slot.as_ref().is_some_and(|barrier| barrier.boundary == boundary) { slot.take() } else { None }
+        };
+        if let Some(barrier) = barrier { let _ = barrier.reached.send(activation); let _ = barrier.release.await; }
+    }
+
     async fn activate(&self, core: &mut RunningCore, json: &str, plan: &RuntimePlan, fd: Option<OwnedFd>,
         network: &NetworkContext, specs: &[NamedListener], auth: &Arc<meow_common::AuthConfig>) -> io::Result<()> {
-        let mut bound = Vec::new(); let mut ports = Vec::new();
-        for spec in specs { let socket = TcpListener::bind(listener_address(spec)?).await.map_err(|_| error("userListenerBindFailed"))?; ports.push(socket.local_addr()?.port()); bound.push((socket, spec.clone())); }
+        let bound = bind_users(specs).await?;
+        let mut ports: Vec<u16> = bound.iter().map(|(socket, _)| socket.local_addr().map(|address| address.port())).collect::<io::Result<_>>()?;
+        let mut user_ports = ports.clone(); user_ports.sort_unstable();
+        let mut background_ports = Vec::new();
         let dns_address = if core.dns_enabled { dns_listen(plan)? } else { None };
         let dns = match dns_address {
             Some(address) => { let tcp = TcpListener::bind(address).await.map_err(|_| error("dnsTcpBindFailed"))?;
-                let udp = UdpSocket::bind(tcp.local_addr()?).await.map_err(|_| error("dnsUdpBindFailed"))?; ports.push(tcp.local_addr()?.port()); Some((tcp, udp)) },
+                let udp = UdpSocket::bind(tcp.local_addr()?).await.map_err(|_| error("dnsUdpBindFailed"))?;
+                let port = tcp.local_addr()?.port(); ports.push(port); background_ports.push(port); Some((tcp, udp)) },
             None => None,
         };
         let transports = self.transports.child();
         let network = network.child().with_transport(transports.clone(), self.transport_scope.clone());
         let stop = network.cancellation();
-        core.active = Some(ActiveListeners { cancel: stop.clone(), tasks: JoinSet::new(), driver: None, ingress: meow_listener::owned_ingress::OwnedIngress::new(), transports });
+        core.active = Some(ActiveListeners { cancel: stop.clone(), tasks: JoinSet::new(), driver: None,
+            users: None, network: Some(network.clone()), background_ports, transports });
         let active = core.active.as_mut().expect("registered listeners");
         if plan.runtime_mode == RuntimeMode::Tun {
             let fd = fd.ok_or_else(|| error("attachedTunFdRequired"))?;
@@ -503,13 +680,7 @@ impl OwnedRuntime {
                 if !cancel.is_cancelled() || result.is_err() { let _ = fault.try_send("tunDriverExited"); }
             });
         } else if fd.is_some() { return Err(error("proxyFdForbidden")); }
-        for (socket, spec) in bound {
-            let tunnel = core.tunnel.clone(); let auth = auth.clone(); let context = network.clone(); let cancel = stop.clone(); let ingress = active.ingress.clone(); let fault = core.fault.clone();
-            active.tasks.spawn(async move {
-                let result = AssertUnwindSafe(ingress.scope(context.serve_scope(serve_inbound(socket, spec, tunnel, auth, cancel.clone(), context.clone())))).catch_unwind().await;
-                if !cancel.is_cancelled() || result.is_err() { let _ = fault.try_send("userListenerOwnerExited"); }
-            });
-        }
+        active.users = Some(UserListeners::start(bound, &network, &self.transport_scope, &active.transports, &core.tunnel, auth, &core.fault)?);
         if let Some((tcp, udp)) = dns {
             let tunnel = core.tunnel.clone(); let cancel = stop.clone(); let context = network.clone(); let fault = core.fault.clone();
             active.tasks.spawn(async move {
@@ -519,6 +690,7 @@ impl OwnedRuntime {
         }
         ports.sort_unstable(); ports.dedup();
         if self.cancel.is_cancelled() { return Err(error("cancelled")); }
+        self.network_state.lock().active_ports = user_ports;
         let tun = plan.runtime_mode == RuntimeMode::Tun;
         { let mut listeners = self.listeners.lock(); listeners.listening = true; listeners.tun_ready = tun;
             listeners.user_listeners_ready = true; listeners.active_ports = ports; }
@@ -549,16 +721,92 @@ impl RunningCore {
         join_cleanup_results([("activeListeners",active_result),("privateApi",private_result),("tasks",task_result)])
     }
 }
-struct ActiveListeners { cancel: CancellationToken, tasks: JoinSet<()>, driver: Option<Arc<TunDriver>>, ingress: Arc<meow_listener::owned_ingress::OwnedIngress>, transports: Arc<crate::transport_tasks::TransportTasks> }
+struct ActiveListeners {
+    cancel: CancellationToken, tasks: JoinSet<()>, driver: Option<Arc<TunDriver>>,
+    users: Option<UserListeners>, network: Option<NetworkContext>, background_ports: Vec<u16>,
+    transports: Arc<crate::transport_tasks::TransportTasks>,
+}
+struct UserListeners {
+    cancel: CancellationToken, tasks: JoinSet<()>, ingress: Arc<meow_listener::owned_ingress::OwnedIngress>,
+    transports: Arc<crate::transport_tasks::TransportTasks>, ports: Vec<u16>,
+    activation: Arc<UserActivation>,
+}
+#[derive(Default)]
+struct UserActivation { committed: AtomicBool, changed: Notify }
+impl UserActivation {
+    fn commit(&self) { self.committed.store(true,Ordering::Release); }
+    fn wake(&self) { self.changed.notify_waiters(); }
+    fn is_committed(&self) -> bool { self.committed.load(Ordering::Acquire) }
+    async fn wait(&self, cancel: &CancellationToken) -> bool {
+        loop {
+            let changed=self.changed.notified();tokio::pin!(changed);changed.as_mut().enable();
+            if self.is_committed() { return !cancel.is_cancelled(); }
+            tokio::select! { biased; _ = cancel.cancelled() => return false, _ = changed => {} }
+        }
+    }
+}
+async fn bind_users(specs: &[NamedListener]) -> io::Result<Vec<(TcpListener, NamedListener)>> {
+    let mut bound = Vec::new();
+    for spec in specs {
+        let socket = TcpListener::bind(listener_address(spec)?).await.map_err(|_| error("userListenerBindFailed"))?;
+        bound.push((socket, spec.clone()));
+    }
+    Ok(bound)
+}
+impl UserListeners {
+    fn start(bound: Vec<(TcpListener, NamedListener)>, network: &NetworkContext,
+        scope: &crate::transport_tasks::ScopeSlot, parent: &Arc<crate::transport_tasks::TransportTasks>,
+        tunnel: &Tunnel, auth: &Arc<meow_common::AuthConfig>, fault: &mpsc::Sender<&'static str>) -> io::Result<Self> {
+        let owner = Self::pending(bound,network,scope,parent,tunnel,auth,fault)?;
+        owner.activate(); Ok(owner)
+    }
+    fn activate(&self) { self.activation.commit(); self.activation.wake(); }
+    fn pending(bound: Vec<(TcpListener, NamedListener)>, network: &NetworkContext,
+        scope: &crate::transport_tasks::ScopeSlot, parent: &Arc<crate::transport_tasks::TransportTasks>,
+        tunnel: &Tunnel, auth: &Arc<meow_common::AuthConfig>, fault: &mpsc::Sender<&'static str>) -> io::Result<Self> {
+        let mut ports: Vec<u16> = bound.iter().map(|(socket, _)| socket.local_addr().map(|address| address.port())).collect::<io::Result<_>>()?;
+        ports.sort_unstable();
+        let transports = parent.child();
+        let network = network.child().with_transport(transports.clone(), scope.clone());
+        let cancel = network.cancellation();
+        let mut owner = Self { cancel: cancel.clone(), tasks: JoinSet::new(),
+            ingress: meow_listener::owned_ingress::OwnedIngress::new(), transports, ports, activation: Arc::new(UserActivation::default()) };
+        for (socket, spec) in bound {
+            let tunnel = tunnel.clone(); let auth = auth.clone(); let context = network.clone();
+            let cancel = cancel.clone(); let ingress = owner.ingress.clone(); let fault = fault.clone();
+            let activation = owner.activation.clone();
+            owner.tasks.spawn(async move {
+                // Pending sockets cannot enter ingress/transport scope before the committed activation.
+                if !activation.wait(&cancel).await || cancel.is_cancelled() { return; }
+                let result = AssertUnwindSafe(ingress.scope(context.serve_scope(serve_inbound(socket, spec,
+                    tunnel, auth, cancel.clone(), context.clone())))).catch_unwind().await;
+                if !cancel.is_cancelled() || result.is_err() { let _ = fault.try_send("userListenerOwnerExited"); }
+            });
+        }
+        Ok(owner)
+    }
+    async fn close(&mut self) -> io::Result<()> {
+        self.cancel.cancel();
+        let mut tasks = Ok(());
+        while let Some(joined) = self.tasks.join_next().await {
+            if joined.is_err() { tasks = Err(error("userListenerOwnerPanicked")); }
+        }
+        // Parents must stop admitting ingress children before its gate closes.
+        self.ingress.close().await;
+        let transports = self.transports.close_joined().await.map(|_| ());
+        join_cleanup_results([("userListeners", tasks), ("userTransports", transports)])
+    }
+}
 impl ActiveListeners {
     async fn close(&mut self) -> io::Result<()> {
         self.cancel.cancel();
-        self.ingress.close().await;
+        let users = match self.users.as_mut() { Some(users) => users.close().await, None => Ok(()) };
+        self.users.take();
         let driver = match self.driver.as_ref() { Some(driver) => driver.stop().await.map(|_| ()), None => Ok(()) };
         self.driver.take();
         while self.tasks.join_next().await.is_some() {}
         let transports = self.transports.close_joined().await.map(|_| ());
-        join_cleanup_results([("tunDriver",driver),("transports",transports)])
+        join_cleanup_results([("userListeners",users),("tunDriver",driver),("transports",transports)])
     }
 }
 fn listener_address(spec: &NamedListener) -> io::Result<SocketAddr> {
@@ -753,7 +1001,7 @@ async fn serve_private(listener: TcpListener, router: Router, cancel: Cancellati
         accepted = listener.accept(), if tasks.len() < 256 => {
             let (stream, _) = match accepted { Ok(accepted) => accepted, Err(_) => break Err(crate::api::ApiError("apiAcceptFailed")) };
             let context = network.clone(); let router = router.clone();
-            tasks.spawn(async move { context.scope(crate::api::serve_connection(stream, router)).await; });
+            tasks.spawn(async move { crate::network_api::connection_scope(context.scope(crate::api::serve_connection(stream, router))).await; });
         },
     } };
     tasks.abort_all(); while tasks.join_next().await.is_some() {}
@@ -808,6 +1056,140 @@ mod resume_roots;
 #[cfg(test)]
 mod cleanup_ack_tests {
     use super::*;
+    async fn assert_network_boundary_rejects_uncommitted_ingress(boundary: NetworkApplyBoundary, action: &str) {
+        use std::{future::{poll_fn, Future}, task::Poll};
+        use tokio::time::timeout;
+        let roots=super::resume_roots::Roots::new();
+        let private=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=private.local_addr().unwrap();
+        let mixed=TcpListener::bind("127.0.0.1:0").await.unwrap();let old=mixed.local_addr().unwrap();
+        let mut next=None;
+        for port in 30000..=49151 {
+            if let Ok(socket)=TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,port)).await {next=Some(socket);break;}
+        }
+        let next=next.unwrap();let candidate=next.local_addr().unwrap();
+        let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=origin.local_addr().unwrap();
+        let request_bytes=format!("GET http://{target}/uncommitted HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n");
+        let mut json:serde_json::Value=serde_json::from_str(&attachment_fixture(Some(&roots),address,old.port(),"proxy","{}")).unwrap();
+        json["initiallyParked"]=false.into();
+        json["inbounds"]["configYaml"]=format!("mixed-port: {}\nbind-address: 127.0.0.1\nauthentication: ['previous:credential']\n",old.port()).into();
+        let resource=Arc::new(crate::resource_roots::ResourceRoots::validate(roots.read.to_str(),roots.cache.to_str()).unwrap());
+        let cancel=CancellationToken::new();
+        let network=NetworkContext::platform(cancel.clone()).with_resource_roots(resource).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+        drop((private,mixed,next));
+        let owner=OwnedRuntime::start(json.to_string(),None,network,4242,cancel,Arc::new(|_,_|true),None,|_|{}).unwrap();
+        timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap();let epoch=owner.route_stamp();
+        let mut before=TcpStream::connect(old).await.unwrap();before.write_all(request_bytes.as_bytes()).await.unwrap();
+        let mut denied=Vec::new();timeout(Duration::from_secs(5),before.read_to_end(&mut denied)).await.unwrap().unwrap();assert!(denied.starts_with(b"HTTP/1.1 407"));
+        let (reached,arrived)=oneshot::channel();let (release,waiting)=oneshot::channel();
+        *owner.network_apply_barrier.lock()=Some(NetworkApplyBarrier {boundary,reached,release:waiting});
+        let request:crate::network_api::Apply=serde_json::from_value(serde_json::json!({
+            "requestId":"88888888-8888-4888-8888-888888888888","expectedCoreEpoch":epoch.0.to_string(),
+            "network":{"mixed-port":candidate.port(),"allow-lan":false,"bind-address":"127.0.0.1","authentication":[]}})).unwrap();
+        let applying_owner=owner.clone();let mut applying=Some(tokio::spawn(async move {applying_owner.network_command(request).await}));
+        let activation=timeout(Duration::from_secs(5),arrived).await.unwrap().unwrap();
+        assert!(TcpListener::bind(old).await.is_ok());
+        let mut uncommitted=if boundary==NetworkApplyBoundary::Bound {
+            let mut stream=TcpStream::connect(candidate).await.unwrap();stream.write_all(request_bytes.as_bytes()).await.unwrap();
+            assert!(timeout(Duration::from_millis(100),origin.accept()).await.is_err(),"uncommitted request reached origin");
+            assert!(!activation.as_ref().unwrap().is_committed(),"uncommitted authentication policy was activated");
+            Some(stream)
+        } else {assert!(activation.is_none());assert!(TcpListener::bind(candidate).await.is_ok());None};
+        let mut api=TcpStream::connect(address).await.unwrap();
+        api.write_all(b"GET /aerove/network HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer attachment-private-secret-000000000001\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut response=Vec::new();timeout(Duration::from_secs(5),api.read_to_end(&mut response)).await.unwrap().unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 409"));assert!(String::from_utf8_lossy(&response).contains("networkApplying"));
+        let mut parking=Box::pin(owner.park());
+        let expected_epoch=match action {
+            "cancel" => {
+                let task=applying.take().unwrap();task.abort();
+                match task.await {Err(cause)=>assert!(cause.is_cancelled()),Ok(_)=>panic!("handler cancellation did not take ownership")};epoch.0
+            },
+            "park" => {poll_fn(|cx| {assert!(parking.as_mut().poll(cx).is_pending());Poll::Ready(())}).await;epoch.0},
+            "epoch" => owner.plane.commit_policy(epoch.0,true,||()).unwrap().0.0,
+            "stop" => {owner.cancel();epoch.0},
+            _ => panic!("unknown boundary action"),
+        };
+        release.send(()).unwrap();
+        if let Some(task)=applying {assert!(timeout(Duration::from_secs(5),task).await.unwrap().unwrap().is_err());}
+        if action=="park" {assert!(timeout(Duration::from_secs(5),parking.as_mut()).await.unwrap().is_err());}
+        let status=timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
+        assert_eq!(status.state,if action=="stop" {"Exited"} else {"Failed"});assert!(owner.cleanup_confirmed());
+        assert_eq!(owner.route_stamp().0,expected_epoch);assert!(owner.network_snapshot().is_err());
+        assert!(owner.listener_status().active_ports.is_empty());assert!(!owner.status().listening);assert!(owner.status().api_address.is_none());
+        assert_eq!(owner.network_bind_attempts.load(Ordering::Acquire),if boundary==NetworkApplyBoundary::Joined {0} else {1});
+        if let Some(gate)=activation {assert!(!gate.is_committed(),"rejected candidate was activated");}
+        if let Some(stream)=uncommitted.as_mut() {
+            let mut bytes=Vec::new();let read=timeout(Duration::from_secs(5),stream.read_to_end(&mut bytes)).await.unwrap();
+            if let Err(cause)=read {assert!(matches!(cause.kind(),io::ErrorKind::ConnectionReset|io::ErrorKind::UnexpectedEof));}
+            assert!(!bytes.starts_with(b"HTTP/1.1 200"));
+        }
+        assert!(timeout(Duration::from_millis(100),origin.accept()).await.is_err(),"rejected candidate forwarded after cleanup");
+        for endpoint in [address,old,candidate] {assert!(TcpListener::bind(endpoint).await.is_ok());}
+    }
+    #[tokio::test]
+    async fn joined_network_domain_rechecks_cancel_park_epoch_and_stop_before_any_rebind() {
+        for action in ["cancel","park","epoch","stop"] {assert_network_boundary_rejects_uncommitted_ingress(NetworkApplyBoundary::Joined,action).await;}
+    }
+    #[tokio::test]
+    async fn pending_network_sockets_cannot_accept_uncommitted_auth_or_forward_before_cas() {
+        for action in ["cancel","park","epoch","stop"] {assert_network_boundary_rejects_uncommitted_ingress(NetworkApplyBoundary::Bound,action).await;}
+    }
+    async fn assert_cancelled_network_command_never_commits(stopping: bool) {
+        use std::{future::{poll_fn, Future}, task::Poll};
+        use tokio::time::timeout;
+        let roots = super::resume_roots::Roots::new();
+        let private = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address=private.local_addr().unwrap();
+        let mixed = TcpListener::bind("127.0.0.1:0").await.unwrap(); let old=mixed.local_addr().unwrap();
+        let mut next=None;
+        for port in 30000..=49151 {
+            if let Ok(socket)=TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,port)).await {next=Some(socket);break;}
+        }
+        let next=next.unwrap();let new_port=next.local_addr().unwrap().port();
+        let mut json:serde_json::Value=serde_json::from_str(&attachment_fixture(Some(&roots),address,old.port(),"proxy","{}")).unwrap();
+        json["initiallyParked"]=false.into();
+        let resource=Arc::new(crate::resource_roots::ResourceRoots::validate(roots.read.to_str(),roots.cache.to_str()).unwrap());
+        let cancel=CancellationToken::new();
+        let network=NetworkContext::platform(cancel.clone()).with_resource_roots(resource).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+        drop((private,mixed,next));
+        let owner=OwnedRuntime::start(json.to_string(),None,network,4242,cancel,Arc::new(|_,_|true),None,|_|{}).unwrap();
+        timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap();
+        let epoch=owner.route_stamp();let before=owner.network_snapshot().unwrap().network.mixed_port;
+        let value=serde_json::json!({
+            "requestId":"44444444-4444-4444-8444-444444444444","expectedCoreEpoch":epoch.0.to_string(),
+            "network":{"mixed-port":new_port,"allow-lan":false,"bind-address":"127.0.0.1","authentication":[]}});
+        let count=if stopping {9} else {1};let mut pending=Vec::new();
+        // Current-thread polling fills the real lane before its owner runs.
+        for index in 0..count {
+            let request:crate::network_api::Apply=serde_json::from_value(value.clone()).unwrap();
+            let mut work=Box::pin(owner.network_command(request));
+            poll_fn(|cx| {assert!(work.as_mut().poll(cx).is_pending());Poll::Ready(())}).await;
+            assert_eq!(owner.commands.capacity(),8usize.saturating_sub(index+1));pending.push(work);
+        }
+        if stopping {
+            owner.cancel();
+            for work in pending {assert!(timeout(Duration::from_secs(5),work).await.unwrap().is_err());}
+        } else {
+            drop(pending);
+            // A later real command is the ordering barrier, without a sleep.
+            owner.park().await.unwrap();assert_eq!(owner.status().state,"Running");
+            assert_eq!(owner.network_snapshot().unwrap().network.mixed_port,before);
+            owner.resume(None).await.unwrap();assert!(TcpListener::bind(old).await.is_err());
+            assert!(TcpListener::bind((std::net::Ipv4Addr::LOCALHOST,new_port)).await.is_ok());
+            owner.cancel();
+        }
+        let status=timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
+        assert_eq!(status.state,"Exited");assert!(status.error.is_none());assert!(owner.cleanup_confirmed());
+        assert_eq!(owner.route_stamp(),epoch);assert!(owner.network_snapshot().is_err());
+        for endpoint in [address,old,SocketAddr::from(([127,0,0,1],new_port))] {assert!(TcpListener::bind(endpoint).await.is_ok());}
+    }
+    #[tokio::test]
+    async fn dropped_private_network_request_before_owner_admission_cannot_rebind_or_commit() {
+        assert_cancelled_network_command_never_commits(false).await;
+    }
+    #[tokio::test]
+    async fn stop_with_full_private_network_queue_finishes_all_replies_without_a_late_commit() {
+        assert_cancelled_network_command_never_commits(true).await;
+    }
     #[test]
     fn cleanup_diagnostic_keeps_original_serve_and_every_failed_stage() {
         let mut details = serde_json::Map::new();
@@ -832,7 +1214,7 @@ mod cleanup_ack_tests {
     use std::os::{fd::{AsFd, AsRawFd}, unix::net::UnixDatagram};
     fn active(driver: Option<Arc<TunDriver>>) -> ActiveListeners {
         ActiveListeners { cancel: CancellationToken::new(), tasks: JoinSet::new(), driver,
-            ingress: meow_listener::owned_ingress::OwnedIngress::new(), transports: crate::transport_tasks::TransportTasks::new() }
+            users: None, network: None, background_ports: Vec::new(), transports: crate::transport_tasks::TransportTasks::new() }
     }
     #[tokio::test]
     async fn park_failed_driver_join_cannot_be_acknowledged_by_later_empty_cleanup() {
