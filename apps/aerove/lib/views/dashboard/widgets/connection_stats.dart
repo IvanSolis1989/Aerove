@@ -68,13 +68,15 @@ class _ConnectionStatsCardState extends ConsumerState<ConnectionStatsCard>
         ),
       ],
     );
-    return widget.embedded
-        ? content
-        : DashboardCard(
-            semanticLabel: context.appLocalizations.connectionStats,
-            padding: const EdgeInsets.all(_inset),
-            child: content,
-          );
+    return gateConnections(
+      widget.embedded
+          ? content
+          : DashboardCard(
+              semanticLabel: context.appLocalizations.connectionStats,
+              padding: const EdgeInsets.all(_inset),
+              child: content,
+            ),
+    );
   }
 }
 

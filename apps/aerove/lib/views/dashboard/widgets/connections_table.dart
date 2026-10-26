@@ -8,12 +8,14 @@ import 'package:fl_clash/features/features.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/views/connection/connections.dart';
 import 'package:fl_clash/views/connection/requests.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/views/dns_queries.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/widgets/viewport_visibility.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -86,6 +88,40 @@ mixin ConnectionsPolling<T extends ConsumerStatefulWidget>
         ActivePollingMixin<T>,
         RouteMotionHoldMixin<T> {
   final connectionCount = ValueNotifier(0);
+  final connectionViewportVisible = ValueNotifier(false);
+  var _idleWhileStopped = false;
+
+  @override
+  bool get gatesOnCurrentRoute => true;
+
+  @override
+  bool get canPoll => super.canPoll && !_idleWhileStopped;
+
+  @override
+  void initState() {
+    super.initState();
+    setViewportVisible(false);
+    connectionViewportVisible.addListener(_followViewport);
+    ref.listenManual(isStartProvider, (_, running) {
+      if (running) {
+        _idleWhileStopped = false;
+        restartPolling();
+      }
+    });
+  }
+
+  void _followViewport() => setViewportVisible(connectionViewportVisible.value);
+
+  Widget gateConnections(Widget child) =>
+      ViewportVisibility(visible: connectionViewportVisible, child: child);
+
+  void _drained(int count) {
+    if (count == 0 && !ref.read(isStartProvider)) {
+      _idleWhileStopped = true;
+      stopPolling();
+    }
+  }
+
   List<TrackerInfo> connections = const [];
   var tcpCount = 0;
   var udpCount = 0;
@@ -99,6 +135,8 @@ mixin ConnectionsPolling<T extends ConsumerStatefulWidget>
 
   @override
   void dispose() {
+    connectionViewportVisible.removeListener(_followViewport);
+    connectionViewportVisible.dispose();
     connectionCount.dispose();
     super.dispose();
   }
@@ -106,6 +144,7 @@ mixin ConnectionsPolling<T extends ConsumerStatefulWidget>
   @override
   Future<void> poll(PollGuard isCurrent) async {
     if (ref.read(coreStatusProvider) != CoreStatus.connected) {
+      if (!isCurrent()) return;
       connectionCount.value = 0;
       if (connections.isNotEmpty && isCurrent()) {
         updateWhenRouteSettled(
@@ -116,6 +155,7 @@ mixin ConnectionsPolling<T extends ConsumerStatefulWidget>
           }),
         );
       }
+      _drained(0);
       return;
     }
     try {
@@ -134,10 +174,12 @@ mixin ConnectionsPolling<T extends ConsumerStatefulWidget>
             udpCount = next.length - tcp;
           }),
         );
+        _drained(next.length);
       } else {
         final count = await _core.getConnectionCount();
         if (!isCurrent()) return;
         connectionCount.value = count;
+        _drained(count);
       }
     } catch (error) {
       commonPrint.log(
@@ -169,13 +211,17 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
   late var _latest = _count;
   Timer? _repaint;
   var _active = true;
+  var _pageShown = true;
+  var _shown = false;
+  final _inView = ValueNotifier(false);
 
   @override
   void initState() {
     super.initState();
+    _inView.addListener(_syncShown);
     ref.listenManual(widget.provider, (_, next) {
       _latest = next;
-      if (!_active) {
+      if (!_shown) {
         return;
       }
       _repaint ??= Timer(renderThrottleDuration, _showLatest);
@@ -184,13 +230,32 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
 
   void _showLatest() {
     _repaint = null;
-    setState(() => _count = _latest);
+    if (mounted && _shown) setState(() => _count = _latest);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _pageShown =
+        TickerMode.valuesOf(context).enabled &&
+        PageActivityScope.isActiveOf(context);
+    _syncShown();
+  }
+
+  void _syncShown() {
+    final shown = _active && _pageShown && _inView.value;
+    if (shown == _shown) return;
+    _shown = shown;
+    _repaint?.cancel();
+    _repaint = null;
+    if (shown) _showLatest();
   }
 
   // A card can stay deactivated across timer ticks; a repaint there throws.
   @override
   void deactivate() {
     _active = false;
+    _shown = false;
     _repaint?.cancel();
     _repaint = null;
     super.deactivate();
@@ -201,18 +266,24 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
     super.activate();
     _active = true;
     _count = _latest;
+    _syncShown();
   }
 
   @override
   void dispose() {
     _repaint?.cancel();
+    _inView.removeListener(_syncShown);
+    _inView.dispose();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => InteractionPaced(
-    revision: _count,
-    builder: (context) => widget.builder(context, _count),
+  Widget build(BuildContext context) => ViewportVisibility(
+    visible: _inView,
+    child: InteractionPaced(
+      revision: _count,
+      builder: (context) => widget.builder(context, _count),
+    ),
   );
 }
 
@@ -234,6 +305,8 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
   List<TrackerInfo> _requests = const [];
   List<DnsQuery> _queries = const [];
   Timer? _snapshot;
+  var _shown = false;
+  var _snapshotStale = true;
 
   @override
   bool get pollsConnections => _feed == DashboardFeed.connections;
@@ -242,6 +315,7 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
   void initState() {
     super.initState();
     _takeSnapshot();
+    connectionViewportVisible.addListener(_followSnapshot);
     ref.listenManual(
       requestsProvider.select((state) => state.revision),
       (_, _) => _scheduleSnapshot(DashboardFeed.requests),
@@ -255,23 +329,61 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
   @override
   void dispose() {
     _snapshot?.cancel();
+    connectionViewportVisible.removeListener(_followSnapshot);
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _followSnapshot();
+  }
+
+  void _followSnapshot() {
+    final shown =
+        TickerMode.valuesOf(context).enabled &&
+        PageActivityScope.isActiveOf(context) &&
+        (ModalRoute.isCurrentOf(context) ?? true) &&
+        connectionViewportVisible.value;
+    _shown = shown;
+    if (!shown) {
+      _snapshotStale = true;
+      _snapshot?.cancel();
+      _snapshot = null;
+    } else if (_snapshotStale) {
+      _snapshotStale = false;
+      _publishSnapshot();
+    }
   }
 
   void _scheduleSnapshot(DashboardFeed feed) {
     if (feed != _feed) return;
+    if (!_shown) {
+      _snapshotStale = true;
+      return;
+    }
     _snapshot ??= Timer(renderThrottleDuration, () {
       _snapshot = null;
-      if (mounted) updateWhenRouteSettled(() => setState(_takeSnapshot));
+      if (mounted) _publishSnapshot();
+    });
+  }
+
+  void _publishSnapshot() {
+    updateWhenRouteSettled(() {
+      if (!mounted || !_shown) {
+        _snapshotStale = true;
+        return;
+      }
+      setState(_takeSnapshot);
     });
   }
 
   void _takeSnapshot() {
     switch (_feed) {
       case DashboardFeed.requests:
-        _requests = ref.read(requestsProvider).list.reversed.toList();
+        _requests = ref.read(requestsProvider).list;
       case DashboardFeed.dns:
-        _queries = ref.read(dnsQueriesProvider).list.reversed.toList();
+        _queries = ref.read(dnsQueriesProvider).list;
       case DashboardFeed.connections:
         break;
     }
@@ -287,8 +399,7 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
       _takeSnapshot();
     });
     if (feed == DashboardFeed.connections) {
-      stopPolling();
-      startPolling();
+      restartPolling();
     }
   }
 
@@ -318,105 +429,109 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
             foreground: foreground,
           ),
         );
-    return DashboardCard(
-      semanticLabel: appLocalizations.liveConnections,
-      padding: EdgeInsets.fromLTRB(cellStart, tabInset, cellStart, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            height: headerHeight,
-            padding: EdgeInsets.symmetric(horizontal: tabInset - cellStart),
-            child: LayoutBuilder(
-              builder: (context, constraints) => DashboardCappedRow(
-                share: 0.45,
-                start: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: AlignmentDirectional.centerStart,
-                  child: DashboardConnectedGroup(
-                    children: [
-                      segment(
-                        DashboardFeed.connections,
-                        ValueListenableBuilder(
-                          valueListenable: connectionCount,
-                          builder: (context, count, _) => InteractionPaced(
-                            revision: count,
-                            builder: (_) => _TabCount(count),
+    return gateConnections(
+      DashboardCard(
+        semanticLabel: appLocalizations.liveConnections,
+        padding: EdgeInsets.fromLTRB(cellStart, tabInset, cellStart, 0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              height: headerHeight,
+              padding: EdgeInsets.symmetric(horizontal: tabInset - cellStart),
+              child: LayoutBuilder(
+                builder: (context, constraints) => DashboardCappedRow(
+                  share: 0.45,
+                  start: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: DashboardConnectedGroup(
+                      children: [
+                        segment(
+                          DashboardFeed.connections,
+                          ValueListenableBuilder(
+                            valueListenable: connectionCount,
+                            builder: (context, count, _) => InteractionPaced(
+                              revision: count,
+                              builder: (_) => _TabCount(count),
+                            ),
                           ),
                         ),
-                      ),
-                      segment(
-                        DashboardFeed.requests,
-                        ThrottledCount(
-                          provider: requestCountProvider,
-                          builder: (_, count) => _TabCount(count),
+                        segment(
+                          DashboardFeed.requests,
+                          ThrottledCount(
+                            provider: requestCountProvider,
+                            builder: (_, count) => _TabCount(count),
+                          ),
                         ),
-                      ),
-                      segment(
-                        DashboardFeed.dns,
-                        ThrottledCount(
-                          provider: dnsQueryCountProvider,
-                          builder: (_, count) => _TabCount(count),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                end: InteractionPaced(
-                  revision: (tcpCount, udpCount),
-                  builder: (_) => Row(
-                    mainAxisSize: MainAxisSize.min,
-                    spacing: 8,
-                    children: [
-                      if (_feed == DashboardFeed.connections &&
-                          connections.isNotEmpty &&
-                          constraints.maxWidth >= _midTableWidth) ...[
-                        DashboardChip(
-                          label: 'TCP $tcpCount',
-                          tone: DashboardChipTone.idle,
-                        ),
-                        DashboardChip(
-                          label: 'UDP $udpCount',
-                          tone: DashboardChipTone.idle,
+                        segment(
+                          DashboardFeed.dns,
+                          ThrottledCount(
+                            provider: dnsQueryCountProvider,
+                            builder: (_, count) => _TabCount(count),
+                          ),
                         ),
                       ],
-                    ],
+                    ),
+                  ),
+                  end: InteractionPaced(
+                    revision: (tcpCount, udpCount),
+                    builder: (_) => Row(
+                      mainAxisSize: MainAxisSize.min,
+                      spacing: 8,
+                      children: [
+                        if (_feed == DashboardFeed.connections &&
+                            connections.isNotEmpty &&
+                            constraints.maxWidth >= _midTableWidth) ...[
+                          DashboardChip(
+                            label: 'TCP $tcpCount',
+                            tone: DashboardChipTone.idle,
+                          ),
+                          DashboardChip(
+                            label: 'UDP $udpCount',
+                            tone: DashboardChipTone.idle,
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: _tableGap),
-          Expanded(
-            child: InteractionPaced(
-              key: ValueKey(_feed),
-              revision: (connections, _requests, _queries),
-              builder: (context) => switch (_feed) {
-                DashboardFeed.connections => _Table<TrackerInfo>(
-                  key: const ValueKey(DashboardFeed.connections),
-                  tableId: 'dashboard.connections',
-                  items: connections,
-                  rowHeight: rowHeight,
-                  columnsOf: (width) => _connectionColumns(context, width),
-                ),
-                DashboardFeed.requests => _Table<TrackerInfo>(
-                  key: const ValueKey(DashboardFeed.requests),
-                  tableId: 'dashboard.requests',
-                  items: _requests,
-                  rowHeight: rowHeight,
-                  columnsOf: (_) => _requestColumns(context),
-                ),
-                DashboardFeed.dns => _Table<DnsQuery>(
-                  key: const ValueKey(DashboardFeed.dns),
-                  tableId: 'dashboard.dns',
-                  items: _queries,
-                  rowHeight: rowHeight,
-                  columnsOf: (_) => _dnsColumns(context),
-                ),
-              },
+            const SizedBox(height: _tableGap),
+            Expanded(
+              child: InteractionPaced(
+                key: ValueKey(_feed),
+                revision: (connections, _requests, _queries),
+                builder: (context) => switch (_feed) {
+                  DashboardFeed.connections => _Table<TrackerInfo>(
+                    key: const ValueKey(DashboardFeed.connections),
+                    tableId: 'dashboard.connections',
+                    items: connections,
+                    rowHeight: rowHeight,
+                    columnsOf: (width) => _connectionColumns(context, width),
+                  ),
+                  DashboardFeed.requests => _Table<TrackerInfo>(
+                    key: const ValueKey(DashboardFeed.requests),
+                    tableId: 'dashboard.requests',
+                    reverse: true,
+                    items: _requests,
+                    rowHeight: rowHeight,
+                    columnsOf: (_) => _requestColumns(context),
+                  ),
+                  DashboardFeed.dns => _Table<DnsQuery>(
+                    key: const ValueKey(DashboardFeed.dns),
+                    tableId: 'dashboard.dns',
+                    reverse: true,
+                    items: _queries,
+                    rowHeight: rowHeight,
+                    columnsOf: (_) => _dnsColumns(context),
+                  ),
+                },
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -488,10 +603,12 @@ class _Table<T> extends ConsumerStatefulWidget {
     required this.items,
     required this.rowHeight,
     required this.columnsOf,
+    this.reverse = false,
   });
 
   final String tableId;
   final List<T> items;
+  final bool reverse;
   final double rowHeight;
   final List<RecordColumn<T>> Function(double width) columnsOf;
 
@@ -520,7 +637,20 @@ class _TableState<T> extends ConsumerState<_Table<T>>
           constraints.maxWidth,
           columnWidths,
         );
-        final sorted = _sorter.sort(widget.items, columns, _sort);
+        final source = widget.items;
+        final List<T> sorted;
+        if (_sort == null) {
+          sorted = [
+            for (var i = 0; i < source.length && i < _maxFeedRows; i++)
+              source[widget.reverse ? source.length - 1 - i : i],
+          ];
+        } else {
+          sorted = _sorter.sort(
+            widget.reverse ? source.reversed.toList() : source,
+            columns,
+            _sort,
+          );
+        }
         final items = sorted.length > _maxFeedRows
             ? sorted.sublist(0, _maxFeedRows)
             : sorted;

@@ -54,19 +54,11 @@ ProfileStats profileStatsOf(
   );
 }
 
-({String md5, ConfigCounts counts})? _countsCache;
+({String key, ConfigCounts? counts})? _countsCache;
+({String key, Future<ConfigCounts?> future})? _countsPending;
 
 // package:yaml holds a document in many times its size.
 const _maxCountedConfigBytes = 8 << 20;
-
-ConfigCounts? _cachedCounts() {
-  if (globalState.lastConfigCounts case final counts?) {
-    return counts;
-  }
-  final cache = _countsCache;
-  final md5 = globalState.lastConfigMd5;
-  return cache != null && cache.md5 == md5 ? cache.counts : null;
-}
 
 ConfigCounts? _countConfigFile(String path) {
   final file = File(path);
@@ -79,31 +71,43 @@ ConfigCounts? _countConfigFile(String path) {
 
 /// Parsed in an isolate: a large profile takes far longer than a frame.
 Future<ConfigCounts?> _loadCounts() async {
-  if (_cachedCounts() case final counts?) {
-    return counts;
-  }
+  final path = await appPath.configFilePath;
   final md5 = globalState.lastConfigMd5;
-  final counts = await compute(_countConfigFile, await appPath.configFilePath);
-  if (md5 != null && counts != null) {
-    _countsCache = (md5: md5, counts: counts);
+  final stat = md5 == null ? await File(path).stat() : null;
+  final key =
+      '$path|${md5 ?? '${stat!.modified.microsecondsSinceEpoch}|${stat.size}'}';
+  if (_countsCache?.key == key) return _countsCache!.counts;
+  if (_countsPending?.key == key) return _countsPending!.future;
+  final future = compute(_countConfigFile, path);
+  _countsPending = (key: key, future: future);
+  try {
+    final counts = await future;
+    if (_countsPending?.future == future) {
+      _countsCache = (key: key, counts: counts);
+    }
+    return counts;
+  } finally {
+    if (_countsPending?.future == future) _countsPending = null;
   }
-  return counts;
 }
 
 mixin ConfigCountsWatch<T extends ConsumerStatefulWidget> on ConsumerState<T> {
-  ConfigCounts? configCounts = _cachedCounts();
+  ConfigCounts? configCounts;
   bool configCountsFailed = false;
   var _generation = 0;
 
   @override
   void initState() {
     super.initState();
-    if (configCounts == null) {
-      unawaited(_reloadCounts());
-    }
+    configCounts = ref.read(appliedConfigCountsProvider);
+    if (configCounts == null) unawaited(_reloadCounts());
   }
 
   Future<void> _reloadCounts() async {
+    if (!ref.read(initProvider) ||
+        !ref.read(appliedConfigCountsProvider.notifier).allowsFileFallback) {
+      return;
+    }
     final generation = ++_generation;
     ConfigCounts? counts;
     var failed = false;
@@ -113,27 +117,29 @@ mixin ConfigCountsWatch<T extends ConsumerStatefulWidget> on ConsumerState<T> {
       commonPrint.log('read applied config error: $error');
       failed = true;
     }
-    if (!mounted || generation != _generation) {
+    if (!mounted ||
+        generation != _generation ||
+        !ref.read(initProvider) ||
+        !ref.read(appliedConfigCountsProvider.notifier).allowsFileFallback) {
       return;
     }
     setState(() {
-      configCounts = counts ?? configCounts;
+      configCounts = counts;
       configCountsFailed = failed || counts == null;
     });
   }
 
-  /// Called from build: groups refresh after every applied setup.
   void watchConfigCounts() {
-    ref.listen(groupsProvider, (_, _) {
-      final cached = _cachedCounts();
-      if (cached == null) {
+    ref.listen(appliedConfigCountsProvider, (_, counts) {
+      _generation++;
+      setState(() {
+        configCounts = counts;
+        configCountsFailed = false;
+      });
+    });
+    ref.listen(initProvider, (_, ready) {
+      if (ready && ref.read(appliedConfigCountsProvider) == null) {
         unawaited(_reloadCounts());
-      } else if (cached != configCounts) {
-        _generation++;
-        setState(() {
-          configCounts = cached;
-          configCountsFailed = false;
-        });
       }
     });
   }

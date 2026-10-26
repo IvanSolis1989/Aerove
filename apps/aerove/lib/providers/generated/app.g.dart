@@ -838,6 +838,59 @@ abstract class _$RunningVpnOptions extends $Notifier<VpnOptions?> {
   }
 }
 
+@ProviderFor(AppliedConfigCounts)
+final appliedConfigCountsProvider = AppliedConfigCountsProvider._();
+
+final class AppliedConfigCountsProvider
+    extends $NotifierProvider<AppliedConfigCounts, ConfigCounts?> {
+  AppliedConfigCountsProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'appliedConfigCountsProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$appliedConfigCountsHash();
+
+  @$internal
+  @override
+  AppliedConfigCounts create() => AppliedConfigCounts();
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(ConfigCounts? value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<ConfigCounts?>(value),
+    );
+  }
+}
+
+String _$appliedConfigCountsHash() =>
+    r'a67e29eb588c68211bcea25d077ad33136313432';
+
+abstract class _$AppliedConfigCounts extends $Notifier<ConfigCounts?> {
+  ConfigCounts? build();
+  @$mustCallSuper
+  @override
+  WhenComplete runBuild() {
+    final ref = this.ref as $Ref<ConfigCounts?, ConfigCounts?>;
+    final element =
+        ref.element
+            as $ClassProviderElement<
+              AnyNotifier<ConfigCounts?, ConfigCounts?>,
+              ConfigCounts?,
+              Object?,
+              Object?
+            >;
+    return element.handleCreate(ref, build);
+  }
+}
+
 /// What the dashboard cards a user can see right now need sampled.
 
 @ProviderFor(TrafficDemand)

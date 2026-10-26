@@ -52,17 +52,33 @@ class CurrentOutboundCard extends ConsumerStatefulWidget {
 class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     with ProbeStartHold<CurrentOutboundCard> {
   late final OutboundIpProbe _probe;
+  var _watching = false;
 
   @override
   void initState() {
     super.initState();
-    _probe = ref.read(outboundIpProbeProvider.notifier)..watch(routedOutbound);
+    _probe = ref.read(outboundIpProbeProvider.notifier);
   }
 
   @override
   void dispose() {
-    _probe.unwatch(routedOutbound);
+    if (_watching) _probe.unwatch(routedOutbound);
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final watching =
+        PageActivityScope.isActiveOf(context) &&
+        TickerMode.valuesOf(context).enabled;
+    if (_watching == watching) return;
+    _watching = watching;
+    if (watching) {
+      _probe.watch(routedOutbound);
+    } else {
+      _probe.unwatch(routedOutbound);
+    }
   }
 
   void _refresh(String? ip) {

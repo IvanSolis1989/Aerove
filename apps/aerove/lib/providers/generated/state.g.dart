@@ -179,7 +179,7 @@ final class TrayStateProvider
   }
 }
 
-String _$trayStateHash() => r'd4fe17e62e479ff316ab5deb11475b4ea533d0bb';
+String _$trayStateHash() => r'c3e9345f8d0b752495704c99662e1bc43d9915b7';
 
 /// Measured delays of the proxies the tray lists, by group and then proxy
 /// name. Resolved like a proxy card, so a nested group shows its selection.
@@ -277,7 +277,7 @@ final class TrayTitleStateProvider
   }
 }
 
-String _$trayTitleStateHash() => r'aacf3779c879f7f1144484a80043679020bf8424';
+String _$trayTitleStateHash() => r'e71d9698378dad85d9002abc6142e7fe69fb95c9';
 
 @ProviderFor(getHotKeyAction)
 final getHotKeyActionProvider = GetHotKeyActionFamily._();

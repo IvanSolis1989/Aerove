@@ -84,6 +84,7 @@ void main() {
       ],
     );
     globalState.container = container;
+    container.read(initProvider.notifier).value = true;
     container.listen(currentProfileIdProvider, (_, _) {});
     container.read(currentProfileIdProvider.notifier).value =
         profiles.firstOrNull?.id;
@@ -301,6 +302,9 @@ void main() {
     expect(find.text('—'), findsNWidgets(3));
 
     globalState.lastConfigCounts = (groups: 4, proxies: 2048, rules: 9);
+    container
+        .read(appliedConfigCountsProvider.notifier)
+        .publish(globalState.lastConfigCounts);
     addTearDown(() => globalState.lastConfigCounts = null);
     container.read(groupsProvider.notifier).value = [
       const Group(type: GroupType.Selector, name: 'G1'),

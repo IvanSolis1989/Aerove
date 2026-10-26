@@ -36,7 +36,15 @@ class _RunRequest {
 class SetupAction extends _$SetupAction {
   CoreController get _core => ref.read(coreHandlerProvider);
 
+  void _publishAppliedCounts(ConfigCounts? counts) {
+    globalState.lastConfigCounts = counts;
+    if (ref.mounted) {
+      ref.read(appliedConfigCountsProvider.notifier).publish(counts);
+    }
+  }
+
   Timer? _runtimeTimer;
+  int _runtimeRevision = 0;
   final _setupScheduler = SerialTaskScheduler();
   final _listenerScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
@@ -139,12 +147,22 @@ class SetupAction extends _$SetupAction {
   }
 
   void _stopRuntimeTicker() {
+    _runtimeRevision++;
     _runtimeTimer?.cancel();
     _runtimeTimer = null;
   }
 
   void _refreshRunningState() {
-    if (_isShown(TrafficNeed.runTime)) _updateRunTime();
+    if (_isShown(TrafficNeed.runTime)) {
+      final revision = _runtimeRevision;
+      FramePacer.publish(this, () {
+        if (ref.mounted &&
+            revision == _runtimeRevision &&
+            _isShown(TrafficNeed.runTime)) {
+          _updateRunTime();
+        }
+      });
+    }
     unawaited(ref.read(commonActionProvider.notifier).updateTraffic());
   }
 
@@ -299,11 +317,11 @@ class SetupAction extends _$SetupAction {
 
   Future<bool> _adoptAppliedSetup(SetupRecord record) async {
     globalState.lastConfigMd5 = record.yamlMd5;
-    globalState.lastConfigCounts = (
+    _publishAppliedCounts((
       groups: record.groups,
       proxies: record.proxies,
       rules: record.rules,
-    );
+    ));
     final inputs = await _currentInputs();
     final adopted =
         inputs != null && await _inputsDigest(inputs) == record.digest;
@@ -994,7 +1012,7 @@ class SetupAction extends _$SetupAction {
         await _refreshRecord(inputs, realProfile);
       }
       _appliedInputs = inputs;
-      globalState.lastConfigCounts = realProfile.counts;
+      _publishAppliedCounts(realProfile.counts);
       if (preloadInvoke != null) {
         await _runSurfaced(preloadInvoke);
       }
@@ -1004,14 +1022,13 @@ class SetupAction extends _$SetupAction {
     // has no proxies, so until this push succeeds no applied config is known.
     _appliedInputs = null;
     globalState.lastConfigMd5 = null;
-    globalState.lastConfigCounts = null;
+    _publishAppliedCounts(null);
     final record = realProfile == null
         ? null
         : await _setupRecord(inputs, realProfile);
     if (system.isAndroid) {
       await ref.read(vpnOptionsProvider.future);
       await preferences.saveShareState(ref.read(sharedStateProvider));
-      await preferences.saveAppliedConfigMd5(null);
     }
     // Recaptured so _start's catch can roll back after safeRun swallows it.
     (Object, StackTrace)? handoffFailure;
@@ -1032,7 +1049,7 @@ class SetupAction extends _$SetupAction {
             preloadInvoke: preloadInvoke,
           );
           if (message.isNotEmpty) {
-            globalState.lastConfigCounts = configCountsOf(const {});
+            _publishAppliedCounts(configCountsOf(const {}));
             await globalState.safeRun(() => onUpdated?.call());
             throw MessageException(message);
           }
@@ -1044,12 +1061,8 @@ class SetupAction extends _$SetupAction {
           rethrow;
         }
         globalState.lastConfigMd5 = yamlMd5;
-        globalState.lastConfigCounts =
-            realProfile?.counts ?? configCountsOf(const {});
+        _publishAppliedCounts(realProfile?.counts ?? configCountsOf(const {}));
         _appliedInputs = inputs;
-        if (system.isAndroid) {
-          await preferences.saveAppliedConfigMd5(yamlMd5);
-        }
         await onUpdated?.call();
       },
       silence: true,

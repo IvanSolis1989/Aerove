@@ -11,6 +11,13 @@ class CommonAction extends _$CommonAction {
   void build() {
     ref.listen(appVisibleProvider, (_, _) => _trafficRevision++);
     ref.listen(trafficDemandProvider, (_, _) => _trafficRevision++);
+    ref.listen(appSettingProvider, (previous, next) {
+      if (previous?.showTrayTitle != next.showTrayTitle ||
+          previous?.onlyStatisticsProxy != next.onlyStatisticsProxy) {
+        _trafficRevision++;
+      }
+    });
+    ref.listen(safeModeProvider, (_, _) => _trafficRevision++);
   }
 
   bool get _trafficVisible =>
@@ -58,9 +65,9 @@ class CommonAction extends _$CommonAction {
     _isUpdatingTraffic = true;
     final revision = _trafficRevision;
     try {
-      final onlyStatisticsProxy = ref.read(
-        appSettingProvider.select((state) => state.onlyStatisticsProxy),
-      );
+      final onlyStatisticsProxy = ref
+          .read(appSettingProvider)
+          .onlyStatisticsProxy;
       final [traffic, totalTraffic] = await Future.wait([
         _readTraffic(() => _core.getTraffic(onlyStatisticsProxy)),
         _readTraffic(() => _core.getTotalTraffic(onlyStatisticsProxy)),
@@ -68,12 +75,17 @@ class CommonAction extends _$CommonAction {
       if (!ref.mounted || !_trafficVisible || revision != _trafficRevision) {
         return;
       }
-      if (traffic != null) {
-        ref.read(trafficsProvider.notifier).addTraffic(traffic);
-      }
-      if (totalTraffic != null) {
-        ref.read(totalTrafficProvider.notifier).value = totalTraffic;
-      }
+      FramePacer.publish(this, () {
+        if (!ref.mounted || !_trafficVisible || revision != _trafficRevision) {
+          return;
+        }
+        if (traffic != null) {
+          ref.read(trafficsProvider.notifier).addTraffic(traffic);
+        }
+        if (totalTraffic != null) {
+          ref.read(totalTrafficProvider.notifier).value = totalTraffic;
+        }
+      });
     } finally {
       _isUpdatingTraffic = false;
     }

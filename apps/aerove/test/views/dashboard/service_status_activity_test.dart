@@ -33,6 +33,7 @@ String _groupOf(String name) =>
 
 void main() {
   setUpAll(() {
+    registerFallbackValue(const CheckRoutesParams());
     registerFallbackValue(const ServiceCheckParams(timeout: 0));
     registerFallbackValue(const OutboundIpParams(timeout: 0));
   });
@@ -57,6 +58,17 @@ void main() {
     timingOut = {};
     held = [];
     hold = false;
+    when(() => core.checkRoutes(any())).thenAnswer((invocation) async {
+      final params = invocation.positionalArguments.single as CheckRoutesParams;
+      return RouteCheck(
+        coreEpoch: 1,
+        routeVersion: picksVersion,
+        held: [
+          for (final route in params.routes)
+            route.every((hit) => picks[hit.proxy] == hit.exit),
+        ],
+      );
+    });
     when(() => core.serviceCheck(any())).thenAnswer((invocation) async {
       final params =
           invocation.positionalArguments.single as ServiceCheckParams;
@@ -80,10 +92,17 @@ void main() {
                 : ServiceProbeStatus.available.id,
             delay: 40,
             chains: chains[name]!,
+            hits: [
+              RouteHit(
+                host: name,
+                proxy: _groupOf(name),
+                exit: chains[name]!.first,
+              ),
+            ],
             region: '',
             checkedAt: 1700000000000,
             coreEpoch: 1,
-            picksVersion: version,
+            routeVersion: version,
           ),
       ];
     });
@@ -99,8 +118,7 @@ void main() {
       routeTrackerProvider.overrideWithBuild(
         (ref, _) => const RouteState(
           coreEpoch: 1,
-          picksVersion: 1,
-          picks: {'Proxy': 'NodeA', 'Media': 'NodeM'},
+          routeVersion: 1,
           hostEpoch: 1,
           proxied: true,
           synced: true,
@@ -168,13 +186,7 @@ void main() {
   void resubscribe(WidgetTester tester) {
     containerOf(tester)
         .read(routeTrackerProvider.notifier)
-        .applySnapshot(
-          RouteSnapshot(
-            coreEpoch: 1,
-            picksVersion: picksVersion,
-            picks: Map.of(picks),
-          ),
-        );
+        .applySnapshot(RouteSnapshot(coreEpoch: 1, routeVersion: picksVersion));
   }
 
   /// What the Core publishes after a group re-picks.
@@ -496,6 +508,9 @@ void main() {
     active.value = false;
     await settle(tester);
     final container = containerOf(tester);
+    container
+        .read(routeTrackerProvider.notifier)
+        .applySnapshot(RouteSnapshot(coreEpoch: 2, routeVersion: picksVersion));
     container.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
     await settle(tester);
 

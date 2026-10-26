@@ -830,7 +830,7 @@ void main() {
         final lastConfigMd5 = globalState.lastConfigMd5;
         addTearDown(() => globalState.lastConfigMd5 = lastConfigMd5);
         globalState.lastConfigMd5 = null;
-        await mockPreferences({appliedConfigMd5Key: 'running'});
+        await mockPreferences({'applied_config_md5': 'running'});
         action.serviceRunTime = (
           startedAt: DateTime.now().subtract(const Duration(minutes: 1)),
           vpnOptions: null,
@@ -1648,6 +1648,15 @@ void main() {
       expect(overlay['mixed-port'], isNot(1));
       expect(await configFile.readAsString(), 'previous');
       expect(globalState.lastConfigCounts, (groups: 2, proxies: 3, rules: 6));
+      expect(scoped.read(appliedConfigCountsProvider), (
+        groups: 2,
+        proxies: 3,
+        rules: 6,
+      ));
+      expect(
+        scoped.read(appliedConfigCountsProvider.notifier).allowsFileFallback,
+        isFalse,
+      );
 
       await setupAction.applyProfile();
       expect(pushed, hasLength(1));
@@ -1660,6 +1669,11 @@ void main() {
       digest = 'third';
       expect(await setupAction.applyProfile(), isFalse);
       expect(globalState.lastConfigCounts, (groups: 0, proxies: 0, rules: 0));
+      expect(scoped.read(appliedConfigCountsProvider), (
+        groups: 0,
+        proxies: 0,
+        rules: 0,
+      ));
     });
 
     test('the preview shows the config the Core merges', () async {

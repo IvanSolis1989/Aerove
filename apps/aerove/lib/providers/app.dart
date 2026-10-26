@@ -219,6 +219,26 @@ class RunningVpnOptions extends _$RunningVpnOptions
   }
 }
 
+@Riverpod(keepAlive: true)
+class AppliedConfigCounts extends _$AppliedConfigCounts
+    with AutoDisposeNotifierMixin {
+  var _received = false;
+
+  @override
+  ConfigCounts? build() => null;
+
+  // A receipt starts a new apply generation even when counts remain null.
+  @override
+  bool updateShouldNotify(ConfigCounts? previous, ConfigCounts? next) => true;
+
+  bool get allowsFileFallback => !_received;
+
+  void publish(ConfigCounts? counts) {
+    _received = true;
+    value = counts;
+  }
+}
+
 /// What the dashboard cards a user can see right now need sampled.
 @Riverpod(keepAlive: true)
 class TrafficDemand extends _$TrafficDemand {

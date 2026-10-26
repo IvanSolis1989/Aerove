@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/foundation.dart';
 
 /// Runs [onFrame] at a capped rate, scheduling a frame only when one is due;
 /// pacers running together count from one grid, so their frames coincide.
@@ -11,6 +12,51 @@ class FramePacer {
 
   static final _running = <FramePacer>{};
   static Duration? _grid;
+  static final _pending = <Object, void Function()>{};
+
+  /// Shares the next paced frame, but never waits for a pacer that stopped.
+  static void publish(Object owner, void Function() update) {
+    if (_running.isEmpty) {
+      update();
+    } else {
+      _pending[owner] = update;
+    }
+  }
+
+  static bool _flushScheduled = false;
+
+  static void _flushPending() {
+    if (_pending.isEmpty) return;
+    final binding = SchedulerBinding.instance;
+    if (binding.schedulerPhase == SchedulerPhase.persistentCallbacks) {
+      if (!_flushScheduled) {
+        _flushScheduled = true;
+        binding.addPostFrameCallback((_) {
+          // Demand claims may be released by later callbacks in this frame.
+          scheduleMicrotask(() {
+            _flushScheduled = false;
+            _flushPending();
+          });
+        });
+      }
+      return;
+    }
+    final updates = _pending.values.toList();
+    _pending.clear();
+    for (final update in updates) {
+      try {
+        update();
+      } catch (error, stack) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stack,
+            library: 'FramePacer',
+          ),
+        );
+      }
+    }
+  }
 
   final void Function(Duration elapsed) onFrame;
 
@@ -49,7 +95,10 @@ class FramePacer {
   }
 
   void stop() {
-    if (_running.remove(this) && _running.isEmpty) _grid = null;
+    if (_running.remove(this) && _running.isEmpty) {
+      _grid = null;
+      _flushPending();
+    }
     _timer?.cancel();
     _timer = null;
     final id = _callbackId;
@@ -107,6 +156,7 @@ class FramePacer {
       final frame = _frameAt(timeStamp);
       if (frame > _lastPublishedFrame) {
         _lastPublishedFrame = frame;
+        _flushPending();
         onFrame(timeStamp - origin);
       }
     }

@@ -146,6 +146,58 @@ List<TrackerInfo> trackerInfosOf(Object? data) {
   ];
 }
 
+/// The Core fixes identity and metadata at open; only counters change later.
+class TrackerInfoCache {
+  var _items = <String, TrackerInfo>{};
+
+  void clear() => _items.clear();
+
+  List<TrackerInfo> decode(Object? data) {
+    final list = data is List<TrackerInfo>
+        ? data
+        : data is Map
+        ? data['connections']
+        : null;
+    if (list is! List) {
+      _items.clear();
+      return const [];
+    }
+    final next = <String, TrackerInfo>{};
+    final result = <TrackerInfo>[];
+    for (final raw in list) {
+      final TrackerInfo item;
+      if (raw is TrackerInfo) {
+        final previous = _items[raw.id];
+        item = previous != null && previous.start == raw.start
+            ? _counters(previous, raw.upload, raw.download)
+            : raw;
+      } else if (raw is Map) {
+        final previous = _items[raw['id']];
+        item =
+            previous != null &&
+                previous.start == DateTime.parse(raw['start'] as String)
+            ? _counters(
+                previous,
+                (raw['upload'] as num?)?.toInt() ?? 0,
+                (raw['download'] as num?)?.toInt() ?? 0,
+              )
+            : TrackerInfo.fromJson(Map<String, Object?>.from(raw));
+      } else {
+        continue;
+      }
+      next[item.id] = item;
+      result.add(item);
+    }
+    _items = next;
+    return List.unmodifiable(result);
+  }
+
+  TrackerInfo _counters(TrackerInfo previous, int upload, int download) =>
+      previous.upload == upload && previous.download == download
+      ? previous
+      : previous.copyWith(upload: upload, download: download);
+}
+
 typedef RequestTraffic = ({int upload, int download});
 
 extension TrackerInfoExt on TrackerInfo {

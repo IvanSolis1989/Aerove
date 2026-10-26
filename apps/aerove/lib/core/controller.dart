@@ -41,13 +41,25 @@ class CoreController {
     return _instance!;
   }
 
-  Future<CoreLifecycleResult> start() => _interface.start();
+  Future<CoreLifecycleResult> start() {
+    _invalidateConnections();
+    return _interface.start().whenComplete(_invalidateConnections);
+  }
 
-  Future<CoreLifecycleResult> restart() => _interface.restart();
+  Future<CoreLifecycleResult> restart() {
+    _invalidateConnections();
+    return _interface.restart().whenComplete(_invalidateConnections);
+  }
 
-  Future<CoreLifecycleResult> stop() => _interface.stop();
+  Future<CoreLifecycleResult> stop() {
+    _invalidateConnections();
+    return _interface.stop().whenComplete(_invalidateConnections);
+  }
 
-  Future<CoreLifecycleResult> close() => _interface.close();
+  Future<CoreLifecycleResult> close() {
+    _invalidateConnections();
+    return _interface.close().whenComplete(_invalidateConnections);
+  }
 
   static Future<void> ensureHomeDir() async {
     final homePath = await appPath.homeDirPath;
@@ -224,8 +236,42 @@ class CoreController {
     return _interface.setUiTelemetryActive(active);
   }
 
-  Future<List<TrackerInfo>> getConnections() async {
-    return _interface.getConnections();
+  List<TrackerInfo>? _connections;
+  final _connectionsClock = Stopwatch()..start();
+  Duration? _connectionsRead;
+  Future<List<TrackerInfo>>? _connectionsPending;
+  int _connectionsRevision = 0;
+
+  void _invalidateConnections() {
+    _interface.clearConnectionCache();
+    _connectionsRevision++;
+    _connections = null;
+    _connectionsRead = null;
+    _connectionsPending = null;
+  }
+
+  Future<List<TrackerInfo>> getConnections() {
+    final cached = _connections;
+    final read = _connectionsRead;
+    if (cached != null &&
+        read != null &&
+        _connectionsClock.elapsed - read < const Duration(seconds: 1)) {
+      return Future.value(cached);
+    }
+    return _connectionsPending ??= _readConnections(_connectionsRevision);
+  }
+
+  Future<List<TrackerInfo>> _readConnections(int revision) async {
+    try {
+      final items = await _interface.getConnections();
+      if (revision == _connectionsRevision) {
+        _connections = List.unmodifiable(items);
+        _connectionsRead = _connectionsClock.elapsed;
+      }
+      return items;
+    } finally {
+      if (revision == _connectionsRevision) _connectionsPending = null;
+    }
   }
 
   Future<int> getConnectionCount() async {
@@ -233,15 +279,30 @@ class CoreController {
   }
 
   Future<void> closeConnection(String id) async {
-    await _interface.closeConnection(id);
+    _invalidateConnections();
+    try {
+      await _interface.closeConnection(id);
+    } finally {
+      _invalidateConnections();
+    }
   }
 
   Future<void> closeConnections() async {
-    await _interface.closeConnections();
+    _invalidateConnections();
+    try {
+      await _interface.closeConnections();
+    } finally {
+      _invalidateConnections();
+    }
   }
 
   Future<void> resetConnections() async {
-    await _interface.resetConnections();
+    _invalidateConnections();
+    try {
+      await _interface.resetConnections();
+    } finally {
+      _invalidateConnections();
+    }
   }
 
   Future<bool> clearDnsCache() async {

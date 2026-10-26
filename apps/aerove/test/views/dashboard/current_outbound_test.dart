@@ -146,7 +146,12 @@ Widget _probingApp(
       coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
       ipQualityProvider.overrideWith(quality ?? (_, _) async => _residential),
     ],
-    child: _card(motion: false),
+    child: Builder(
+      builder: (context) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(disableAnimations: true),
+        child: _card(),
+      ),
+    ),
   );
 }
 

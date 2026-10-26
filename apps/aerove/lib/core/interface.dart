@@ -519,10 +519,22 @@ abstract class CoreHandlerInterface with CoreInterface {
     );
   }
 
+  final _connectionCache = TrackerInfoCache();
+  int _connectionDecodeRevision = 0;
+
+  void clearConnectionCache() {
+    _connectionDecodeRevision++;
+    _connectionCache.clear();
+  }
+
   @override
   Future<List<TrackerInfo>> getConnections() async {
+    final revision = _connectionDecodeRevision;
     final data = await _invokeMethod<Object>(method: CoreMethod.getConnections);
-    return data is List<TrackerInfo> ? data : trackerInfosOf(data);
+    if (revision != _connectionDecodeRevision) {
+      return data is List<TrackerInfo> ? data : trackerInfosOf(data);
+    }
+    return _connectionCache.decode(data);
   }
 
   @override
