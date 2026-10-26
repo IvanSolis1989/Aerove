@@ -35,6 +35,95 @@ void main() {
     }
   });
 
+  testWidgets('a pending tight paragraph keeps its current collision bounds', (
+    tester,
+  ) async {
+    late StateSetter update;
+    var expanded = false;
+    const bodyKey = ValueKey('tight-body');
+    const figuresKey = ValueKey('tight-figures');
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return SizedBox(
+                width: 328,
+                child: StatusCardLayout(
+                  padding: EdgeInsets.zero,
+                  shape: const RoundedRectangleBorder(),
+                  baselineRatio: 1,
+                  allowAppend: true,
+                  backdrop: const SizedBox(),
+                  body: SizedBox(
+                    key: bodyKey,
+                    width: 328,
+                    height: 100,
+                    child: Align(
+                      alignment: Alignment.topLeft,
+                      child: StatusForeground(
+                        child: SizedBox(
+                          width: 328,
+                          height: 20,
+                          child: Text(
+                            expanded ? 'MMMMMMMMMMMMMMMMMMMMMM' : 'clear',
+                            style: const TextStyle(
+                              fontFamily: 'Ahem',
+                              fontSize: 14,
+                            ),
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.visible,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  figures: SizedBox(
+                    key: figuresKey,
+                    width: expanded ? 70 : 40,
+                    height: 20,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    final layout = tester.renderObject<RenderStatusCardLayout>(
+      find.byType(StatusCardLayout),
+    );
+    final body = tester.getRect(find.byKey(bodyKey));
+    expect(layout.footerSlotAvailable, isTrue);
+    expect(layout.overlaid, isTrue);
+    update(() => expanded = true);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(layout.footerSlotAvailable, isFalse);
+    expect(layout.overlaid, isFalse);
+    expect(tester.getRect(find.byKey(bodyKey)), body);
+    expect(tester.getRect(find.byKey(figuresKey)).top, body.bottom + 8);
+    expect(layout.size.height, 128);
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.byType(RichText),
+    );
+    final boxes = paragraph.getBoxesForSelection(
+      const TextSelection(baseOffset: 0, extentOffset: 22),
+    );
+    expect(boxes.single.right, 308);
+    update(() => expanded = false);
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(layout.footerSlotAvailable, isTrue);
+    expect(layout.overlaid, isTrue);
+    expect(tester.getRect(find.byKey(bodyKey)), body);
+    expect(layout.size.height, 100);
+  });
+
   testWidgets('zero and unsampled speed retain real zero values', (
     tester,
   ) async {
@@ -251,9 +340,12 @@ void main() {
   testWidgets(
     'on glass the running start bubble repaints itself, not the status card',
     (tester) async {
-      await expectOnlyTheBubbleDrifts(
-        await pumpDashboardHost(tester, glass: true),
-      );
+      final host = await pumpDashboardHost(tester, glass: true);
+      // The host updates traffic and the tight uptime paragraph together.
+      expect(host.container.read(runTimeProvider), 3000);
+      expect(find.text('00:00:03'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await expectOnlyTheBubbleDrifts(host);
     },
     skip: !ui.ImageFilter.isShaderFilterSupported,
   );

@@ -227,6 +227,15 @@ class RenderStatusCardLayout extends RenderBox
 
   @override
   void performLayout() {
+    final textLayout = _StatusTextLayout();
+    try {
+      _layoutCard(textLayout);
+    } finally {
+      textLayout.dispose();
+    }
+  }
+
+  void _layoutCard(_StatusTextLayout textLayout) {
     final backdrop = _backdrop;
     final body = _body;
     final figures = _figures;
@@ -244,7 +253,7 @@ class RenderStatusCardLayout extends RenderBox
     final bleed = math.min(_bleed, _padding.right);
     final provisional = constraints.constrain(_padding.inflateSize(body.size));
     final anchor = _cornerCenter(provisional);
-    final centers = _footerCenters(body);
+    final centers = _footerCenters(body, textLayout);
     RenderTrafficReadings? readings;
     void findReadings(RenderObject node) {
       if (node is RenderTrafficReadings) readings ??= node;
@@ -273,6 +282,7 @@ class RenderStatusCardLayout extends RenderBox
       corner = _cornerFor(
         figures.size,
         body,
+        textLayout,
         bleed,
         top,
         rows: rows,
@@ -347,6 +357,7 @@ class RenderStatusCardLayout extends RenderBox
   Rect? _cornerFor(
     Size figures,
     RenderBox body,
+    _StatusTextLayout textLayout,
     double bleed,
     double top, {
     required List<Rect> rows,
@@ -365,6 +376,7 @@ class RenderStatusCardLayout extends RenderBox
             for (final block in mark.blockingBounds(
               row.shift(corner.topLeft),
               body,
+              textLayout,
             ))
               block.left - row.right,
       ];
@@ -377,7 +389,10 @@ class RenderStatusCardLayout extends RenderBox
     return null;
   }
 
-  (double, double)? _footerCenters(RenderBox body) {
+  (double, double)? _footerCenters(
+    RenderBox body,
+    _StatusTextLayout textLayout,
+  ) {
     final paragraphs = <RenderParagraph>[];
     void visit(RenderObject node) {
       if (node is RenderParagraph &&
@@ -395,26 +410,11 @@ class RenderStatusCardLayout extends RenderBox
     }
     if (paragraphs.length < 2) return null;
     double center(RenderParagraph paragraph) {
-      final painter =
-          TextPainter(
-            text: paragraph.text,
-            textDirection: paragraph.textDirection,
-            textAlign: paragraph.textAlign,
-            textScaler: paragraph.textScaler,
-            maxLines: paragraph.maxLines,
-            strutStyle: paragraph.strutStyle,
-            locale: paragraph.locale,
-            textWidthBasis: paragraph.textWidthBasis,
-            textHeightBehavior: paragraph.textHeightBehavior,
-          )..layout(
-            minWidth: paragraph.constraints.minWidth,
-            maxWidth: paragraph.constraints.maxWidth,
-          );
+      final painter = textLayout.of(paragraph);
       final center = MatrixUtils.transformRect(
         paragraph.getTransformTo(body),
         Offset.zero & paragraph.constraints.constrain(painter.size),
       ).center.dy;
-      painter.dispose();
       return center;
     }
 
@@ -496,6 +496,44 @@ mixin _StatusMark on RenderProxyBox {
   }
 }
 
+/// A tight descendant can be queued behind this card in flushLayout. Measure
+/// its current text without querying its not-yet-laid-out render paragraph.
+/// Reuse the snapshot for every candidate in this pass, then release it.
+class _StatusTextLayout {
+  final _painters = <RenderParagraph, TextPainter>{};
+
+  TextPainter of(RenderParagraph paragraph) => _painters.putIfAbsent(
+    paragraph,
+    () =>
+        TextPainter(
+          text: paragraph.text,
+          textAlign: paragraph.textAlign,
+          textDirection: paragraph.textDirection,
+          textScaler: paragraph.textScaler,
+          maxLines: paragraph.maxLines,
+          ellipsis: paragraph.overflow == TextOverflow.ellipsis
+              ? '\u2026'
+              : null,
+          locale: paragraph.locale,
+          strutStyle: paragraph.strutStyle,
+          textWidthBasis: paragraph.textWidthBasis,
+          textHeightBehavior: paragraph.textHeightBehavior,
+        )..layout(
+          minWidth: paragraph.constraints.minWidth,
+          maxWidth:
+              paragraph.softWrap || paragraph.overflow == TextOverflow.ellipsis
+              ? paragraph.constraints.maxWidth
+              : double.infinity,
+        ),
+  );
+
+  void dispose() {
+    for (final painter in _painters.values) {
+      painter.dispose();
+    }
+  }
+}
+
 /// Marks what the status card's corner figures must never cover; [margin]
 /// widens the mark, as the gap a title keeps from them. The speed lines
 /// stay off a mark holding [text]: off its own [outline], such as a chip's
@@ -567,7 +605,11 @@ class _RenderStatusForeground extends RenderProxyBox with _StatusMark {
     return rect == null ? null : _margin.inflateRect(rect);
   }
 
-  List<Rect> blockingBounds(Rect corner, RenderBox body) {
+  List<Rect> blockingBounds(
+    Rect corner,
+    RenderBox body,
+    _StatusTextLayout textLayout,
+  ) {
     final mark = markIn(body);
     if (mark == null) return const [];
     if (!text) {
@@ -598,9 +640,15 @@ class _RenderStatusForeground extends RenderProxyBox with _StatusMark {
         if (node is RenderParagraph) {
           final text = node.text.toPlainText(includeSemanticsLabels: false);
           for (final word in RegExp(r'\S+').allMatches(text)) {
-            for (final box in node.getBoxesForSelection(
-              TextSelection(baseOffset: word.start, extentOffset: word.end),
-            )) {
+            for (final box
+                in textLayout
+                    .of(node)
+                    .getBoxesForSelection(
+                      TextSelection(
+                        baseOffset: word.start,
+                        extentOffset: word.end,
+                      ),
+                    )) {
               bounds.add(
                 _margin.inflateRect(
                   MatrixUtils.transformRect(
