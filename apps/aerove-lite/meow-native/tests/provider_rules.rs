@@ -86,7 +86,7 @@ async fn actual_accepted_rules_receipt_pages_and_same_count_change_are_coherent(
     let before = plane.stamp(); read.write(b"payload:\n - b.example\n - c.example\n");
     assert!(request(address, "PUT", "/providers/rules/feed").await.starts_with("HTTP/1.1 204"));
     let changed = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
-    assert_eq!(changed.revision, "2"); assert!(changed.changed); assert!(plane.stamp().0 > before.0); assert_eq!(plane.stamp().1, before.1);
+    assert_eq!(changed.revision, "2"); assert!(changed.changed); assert!(plane.stamp().0 > before.0); assert!(plane.stamp().1 > before.1);
     assert!(!provider.snapshot().matches_domain("a.example")); assert!(provider.snapshot().matches_domain("c.example"));
     assert!(request(address, "GET", &format!("/providers/rules/feed/rules?offset=1&limit=1&coreEpoch={epoch}")).await.starts_with("HTTP/1.1 409"), "same-size mutation allowed pages from different live snapshots");
     let current = body(&request(address, "GET", "/providers/rules/feed/rules?limit=10").await);
