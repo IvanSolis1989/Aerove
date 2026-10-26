@@ -11,6 +11,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SystemFontCatalogTest {
+    @Test fun matchingConfigurationKeyReturnsSuccessfulCacheWithoutEnumerationOrStat() {
+        val cache = ConfigurationCatalogCache()
+        var enumerations = 0
+        var stats = 0
+        fun load(key: String): List<String> = cache.get(key) ?: run {
+            enumerations++
+            stats++
+            listOf("sans-serif", "Noto Sans CJK").also { cache.put(key, it) }
+        }
+        val first = load("locale=zh-CN;scale=1")
+        val hit = load("locale=zh-CN;scale=1")
+        assertTrue(first === hit)
+        assertEquals(1, enumerations)
+        assertEquals(1, stats)
+        load("locale=en-US;scale=1")
+        assertEquals(2, enumerations)
+        assertEquals(2, stats)
+    }
     @Test fun namedSystemFamiliesAreTrimmedDeduplicatedAndSorted() {
         val xml = """<familyset><family name=" serif "/><family><font>fallback.ttf</font></family>
             <family name="Sans-Serif"/><family name="sans-serif"/><family name=".hidden"/>

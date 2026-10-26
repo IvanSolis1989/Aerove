@@ -17,8 +17,17 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+internal class ConfigurationCatalogCache {
+    private var configurationKey: String? = null
+    private var value: List<String>? = null
+
+    fun get(key: String): List<String>? = value?.takeIf { configurationKey == key }
+    fun put(key: String, value: List<String>) { configurationKey = key; this.value = value }
+}
+
 internal object SystemFontCatalog {
     private val mutex = Mutex()
+    private val configurationCache = ConfigurationCatalogCache()
     private var cacheKey: String? = null
     private var cached = emptyList<String>()
     private val configurations = listOf(
@@ -31,13 +40,17 @@ internal object SystemFontCatalog {
 
     suspend fun load(configurationKey: String = ""): List<String> = withContext(Dispatchers.IO) {
         mutex.withLock {
+            configurationCache.get(configurationKey)?.let { return@withLock it }
             val available = SystemFonts.getAvailableFonts().take(1024)
                 .mapNotNull { font -> font.file?.let { InstalledFace(it.canonicalFile, font.ttcIndex) } }
                 .distinct().sortedWith(compareBy({ it.file.path }, { it.index }))
             val configs = configurations.map(::File).filter { it.isFile && it.length() in 1..MAX_XML_BYTES.toLong() }
             val key = configurationKey + configs.joinToString { "${it.path}:${it.lastModified()}:${it.length()}" } +
                 available.joinToString { "${it.file.path}:${it.index}:${it.file.lastModified()}:${it.file.length()}" }
-            if (key == cacheKey) return@withLock cached
+            if (key == cacheKey) {
+                configurationCache.put(configurationKey, cached)
+                return@withLock cached
+            }
             val candidates = configs.flatMap { file ->
                 currentCoroutineContext().ensureActive()
                 val root = file.parentFile?.parentFile ?: return@flatMap emptyList()
@@ -61,7 +74,7 @@ internal object SystemFontCatalog {
             }
             currentCoroutineContext().ensureActive()
             accepted.distinctBy { it.lowercase(Locale.ROOT) }.sortedWith(String.CASE_INSENSITIVE_ORDER)
-                .also { cached = it; cacheKey = key }
+                .also { cached = it; cacheKey = key; configurationCache.put(configurationKey, it) }
         }
     }
 
