@@ -58,6 +58,7 @@ on:
 
 defaults:
   run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
     working-directory: apps/aerove
 
 permissions:

@@ -28,6 +28,46 @@ SIGNER = '0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60'
 APK_NAME = 'Aerove-standard-internal-qa-x86_64.apk'
 ARTIFACT_PREFIX = 'Aerove-standard-internal-x86-qa-'
 COMPILE_STEP = 'Build only the new x86 ABI once'
+BUILD_STEPS = ('Resolve the dispatched formal ARM build run', 'Read actual prior QA build state before compiling',
+               'Select the original artifacts main promotion would reuse',
+               'Validate the formal BUILD_INFO with the release validator',
+               'Read the formal ARM identity, signer and pinned toolchain',
+               'Prepare pinned toolchain and dependencies before compilation', COMPILE_STEP,
+               'Strict new-ABI APK readback and separate QA identity')
+PROBE_WORKFLOW_PATH = '.github/workflows/aerove-standard-x86-qa-probe.yaml'
+PROBE_TITLE = 'AEROVE Standard internal x86 QA probe of artifact {artifact} from run {run} for formal run {formal}'
+PACKAGE_FILES = (APK_NAME, 'QA_BUILD_INFO.json', 'QA_SHA256SUMS')
+FORMAL_ARTIFACTS = dict(artifactId='Aerove-android-arm64', generatedArtifactId='xclash-generated')
+# Lite's supported mode on the same emulator build; swiftshader_indirect is deprecated since emulator 36.4.9.
+GPU_BACKEND = 'swangle'
+EMULATOR_FLAGS = ('-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio',
+                  '-no-boot-anim')
+FALLBACK_FLAGS = ('-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-wipe-data',
+                  '-noaudio', '-no-boot-anim')
+ATTEMPTS = dict(primary=dict(flags=EMULATOR_FLAGS, appRenderer='impeller'),
+                fallback=dict(flags=FALLBACK_FLAGS, appRenderer='skia'))
+CAPTURED = dict(impeller='INITIAL_QA_SCREEN_CAPTURED_REVIEW_REQUIRED',
+                skia='NON_PRODUCTION_SKIA_SCREEN_CAPTURED_REVIEW_REQUIRED')
+RENDERER_UNCONFIRMED = 'RENDERER_UNCONFIRMED_SCREEN_CAPTURED_REVIEW_REQUIRED'
+SCREENSHOTS = dict(impeller='initial-screen.png', skia='initial-screen.NON-PRODUCTION-skia.png',
+                   unconfirmed='initial-screen.RENDERER-UNCONFIRMED.png')
+SKIA_OPT_OUT = ('--ez', 'enable-impeller', 'false')
+APP_RENDERERS = (('Using the Impeller rendering backend (OpenGLES)', 'impeller-opengles'),
+                 ('Using the Impeller rendering backend (Vulkan', 'impeller-vulkan'),
+                 ('Impeller opt-out deprecated', 'skia'))
+PRODUCTION_RENDERERS = ('impeller-opengles', 'impeller-vulkan')
+OWNER_DEADLINE_SECONDS = 780
+HOST_EXIT_GRACE_SECONDS = 30
+OWNED_STOP_SECONDS = 30
+# Owner adb state, the grace, the host-side logcat stop and two host diagnostics come out of the runtime deadline,
+# so the owner still ends within the baseline 780 s plus its two owned stops.
+ATTRIBUTION_SECONDS = 5 + HOST_EXIT_GRACE_SECONDS + OWNED_STOP_SECONDS + 2 * 10
+# Only after the host exited, when the emulator itself needs no owned stop.
+LIVE_DRAIN_SECONDS = 5
+TERMINATION_SIGNALS = (15, 9)
+CLEANUP_COMMANDS = ('device-state-after-failure', 'pre-cleanup-state', 'final-logcat', 'crash-logcat', 'final-activity',
+                    'final-window', 'stop-task-app')
+PROC = Path('/proc')
 TOOLCHAIN = dict(flutter='3.47.6', go='1.27.1', rust='1.99.0', ndk='28.2.13676358', java='17')
 FORMAL_PINS = (
     "  FLUTTER_VERSION: '3.47.6'",
@@ -83,6 +123,20 @@ def save(path, value):
 
 def load(path):
     return json.loads(Path(path).read_text(encoding='utf-8'))
+
+
+def save_atomic(path, value):
+    temporary = path.with_name('.' + path.name + '.tmp')
+    try:
+        save(temporary, value)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def utc_now():
+    now = time.time()
+    return time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(now)) + f'.{int(now * 1000) % 1000:03d}Z'
 
 
 def target_key(source):
@@ -206,7 +260,8 @@ def remember_failure(receipt, phase, error):
 
 def inspection_command(command, directory, label, timeout=60, check=True, receipt=None, suffix=''):
     record = dict(label=label, argv=[str(v) for v in command], result=None, timeout=False,
-                  stdoutSaved=False, stderrSaved=False, diagnosticWriteErrors=[])
+                  stdoutSaved=False, stderrSaved=False, diagnosticWriteErrors=[], startedAt=utc_now(),
+                  startedMonotonic=time.monotonic())
     if receipt is not None:
         receipt['commands'].append(record)
     stdout = stderr = b''
@@ -225,6 +280,7 @@ def inspection_command(command, directory, label, timeout=60, check=True, receip
         raise
     finally:
         diagnostic_failure = None
+        record.update(endedAt=utc_now(), endedMonotonic=time.monotonic())
         record['stdoutPreview'] = stdout[:8192].decode(errors='replace')
         record['stderrPreview'] = stderr[:8192].decode(errors='replace')
         for kind, data in [('stdout', stdout), ('stderr', stderr), ('command', None)]:
@@ -248,8 +304,8 @@ def inspection_command(command, directory, label, timeout=60, check=True, receip
     return stdout
 
 
-def api_reader(directory):
-    prefix = f'repos/{REPOSITORY}/actions/'
+def api_reader(directory, area='actions/'):
+    prefix = f'repos/{REPOSITORY}/{area}'
     def read(label, endpoint, field=None):
         data = json.loads(inspection_command(['gh', 'api', '--paginate', '--slurp', prefix + endpoint], directory, label))
         if field is None:
@@ -620,6 +676,193 @@ def verify(args):
     return info
 
 
+def requested_id(text, label):
+    if not isinstance(text, str) or not RUN_ID.fullmatch(text):
+        raise ValueError(label + ' must be a positive decimal id')
+    return int(text)
+
+
+def compile_entries(jobs):
+    return {(job.get('runner_id'), step.get('started_at'), step.get('completed_at')) for job in jobs
+            for step in job.get('steps', []) if step.get('name') == COMPILE_STEP
+            and step.get('conclusion') != 'skipped' and step.get('status') != 'queued'}
+
+
+def package_run(read, formal_id, qa_run, artifact_id):
+    formal = validate_formal_run(read('formal-run', f'runs/{formal_id}'), formal_id)
+    build = read('qa-run', f'runs/{qa_run}')
+    if (build.get('id') != qa_run or build.get('path') != WORKFLOW_PATH or build.get('event') != 'workflow_dispatch'
+            or build.get('head_branch') != HARNESS_BRANCH or build.get('display_title') != RUN_TITLE + str(formal_id)
+            or build.get('status') != 'completed' or not positive(build.get('run_number'))
+            or (build.get('repository') or {}).get('full_name') != REPOSITORY
+            or (build.get('head_repository') or {}).get('full_name') != REPOSITORY
+            or type(build.get('head_sha')) is not str or not SHA1.fullmatch(build['head_sha'])):
+        raise ValueError('QA package run is not a completed internal x86 QA build of the dispatched formal run')
+    jobs = read('qa-run-jobs', f'runs/{qa_run}/jobs?filter=all&per_page=100', 'jobs')
+    builds = [job for job in jobs if job.get('name') == 'build_internal_qa']
+    first = [job for job in builds if job.get('run_attempt') == 1]
+    if (len(first) != 1 or first[0].get('conclusion') != 'success' or first[0].get('run_id') != qa_run
+            or first[0].get('head_sha') != build['head_sha']
+            or any([step.get('conclusion') for step in first[0].get('steps', []) if step.get('name') == name] != ['success']
+                   for name in BUILD_STEPS)
+            or len(compile_entries(first)) != 1 or compile_entries(builds) != compile_entries(first)):
+        raise ValueError('QA package must come from one first-attempt build that compiled and read back exactly once')
+    named = read('qa-artifacts', 'artifacts?name=' + artifact_name(formal['source']) + '&per_page=100', 'artifacts')
+    meta = read('qa-artifact', f'artifacts/{artifact_id}')
+    origin = meta.get('workflow_run') or {}
+    digest = meta.get('digest')
+    if ([item.get('id') for item in named] != [artifact_id] or meta.get('id') != artifact_id
+            or meta.get('name') != artifact_name(formal['source']) or meta.get('expired') is not False
+            or origin.get('id') != qa_run or origin.get('head_sha') != build['head_sha']
+            or origin.get('head_branch') != HARNESS_BRANCH or not positive(meta.get('size_in_bytes'))
+            or type(digest) is not str or not re.fullmatch('sha256:[0-9a-f]{64}', digest)):
+        raise ValueError('QA artifact is not the single unexpired package of this target and QA run')
+    return formal, build, first[0], meta
+
+
+def bind_package(info, formal, build, read, git):
+    bound = info['formalArmBuild']
+    if (info['buildRun'] != str(build['id']) or info['buildAttempt'] != 1
+            or info['buildRunNumber'] != build['run_number'] or info['harnessSource'] != build['head_sha']
+            or any(bound[key] != formal[key] for key in ('runId', 'runNumber', 'runAttempt', 'event', 'headBranch', 'source'))):
+        raise ValueError('Reused QA_BUILD_INFO does not bind to the verified QA run and formal run')
+    for key, name in FORMAL_ARTIFACTS.items():
+        meta = read('formal-' + name, f'artifacts/{bound[key]}')
+        origin = meta.get('workflow_run') or {}
+        if (meta.get('id') != bound[key] or meta.get('name') != name or origin.get('id') != formal['runId']
+                or origin.get('head_sha') != formal['source']):
+            raise ValueError('Reused QA_BUILD_INFO names a formal artifact outside the formal run')
+    commit = git('source-commit', 'commits/' + formal['source'])
+    if commit.get('sha') != formal['source'] or (commit.get('tree') or {}).get('sha') != bound['sourceTree']:
+        raise ValueError('Reused QA_BUILD_INFO source tree differs from the formal commit')
+    def child(tree, name):
+        rows = [row.get('sha') for row in tree.get('tree', []) if row.get('path') == name and row.get('type') == 'tree']
+        return rows[0] if len(rows) == 1 and tree.get('truncated') is False else None
+    apps = child(git('source-tree', 'trees/' + bound['sourceTree']), 'apps')
+    if apps is None or child(git('apps-tree', 'trees/' + apps), 'aerove') != bound['standardSubtree']:
+        raise ValueError('Reused QA_BUILD_INFO Standard subtree differs from the formal commit')
+
+
+def download_artifact_zip(artifact_id, destination, attempts):
+    for attempt in range(1, 4):
+        destination.unlink(missing_ok=True)
+        row = dict(attempt=attempt, startedAt=utc_now(), result=None)
+        attempts.append(row)
+        try:
+            with destination.open('xb') as stream:
+                completed = subprocess.run(['gh', 'api', f'repos/{REPOSITORY}/actions/artifacts/{artifact_id}/zip'],
+                                           stdout=stream, stderr=subprocess.PIPE, timeout=180)
+            row.update(result=completed.returncode, bytes=destination.stat().st_size,
+                       stderr=re.sub(r'https?://\S+', '<url redacted>', completed.stderr[:4096].decode(errors='replace')))
+        except subprocess.TimeoutExpired:
+            row['timeout'] = True
+        row['endedAt'] = utc_now()
+        if row['result'] == 0:
+            return
+    destination.unlink(missing_ok=True)
+    raise ValueError('QA artifact download failed in every bounded attempt')
+
+
+def extract_package(archive, directory):
+    with zipfile.ZipFile(archive) as source:
+        rows = source.infolist()
+        names = [row.filename for row in rows]
+        if (sorted(names) != sorted(PACKAGE_FILES) or source.testzip() is not None
+                or any(row.is_dir() or (row.external_attr >> 16) & 0o170000 == 0o120000 for row in rows)):
+            raise ValueError('Reused QA artifact must hold exactly the APK, QA_BUILD_INFO.json and QA_SHA256SUMS')
+        directory.mkdir(parents=True, exist_ok=False)
+        for name in names:
+            (directory / name).write_bytes(source.read(name))
+
+
+def reuse_package(args):
+    if os.environ.get('GITHUB_RUN_ATTEMPT') != '1':
+        raise ValueError('Do not rerun a package probe; dispatch a new probe instead')
+    if os.environ.get('GITHUB_REF') != HARNESS_REF:
+        raise ValueError('The QA package probe runs only from the locked harness branch')
+    formal_id = requested_run(args.run_id)
+    qa_run = requested_id(args.qa_run_id, 'qa_run_id')
+    artifact_id = requested_id(args.qa_artifact_id, 'qa_artifact_id')
+    if str(qa_run) == os.environ.get('GITHUB_RUN_ID') or qa_run == formal_id:
+        raise ValueError('The QA package must come from an earlier internal QA run, not the probe or formal run')
+    args.evidence.mkdir(parents=True, exist_ok=False)
+    read = api_reader(args.evidence)
+    current = read('current-run', 'runs/' + os.environ['GITHUB_RUN_ID'])
+    if (current.get('path') != PROBE_WORKFLOW_PATH or current.get('event') != 'workflow_dispatch'
+            or current.get('head_branch') != HARNESS_BRANCH or current.get('run_attempt') != 1
+            or current.get('display_title') != PROBE_TITLE.format(artifact=artifact_id, run=qa_run, formal=formal_id)):
+        raise ValueError('Current probe run identity does not match its dispatched QA package')
+    formal, build, job, meta = package_run(read, formal_id, qa_run, artifact_id)
+    archive = args.directory.with_name(args.directory.name + '.zip')
+    downloads = []
+    try:
+        download_artifact_zip(artifact_id, archive, downloads)
+    finally:
+        save(args.evidence / 'QA_PACKAGE_DOWNLOAD.json', downloads)
+    if 'sha256:' + sha(archive) != meta['digest']:
+        raise ValueError('Downloaded QA artifact differs from its API digest')
+    extract_package(archive, args.directory)
+    info = verify(args)
+    bind_package(info, formal, build, read, api_reader(args.evidence, 'git/'))
+    save(args.evidence / 'QA_PACKAGE_REUSE.json', dict(
+        schema=1, kind='standard-internal-x86-qa-package-reuse', diagnosticOnly=True, accepted=False, compiled=False,
+        packageMode='reuse', packageFromEarlierRun=True, source=info['source'], sourceTree=info['sourceTree'],
+        standardSubtree=info['standardSubtree'], targetKey=info['targetKey'], formalRun=formal_id,
+        formalRunNumber=formal['runNumber'], packageRun=str(qa_run), packageRunNumber=build['run_number'],
+        packageRunAttempt=1, packageRunLatestAttempt=build.get('run_attempt'), packageBuildJob=job.get('id'),
+        packageHarnessSource=build['head_sha'],
+        packageArtifact=dict(id=artifact_id, name=meta['name'], digest=meta['digest'], sizeInBytes=meta['size_in_bytes'],
+                             createdAt=meta.get('created_at'), expiresAt=meta.get('expires_at')),
+        apk=info['apk'], versionName=info['actual']['versionName'], versionCode=info['actual']['versionCode'],
+        formalBytesReverified=False, probeRun=os.environ['GITHUB_RUN_ID'], probeRunAttempt=1,
+        probeHarnessSource=os.environ['GITHUB_SHA'], probeHarnessRef=os.environ['GITHUB_REF']))
+    return 0
+
+
+def package_origin(qa, receipt_path):
+    run = os.environ['GITHUB_RUN_ID']
+    artifact = os.environ.get('QA_ARTIFACT_ID', '')
+    if not RUN_ID.fullmatch(artifact):
+        raise ValueError('QA_ARTIFACT_ID must name the probed QA package')
+    if receipt_path is None:
+        if qa['buildRun'] != run:
+            raise ValueError('A same-run first-screen probe must use the QA package built by this run')
+        return dict(packageMode='same-run', packageFromEarlierRun=False, packageRun=run, qaArtifactId=artifact)
+    reuse = load(receipt_path)
+    if (reuse.get('kind') != 'standard-internal-x86-qa-package-reuse' or reuse.get('compiled') is not False
+            or reuse.get('accepted') is not False or reuse.get('packageMode') != 'reuse'
+            or reuse.get('packageFromEarlierRun') is not True or reuse.get('packageRun') != qa['buildRun']
+            or qa['buildRun'] == run or reuse.get('probeRun') != run
+            or reuse.get('formalRun') != qa['formalArmBuild']['runId'] or reuse.get('apk') != qa['apk']
+            or reuse.get('source') != qa['source'] or reuse.get('packageHarnessSource') != qa['harnessSource']
+            or str((reuse.get('packageArtifact') or {}).get('id')) != artifact):
+        raise ValueError('Reused QA package receipt does not match this probe run and QA_BUILD_INFO')
+    return dict(packageMode='reuse', packageFromEarlierRun=True, packageRun=qa['buildRun'],
+                packageHarnessSource=qa['harnessSource'], packageArtifact=reuse['packageArtifact'],
+                qaArtifactId=artifact, packageReceiptSha256=sha(receipt_path))
+
+
+def host_renderer(output):
+    def field(name):
+        return [value.strip() for value in re.findall(r'\| ' + name + r' (.+)$', output, re.M)]
+    modes = re.findall(r'emuglConfig_init: vulkan_mode_selected:(\S+) gles_mode_selected:(\S+)', output)
+    adapter, version = field('Graphics Adapter(?! Vendor)'), field('Graphics API Version')
+    if (len(modes) != 1 or modes[0][1] != GPU_BACKEND or len(adapter) != 1 or len(version) != 1
+            or 'SWIFTSHADER' not in adapter[0].upper() or not all('ANGLE' in text.upper() for text in adapter + version)):
+        raise ValueError(f'Requested {GPU_BACKEND} renderer was not confirmed in actual emulator startup output')
+    return dict(requestedGpu=GPU_BACKEND, vulkanModeSelected=modes[0][0], glesModeSelected=modes[0][1],
+                adapterVendor=field('Graphics Adapter Vendor'), adapter=adapter[0], apiVersion=version[0],
+                lines=[line for line in output.splitlines() if re.search(
+                    r'emuglConfig_init|Graphics backend|Graphics Adapter|Graphics API Version|Selecting Vulkan device|ICD set', line)])
+
+
+def app_renderer(log, pid):
+    lines = [line for line in log.splitlines() if pid and re.match(r'\S+\s+\S+\s+' + re.escape(pid) + r'\s', line)
+             and ('rendering backend' in line or 'Impeller' in line)]
+    found = sorted({label for text, label in APP_RENDERERS if any(text in line for line in lines)})
+    return dict(backend=found[0] if len(found) == 1 else 'conflicting' if found else 'not-reported', lines=lines[:20])
+
+
 def validate_initial_app_ui(ui_tree, activity_state):
     root = ET.fromstring(ui_tree)
     if not any(node.get('package') == PACKAGE for node in root.iter('node')):
@@ -648,10 +891,33 @@ def app_failure_lines(log, pid):
     return failures
 
 
+def live_app_failure(log):
+    """QA app crash lines: native signals, tombstone headers, Java and Flutter fatals, and deaths, with line numbers."""
+    name = re.escape(PACKAGE) + r'(?::[\w.]+)?'
+    pids = set(re.findall(r'Start proc ([0-9]+):' + name + '/', log))
+    lines = log.splitlines()
+    found = []
+    for number, line in enumerate(lines, 1):
+        native = re.search(r'Fatal signal [0-9]+ .*\bpid ([0-9]+) \(([^)]*)\)', line)
+        writer = re.match(r'\S+\s+\S+\s+([0-9]+)\s', line)
+        # Android names the main thread after the last 15 characters of a long dotted process name.
+        if ((native and (native.group(1) in pids or native.group(2) in (PACKAGE, PACKAGE[-15:])))
+                or re.search('>>> ' + name + ' <<<', line)
+                or re.search('Process ' + name + r' \(pid [0-9]+\) has died', line)
+                or ('FATAL EXCEPTION' in line and re.search('Process: ' + name + ', PID: [0-9]+',
+                                                            '\n'.join(lines[number - 1:number + 7])))
+                or (writer and writer.group(1) in pids and '[FATAL:flutter/' in line)):
+            found.append((number, line))
+    return found
+
+
 def run_probe(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
+    renderer = args.app_renderer
+    path = args.evidence / 'FIRST-SCREEN.json'
     receipt = dict(diagnosticOnly=True, accepted=False, status='STARTED', commands=[], apkModified=False,
-                   vpnRequested=False, demoInjected=False, twelveThemeCaptures=False)
+                   vpnRequested=False, demoInjected=False, twelveThemeCaptures=False,
+                   appRendererRequested=renderer, productionRenderer=False)
     adb = ['adb', '-s', 'emulator-5554']
     installed = False
     cancelled = []
@@ -661,9 +927,34 @@ def run_probe(args):
     previous = {s: signal.signal(s, interrupt) for s in (signal.SIGTERM, signal.SIGINT)}
     def command(label, values, timeout=25, check=True):
         return inspection_command(values, args.evidence, label, timeout, check, receipt)
+    def checkpoint():
+        try:
+            save_atomic(path, dict(receipt, status='IN_PROGRESS', observedStatus=receipt['status'], provisional=True))
+        except Exception as error:
+            receipt.setdefault('checkpointErrors', []).append(repr(error))
+    def device_state(label):
+        try:
+            return command(label, adb + ['get-state'], timeout=5, check=False).decode(errors='replace').strip()
+        except Exception as error:
+            return 'unreachable: ' + type(error).__name__
+    def diagnostic(label, values):
+        try:
+            return command(label, adb + values, check=False).decode(errors='replace')
+        except Exception as error:
+            receipt.setdefault('diagnosticErrors', []).append(dict(phase=label, error=repr(error)))
+            return ''
+    def device_lost(during, state):
+        receipt.setdefault('deviceLost', dict(during=during, state=state, observedAt=utc_now(),
+                                              observedMonotonic=time.monotonic()))
+        remember_failure(receipt, 'device-lost', RuntimeError(f'adb lost emulator-5554 {during}: {state or "no device"}'))
+    def app_failed(source, pid, failures):
+        receipt.setdefault('appFailure', dict(source=source, firstActivityPid=pid, lines=failures[:20],
+                                              recordedAt=utc_now(), recordedMonotonic=time.monotonic()))
     try:
         try:
+            checkpoint()
             receipt['qaBuild'] = verify(args)
+            receipt['package'] = package_origin(receipt['qaBuild'], args.package_receipt)
             version_code = receipt['qaBuild']['actual']['versionCode']
             props = {p: command('prop-' + p, adb + ['shell', 'getprop', p]).decode().strip()
                      for p in ['sys.boot_completed', 'ro.build.version.sdk', 'ro.product.cpu.abilist64',
@@ -673,25 +964,37 @@ def run_probe(args):
                 raise ValueError('Expected booted API33 x86_64 emulator')
             if command('existing-package', adb + ['shell', 'pm', 'path', PACKAGE], check=False).strip():
                 raise ValueError('Refusing to replace existing app/data')
+            diagnostic('guest-properties', ['shell', 'getprop'])
+            diagnostic('guest-features', ['shell', 'pm', 'list', 'features'])
+            receipt['guestRenderer'] = re.findall(r'^GLES: (.+)$', diagnostic(
+                'guest-surfaceflinger', ['shell', 'dumpsys', 'SurfaceFlinger']), re.M)
             command('prelaunch-logcat', adb + ['logcat', '-d', '-v', 'threadtime'])
             command('clear-fresh-log', adb + ['logcat', '-c'])
             command('install-x86-qa', adb + ['install', '--abi', 'x86_64', args.directory / APK_NAME], timeout=90)
             installed = True
+            checkpoint()
             package = command('installed-package', adb + ['shell', 'dumpsys', 'package', PACKAGE]).decode()
             if 'primaryCpuAbi=x86_64' not in package or f'versionCode={version_code}' not in package:
                 raise ValueError('Installed QA ABI/version mismatch')
-            launch = command('launch', adb + ['shell', 'am', 'start', '-W', '-n', PACKAGE + '/com.follow.clash.MainActivity'], timeout=35).decode()
+            opt_out = list(SKIA_OPT_OUT) if renderer == 'skia' else []
+            launch = command('launch', adb + ['shell', 'am', 'start', '-W', *opt_out, '-n', PACKAGE + '/com.follow.clash.MainActivity'], timeout=35).decode()
             if 'Status: ok' not in launch:
                 raise RuntimeError('QA MainActivity launch request failed')
             time.sleep(12)
             log = command('first-logcat', adb + ['logcat', '-d', '-v', 'threadtime']).decode(errors='replace')
             pid = first_activity_pid(log)
             receipt['firstActivityPid'] = pid
+            receipt['appRenderer'] = app_renderer(log, pid)
+            receipt['productionRenderer'] = receipt['appRenderer']['backend'] in PRODUCTION_RENDERERS
+            checkpoint()
             if pid is None:
                 raise RuntimeError('First MainActivity process could not be identified from original logcat')
+            if renderer == 'skia' and receipt['appRenderer']['backend'] != 'skia':
+                raise RuntimeError('Requested Skia opt-out did not take effect in the first MainActivity process')
             failures = app_failure_lines(log, pid)
             receipt['firstFailureLines'] = failures
             if failures:
+                app_failed('first-logcat', pid, failures)
                 raise RuntimeError('First MainActivity process crashed or died: ' + failures[0])
             if not re.search(r'Displayed ' + re.escape(PACKAGE + '/com.follow.clash.MainActivity') + r':', log):
                 raise RuntimeError('Window manager has not reported the first MainActivity frame displayed')
@@ -704,30 +1007,58 @@ def run_probe(args):
             screen = command('initial-screen', adb + ['exec-out', 'screencap', '-p'])
             if not screen.startswith(b'\x89PNG\r\n\x1a\n'):
                 raise RuntimeError('Initial screenshot is not a PNG')
-            (args.evidence / 'initial-screen.png').write_bytes(screen)
+            shot = renderer if renderer == 'skia' or receipt['productionRenderer'] else 'unconfirmed'
+            (args.evidence / SCREENSHOTS[shot]).write_bytes(screen)
+            receipt['screenshot'] = dict(file=SCREENSHOTS[shot], appRenderer=receipt['appRenderer']['backend'],
+                                         productionRenderer=receipt['productionRenderer'])
             validate_initial_app_ui(ui, command('activity-after-screen', adb + ['shell', 'dumpsys', 'activity', 'activities']).decode())
             if command('pid-after-screen', adb + ['shell', 'pidof', PACKAGE]).decode().strip() != pid:
                 raise RuntimeError('First MainActivity PID changed during capture')
-            receipt['status'] = 'INITIAL_QA_SCREEN_CAPTURED_REVIEW_REQUIRED'
+            receipt['status'] = CAPTURED[renderer] if shot == renderer else RENDERER_UNCONFIRMED
         except BaseException as error:
-            remember_failure(receipt, 'probe', error)
+            try:
+                if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)) and not cancelled:
+                    failed = receipt['commands'][-1]['label'] if receipt['commands'] else None
+                    state = device_state('device-state-after-failure')
+                    if state != 'device':
+                        device_lost(f'during {failed}', state)
+            finally:
+                remember_failure(receipt, 'probe', error)
         finally:
             receipt['cleanupErrors'] = []
+            stopped = None
+            try:
+                checkpoint()
+            except SystemExit as stop:
+                stopped = stop
+            state = None
+            try:
+                state = None if cancelled else device_state('pre-cleanup-state')
+            except SystemExit:
+                pass
+            reachable = state == 'device' and not cancelled
+            receipt['deviceCleanupSkipped'] = not reachable
+            if not reachable and not cancelled:
+                device_lost('before final evidence', state)
             for label, cmd in [('final-logcat', ['logcat', '-d', '-v', 'threadtime']),
                                ('crash-logcat', ['logcat', '-b', 'crash', '-d', '-v', 'threadtime']),
                                ('final-activity', ['shell', 'dumpsys', 'activity', 'activities']),
                                ('final-window', ['shell', 'dumpsys', 'window', 'windows'])]:
+                if not reachable or cancelled:
+                    break
                 try:
                     data = command(label, adb + cmd)
                     if label == 'final-logcat' and receipt.get('firstActivityPid'):
                         failures = app_failure_lines(data.decode(errors='replace'), receipt['firstActivityPid'])
                         if failures:
+                            app_failed('final-logcat', receipt['firstActivityPid'], failures)
                             remember_failure(receipt, 'final-app-crash', RuntimeError(failures[0]))
                         receipt['firstFailureLines'] = failures
                 except BaseException as error:
                     receipt['cleanupErrors'].append(dict(phase=label, error=repr(error)))
                     remember_failure(receipt, label, error)
-            if installed or any(c['label'] == 'install-x86-qa' and c.get('result') == 0 for c in receipt['commands']):
+            if reachable and not cancelled and (installed or any(
+                    c['label'] == 'install-x86-qa' and c.get('result') == 0 for c in receipt['commands'])):
                 try:
                     command('stop-task-app', adb + ['shell', 'am', 'force-stop', PACKAGE])
                 except BaseException as error:
@@ -737,32 +1068,334 @@ def run_probe(args):
                 remember_failure(receipt, 'cancellation', SystemExit(128 + cancelled[0]))
             receipt['cancelSignals'] = cancelled
             try:
-                save(args.evidence / 'FIRST-SCREEN.json', receipt)
+                save_atomic(path, receipt)
             except BaseException as error:
                 remember_failure(receipt, 'receipt-save', error)
                 receipt['receiptSaved'] = False
                 fallback_receipt(receipt)
+            if stopped is not None:
+                raise stopped
     finally:
         for sig, handler in previous.items():
             signal.signal(sig, handler)
-    return receipt.get('result', 0 if receipt['status'] == 'INITIAL_QA_SCREEN_CAPTURED_REVIEW_REQUIRED' else 1)
+    return receipt.get('result', 0 if receipt['status'] == CAPTURED[renderer] else 1)
+
+
+class EmulatorHostExit(RuntimeError):
+    def __init__(self, code):
+        number = -code if code < 0 else None
+        super().__init__('Owned emulator host process exited before owned cleanup: '
+                         + (f'signal {number}' if number else f'code {code}'))
+        self.code = 128 + number if number else (code or 1)
+        self.emulatorReturnCode = code
+
+
+class AppFailure(RuntimeError):
+    def __init__(self, record):
+        super().__init__(f'First MainActivity process failed ({record.get("source")}): '
+                         + str((record.get('lines') or ['no failure line'])[0]))
+        self.code = 1
+
+
+class SlowHostDeath(RuntimeError):
+    def __init__(self, record):
+        super().__init__(f'Owned emulator host outlived the {record["graceSeconds"]} s device-loss grace and exited with '
+                         f'signal {record["signal"]} only after the owner terminated it')
+        self.code = record['result']
+
+
+def name_app_failure(receipt, record_failure, app):
+    named = 'primaryFailure' in receipt
+    record_failure(receipt, 'first-screen-app-failure', AppFailure(app))
+    item = receipt['secondaryFailures'][-1] if named else receipt['primaryFailure']
+    item.update(source=app.get('source'), lines=list(app.get('lines') or [])[:20])
+
+
+class ExitWatch:
+    """The owned emulator, stamping the first poll that finds the host process gone."""
+
+    def __init__(self, process, receipt):
+        self.process = process
+        self.receipt = receipt
+
+    def __getattr__(self, name):
+        return getattr(self.process, name)
+
+    def poll(self):
+        code = self.process.poll()
+        if code is not None and 'emulatorExitObservedAt' not in self.receipt:
+            self.receipt.update(emulatorExitObservedAt=utc_now(), emulatorExitObservedMonotonic=time.monotonic())
+        return code
+
+
+def start_live_logcat(directory, env):
+    path = directory / 'live-logcat.txt'
+    with path.open('xb') as out:
+        child = subprocess.Popen(['adb', '-s', 'emulator-5554', 'logcat', '-v', 'threadtime'], stdin=subprocess.DEVNULL,
+                                 stdout=out, stderr=subprocess.STDOUT, start_new_session=True, env=env)
+    return child, dict(pid=child.pid, file=path.name, startedAt=utc_now())
+
+
+def finish_live_logcat(child, row, directory, stop_owned):
+    row.update(cleanup=stop_owned(child), endedAt=utc_now())
+    path = directory / row['file']
+    text = path.read_text(errors='replace')
+    pid = first_activity_pid(text)
+    crashes = live_app_failure(text)[:20]
+    row.update(bytes=path.stat().st_size, sha256=sha(path), lastLine=text.rstrip().rpartition('\n')[2][:400],
+               firstActivityPid=pid, appRenderer=app_renderer(text, pid), appFailure=dict(
+                   source='live-logcat', file=row['file'], firstActivityPid=pid, lines=[line for _, line in crashes],
+                   lineNumbers=[number for number, _ in crashes], analysedAt=utc_now(),
+                   analysedMonotonic=time.monotonic()) if crashes else None)
+
+
+def drain_live_logcat(child, seconds):
+    """Give adb time to deliver what the guest wrote before its host died; the stream ends by itself then."""
+    started = time.monotonic()
+    try:
+        child.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    return dict(seconds=round(time.monotonic() - started, 3), endedBySelf=child.poll() is not None)
+
+
+def owner_device_state(directory):
+    try:
+        output = inspection_command(['adb', '-s', 'emulator-5554', 'get-state'], directory, 'owner-device-state',
+                                    timeout=5, check=False)
+        return output.decode(errors='replace').strip()
+    except Exception as error:
+        return 'unreachable: ' + type(error).__name__
+
+
+def probe_outcome(directory):
+    try:
+        value = load(directory / 'FIRST-SCREEN.json')
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def probe_progress(directory):
+    """How far the first-screen child got, so a fallback can tell a pre-launch host death from a launch-time one."""
+    outcome = probe_outcome(directory)
+    commands = outcome.get('commands')
+    commands = [row for row in commands if isinstance(row, dict)] if isinstance(commands, list) else []
+    stage = [row.get('label') for row in commands if row.get('label') not in CLEANUP_COMMANDS]
+    launch = [row for row in commands if row.get('label') == 'launch']
+    return dict(readable=bool(outcome), status=outcome.get('status'), observedStatus=outcome.get('observedStatus'),
+                provisional=outcome.get('provisional') is True, lastStageCommand=stage[-1] if stage else None,
+                launchStarted=bool(launch), launch={key: launch[0].get(key) for key in
+                                                    ('result', 'timeout', 'errorType', 'startedAt', 'endedAt')} if launch else None,
+                deviceLost=outcome.get('deviceLost'), primaryFailure=outcome.get('primaryFailure'),
+                screenshot=outcome.get('screenshot'))
+
+
+def signal_after_termination(receipt):
+    """A crash signal after the owner's own SIGTERM; after a device-loss grace it is the slow host death."""
+    cleanup, loss = receipt.get('cleanup') or {}, receipt.get('deviceLoss') or {}
+    code = cleanup.get('returnCode')
+    if not cleanup.get('terminationInitiated') or type(code) is not int or code >= 0 or -code in TERMINATION_SIGNALS:
+        return None
+    return dict(signal=-code, emulatorReturnCode=code, result=128 - code, terminationInitiated=True,
+                slowHostDeath=loss.get('emulatorExited') is False, graceSeconds=loss.get('graceSeconds'),
+                deviceLossWaitedSeconds=loss.get('waitedSeconds'))
+
+
+def await_host_exit(emulator, receipt, reasons):
+    started = time.monotonic()
+    receipt['deviceLoss'] = dict(reasons=reasons, observedAt=utc_now(), graceSeconds=HOST_EXIT_GRACE_SECONDS)
+    while (emulator.poll() is None and not receipt['interruptSignals']
+           and time.monotonic() - started < HOST_EXIT_GRACE_SECONDS):
+        try:
+            emulator.wait(timeout=0.25)
+        except subprocess.TimeoutExpired:
+            pass
+    receipt['deviceLoss'].update(waitedSeconds=round(time.monotonic() - started, 3),
+                                 emulatorExited=emulator.poll() is not None)
+
+
+def host_exit(emulator, receipt, observed_by):
+    code = None if emulator is None else emulator.poll()
+    if code is None:
+        return None
+    error = EmulatorHostExit(code)
+    receipt.setdefault('emulatorHostExit', dict(
+        result=error.code, emulatorReturnCode=code, signal=-code if code < 0 else None, cleanExit=code == 0,
+        observedBy=observed_by, observedAt=receipt.get('emulatorExitObservedAt'),
+        observedMonotonic=receipt.get('emulatorExitObservedMonotonic'),
+        firstScreenStageStarted=receipt['firstScreenStageStarted']))
+    return error
+
+
+def classify_failure(error, emulator, receipt, evidence, record_failure, stream):
+    """Name an app failure, a host exit and a device loss in that order, whichever order adb and the host died in."""
+    outcome = probe_outcome(evidence / 'first-screen') if receipt['firstScreenStageStarted'] else {}
+    observed = 'monitor' if receipt.get('unexpectedEmulatorExit') else 'owner-poll'
+    reasons = []
+    if emulator is not None and emulator.poll() is None and not receipt['interruptSignals']:
+        state = owner_device_state(evidence)
+        if state != 'device':
+            reasons.append('owner adb get-state: ' + (state or 'no device'))
+        if isinstance(outcome.get('deviceLost'), dict):
+            reasons.append('first-screen probe: ' + str(outcome['deviceLost'].get('during')))
+        if reasons:
+            await_host_exit(emulator, receipt, reasons)
+            observed = 'grace-wait'
+    host = host_exit(emulator, receipt, observed)
+    try:
+        live, problem = stream(), None
+    except Exception as failure:
+        live, problem = None, failure
+    app = outcome.get('appFailure') if isinstance(outcome.get('appFailure'), dict) else None
+    stamp = (receipt.get('emulatorHostExit') or {}).get('observedMonotonic')
+    moment = (app or {}).get('recordedMonotonic')
+    app_first = app is not None and (host is None or (isinstance(moment, (int, float)) and isinstance(stamp, (int, float))
+                                                      and moment <= stamp))
+    if live is not None and not app_first:
+        # The guest wrote every line of the host-side stream, so none of them can postdate the host's death.
+        app, app_first = live, True
+    if app is not None:
+        receipt['appFailure'] = dict(app, beforeHostExit=app_first if host is not None else None)
+    if app_first:
+        name_app_failure(receipt, record_failure, app)
+    if host is not None:
+        record_failure(receipt, 'emulator-host-exit', host)
+    elif reasons:
+        record_failure(receipt, 'device-lost', RuntimeError(
+            f'adb lost emulator-5554 while its host process kept running {HOST_EXIT_GRACE_SECONDS} s: ' + '; '.join(reasons)))
+    if app is not None and not app_first:
+        name_app_failure(receipt, record_failure, app)
+    record_failure(receipt, 'qa-runtime', error)
+    if problem is not None:
+        record_failure(receipt, 'live-logcat-cleanup', problem)
+
+
+def fallback_reason(primary, package):
+    expected = dict(owner='standard_x86_qa.py', attempt='primary', harnessRun=os.environ['GITHUB_RUN_ID'],
+                    harnessRunAttempt=os.environ['GITHUB_RUN_ATTEMPT'], gpuBackend=GPU_BACKEND,
+                    appRendererRequested='impeller', status='FAILED', accepted=False, interruptSignals=[],
+                    firstScreenStageStarted=True, **package)
+    if any(primary.get(key) != value for key, value in expected.items()):
+        return 'Primary receipt does not describe a finished production-renderer attempt of this run and package'
+    late = primary.get('emulatorSignalAfterTermination')
+    if isinstance(late, dict) and late.get('slowHostDeath') is True:
+        return (f'Slow host death: the primary host outlived the device-loss grace and exited with signal {late.get("signal")} '
+                'only after the owner terminated it, which is not a host exit before owned cleanup')
+    host, renderer = primary.get('emulatorHostExit'), primary.get('rendererEvidence')
+    if (primary.get('unexpectedEmulatorExit') is not True or not isinstance(host, dict) or not positive(host.get('result'))
+            or not isinstance(renderer, dict) or renderer.get('glesModeSelected') != GPU_BACKEND):
+        return 'Primary attempt did not end with the owned emulator host gone after its first-screen stage started'
+    return None
+
+
+def reuse_avd(primary, record):
+    """Clear the AVD locks the dead primary emulator left, refusing while its recorded process still runs."""
+    pid, command, home = primary.get('emulatorPid'), primary.get('command'), os.environ.get('ANDROID_AVD_HOME')
+    avd = Path(home or '.') / 'test.avd'
+    record.update(directory=str(avd), primaryEmulatorPid=pid, staleLocks=[])
+    if (not home or not positive(pid) or not isinstance(command, list) or not command
+            or not all(isinstance(part, str) for part in command) or avd.is_symlink() or not avd.is_dir()):
+        raise ValueError('the primary emulator PID, its command or the owned AVD directory is not recorded')
+    try:
+        running = [part.decode(errors='replace') for part in (PROC / str(pid) / 'cmdline').read_bytes().split(b'\0')[:-1]]
+    except FileNotFoundError:
+        running = []
+    # qemu may replace the emulator launcher under the same PID, so match the SDK emulator directory or the AVD.
+    record['primaryEmulatorRunning'] = bool(running) and (
+        running == command or Path(running[0]).is_relative_to(Path(command[0]).parent)
+        or any(running[index:index + 2] == ['-avd', 'test'] for index in range(len(running))))
+    record['primaryEmulatorCmdline'] = running[:16]
+    if record['primaryEmulatorRunning']:
+        raise ValueError(f'the primary emulator {pid} is still running')
+    record['configSha256'] = sha(avd / 'config.ini') if (avd / 'config.ini').is_file() else None
+    locks = sorted(avd.rglob('*.lock'))
+    if any(path.is_dir() and not path.is_symlink() for path in locks):
+        raise ValueError('an AVD lock is a directory, not a stale emulator lock file')
+    for path in locks:
+        row = dict(path=path.relative_to(avd).as_posix(), kind='symlink' if path.is_symlink() else 'file')
+        if row['kind'] == 'file' and path.stat().st_size <= 256:
+            row['content'] = path.read_bytes().decode(errors='replace').strip()
+        record['staleLocks'].append(row)
+        path.unlink()
+        row['removed'] = True
+
+
+def fallback_decision(path, package):
+    try:
+        primary = load(path)
+    except (OSError, ValueError) as error:
+        primary, reason = {}, 'Primary receipt is unreadable: ' + repr(error)
+    else:
+        primary = primary if isinstance(primary, dict) else {}
+        reason = fallback_reason(primary, package)
+    def part(key):
+        return primary.get(key) if isinstance(primary.get(key), dict) else {}
+    live = part('liveLogcat').get('appFailure')
+    decision = dict(diagnosticOnly=True, accepted=False, warranted=False, reason=reason,
+                    primaryFailure=primary.get('primaryFailure'), primarySecondaryFailures=primary.get('secondaryFailures'),
+                    primaryHostExit=primary.get('emulatorHostExit'), primaryCleanup=primary.get('cleanup'),
+                    primarySignalAfterTermination=primary.get('emulatorSignalAfterTermination'),
+                    primaryDeviceLoss=primary.get('deviceLoss'), primaryFirstScreen=primary.get('firstScreenProgress'),
+                    launchStarted=part('firstScreenProgress').get('launchStarted'),
+                    primaryAppFailure=primary.get('appFailure'), primaryLiveLogcatAppFailure=live,
+                    mixedWithAppFailure=bool(primary.get('appFailure') or live),
+                    primaryReceiptSha256=sha(path) if path.is_file() else None, avd={})
+    if reason is None:
+        try:
+            reuse_avd(primary, decision['avd'])
+        except (OSError, ValueError) as error:
+            decision['reason'] = 'The owned AVD cannot be reused: ' + str(error)
+        else:
+            decision['warranted'] = True
+    return decision
+
+
+def host_diagnostics(directory):
+    directory.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for label, command in (('host-kernel', ['sudo', '-n', 'dmesg', '--ctime']), ('host-cpuinfo', ['cat', '/proc/cpuinfo'])):
+        try:
+            inspection_command(command, directory, label, timeout=10, check=False, suffix='.txt')
+            rows.append(dict(label=label, collected=True))
+        except Exception as error:
+            rows.append(dict(label=label, collected=False, error=repr(error)))
+    return rows
 
 
 def capture(args):
     sys.path.insert(0, str(args.harness / 'apps/aerove-lite/tool'))
     from emulator_bootstrap import wait_ready
+    from emulator_current import write_owner_receipt
     from emulator_standard_reference import record_failure, persist, run_stage
-    from emulator_qa79 import emulator_environment, renderer_evidence, crash_inventory, preserve_owned_crash, finish_emulator
+    from emulator_qa79 import emulator_environment, crash_inventory, preserve_owned_crash, finish_emulator, stop_owned
     if sys.platform != 'linux' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('Only a fresh isolated GitHub Linux/KVM runner is allowed')
     qa = validate_identity(load(args.directory / 'QA_BUILD_INFO.json'))
+    package = package_origin(qa, args.package_receipt)
+    attempt = 'primary' if args.fallback_after is None else 'fallback'
+    setup = ATTEMPTS[attempt]
     args.evidence.mkdir(parents=True, exist_ok=False)
+    decision = None
+    if attempt == 'fallback':
+        decision = fallback_decision(args.fallback_after, package)
+        save(args.evidence / 'FALLBACK.json', decision)
+        if not decision['warranted']:
+            return 0
     receipt = dict(owner='standard_x86_qa.py', ownerPid=os.getpid(), diagnosticOnly=True, accepted=False,
                    source=qa['source'], sourceTree=qa['sourceTree'], formalRun=qa['formalArmBuild']['runId'],
-                   harnessSource=os.environ['GITHUB_SHA'],
-                   harnessRun=os.environ['GITHUB_RUN_ID'], qaArtifactId=os.environ['QA_ARTIFACT_ID'],
-                   primaryResult=0, interruptSignals=[], children=[],
-                   cleanupErrors=[], gpuBackend='swangle', status='STARTED')
+                   harnessSource=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'],
+                   harnessRunAttempt=os.environ['GITHUB_RUN_ATTEMPT'], **package, attempt=attempt,
+                   fallbackAfter=decision, primaryResult=0, interruptSignals=[], children=[], cleanupErrors=[],
+                   gpuBackend=GPU_BACKEND, appRendererRequested=setup['appRenderer'],
+                   productionRendererRequested=setup['appRenderer'] == 'impeller', firstScreenStageStarted=False,
+                   startedAt=utc_now(), status='STARTED')
+    def checkpoint():
+        try:
+            write_owner_receipt(args.evidence / 'EMULATOR-OWNER.json', dict(
+                receipt, status='IN_PROGRESS', observedStatus=receipt['status'], provisional=True, checkpointAt=utc_now()))
+        except Exception as error:
+            receipt.setdefault('checkpointErrors', []).append(repr(error))
     def check(value):
         if value['interruptSignals']:
             raise InterruptedError('QA owner cancelled')
@@ -773,7 +1406,9 @@ def capture(args):
     def interrupt(sig, frame):
         nonlocal late_handling
         receipt['interruptSignals'].append(sig)
-        if phase == 'finalized' and not late_handling:
+        if phase != 'finalized':
+            checkpoint()
+        elif not late_handling:
             late_handling = True
             record_failure(receipt, 'finalized-cancellation', SystemExit(128 + sig))
             receipt.update(result=receipt['primaryResult'], status='FAILED')
@@ -782,43 +1417,94 @@ def capture(args):
             finally:
                 raise SystemExit(receipt['primaryResult'])
     previous = {s: signal.signal(s, interrupt) for s in (signal.SIGTERM, signal.SIGINT)}
-    emulator = None
+    emulator = live = None
     owned = []
     before = None
-    deadline = time.monotonic() + 780
+    deadline = time.monotonic() + OWNER_DEADLINE_SECONDS - ATTRIBUTION_SECONDS
+    receipt['ownerBudget'] = dict(runtimeSeconds=OWNER_DEADLINE_SECONDS - ATTRIBUTION_SECONDS,
+                                  attributionSeconds=ATTRIBUTION_SECONDS, ownedStopSeconds=OWNED_STOP_SECONDS,
+                                  worstCaseSeconds=OWNER_DEADLINE_SECONDS + 2 * OWNED_STOP_SECONDS)
     env = emulator_environment(dict(os.environ, ANDROID_SERIAL='emulator-5554'))
+    def stream():
+        """Stop the host-side logcat once and return the QA app crash it holds."""
+        row = receipt.get('liveLogcat') or {}
+        if live is not None and 'cleanup' not in row and 'cleanupError' not in row:
+            try:
+                if emulator is not None and emulator.poll() is not None:
+                    row['drain'] = drain_live_logcat(live, LIVE_DRAIN_SECONDS)
+                finish_live_logcat(live, row, args.evidence, stop_owned)
+            except BaseException as error:
+                row['cleanupError'] = repr(error)
+                raise
+        return row.get('appFailure')
+    checkpoint()
     try:
         before = crash_inventory()
-        command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test',
-                   '-no-window', '-gpu', 'swangle', '-no-snapshot', '-noaudio', '-no-boot-anim']
+        command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), *setup['flags']]
         receipt['command'] = command
         with (args.evidence / 'emulator.stdout.log').open('wb') as out, (args.evidence / 'emulator.stderr.log').open('wb') as err:
-            emulator = subprocess.Popen(command, stdout=out, stderr=err, stdin=subprocess.DEVNULL,
-                                        start_new_session=True, env=env)
+            emulator = ExitWatch(subprocess.Popen(command, stdout=out, stderr=err, stdin=subprocess.DEVNULL,
+                                                  start_new_session=True, env=env), receipt)
             receipt['emulatorPid'] = emulator.pid
+            checkpoint()
             wait_ready(emulator, args.evidence, receipt, check)
-            receipt['rendererEvidence'] = renderer_evidence((args.evidence / 'emulator.stdout.log').read_text(errors='replace'))
-            run_stage('first-screen', [sys.executable, __file__, 'probe', '--directory', str(args.directory),
-                                       '--evidence', str(args.evidence / 'first-screen'), '--build-tools', str(args.build_tools)],
-                      300, emulator, receipt, owned, args.evidence, env, deadline)
+            receipt['readyAt'] = utc_now()
+            receipt['rendererEvidence'] = host_renderer((args.evidence / 'emulator.stdout.log').read_text(errors='replace'))
+            live, receipt['liveLogcat'] = start_live_logcat(args.evidence, env)
+            probe = [sys.executable, __file__, 'probe', '--directory', str(args.directory),
+                     '--evidence', str(args.evidence / 'first-screen'), '--build-tools', str(args.build_tools),
+                     '--app-renderer', setup['appRenderer']]
+            if args.package_receipt is not None:
+                probe += ['--package-receipt', str(args.package_receipt)]
+            receipt['firstScreenStageStarted'] = True
+            checkpoint()
+            run_stage('first-screen', probe, 300, emulator, receipt, owned, args.evidence, env, deadline)
             check(receipt)
-            receipt['status'] = 'INITIAL_QA_SCREEN_CAPTURED_REVIEW_REQUIRED'
+            receipt['status'] = CAPTURED[setup['appRenderer']]
     except BaseException as error:
-        record_failure(receipt, 'qa-runtime', error)
+        checkpoint()
+        try:
+            classify_failure(error, emulator, receipt, args.evidence, record_failure, stream)
+        except Exception as problem:
+            record_failure(receipt, 'qa-runtime', error)
+            record_failure(receipt, 'failure-classification', problem)
     finally:
-        from emulator_qa79 import stop_owned
+        checkpoint()
         for child, row in reversed(owned):
             try:
                 row['cleanup'] = stop_owned(child)
             except BaseException as error:
                 record_failure(receipt, 'probe-cleanup', error)
+        try:
+            app = stream()
+        except BaseException as error:
+            app = None
+            record_failure(receipt, 'live-logcat-cleanup', error)
+        if app is not None and 'appFailure' not in receipt:
+            receipt['appFailure'] = dict(app, beforeHostExit=None)
+            name_app_failure(receipt, record_failure, app)
+        if receipt['firstScreenStageStarted']:
+            try:
+                receipt['firstScreenProgress'] = probe_progress(args.evidence / 'first-screen')
+            except Exception as error:
+                record_failure(receipt, 'first-screen-progress', error)
         if emulator is not None:
             try:
-                result = finish_emulator(emulator, receipt, receipt['primaryResult'])
-                if result and not receipt['primaryResult']:
-                    record_failure(receipt, 'emulator-exit', RuntimeError('Emulator exited before owned cleanup'))
+                finish_emulator(emulator, receipt, receipt['primaryResult'])
+                if not receipt['cleanup']['terminationInitiated'] and 'emulatorHostExit' not in receipt:
+                    record_failure(receipt, 'emulator-host-exit', host_exit(emulator, receipt, 'owned-cleanup'))
+                late = signal_after_termination(receipt)
+                if late is not None:
+                    receipt['emulatorSignalAfterTermination'] = late
+                    if late['slowHostDeath']:
+                        record_failure(receipt, 'slow-host-death', SlowHostDeath(late))
             except BaseException as error:
                 record_failure(receipt, 'emulator-cleanup', error)
+            if 'emulatorHostExit' in receipt and (receipt.get('appFailure') or {}).get('source') == 'live-logcat':
+                receipt['appFailure']['beforeHostExit'] = True
+            if ('emulatorHostExit' in receipt or receipt.get('unexpectedEmulatorExit')
+                    or 'emulatorSignalAfterTermination' in receipt):
+                receipt['hostDiagnostics'] = host_diagnostics(args.evidence / 'host')
             try:
                 receipt['crashpad'] = preserve_owned_crash(args.evidence, emulator.pid, before or {})
             except BaseException as error:
@@ -840,7 +1526,7 @@ def capture(args):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('phase', choices=['formal-run', 'guard', 'formal-artifacts', 'formal', 'source', 'verify',
-                                          'probe', 'capture'])
+                                          'reuse', 'probe', 'capture'])
     parser.add_argument('--directory', type=Path, required=True)
     parser.add_argument('--run-id')
     parser.add_argument('--source')
@@ -849,6 +1535,11 @@ def main():
     parser.add_argument('--source-root', type=Path)
     parser.add_argument('--harness', type=Path)
     parser.add_argument('--evidence', type=Path)
+    parser.add_argument('--qa-run-id')
+    parser.add_argument('--qa-artifact-id')
+    parser.add_argument('--package-receipt', type=Path)
+    parser.add_argument('--fallback-after', type=Path)
+    parser.add_argument('--app-renderer', choices=['impeller', 'skia'], default='impeller')
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('QA commands require an isolated GitHub Actions runner')
@@ -873,6 +1564,10 @@ def main():
             parser.error('verify --create requires --source-root')
         verify(args)
         return 0
+    if args.phase == 'reuse':
+        if args.evidence is None:
+            parser.error('reuse requires --evidence')
+        return reuse_package(args)
     return run_probe(args) if args.phase == 'probe' else capture(args)
 
 

@@ -1,4 +1,7 @@
 name: AEROVE Lite run79 Android QA only
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 'on':
   workflow_call:
     inputs:
@@ -37,7 +40,7 @@ jobs:
           log-accepted-android-sdk-licenses: false
           cmdline-tools-version: '16111833'
       - name: Existing API33 emulator environment with unchanged configuration
-        shell: bash
+        shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
         run: |
           set -euo pipefail
           sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0

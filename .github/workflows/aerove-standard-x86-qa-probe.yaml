@@ -1,0 +1,119 @@
+name: AEROVE Standard internal x86 QA probe of an existing package (diagnostic only)
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('AEROVE Standard internal x86 QA probe of artifact {0} from run {1} for formal run {2}', inputs.qa_artifact_id, inputs.qa_run_id, inputs.formal_run_id) || format('AEROVE Standard internal x86 QA probe registration {0} {1}', github.event_name, github.sha) }}
+
+on:
+  push:
+    branches: [codex/aerove-lite-meow-app]
+    paths: [.github/workflows/aerove-standard-x86-qa-probe.yaml]
+  workflow_dispatch:
+    inputs:
+      formal_run_id:
+        description: Successful Aerove Android run that defined the reused x86 QA package
+        type: string
+        required: true
+      qa_run_id:
+        description: Internal x86 QA run whose first attempt built the package once
+        type: string
+        required: true
+      qa_artifact_id:
+        description: The single QA package artifact of that run; it is downloaded and re-verified, never rebuilt
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: standard-internal-x86-qa-probe-${{ github.event_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+
+jobs:
+  probe_existing_qa:
+    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/codex/aerove-lite-meow-app' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      FORMAL_RUN_ID: ${{ inputs.formal_run_id }}
+      QA_RUN_ID: ${{ inputs.qa_run_id }}
+      QA_ARTIFACT_ID: ${{ inputs.qa_artifact_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        timeout-minutes: 5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        timeout-minutes: 5
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - name: Existing official API33 x86 image and KVM
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/standard-x86-qa-render"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/standard-x86-qa-avd"
+          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
+          mkdir -p "$root/environment" "$ANDROID_AVD_HOME"
+          timeout --kill-after=10s 300s sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0
+          "$ANDROID_HOME/emulator/emulator" -no-window -version > "$root/environment/emulator-version.txt" 2>&1
+          grep -E '37\.2\.12\.0.*16428233' "$root/environment/emulator-version.txt"
+          image="$ANDROID_HOME/system-images/android-33/google_apis/x86_64"
+          cp "$image/source.properties" "$root/environment/image-source.properties"
+          cp "$image/build.prop" "$root/environment/image-build.prop"
+          grep -E '^Pkg.Revision\s*=\s*17\s*$' "$image/source.properties"
+          grep -E '^AndroidVersion.ApiLevel\s*=\s*33\s*$' "$image/source.properties"
+          grep -E '^SystemImage.Abi\s*=\s*x86_64\s*$' "$image/source.properties"
+          sha256sum "$image/system.img" > "$root/environment/image-system-sha256.txt"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -c /dev/kvm
+          echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+          printf 'hw.cpu.ncore=2\n' >> "$ANDROID_AVD_HOME/test.avd/config.ini"
+          cp "$ANDROID_AVD_HOME/test.avd/config.ini" "$root/environment/avd-config.ini"
+      - name: Re-verify the earlier QA package without compiling
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tooling/standard_x86_qa.py reuse \
+            --directory "$RUNNER_TEMP/standard-x86-qa-input" --evidence "$RUNNER_TEMP/standard-x86-qa-render/reuse" \
+            --run-id "$FORMAL_RUN_ID" --qa-run-id "$QA_RUN_ID" --qa-artifact-id "$QA_ARTIFACT_ID" \
+            --build-tools "$ANDROID_HOME/build-tools/35.0.0"
+      - name: Own emulator and strict QA first-screen probe without building
+        id: primary
+        timeout-minutes: 18
+        run: |
+          python3 tooling/standard_x86_qa.py capture \
+            --directory "$RUNNER_TEMP/standard-x86-qa-input" \
+            --evidence "$RUNNER_TEMP/standard-x86-qa-render/runtime" \
+            --package-receipt "$RUNNER_TEMP/standard-x86-qa-render/reuse/QA_PACKAGE_REUSE.json" \
+            --harness "$GITHUB_WORKSPACE" --build-tools "$ANDROID_HOME/build-tools/35.0.0"
+      - name: Non-production Skia fallback only after a primary emulator host exit
+        if: failure() && steps.primary.outcome == 'failure'
+        timeout-minutes: 18
+        run: |
+          python3 tooling/standard_x86_qa.py capture \
+            --directory "$RUNNER_TEMP/standard-x86-qa-input" \
+            --evidence "$RUNNER_TEMP/standard-x86-qa-render/runtime-fallback" \
+            --package-receipt "$RUNNER_TEMP/standard-x86-qa-render/reuse/QA_PACKAGE_REUSE.json" \
+            --fallback-after "$RUNNER_TEMP/standard-x86-qa-render/runtime/EMULATOR-OWNER.json" \
+            --harness "$GITHUB_WORKSPACE" --build-tools "$ANDROID_HOME/build-tools/35.0.0"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        timeout-minutes: 10
+        with:
+          name: Std-internal-x86-probe-first-screen-${{ github.run_id }}
+          path: ${{ runner.temp }}/standard-x86-qa-render/
+          if-no-files-found: warn

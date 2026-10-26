@@ -1,4 +1,7 @@
 name: Lite ABI build
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 'on':
   workflow_call:
     inputs:
@@ -80,7 +83,7 @@ jobs:
         cache-dependency-path: apps/aerove-lite/regexp2/go.sum
     - name: Build the isolated client helper for this ABI
       id: client_helper
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         python3 apps/aerove-lite/tool/ci_artifacts.py android-helper --go "$(go env GOROOT)/bin/go" \
           --ndk "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" --abi '${{ inputs.abi }}' \

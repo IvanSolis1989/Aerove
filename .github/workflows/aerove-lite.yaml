@@ -1,4 +1,7 @@
 name: AEROVE Lite
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 permissions:
   contents: read
 concurrency:
@@ -97,7 +100,7 @@ jobs:
     - name: Ensure GDB is available for requested native stack capture
       if: ${{ inputs.native_preflight && inputs.native_test_stacks }}
       timeout-minutes: 5
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |-
         set -euo pipefail
         if ! command -v gdb >/dev/null 2>&1; then
@@ -116,7 +119,7 @@ jobs:
           gdb -nx -nh --batch -ex 'show version' -ex quit
     - name: Initialize native lock and run host Rust tests
       if: ${{ inputs.native_preflight }}
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
         NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
         NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
@@ -433,7 +436,7 @@ jobs:
       if: ${{ failure() && steps.kotlin_checks.outcome == 'failure' }}
       timeout-minutes: 3
       working-directory: apps/aerove-lite
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         mkdir -p app/build/reports
         gradle --no-daemon :app:tasks --all 2>&1 | tee app/build/reports/gradle-tasks.txt
@@ -502,7 +505,7 @@ jobs:
         sdkmanager 'build-tools;37.0.0'
         test -x "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner"
     - name: Download only selected immutable acceptance artifact IDs
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         set -euo pipefail
         root="$RUNNER_TEMP/lite-promotion"
@@ -636,7 +639,7 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/standard-original-input
       - name: Existing API33 image, emulator and KVM configuration
-        shell: bash
+        shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
         run: |
           set -euo pipefail
           STANDARD_REFERENCE_ROOT="$RUNNER_TEMP/standard-original-reference"
@@ -695,7 +698,7 @@ jobs:
           (Path(os.environ['STANDARD_REFERENCE_ROOT']) / 'DIAGNOSTIC-IDENTITY.json').write_text(json.dumps(receipt, indent=2) + '\n')
           PY
       - name: Owned emulator and closed02 original-APK first-screen probe
-        shell: bash
+        shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
         run: |
           python3 apps/aerove-lite/tool/emulator_standard_reference.py \
             --apk-directory "$RUNNER_TEMP/standard-original-input" \
@@ -778,7 +781,7 @@ jobs:
     - name: Prepare and read back the pinned Smart Android fixture
       if: ${{ matrix.phase == 'remaining' }}
       timeout-minutes: 5
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         set -euo pipefail
         python3 apps/aerove-lite/tool/prepare_smart_config_meow_ci_fixture.py prepare \
@@ -790,7 +793,7 @@ jobs:
         echo "SMART_CONFIG_MEOW_FIXTURE_DIR=$RUNNER_TEMP/lite-smart-config-meow" >> "$GITHUB_ENV"
         echo "SMART_CONFIG_MEOW_FIXTURE_RECEIPT=$RUNNER_TEMP/lite-diagnostics/remaining/smart-fixture-source.json" >> "$GITHUB_ENV"
     - name: Existing API33 emulator environment with unchanged configuration
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         set -euo pipefail
         sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0
@@ -805,7 +808,7 @@ jobs:
         printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
     - name: Real API 33 ${{ matrix.phase }} verification
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         set -euo pipefail
         if [[ '${{ matrix.phase }}' == remaining ]]; then

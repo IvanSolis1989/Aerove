@@ -1,4 +1,7 @@
 name: AEROVE Lite original run84 matrix diagnosis only
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 'on':
   workflow_call:
     inputs:
@@ -43,7 +46,7 @@ jobs:
         log-accepted-android-sdk-licenses: false
         cmdline-tools-version: '16111833'
     - name: Existing API33 emulator environment with unchanged configuration
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: 'set -euo pipefail
 
         sdkmanager --install ''build-tools;35.0.0'' emulator ''system-images;android-33;google_apis;x86_64'' --channel=0
@@ -70,7 +73,7 @@ jobs:
 
         '
     - name: Verify original run84 runtime and execute matrix with owned emulator
-      shell: bash
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
         RUNTIME_TARGET: ${{ inputs.runtime_target }}
         RUNTIME_DIRECTORY: ${{ inputs.runtime_target == 'beta14' && 'beta14-original-runtime' || inputs.runtime_target == 'lite94' && 'lite94-original-runtime' || 'qa84-original-runtime' }}
