@@ -17,17 +17,33 @@ import java.io.File
 import java.io.FileInputStream
 import java.nio.channels.FileChannel
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 
-class SystemFontPlugin : FlutterPlugin, ComponentCallbacks {
-    private lateinit var context: Context
+class SystemFontPlugin : FlutterPlugin {
     private var channel: MethodChannel? = null
     @Volatile private var catalog: FontCatalogCache? = null
 
+    companion object {
+        private val store = FontCatalogStore()
+        private val watchingConfiguration = AtomicBoolean(false)
+
+        // Process wide like the store, so a change while detached still lands.
+        private fun watchConfiguration(context: Context) {
+            if (!watchingConfiguration.compareAndSet(false, true)) return
+            context.registerComponentCallbacks(object : ComponentCallbacks {
+                override fun onConfigurationChanged(newConfig: Configuration) = store.invalidate()
+
+                @Deprecated("Deprecated in Java")
+                override fun onLowMemory() {}
+            })
+        }
+    }
+
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        context = binding.applicationContext
-        val cache = FontCatalogCache()
+        val context = binding.applicationContext
+        val cache = FontCatalogCache(store)
         catalog = cache
-        context.registerComponentCallbacks(this)
+        watchConfiguration(context)
         channel = MethodChannel(binding.binaryMessenger, "com.follow.clash/fonts", StandardMethodCodec.INSTANCE,
             binding.binaryMessenger.makeBackgroundTaskQueue()).also { channel ->
             channel.setMethodCallHandler { call, result ->
@@ -43,16 +59,8 @@ class SystemFontPlugin : FlutterPlugin, ComponentCallbacks {
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel?.setMethodCallHandler(null)
         channel = null
-        context.unregisterComponentCallbacks(this)
         catalog?.close()
         catalog = null
-    }
-
-    override fun onConfigurationChanged(newConfig: Configuration) { invalidate() }
-    override fun onLowMemory() { invalidate() }
-
-    private fun invalidate() {
-        catalog?.invalidate()
     }
 
     private fun readFamilies(checkpoint: () -> Unit): List<String> {

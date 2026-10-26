@@ -67,20 +67,26 @@ fun Context.ensureNotificationChannel() {
         return
     }
     val manager = getSystemService(NotificationManager::class.java) ?: return
+    val name = getString(R.string.service_channel_name)
     val existing = manager.getNotificationChannel(GlobalState.NOTIFICATION_CHANNEL)
     if (existing != null) {
-        existing.name = getString(R.string.service_channel_name)
-        manager.createNotificationChannel(existing)
+        if (channelNeedsRename(existing.name, name)) {
+            existing.name = name
+            manager.createNotificationChannel(existing)
+        }
         return
     }
     manager.createNotificationChannel(
         NotificationChannel(
             GlobalState.NOTIFICATION_CHANNEL,
-            getString(R.string.service_channel_name),
+            name,
             NotificationManager.IMPORTANCE_LOW,
         ),
     )
 }
+
+internal fun channelNeedsRename(current: CharSequence?, name: String): Boolean =
+    current?.toString() != name
 
 fun Service.startForeground(notification: Notification) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -16,6 +17,7 @@ import android.os.Looper
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import androidx.core.location.LocationManagerCompat
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -25,6 +27,12 @@ import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import io.flutter.plugin.common.PluginRegistry.RequestPermissionsResultListener
 import java.util.concurrent.ConcurrentHashMap
+
+internal data class LocationAccess(
+    val fine: Boolean,
+    val background: Boolean,
+    val locationEnabled: Boolean,
+)
 
 class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private lateinit var channel: MethodChannel
@@ -36,6 +44,8 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private var pendingPermissionResult: Result? = null
     private var rationaleBeforeRequest: Map<String, Boolean> = emptyMap()
     private var wifiNetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private var tracking = false
+    private var locationAccess: LocationAccess? = null
     private val wifiInfoByNetwork = ConcurrentHashMap<Network, WifiInfo>()
     private val pendingSsidResults = mutableListOf<Result>()
     @Volatile
@@ -75,6 +85,7 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         private const val METHOD_GET_SSID = "getSsid"
         private const val METHOD_CHECK_PERMISSION = "checkPermission"
         private const val METHOD_REQUEST_PERMISSION = "requestPermission"
+        private const val METHOD_SET_TRACKING = "setTracking"
         private const val ERROR_UNAVAILABLE = "UNAVAILABLE"
         private const val ERROR_IN_PROGRESS = "IN_PROGRESS"
         // Every plugin on the activity sees every result; stay clear of the app's codes.
@@ -97,9 +108,6 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
         connectivityManager = binding.applicationContext.getSystemService(
             Context.CONNECTIVITY_SERVICE,
         ) as? ConnectivityManager
-        if (hasForegroundLocation(binding.applicationContext)) {
-            registerWifiNetworkCallback()
-        }
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -107,6 +115,8 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             errorMessage = "Plugin detached before SSID lookup completed",
         )
         channel.setMethodCallHandler(null)
+        tracking = false
+        locationAccess = null
         unregisterWifiNetworkCallback()
         detachFromActivity(cancelPermissionRequest = true)
         context = null
@@ -138,8 +148,20 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             METHOD_GET_SSID -> getSsid(result)
             METHOD_CHECK_PERMISSION -> checkPermission(result)
             METHOD_REQUEST_PERMISSION -> requestPermission(result)
+            METHOD_SET_TRACKING -> setTracking(call.arguments == true, result)
             else -> result.notImplemented()
         }
+    }
+
+    // Dart enables this only while a network is excluded and access is granted.
+    private fun setTracking(enabled: Boolean, result: Result) {
+        tracking = enabled
+        if (enabled) {
+            registerWifiNetworkCallback()
+        } else {
+            unregisterWifiNetworkCallback()
+        }
+        result.success(null)
     }
 
     private fun checkPermission(result: Result) {
@@ -147,11 +169,27 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             result.error(ERROR_UNAVAILABLE, "Context not available", null)
             return
         }
-        refreshWifiNetworkCallback()
-        forgetGrantedDenials(ctx)
+        syncLocationAccess(ctx)
         result.success(
             if (missingPermission(ctx) == null) PERMISSION_GRANTED else PERMISSION_DENIED,
         )
+    }
+
+    // The system applies location access when a callback registers, not after.
+    private fun syncLocationAccess(context: Context) {
+        val current = LocationAccess(
+            fine = hasForegroundLocation(context),
+            background = hasBackgroundLocation(context),
+            locationEnabled = isLocationEnabled(context),
+        )
+        if (current == locationAccess) {
+            return
+        }
+        locationAccess = current
+        forgetGrantedDenials(context)
+        if (tracking || wifiNetworkCallback != null) {
+            refreshWifiNetworkCallback()
+        }
     }
 
     private fun requestPermission(result: Result) {
@@ -164,8 +202,7 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
             return
         }
         if (missingPermission(ctx) == null) {
-            refreshWifiNetworkCallback()
-            forgetGrantedDenials(ctx)
+            syncLocationAccess(ctx)
             result.success(PERMISSION_GRANTED)
             return
         }
@@ -221,8 +258,7 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private fun settleRequest(activity: Activity): Int {
         val rationaleBefore = rationaleBeforeRequest
         rationaleBeforeRequest = emptyMap()
-        refreshWifiNetworkCallback()
-        forgetGrantedDenials(activity)
+        syncLocationAccess(activity)
         val missing = missingPermission(activity) ?: return PERMISSION_GRANTED
         return resolveDenial(activity, missing, rationaleBefore[missing] == true)
     }
@@ -269,6 +305,11 @@ class WifiSsidPlugin : FlutterPlugin, MethodCallHandler, ActivityAware {
     private fun hasBackgroundLocation(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
             isGranted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+
+    private fun isLocationEnabled(context: Context): Boolean {
+        val manager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        return manager != null && LocationManagerCompat.isLocationEnabled(manager)
+    }
 
     private fun missingPermission(context: Context): String? = when {
         !hasForegroundLocation(context) -> Manifest.permission.ACCESS_FINE_LOCATION

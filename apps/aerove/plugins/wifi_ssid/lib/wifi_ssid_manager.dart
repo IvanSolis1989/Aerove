@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/services.dart';
 
 /// The platform permission state required to read the current Wi-Fi SSID.
@@ -12,6 +14,7 @@ class WifiSsidManager {
   static const _getSsidMethod = 'getSsid';
   static const _checkPermissionMethod = 'checkPermission';
   static const _requestPermissionMethod = 'requestPermission';
+  static const _setTrackingMethod = 'setTracking';
 
   /// Returns the current WiFi SSID, or null if not connected to WiFi.
   Future<String?> getSsid() {
@@ -26,6 +29,15 @@ class WifiSsidManager {
   Future<WifiSsidPermission> requestPermission() async {
     final result = await _channel.invokeMethod<int>(_requestPermissionMethod);
     return _decodePermission(result);
+  }
+
+  /// Keeps an Android Wi-Fi callback carrying location info registered only
+  /// while something reads the SSID; the desktop reads it on demand instead.
+  Future<void> setTracking(bool enabled) async {
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      return;
+    }
+    await _channel.invokeMethod<void>(_setTrackingMethod, enabled);
   }
 
   WifiSsidPermission _decodePermission(int? value) {

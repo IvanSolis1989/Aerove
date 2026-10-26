@@ -8,7 +8,8 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -37,12 +38,24 @@ Widget _closeButtonIcon(BuildContext context) =>
 /// A rebuilt ThemeData never equals the last, and ThemeCrossFade fades on that.
 final _appThemes = <Brightness, ({Object inputs, ThemeData theme})>{};
 
+@visibleForTesting
+bool? debugAndroidSystemFontsOverride;
+
+bool get _androidSystemFonts =>
+    debugAndroidSystemFontsOverride ?? system.isAndroid;
+
+/// Only a chosen font is checked against the Android catalog; the default
+/// resolves to null whatever the catalog holds.
+bool needsSystemFontCatalog(String? selected, {required bool android}) =>
+    android && selected != null;
+
 ThemeData watchAppTheme(WidgetRef ref, Brightness brightness) {
   final locale = ref.watch(appSettingProvider.select((state) => state.locale));
   final selectedFont = ref.watch(
     themeSettingProvider.select((state) => state.fontFamily),
   );
-  final fontFamily = system.isAndroid
+  final fontFamily =
+      needsSystemFontCatalog(selectedFont, android: _androidSystemFonts)
       ? resolveSystemFontFamily(
           selectedFont,
           ref.watch(installedSystemFontsProvider).asData?.value,
@@ -112,14 +125,14 @@ class _ThemeManagerState extends ConsumerState<ThemeManager>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (system.isAndroid && state == AppLifecycleState.resumed) {
+    if (_androidSystemFonts && state == AppLifecycleState.resumed) {
       ref.invalidate(installedSystemFontsProvider);
     }
   }
 
   @override
   void didChangeLocales(List<Locale>? locales) {
-    if (system.isAndroid) ref.invalidate(installedSystemFontsProvider);
+    if (_androidSystemFonts) ref.invalidate(installedSystemFontsProvider);
   }
 
   @override

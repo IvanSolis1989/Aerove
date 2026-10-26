@@ -39,6 +39,11 @@ class _ConnectivityManagerState extends ConsumerState<ConnectivityManager> {
   int _ssidRequestId = 0;
   bool _onWifi = false;
 
+  ({bool excluded, bool granted}) _trackingGate = (
+    excluded: false,
+    granted: false,
+  );
+
   @override
   void initState() {
     super.initState();
@@ -50,6 +55,7 @@ class _ConnectivityManagerState extends ConsumerState<ConnectivityManager> {
       next,
     ) {
       if (previous != next) {
+        _syncTracking();
         unawaited(_updateSsid());
       }
     });
@@ -59,10 +65,40 @@ class _ConnectivityManagerState extends ConsumerState<ConnectivityManager> {
       ),
       (previous, next) {
         if (previous != next) {
+          _syncTracking();
           unawaited(_updateSsid());
         }
       },
     );
+    _syncTracking();
+  }
+
+  /// Runs before the SSID read of the same change; the platform keeps order.
+  void _syncTracking() {
+    if (ref.read(safeModeProvider)) {
+      return;
+    }
+    final gate = (
+      excluded: ref.read(excludeSSIDsProvider).isNotEmpty,
+      granted:
+          ref.read(locationPermissionsProvider) == WifiSsidPermission.granted,
+    );
+    if (gate == _trackingGate) {
+      return;
+    }
+    _trackingGate = gate;
+    unawaited(_sendTracking(gate.excluded && gate.granted));
+  }
+
+  Future<void> _sendTracking(bool enabled) async {
+    try {
+      await WifiSsidManager.instance.setTracking(enabled);
+    } catch (error) {
+      commonPrint.log(
+        'Unable to switch Wi-Fi SSID tracking: $error',
+        logLevel: LogLevel.warning,
+      );
+    }
   }
 
   void _handleResults(List<ConnectivityResult> results) {

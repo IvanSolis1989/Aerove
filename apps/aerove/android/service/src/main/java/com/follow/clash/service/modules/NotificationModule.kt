@@ -17,7 +17,16 @@ import com.follow.clash.service.R
 import com.follow.clash.service.ServiceConfig
 import com.follow.clash.service.models.NotificationParams
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.dropWhile
 import kotlinx.coroutines.launch
+
+/**
+ * A StateFlow collector starts with the value it finds on subscribing, usually the one just
+ * posted. Comparing, rather than dropping the first, keeps a change that lands before then.
+ */
+internal fun <T> StateFlow<T>.changesAfter(posted: T): Flow<T> = dropWhile { it == posted }
 
 internal class NotificationModule(
     private val service: Service,
@@ -25,9 +34,10 @@ internal class NotificationModule(
 ) : ServiceModule {
     override fun start() {
         service.ensureNotificationChannel()
-        update(ServiceConfig.notificationParams.value)
+        val initial = ServiceConfig.notificationParams.value
+        update(initial)
         scope.launch {
-            ServiceConfig.notificationParams.collect { params -> update(params) }
+            ServiceConfig.notificationParams.changesAfter(initial).collect { params -> update(params) }
         }
     }
 

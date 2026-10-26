@@ -40,6 +40,9 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     with WidgetsBindingObserver {
   late final AuroraDailyRotation _auroraRotation;
 
+  /// Focus loss alone stays inactive and must not retry failed probes.
+  bool _backgrounded = false;
+
   @override
   void initState() {
     super.initState();
@@ -61,10 +64,9 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     // render never runs a post-frame callback.
     scheduleMicrotask(() {
       if (mounted) {
-        _updateVisible(
-          WidgetsBinding.instance.lifecycleState,
-          initialize: true,
-        );
+        final state = WidgetsBinding.instance.lifecycleState;
+        _backgrounded = _isBackground(state);
+        _updateVisible(state, initialize: true);
       }
     });
     ref.listenManual(configProvider, (prev, next) {
@@ -83,7 +85,10 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
       }
     }, fireImmediately: true);
     ref.listenManual(needUpdateGroupsProvider, (prev, next) {
-      if (prev != next) {
+      final entered = next.isProxies && !(prev?.isProxies ?? false);
+      if (entered ||
+          prev?.sortNum != next.sortNum ||
+          prev?.sortType != next.sortType) {
         ref.read(proxiesActionProvider.notifier).updateGroupsDebounce();
       }
     });
@@ -122,11 +127,21 @@ class _AppStateManagerState extends ConsumerState<AppStateManager>
     }
   }
 
+  static bool _isBackground(AppLifecycleState? state) =>
+      state == AppLifecycleState.hidden || state == AppLifecycleState.paused;
+
   @override
   Future<void> didChangeAppLifecycleState(AppLifecycleState state) async {
     _updateVisible(state);
+    if (_isBackground(state)) {
+      _backgrounded = true;
+    }
     if (state == AppLifecycleState.resumed) {
       unawaited(ref.read(locationPermissionsProvider.notifier).refresh());
+      if (!_backgrounded) {
+        return;
+      }
+      _backgrounded = false;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) {
           return;
