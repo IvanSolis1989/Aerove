@@ -22,7 +22,7 @@ concurrency:
 
 defaults:
   run:
-    shell: bash
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 
 jobs:
   build_internal_qa:
