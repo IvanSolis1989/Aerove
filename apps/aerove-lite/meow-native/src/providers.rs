@@ -424,6 +424,7 @@ impl ActiveLease {
         }
         let previous = gate.sources.get(&self.identity.source).ok_or("providerNotRegistered")?.revision;
         let next = previous.checked_add(1).ok_or("providerRevisionExhausted")?;
+        let epoch_next = if changed { next_core_epoch(gate.core_epoch)? } else { gate.core_epoch };
         let route_next = if changed { gate.revision.checked_add(1).ok_or("routeVersionExhausted")? } else { gate.revision };
         let groups_next = if changed { gate.groups_sequence.checked_add(1).ok_or("groupsSequenceExhausted")? } else { gate.groups_sequence };
         let sequence = gate.sequence.checked_add(1).ok_or("providerSequenceExhausted")?;
@@ -446,7 +447,7 @@ impl ActiveLease {
             control.finish_provider_commit(prepared, &mut gate, *revision, *groups_sequence);
         }
         gate.sources.insert(self.identity.source, SourceReceipt { revision: next, changed });
-        // Provider/rule content moves routes; it does not reset the whole runtime epoch.
+        gate.core_epoch = epoch_next;
         gate.revision = route_next;
         gate.groups_sequence = groups_next;
         gate.sequence = sequence;

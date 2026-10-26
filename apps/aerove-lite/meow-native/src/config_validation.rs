@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct OfflineConversion;
 impl LoadContext for OfflineConversion {
     fn offline_validation(&self) -> bool { true }
+    fn upstream_rule_admission(&self) -> Option<Arc<dyn meow_config::owned_load::UpstreamRuleAdmission>> { Some(Arc::new(LiteUpstreamAdmission)) }
     fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
     fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
 }
@@ -20,12 +21,12 @@ pub const MAX_MRS_EXPANDED_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_INPUT_BYTES: usize = 64 * 1024 * 1024;
 /// Configuration and proxy-provider text.
 pub const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
-/// Rule-set text for preview and dump. Official MRS dumps add no host entry cap; the Core's decoded-output bounds apply.
+/// Rule-set text budget shared by admission, preview and dump.
 pub const MAX_DUMP_TEXT_BYTES: usize = 64 * 1024 * 1024;
 /// Text and YAML rule-provider input share the preview and dump text budget.
 pub const MAX_RULE_TEXT_BYTES: usize = MAX_DUMP_TEXT_BYTES;
 pub const MAX_ENTRIES: usize = 250_000;
-/// One trimmed text or YAML rule entry.
+/// One trimmed rule entry, including decoded official MRS entries.
 pub const MAX_ENTRY_BYTES: usize = 2048;
 /// Values one rule YAML may expand to, counted as the Kotlin reader counts them: the root mapping, its list and the entries.
 pub const MAX_YAML_RULE_VALUES: usize = MAX_ENTRIES + 2;
@@ -203,6 +204,68 @@ fn rule_file(path: &Path, cancel: &tokio_util::sync::CancellationToken) -> Resul
 struct BoundedRuleDump {
     text: parking_lot::Mutex<String>, overflow: std::sync::atomic::AtomicBool,
 }
+pub(crate) struct LiteUpstreamAdmission;
+impl meow_config::owned_load::UpstreamRuleAdmission for LiteUpstreamAdmission {
+    fn compressed_limit(&self) -> u64 { MAX_INPUT_BYTES as u64 }
+    fn control(&self, control: rules::mrs_parser::MrsReadControl,
+        expected: RuleSetBehavior) -> rules::mrs_parser::MrsReadControl {
+        control.with_host_admission(Arc::new(LiteMrsHeaderAdmission(Some(expected))))
+    }
+    fn validate(&self, reader: &rules::mrs_parser::UpstreamRuleSetReader,
+        stop: &std::sync::atomic::AtomicBool) -> Result<(), String> {
+        admit_upstream_entries(reader, stop)
+    }
+}
+struct LiteMrsHeaderAdmission(Option<RuleSetBehavior>);
+impl rules::mrs_parser::MrsHostAdmission for LiteMrsHeaderAdmission {
+    fn header(&self, tag: u8, count: u64) -> Result<(), String> {
+        let actual = behavior_tag(tag).map_err(|e| invalid_rule("$.payload.mrs", e))?;
+        if self.0.is_some_and(|expected| expected != actual) { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); }
+        if count > MAX_ENTRIES as u64 { return Err(invalid_rule("$.payload.mrs.count", format!("official MRS header declares {count} entries, over {MAX_ENTRIES}"))); }
+        Ok(())
+    }
+    fn index_slots(&self) -> usize { MAX_TRIE_NODES }
+}
+
+#[derive(Default)]
+struct UpstreamEntryBudget { entries: usize, nodes: usize, bytes: usize }
+impl UpstreamEntryBudget {
+    fn admit(&mut self, entry: &str) -> Result<(), String> {
+        let entry = entry.trim();
+        if self.entries == MAX_ENTRIES { return Err(too_many_entries()); }
+        if entry.len() > MAX_ENTRY_BYTES { return Err(entry_too_wide(self.entries)); }
+        let nodes = entry.split('.').count();
+        if nodes > MAX_TRIE_DEPTH { return Err(format!("rule-provider entry {} exceeds {MAX_TRIE_DEPTH} labels", self.entries)); }
+        if self.nodes.saturating_add(nodes) > MAX_TRIE_NODES { return Err(format!("rule-provider trie exceeds {MAX_TRIE_NODES} nodes")); }
+        let bytes = self.bytes.saturating_add(entry.len()).saturating_add(1);
+        if bytes > MAX_DUMP_TEXT_BYTES { return Err(format!("rule-set text exceeds {MAX_DUMP_TEXT_BYTES} bytes")); }
+        self.entries += 1; self.nodes += nodes; self.bytes = bytes;
+        Ok(())
+    }
+}
+
+fn admit_upstream_entries(reader: &rules::mrs_parser::UpstreamRuleSetReader,
+    stop: &std::sync::atomic::AtomicBool) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    reader.check_cancelled().map_err(|e| invalid_rule("$.payload.mrs", e))?;
+    if reader.count() > MAX_ENTRIES {
+        return Err(invalid_rule("$.payload.mrs.count", format!("official MRS header declares {} entries, over {MAX_ENTRIES}", reader.count())));
+    }
+    let mut budget = UpstreamEntryBudget::default();
+    let mut failure = None;
+    let mut admit = |entry: &str| {
+        if failure.is_none() {
+            if let Err(error) = budget.admit(entry) { failure = Some(error); stop.store(true, Ordering::Release); }
+        }
+    };
+    let result = match reader.behavior() {
+        rules::mrs_parser::TYPE_DOMAIN => reader.for_each_domain(&mut admit),
+        rules::mrs_parser::TYPE_IPCIDR => reader.for_each_net(|net| admit(&net.to_string())),
+        _ => return Err(invalid_rule("$.payload.mrs", "rule_set_invalid_mrs_behavior")),
+    };
+    if let Some(error) = failure { return Err(invalid_rule("$.payload.mrs", error)); }
+    result.map_err(|e| invalid_rule("$.payload.mrs", e))
+}
 impl rules::rule_set::AcceptedEntrySink for BoundedRuleDump {
     fn accepted(&self, entry: &str) {
         use std::sync::atomic::Ordering;
@@ -213,17 +276,27 @@ impl rules::rule_set::AcceptedEntrySink for BoundedRuleDump {
         } else { text.push_str(entry); text.push('\n'); }
     }
 }
+fn upstream_error(error: impl std::fmt::Display) -> String {
+    let reason = error.to_string();
+    if reason.starts_with("rule_set_invalid:") { reason } else { invalid_rule("$.payload.mrs", reason) }
+}
 fn read_upstream_file(file: std::fs::File, behavior: Option<RuleSetBehavior>, format: Option<&'static str>, cancel: tokio_util::sync::CancellationToken, dump: bool) -> Result<(RuleSummary, Option<String>), String> {
     use rules::mrs_parser::{MrsReadControl, UpstreamRuleSetReader};
     use std::sync::{Arc, atomic::Ordering};
     if format.is_some_and(|f| f != "mrs") { return Err(invalid_rule("$.format", "rule_set_format_mismatch")); }
     let sink = dump.then(|| Arc::new(BoundedRuleDump { text: Default::default(), overflow: Default::default() }));
     let observer = sink.clone();
+    let stopped = Arc::new(std::sync::atomic::AtomicBool::new(false)); let stop = stopped.clone();
+    let token = cancel.clone();
     let control = MrsReadControl::new(MAX_INPUT_BYTES as u64, MAX_MRS_EXPANDED_BYTES as u64,
-        move || cancel.is_cancelled() || observer.as_ref().is_some_and(|sink| sink.overflow.load(Ordering::Acquire)));
-    let reader = UpstreamRuleSetReader::open_from_reader(file, control.clone()).map_err(|e| invalid_rule("$.payload.mrs", e))?;
+        move || token.is_cancelled() || stop.load(Ordering::Acquire) || observer.as_ref().is_some_and(|sink| sink.overflow.load(Ordering::Acquire)))
+        .with_host_admission(Arc::new(LiteMrsHeaderAdmission(behavior)));
+    let reader = UpstreamRuleSetReader::open_from_reader(file, control.clone()).map_err(upstream_error)?;
     let actual = behavior_tag(reader.behavior()).map_err(|e| invalid_rule("$.payload.mrs", e))?;
     if behavior.is_some_and(|expected| expected != actual) { return Err(invalid_rule("$.behavior", "rule_set_behavior_mismatch")); }
+    let admission = admit_upstream_entries(&reader, &stopped);
+    check_cancelled(&cancel)?;
+    admission?;
     let result = rules::rule_set::build_rule_set_from_upstream_reader(reader, behavior, true,
         sink.clone().map(|sink| sink as Arc<dyn rules::rule_set::AcceptedEntrySink>));
     if sink.as_ref().is_some_and(|sink| sink.overflow.load(Ordering::Acquire)) {
@@ -262,6 +335,7 @@ fn decode_rule_payload(bytes: &[u8], behavior: Option<RuleSetBehavior>, format: 
     } else {
         if bytes.len() > MAX_RULE_TEXT_BYTES { return Err(format!("rule-provider text input exceeds {MAX_RULE_TEXT_BYTES} bytes")); }
         let source = std::str::from_utf8(bytes).map_err(|e| invalid_rule("$.payload.utf8", e))?;
+        // Valid text keeps its fast path; failed text admission may identify a bounded YAML format mismatch.
         let (fmt, lines) = match format {
             Some("yaml") => ("yaml", yaml_payload(source).map_err(|e| invalid_rule("$.payload.yaml", e))?),
             Some("text") => ("text", text_lines(source)?),
@@ -1133,6 +1207,69 @@ fn parse_behavior(s: &str) -> Result<RuleSetBehavior, String> { match s.to_ascii
 fn behavior_tag(tag: u8) -> Result<RuleSetBehavior, String> { match tag { 0 => Ok(RuleSetBehavior::Domain), 1 => Ok(RuleSetBehavior::IpCidr), 2 => Ok(RuleSetBehavior::Classical), _ => Err("rule_set_invalid_mrs_behavior".into()) } }
 fn name(b: RuleSetBehavior) -> &'static str { match b { RuleSetBehavior::Domain => "domain", RuleSetBehavior::IpCidr => "ipcidr", RuleSetBehavior::Classical => "classical" } }
 fn canonical_format(s: &str) -> Result<&'static str, String> { match s.to_ascii_lowercase().as_str() { "yaml" | "yml" => Ok("yaml"), "text" => Ok("text"), "mrs" => Ok("mrs"), _ => Err(format!("unsupported rule-provider format: {s}")) } }
+
+#[cfg(test)]
+#[path = "../tests/support/upstream_mrs.rs"]
+mod upstream_budget_fixture;
+
+#[cfg(test)]
+mod upstream_admission_budget_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn each_budget_rejects_before_changing_accepted_state() {
+        let mut budget = UpstreamEntryBudget::default();
+        for _ in 0..MAX_ENTRIES { budget.admit("r.test").unwrap(); }
+        assert_eq!((budget.entries, budget.nodes), (MAX_ENTRIES, MAX_TRIE_NODES));
+        let bytes = budget.bytes;
+        assert_eq!(budget.admit("extra.test"), Err(too_many_entries()));
+        assert_eq!((budget.entries, budget.nodes, budget.bytes), (MAX_ENTRIES, MAX_TRIE_NODES, bytes));
+        let mut budget = UpstreamEntryBudget::default();
+        budget.admit(&"x".repeat(MAX_ENTRY_BYTES)).unwrap();
+        assert_eq!(budget.admit(&"x".repeat(MAX_ENTRY_BYTES + 1)), Err(entry_too_wide(1)));
+        let mut budget = UpstreamEntryBudget::default();
+        budget.admit(&vec!["a"; MAX_TRIE_DEPTH].join(".")).unwrap();
+        assert!(budget.admit(&vec!["a"; MAX_TRIE_DEPTH + 1].join(".")).unwrap_err().contains("128 labels"));
+        let mut budget = UpstreamEntryBudget { nodes: MAX_TRIE_NODES - 2, ..Default::default() };
+        budget.admit("a.test").unwrap();
+        assert!(budget.admit("next").unwrap_err().contains("500000 nodes"));
+        let mut budget = UpstreamEntryBudget { bytes: MAX_DUMP_TEXT_BYTES - 2, ..Default::default() };
+        budget.admit("x").unwrap(); assert_eq!(budget.bytes, MAX_DUMP_TEXT_BYTES);
+        assert!(budget.admit("x").unwrap_err().contains("67108864 bytes"));
+        assert_eq!(budget.bytes, MAX_DUMP_TEXT_BYTES);
+    }
+
+    #[test]
+    fn same_reader_stops_on_width_and_cancellation_precedes_a_header_rejection() {
+        use rules::mrs_parser::{MrsReadControl, UpstreamRuleSetReader};
+        let body = upstream_budget_fixture::encode_domain_set(&[&"x".repeat(MAX_ENTRY_BYTES + 1)]);
+        let bytes = upstream_budget_fixture::encode_upstream_mrs(0, 1, &body);
+        let stopped = Arc::new(AtomicBool::new(false)); let stop = stopped.clone();
+        let control = MrsReadControl::new(MAX_INPUT_BYTES as u64, MAX_MRS_EXPANDED_BYTES as u64,
+            move || stop.load(Ordering::Acquire));
+        let reader = UpstreamRuleSetReader::open_from_reader(Cursor::new(bytes), control.clone()).unwrap();
+        assert!(admit_upstream_entries(&reader, &stopped).unwrap_err().contains("2048 bytes"));
+        assert!(stopped.load(Ordering::Acquire)); assert!(control.check().is_err());
+        let bytes = upstream_budget_fixture::encode_upstream_mrs(0, MAX_ENTRIES + 1, &body);
+        let token = CancellationToken::new(); let watched = token.clone();
+        let reader = UpstreamRuleSetReader::open_from_reader(Cursor::new(bytes),
+            MrsReadControl::new(MAX_INPUT_BYTES as u64, MAX_MRS_EXPANDED_BYTES as u64, move || watched.is_cancelled())).unwrap();
+        token.cancel();
+        assert_eq!(admit_upstream_entries(&reader, &AtomicBool::new(false)).unwrap_err(),
+            "rule_set_invalid: $.payload.mrs: mrs: validation cancelled");
+    }
+
+    #[test]
+    fn invalid_utf8_is_reported_by_the_real_core_walk() {
+        let mut body = upstream_budget_fixture::encode_domain_set(&["a.test"]);
+        *body.last_mut().unwrap() = 0xff;
+        let bytes = upstream_budget_fixture::encode_upstream_mrs(0, 1, &body);
+        let reader = rules::mrs_parser::UpstreamRuleSetReader::open_from_reader(Cursor::new(bytes), Default::default()).unwrap();
+        let error = admit_upstream_entries(&reader, &AtomicBool::new(false)).unwrap_err();
+        assert!(error.contains("invalid UTF-8"), "{error}");
+    }
+}
 
 #[cfg(test)]
 mod owned_dump_budget_tests {

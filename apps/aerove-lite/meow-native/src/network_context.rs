@@ -296,6 +296,7 @@ pub(crate) fn scope_router(router: axum::Router, context: &NetworkContext) -> ax
 }
 
 impl LoadContext for NetworkContext {
+    fn upstream_rule_admission(&self) -> Option<Arc<dyn meow_config::owned_load::UpstreamRuleAdmission>> { Some(Arc::new(crate::config_validation::LiteUpstreamAdmission)) }
     fn requires_dns_transport_scope(&self) -> bool { true }
     fn dns_transport_scope(&self) -> Option<meow_common::transport_tasks::TransportScope> { self.captured_dns_transport() }
     fn requires_provider_roots(&self) -> bool { true }

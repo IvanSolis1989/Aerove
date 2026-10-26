@@ -203,7 +203,7 @@ async fn real_timer_receipts_join_stalled_fetch_before_successor() {
     let changed = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
     assert_eq!(changed.revision, "3"); assert!(changed.changed);
     let structural_stamp = plane.stamp();
-    assert_eq!(structural_stamp.0, stamp_before.0); assert!(structural_stamp.1 > stamp_before.1);
+    assert!(structural_stamp.0 > stamp_before.0); assert!(structural_stamp.1 > stamp_before.1);
     let receipt = request(api_address, "GET", "/providers/proxies/feed", PRIVATE, "").await;
     assert_eq!(body(&receipt)["revision"], "3");
     assert_eq!(body(&receipt)["proxies"][0]["name"], "d2");

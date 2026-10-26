@@ -229,6 +229,7 @@ impl ResourceFetch {
 struct PreparedContext(ProviderRoots);
 impl LoadContext for PreparedContext {
     fn offline_validation(&self)->bool { true }
+    fn upstream_rule_admission(&self) -> Option<Arc<dyn meow_config::owned_load::UpstreamRuleAdmission>> { Some(Arc::new(crate::config_validation::LiteUpstreamAdmission)) }
     fn requires_provider_roots(&self)->bool { true }
     fn provider_roots(&self)->Option<ProviderRoots> { Some(self.0.clone()) }
     fn wrap(&self,work:OwnedWork)->OwnedWork { work }
