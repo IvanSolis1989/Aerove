@@ -27,7 +27,8 @@ class LiteWindowFocusUiTest {
         var rootFocused = false
         compose.replaceAppContent {
             val window = LocalWindowInfo.current
-            SideEffect { rootFocused = window.isWindowFocused }
+            val currentRootFocused = window.isWindowFocused
+            SideEffect { rootFocused = currentRootFocused }
             LiteWindowFocusHost { active ->
                 SideEffect { focused = active }
                 Box(Modifier.fillMaxSize()) {

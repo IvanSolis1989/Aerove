@@ -20,12 +20,13 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
@@ -42,9 +43,19 @@ import dev.aerove.lite.R
 import dev.aerove.lite.observability.*
 import androidx.compose.material3.MaterialTheme
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -109,37 +120,91 @@ internal fun LogsScreen(feature: ObservabilityFeature, padding: PaddingValues) {
     }
 }
 
+internal data class HistoryDocumentLaunch(val feature: ObservabilityFeature, val id: Long)
+
+internal class HistoryDocumentResults : ViewModel() {
+    private data class Slot(val launch: HistoryDocumentLaunch? = null, val cleaning: Boolean = false)
+    private val slots = mutableStateMapOf<String, Slot>()
+    fun pending(slot: String): HistoryDocumentLaunch? = slots[slot]?.launch
+    fun busy(slot: String): Boolean = slots[slot]?.let { it.launch != null || it.cleaning } == true
+    fun completed(slot: String): Boolean = slots[slot]?.let { it.launch == null && !it.cleaning } == true
+    fun capture(slot: String, feature: ObservabilityFeature, id: Long) {
+        check(!busy(slot))
+        slots[slot] = Slot(HistoryDocumentLaunch(feature, id))
+    }
+    fun result(slot: String, current: ObservabilityFeature, active: Boolean, knownLaunch: Boolean, reference: String?): String? {
+        val state = slots[slot]
+        val launch = state?.launch
+        if (launch == null) {
+            if (state != null || !knownLaunch) return null
+            slots[slot] = Slot(cleaning = reference != null)
+            return reference
+        }
+        slots[slot] = Slot()
+        if (launch.feature !== current || !active) launch.feature.cancelExport()
+        launch.feature.documentResult(launch.id, reference)
+        return null
+    }
+    fun orphanComplete(slot: String) { if (slots[slot]?.cleaning == true) slots[slot] = Slot() }
+    override fun onCleared() {
+        slots.values.forEach { it.launch?.feature?.cancelExport() }
+        slots.clear()
+    }
+}
+
 @Composable
 private fun HistoryLogDocumentHost(feature: ObservabilityFeature) {
-    val state by rememberHistoryState(feature)
+    val documents = remember(feature) { feature.state.map { it.document }.distinctUntilChanged() }
+    val document by androidx.compose.runtime.key(feature) { documents.collectAsState(initial = feature.state.value.document) }
     val active = LocalLitePageActive.current
     val currentActive by rememberUpdatedState(active)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var resumed by remember(lifecycle) { mutableStateOf(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
-    var requestId by rememberSaveable { mutableLongStateOf(0L) }
+    val context = LocalContext.current
+    val activity = remember(context) {
+        var item = context
+        while (item is ContextWrapper && item !is Activity) item = item.baseContext
+        item as? Activity
+    }
+    val results = remember(activity) {
+        if (activity is ViewModelStoreOwner) ViewModelProvider(activity)[HistoryDocumentResults::class.java]
+        else HistoryDocumentResults()
+    }
+    val slot = rememberSaveable { java.util.UUID.randomUUID().toString() }
+    var launched by rememberSaveable { mutableStateOf(false) }
+    val pending = results.pending(slot)
+    val busy = results.busy(slot)
+    val awaitingResult = launched && !results.completed(slot)
+    val cleanupScope = (activity as? LifecycleOwner)?.lifecycleScope ?: results.viewModelScope
+    val orphanDocuments = remember(context.applicationContext) { AndroidHistoryDocuments(context.applicationContext.contentResolver) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
-        if (!currentActive) feature.cancelExport()
-        feature.documentResult(requestId, uri?.toString()); requestId = 0L
+        val orphan = results.result(slot, feature, currentActive, awaitingResult, uri?.toString())
+        if (orphan == null) { if (!results.busy(slot)) launched = false }
+        else cleanupScope.launch(NonCancellable) {
+            try {
+                if (!runCatching { orphanDocuments.deleteCreated(orphan) }.getOrDefault(false)) {
+                    android.util.Log.w("HistoryDocumentResult", "Could not remove orphaned CreateDocument result")
+                    android.widget.Toast.makeText(context.applicationContext, R.string.history_partial_document,
+                        android.widget.Toast.LENGTH_LONG).show()
+                }
+            } finally { results.orphanComplete(slot); launched = false }
+        }
     }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, _ -> resumed = lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    LaunchedEffect(feature, active, resumed, state.document?.id) {
+    LaunchedEffect(feature, active, resumed, document?.id, pending, busy, awaitingResult) {
         if (!active) { feature.cancelExport(); return@LaunchedEffect }
         if (!resumed || !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
-        val request = state.document ?: return@LaunchedEffect
-        if (!request.dispatched && requestId != 0L) { feature.cancelExport(); return@LaunchedEffect }
-        if (feature.documentLaunched(request.id)) try {
-            requestId = request.id; launcher.launch(request.name)
-        } catch (_: RuntimeException) { feature.documentResult(request.id, null); requestId = 0L }
-    }
-    val context = LocalContext.current
-    val activity = remember(context) {
-        var item = context
-        while (item is ContextWrapper && item !is Activity) item = item.baseContext
-        item as? Activity
+        val request = document ?: return@LaunchedEffect
+        if (busy || awaitingResult) return@LaunchedEffect
+        if (feature.documentLaunched(request.id)) {
+            results.capture(slot, feature, request.id); launched = true
+            try { launcher.launch(request.name) }
+            catch (_: RuntimeException) { results.result(slot, feature, true, true, null); launched = false }
+        }
     }
     DisposableEffect(feature, activity) { onDispose { if (activity?.isChangingConfigurations != true) feature.cancelExport() } }
 }

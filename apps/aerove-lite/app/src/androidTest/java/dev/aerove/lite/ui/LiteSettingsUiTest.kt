@@ -1,5 +1,9 @@
 package dev.aerove.lite.ui
 
+import android.util.Log
+import org.json.JSONObject
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +22,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -70,23 +75,42 @@ class LiteSettingsUiTest {
     fun connectionDemandExistsOnlyOnTheResumedConnectionsPage() {
         val state = mutableStateOf(LiteState())
         val actions = UiTestActions {}
-        compose.replaceAppContent { LiteApp(state.value, actions) }
-        compose.runOnUiThread { assertTrue(actions.connectionTelemetry.isEmpty()) }
+        var composeRootFocused = false
+        compose.replaceAppContent {
+            val currentRootFocused = LocalWindowInfo.current.isWindowFocused
+            SideEffect { composeRootFocused = currentRootFocused }
+            LiteApp(state.value, actions)
+        }
+        fun assertDemand(stage: String, expected: List<Boolean>) {
+            val connectionNodes = compose.onAllNodesWithTag("connections-search").fetchSemanticsNodes().size
+            compose.runOnIdle {
+                val receipt = JSONObject().put("stage", stage)
+                    .put("rootWindowFocused", compose.activity.window.decorView.hasWindowFocus())
+                    .put("composeRootWindowFocused", composeRootFocused)
+                    .put("lifecycle", compose.activity.lifecycle.currentState.name)
+                    .put("connectionsSearchNodes", connectionNodes)
+                    .put("fixtureMessage", state.value.message)
+                    .put("connectionTelemetry", actions.connectionTelemetry.toString()).toString()
+                Log.i("ConnectionDemandReceipt", receipt)
+                assertEquals(receipt, expected, actions.connectionTelemetry)
+            }
+        }
+        assertDemand("initial", emptyList())
         openSettingsDetail(R.string.lite_tab_connections)
-        compose.runOnUiThread { assertEquals(listOf(true), actions.connectionTelemetry) }
+        assertDemand("connections-open", listOf(true))
         compose.runOnUiThread { state.value = state.value.copy(message = "Fixture overlay") }
         compose.waitForIdle()
-        compose.runOnUiThread { assertEquals(listOf(true, false), actions.connectionTelemetry) }
+        assertDemand("covered", listOf(true, false))
         compose.runOnUiThread { state.value = state.value.copy(message = null) }
         compose.waitForIdle()
-        compose.runOnUiThread { assertEquals(listOf(true, false, true), actions.connectionTelemetry) }
+        assertDemand("uncovered", listOf(true, false, true))
         compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
-        compose.runOnUiThread { assertEquals(listOf(true, false, true, false), actions.connectionTelemetry) }
+        assertDemand("started", listOf(true, false, true, false))
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
-        compose.runOnUiThread { assertEquals(listOf(true, false, true, false, true), actions.connectionTelemetry) }
+        assertDemand("resumed", listOf(true, false, true, false, true))
         compose.onNodeWithContentDescription(text(R.string.lite_back)).performClick()
-        compose.runOnUiThread {
-            assertEquals(listOf(true, false, true, false, true, false), actions.connectionTelemetry)
+        assertDemand("closed", listOf(true, false, true, false, true, false))
+        compose.runOnIdle {
             assertTrue("Lifecycle fixture observations are not user/network actions", actions.events.isEmpty())
         }
     }
