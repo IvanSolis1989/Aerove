@@ -4,6 +4,9 @@ part of '../action.dart';
 class ProfilesAction extends _$ProfilesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
   bool _autoUpdating = false;
+  final _automaticBackoff = AutomaticUpdateBackoff();
+
+  void resetAutomaticBackoff() => _automaticBackoff.reset();
 
   @override
   void build() {}
@@ -60,10 +63,15 @@ class ProfilesAction extends _$ProfilesAction {
         if (isNotNeedUpdate == false || profile.type != ProfileType.url) {
           continue;
         }
+        final key = profile.id.toString();
+        final source = '${profile.url}\n${profile.ageSecretKey}';
+        if (!_automaticBackoff.ready(key, source)) continue;
         try {
           await updateProfile(profile, isCurrent: canUpdate);
+          if (canUpdate()) _automaticBackoff.reset(key);
         } catch (e) {
           if (e is UpdateCancelledException || !canUpdate()) return;
+          _automaticBackoff.failed(key, source, profile.autoUpdateDuration);
           commonPrint.log(compactError(e), logLevel: LogLevel.warning);
         }
       }
@@ -154,6 +162,7 @@ class ProfilesAction extends _$ProfilesAction {
     bool Function()? isCurrent,
   }) async {
     checkUpdateCurrent(isCurrent);
+    if (isCurrent == null) _automaticBackoff.reset(profile.id.toString());
     final operation = showLoading
         ? ref.read(updatingKeysProvider.notifier).start(profile.updatingKey)
         : null;
@@ -164,6 +173,7 @@ class ProfilesAction extends _$ProfilesAction {
         isCurrent: isCurrent,
       );
       checkUpdateCurrent(isCurrent);
+      _automaticBackoff.reset(profile.id.toString());
       // The download can take minutes; edits and deletes made meanwhile win.
       final latest = ref.read(profilesProvider).getProfile(profile.id);
       if (latest == null) {

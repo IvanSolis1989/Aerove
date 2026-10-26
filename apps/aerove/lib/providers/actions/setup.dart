@@ -493,6 +493,10 @@ class SetupAction extends _$SetupAction {
     }
     await setRunning(false);
     await setRunning(true);
+    if (ref.read(isStartProvider)) {
+      ref.read(profilesActionProvider.notifier).resetAutomaticBackoff();
+      ref.read(resourcesActionProvider.notifier).resetAutomaticBackoff();
+    }
   }
 
   void _rollbackRunning(_RunRequest request) {

@@ -227,10 +227,12 @@ class ApplicationState extends ConsumerState<Application> {
     }
   }
 
-  Future<void> _handleConnectivityChanged(
+  Future<void> handleConnectivityChanged(
     List<ConnectivityResult> results,
   ) async {
     commonPrint.log('connectivityChanged ${results.toString()}');
+    ref.read(profilesActionProvider.notifier).resetAutomaticBackoff();
+    ref.read(resourcesActionProvider.notifier).resetAutomaticBackoff();
     unawaited(systemDnsCoordinator?.resync() ?? Future.value());
     unawaited(ref.read(systemActionProvider.notifier).updateLocalIp());
     final hasVpn = results.contains(ConnectivityResult.vpn);
@@ -272,7 +274,7 @@ class ApplicationState extends ConsumerState<Application> {
                     widget._testManagers?.call(child!) ??
                     buildManagerStack(
                       isDesktop: system.isDesktop,
-                      onConnectivityChanged: _handleConnectivityChanged,
+                      onConnectivityChanged: handleConnectivityChanged,
                       terminateSignals: _terminateSignals,
                       child: RemoteFocusAdapter(
                         enabled: system.isTV,

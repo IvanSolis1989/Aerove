@@ -54,6 +54,8 @@ class CoreAction extends _$CoreAction {
     if (result.outcome == CoreLifecycleOutcome.superseded) {
       return false;
     }
+    ref.read(profilesActionProvider.notifier).resetAutomaticBackoff();
+    ref.read(resourcesActionProvider.notifier).resetAutomaticBackoff();
     if (statusFirst) {
       ref.read(coreStatusProvider.notifier).value = CoreStatus.connected;
       await initCore();

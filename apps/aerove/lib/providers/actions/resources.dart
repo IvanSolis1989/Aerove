@@ -3,11 +3,15 @@ part of '../action.dart';
 @Riverpod(keepAlive: true)
 class ResourcesAction extends _$ResourcesAction {
   var _autoUpdating = false;
+  final _automaticBackoff = AutomaticUpdateBackoff();
+
+  void resetAutomaticBackoff() => _automaticBackoff.reset();
 
   @override
   void build() {}
 
   Future<void> updateIconSet(IconSet iconSet, {bool Function()? isCurrent}) {
+    if (isCurrent == null) _automaticBackoff.reset(iconSet.updatingKey);
     return _track(
       iconSet.updatingKey,
       () => ref
@@ -20,6 +24,7 @@ class ResourcesAction extends _$ResourcesAction {
     ClashProvider provider, {
     bool Function()? isCurrent,
   }) {
+    if (isCurrent == null) _automaticBackoff.reset(provider.updatingKey);
     return _track(
       provider.updatingKey,
       () => ref
@@ -34,6 +39,7 @@ class ResourcesAction extends _$ResourcesAction {
   }
 
   Future<void> updateScript(Script script, {bool Function()? isCurrent}) {
+    if (isCurrent == null) _automaticBackoff.reset(script.updatingKey);
     return ref
         .read(scriptsActionProvider.notifier)
         .updateScript(script, isCurrent: isCurrent);
@@ -52,6 +58,7 @@ class ResourcesAction extends _$ResourcesAction {
   /// A geo file fails here only when the Core turns the request down; a
   /// download that fails later reaches the user from [GeoResourceAction].
   Future<List<UpdatingMessage>> updateAll() async {
+    resetAutomaticBackoff();
     final appLocalizations = currentAppLocalizations;
     final geoResourceAction = ref.read(geoResourceActionProvider.notifier);
     final failures = <UpdatingMessage>[];
@@ -137,6 +144,9 @@ class ResourcesAction extends _$ResourcesAction {
         if (iconSet.isRemote && isDue(iconSet.lastUpdateTime)) {
           await _tryUpdate(
             iconSet.name,
+            iconSet.updatingKey,
+            iconSet.url.toString(),
+            interval,
             () => updateIconSet(iconSet, isCurrent: canUpdate),
             isCurrent: canUpdate,
           );
@@ -148,6 +158,9 @@ class ResourcesAction extends _$ResourcesAction {
         if (script.url != null && isDue(script.lastUpdateTime)) {
           await _tryUpdate(
             script.label,
+            script.updatingKey,
+            script.url.toString(),
+            interval,
             () => updateScript(script, isCurrent: canUpdate),
             isCurrent: canUpdate,
           );
@@ -164,6 +177,9 @@ class ResourcesAction extends _$ResourcesAction {
         if (provider.isRemote && isDue(info?.lastModified)) {
           await _tryUpdate(
             provider.label,
+            provider.updatingKey,
+            provider.url.toString(),
+            interval,
             () => updateRuleProvider(provider, isCurrent: canUpdate),
             isCurrent: canUpdate,
           );
@@ -178,17 +194,59 @@ class ResourcesAction extends _$ResourcesAction {
 
   Future<void> _tryUpdate(
     String label,
+    String key,
+    String source,
+    Duration interval,
     Future<void> Function() update, {
     required bool Function() isCurrent,
   }) async {
+    if (!_automaticBackoff.ready(key, source)) return;
     try {
       await update();
+      if (isCurrent()) _automaticBackoff.reset(key);
     } catch (e) {
       if (e is UpdateCancelledException || !isCurrent()) return;
+      _automaticBackoff.failed(key, source, interval);
       commonPrint.log(
         'auto update $label: ${compactError(e)}',
         logLevel: LogLevel.warning,
       );
+    }
+  }
+}
+
+class AutomaticUpdateBackoff {
+  AutomaticUpdateBackoff({DateTime Function()? now})
+    : _now = now ?? DateTime.now;
+
+  final DateTime Function() _now;
+  final _failures =
+      <String, ({String source, Duration delay, DateTime until})>{};
+
+  bool ready(String key, String source) {
+    final failure = _failures[key];
+    if (failure == null) return true;
+    if (failure.source != source) {
+      _failures.remove(key);
+      return true;
+    }
+    return !_now().isBefore(failure.until);
+  }
+
+  void failed(String key, String source, Duration interval) {
+    final previous = _failures[key];
+    final duration = previous?.source == source
+        ? previous!.delay * 2
+        : const Duration(minutes: 20);
+    final delay = duration > interval ? interval : duration;
+    _failures[key] = (source: source, delay: delay, until: _now().add(delay));
+  }
+
+  void reset([String? key]) {
+    if (key == null) {
+      _failures.clear();
+    } else {
+      _failures.remove(key);
     }
   }
 }
