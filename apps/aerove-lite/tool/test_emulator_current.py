@@ -358,3 +358,17 @@ class CurrentCancellationTests(unittest.TestCase):
 
     def test_normal_main_still_joins_children_and_atomically_records_success(self):
         self.exercise_cancellation(mode='normal')
+
+
+class OriginalSamplePhaseTests(unittest.TestCase):
+    def test_requires_one_fixed_lite125_sample_and_preserves_selector(self):
+        runtime = {'runtimeTarget': 'lite125-original-samples'}
+        self.assertEqual('dev.aerove.lite.ui.GlyphPaintedBoundsUiTest#actualArrowPaintIncludingAntialiasFitsTheSharedEnvelope',
+                         current.original_sample_phase_selector('original-sample', 'glyph', runtime))
+        self.assertIsNone(current.original_sample_phase_selector('matrix', None, runtime))
+        with self.assertRaises(ValueError):
+            current.original_sample_phase_selector('original-sample', None, runtime)
+        with self.assertRaises(ValueError):
+            current.original_sample_phase_selector('original-sample', 'glyph', {'runtimeTarget': 'lite94'})
+        with self.assertRaises(ValueError):
+            current.original_sample_phase_selector('matrix', 'glyph', runtime)

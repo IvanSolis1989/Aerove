@@ -96,20 +96,37 @@ class CancellationView:
         finally:
             check_cancelled(self.receipt)
 
+def original_sample_phase_selector(phase, sample, runtime):
+    if phase != 'original-sample':
+        if sample is not None:
+            raise ValueError('A sample is valid only for the original-sample phase')
+        return None
+    if runtime.get('runtimeTarget') != 'lite125-original-samples':
+        raise ValueError('Single-sample phase requires the fixed Lite125 original runtime')
+    from emulator_original84 import original_sample_selector
+    return original_sample_selector(sample)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=['matrix', 'remaining'])
+    parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample'])
     parser.add_argument('--runtime-directory', type=Path, required=True)
+    parser.add_argument('--sample')
     args = parser.parse_args()
+    if (args.phase == 'original-sample') != (args.sample is not None):
+        parser.error('--sample is required only for original-sample')
     if sys.platform != 'linux':
         raise ValueError('The real acceptance owner requires the existing Linux/KVM runner')
     if os.environ.get('AEROVE_QA79_PROOF') or os.environ.get('AEROVE_CURRENT_RENDERER_PROOF'):
         raise ValueError('Current owner requires fresh, unmixed renderer proof')
     current = verify_current_runtime(args.runtime_directory)
+    sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
     directory = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics' / args.phase
     directory.mkdir(parents=True, exist_ok=True)
     emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
+    if sample_selector:
+        receipt.update(sample=args.sample, testSelector=sample_selector, diagnosticOnly=True, accepted=False, promotionAccepted=False)
     environment = dict(os.environ, ANDROID_SERIAL='emulator-5554')
     interrupt_signals = []
     receipt['interruptSignals'] = interrupt_signals
@@ -155,7 +172,12 @@ def main():
                 write_owner_receipt(profile_owner, receipt)
                 environment['AEROVE_BETA14_PROFILE_OWNER'] = str(profile_owner.resolve())
             check_cancelled(receipt)
-            acceptance = subprocess.Popen(['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', args.phase], env=environment, start_new_session=True)
+            acceptance_command = ['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', args.phase]
+            if args.sample:
+                environment['AEROVE_ORIGINAL_SAMPLE'] = args.sample
+                environment['AEROVE_ORIGINAL_SAMPLE_SELECTOR'] = sample_selector
+                acceptance_command.append(args.sample)
+            acceptance = subprocess.Popen(acceptance_command, env=environment, start_new_session=True)
             check_cancelled(receipt)
             result = monitor(emulator, CancellationView(acceptance, receipt), receipt)
             check_cancelled(receipt)

@@ -8,6 +8,10 @@ test_timeout_msec=120000
 case "$phase" in
     matrix) selection=(-e class "$matrix_class"); test_timeout_msec=600000 ;;
     remaining) selection=(-e notClass "$matrix_class") ;;
+    original-sample)
+        [[ "${2:-}" == "${AEROVE_ORIGINAL_SAMPLE:?One original sample required}" ]] || exit 2
+        [[ "$AEROVE_ORIGINAL_SAMPLE" =~ ^(glyph|solid|clear)$ ]] || exit 2
+        ;;
     all) ;;
     *) echo "Unknown instrumentation phase: $phase" >&2; exit 2 ;;
 esac
@@ -15,6 +19,7 @@ esac
 shard_count="${AEROVE_REMAINING_SHARD_COUNT:-}"
 shard_index="${AEROVE_REMAINING_SHARD_INDEX:-}"
 remaining_timeout=()
+if [[ "$phase" == original-sample ]]; then remaining_timeout=(timeout --signal=TERM --kill-after=20s 240s); fi
 if [[ -v AEROVE_REMAINING_SHARD_COUNT || -v AEROVE_REMAINING_SHARD_INDEX ]]; then
     if [[ "$phase" != remaining || "$shard_count" != 4 || ! "$shard_index" =~ ^[0-3]$ ]]; then
         echo 'Sharding requires remaining, count=4 and one index in 0..3; omit both variables for an unsharded run.' >&2
@@ -86,8 +91,19 @@ if original:
         source.update(diagnosticOriginalRuntime=True, runtimeTarget=current["runtimeTarget"],
                       sourceAppRevision=original["sourceRevision"],
                       harnessIdentity=current["harnessIdentity"])
+if sys.argv[2] == "original-sample":
+    if original is None or current.get("runtimeTarget") != "lite125-original-samples":
+        raise ValueError("Original sample requires the approved immutable run125 runtime")
+    from emulator_original84 import runtime_spec
+    from original_sample import context
+    source.update(context(runtime_spec("lite125-original-samples"), current,
+                          os.environ["AEROVE_ORIGINAL_SAMPLE"], os.environ["AEROVE_ORIGINAL_SAMPLE_SELECTOR"]))
 Path(sys.argv[1]).write_text(json.dumps(source, indent=2), encoding="utf-8")
 PY
+if [[ "$phase" == original-sample ]]; then
+    sample_selector=$(python3 -c 'import json,shlex,sys; print(shlex.quote(json.load(open(sys.argv[1]))["originalSample"]["selector"]))' "$diagnostics/SOURCE.json")
+    selection=(-e class "$sample_selector")
+fi
 app_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceRevision"])' "$diagnostics/SOURCE.json")
 renderer_backend_remote=$(python3 -c 'import json,shlex,sys; print(shlex.quote(json.load(open(sys.argv[1]))["rendererBackend"]))' "$diagnostics/SOURCE.json")
 fixture_args=()
@@ -201,7 +217,7 @@ finish() {
     timeout 15s "${adb_device[@]}" logcat -d > "$diagnostics/logcat.txt" 2>&1 || true
     pull_status=0
     timeout 60s "${adb_device[@]}" pull /sdcard/Android/data/dev.aerove.lite/files/captures "$diagnostics/" || pull_status=$?
-    if [[ "$phase" != remaining ]]; then
+    if [[ "$phase" != remaining && "$phase" != original-sample ]]; then
         if [[ "$result" == 0 && "$pull_status" != 0 ]]; then result=1; fi
         gallery_status=0
         python3 apps/aerove-lite/tool/render_gallery.py --captures "$diagnostics/captures" --source "$app_source" \
@@ -245,6 +261,19 @@ if [[ -n "$shard_count" ]]; then
         --proof "${AEROVE_CURRENT_RENDERER_PROOF:?Current runtime proof required for sharded acceptance}" \
         --sums "$diagnostics/APK_SHA256SUMS" --output "$diagnostics/TEST-DISCOVERY.json"
 fi
+if [[ "$phase" == original-sample ]]; then
+    set +e
+    timeout --signal=TERM --kill-after=10s 120s "${adb_device[@]}" shell am instrument -w -r \
+        -e debug false -e log true "${selection[@]}" -e fixtureUrl http://10.0.2.2:18080 \
+        -e sourceRevision "$app_source" -e isolatedBackgroundPolicy true -e deviceKind CI-emulator \
+        -e rendererBackend "$renderer_backend_remote" dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner \
+        2>&1 | tee "$diagnostics/sample-discovery.log"
+    discovery_status=("${PIPESTATUS[@]}")
+    set -e
+    if [[ "${discovery_status[0]}" != 0 || "${discovery_status[1]}" != 0 ]]; then exit 1; fi
+    python3 apps/aerove-lite/tool/original_sample.py --source "$diagnostics/SOURCE.json" \
+        --log "$diagnostics/sample-discovery.log" --discovery --output "$diagnostics/SAMPLE-SELECTION.json"
+fi
 instrumentation_prefix=()
 if [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]]; then
     instrumentation_prefix=(python3 apps/aerove-lite/tool/clear_frame_trace.py
@@ -265,12 +294,19 @@ set +e
     dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | tee "$diagnostics/instrumentation.log"
 pipeline_status=("${PIPESTATUS[@]}")
 set -e
-if [[ -n "$shard_count" ]]; then
+if [[ "$phase" == original-sample ]]; then
+    printf '{"hostExitCode":%s,"teeExitCode":%s,"deadlineSeconds":240,"timeoutSignal":"TERM","killAfterSeconds":20,"guestCancellationConfirmed":false}\n' \
+        "${pipeline_status[0]}" "${pipeline_status[1]}" > "$diagnostics/INSTRUMENTATION-HOST-EXIT.json" || true
+elif [[ -n "$shard_count" ]]; then
     printf '{"hostExitCode":%s,"teeExitCode":%s,"deadlineSeconds":1200,"guestCancellationConfirmed":false}\n' \
         "${pipeline_status[0]}" "${pipeline_status[1]}" > "$diagnostics/INSTRUMENTATION-HOST-EXIT.json" || true
 fi
 if [[ "${pipeline_status[0]}" != 0 ]]; then exit "${pipeline_status[0]}"; fi
 if [[ "${pipeline_status[1]}" != 0 ]]; then exit "${pipeline_status[1]}"; fi
+if [[ "$phase" == original-sample ]]; then
+    python3 apps/aerove-lite/tool/original_sample.py --source "$diagnostics/SOURCE.json" \
+        --log "$diagnostics/instrumentation.log" --output "$diagnostics/SAMPLE-RESULT.json"
+fi
 python3 - "$diagnostics/instrumentation.log" "$phase" "$matrix_class" <<'PY'
 import re, sys
 from pathlib import Path

@@ -27,6 +27,59 @@ PRODUCT = dict(applicationId='dev.aerove.lite', version='0.1.0-beta.10', version
                signerSha256='09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8')
 APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
+LITE125_ORIGINAL_SAMPLES = dict(
+    identity=dict(sourceRevision='d52726dc24756847b2b268d307a611cc37f994a3',
+                  sourceTree='2dbd4a0c5463a24a826ffde19eace43ed229a1fc',
+                  workflowRun='40335340043', runNumber=125, runAttempt=1),
+    artifact=12656749144,
+    zipSha256='8ac16086a91edcfa75cd037bba658f09e088c4dc105885af66af7442a9ddce6d',
+    zipBytes=35353437,
+    manifestSha256='02916fdd4190823236f9bac4a2e7792f6785612c17f4f6e642b0351d3477f9ad',
+    apks={'app-release.apk': 'ad5b09bcd20312cafd64bed39d4c508c1a463063686aa0ed0236c51d1b9fa701',
+          'app-release-androidTest.apk': '1e80bccab828e7e827f91b2d6e8d7ef5076e8a3875d736fbe4ea3e512a68f63b'},
+    product=dict(applicationId='dev.aerove.lite', version='0.1.0-beta.16', versionCode='16',
+                 signerSha256='09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'))
+
+LITE125_SAMPLES = {
+    'glyph': dict(
+        description='actualArrowPaintIncludingAntialiasFitsTheSharedEnvelope(dev.aerove.lite.ui.GlyphPaintedBoundsUiTest)',
+        className='dev.aerove.lite.ui.GlyphPaintedBoundsUiTest',
+        testName='actualArrowPaintIncludingAntialiasFitsTheSharedEnvelope',
+        selector='dev.aerove.lite.ui.GlyphPaintedBoundsUiTest#actualArrowPaintIncludingAntialiasFitsTheSharedEnvelope'),
+    'solid': dict(
+        description='threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Solid_ordinary_light_on_enabled](dev.aerove.lite.ui.LiteMaterialRenderingTest)',
+        className='dev.aerove.lite.ui.LiteMaterialRenderingTest',
+        testName='threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Solid_ordinary_light_on_enabled]',
+        selector='dev.aerove.lite.ui.LiteMaterialRenderingTest#threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Solid_ordinary_light_on_enabled]'),
+    'clear': dict(
+        description='threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Clear_ordinary_dark_off_enabled](dev.aerove.lite.ui.LiteMaterialRenderingTest)',
+        className='dev.aerove.lite.ui.LiteMaterialRenderingTest',
+        testName='threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Clear_ordinary_dark_off_enabled]',
+        selector='dev.aerove.lite.ui.LiteMaterialRenderingTest#threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Clear_ordinary_dark_off_enabled]'),
+}
+
+LITE125_ORIGINAL_SAMPLES = dict(
+    identity=dict(sourceRevision='d52726dc24756847b2b268d307a611cc37f994a3',
+                  sourceTree='2dbd4a0c5463a24a826ffde19eace43ed229a1fc',
+                  workflowRun='40335340043', runNumber=125, runAttempt=1),
+    artifact=12656749144,
+    zipSha256='8ac16086a91edcfa75cd037bba658f09e088c4dc105885af66af7442a9ddce6d',
+    zipBytes=35353437,
+    manifestSha256='02916fdd4190823236f9bac4a2e7792f6785612c17f4f6e642b0351d3477f9ad',
+    apks={'app-release.apk': 'ad5b09bcd20312cafd64bed39d4c508c1a463063686aa0ed0236c51d1b9fa701',
+          'app-release-androidTest.apk': '1e80bccab828e7e827f91b2d6e8d7ef5076e8a3875d736fbe4ea3e512a68f63b'},
+    product=dict(applicationId='dev.aerove.lite', version='0.1.0-beta.16', versionCode='16',
+                 signerSha256='09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'),
+    samples=LITE125_SAMPLES)
+
+
+def original_sample_selector(sample):
+    spec = runtime_spec('lite125-original-samples')['samples']
+    if sample not in spec:
+        raise ValueError('Unknown Lite125 original sample')
+    return spec[sample]['selector']
+
+
 ORIGINAL94 = dict(
     identity=dict(sourceRevision='c8b0fdb6ce33ba93fea831659096c85938ca3994',
                   sourceTree='11d6031b795a437d5bf326c089f9e4bbc295b7aa',
@@ -44,6 +97,8 @@ def runtime_spec(target='original84'):
     if target == 'original84':
         return dict(identity=ORIGINAL, artifact=ARTIFACT_ID, zipSha256=ZIP_SHA256,
                     manifestSha256=MANIFEST_SHA256, apks=APKS, product=PRODUCT)
+    if target == 'lite125-original-samples':
+        return LITE125_ORIGINAL_SAMPLES
     if target == 'lite94':
         return ORIGINAL94
     if target == 'beta14':
@@ -60,7 +115,7 @@ def proof_context():
     if legacy:
         return legacy, 'original84'
     if neutral:
-        if release._json(neutral).get('runtimeTarget') not in ('lite94','beta14'):
+        if release._json(neutral).get('runtimeTarget') not in ('lite94','beta14','lite125-original-samples'):
             raise ValueError('Neutral proof requires approved lite94 target')
         return neutral, release._json(neutral)['runtimeTarget']
     raise ValueError('Original runtime identity is diagnostic opt-in only')
@@ -226,6 +281,8 @@ def verify_original_runtime(directory):
                     harnessIdentity=artifacts.identity(), promotionAccepted=False,
                     artifactId=spec['artifact'], artifactZipSha256=spec['zipSha256'],
                     runtimeManifestSha256=spec['manifestSha256'], apks=spec['apks'])
+    if target == 'lite125-original-samples':
+        expected.update(diagnosticOnly=True, accepted=False)
     if any(proof.get(key) != value for key, value in expected.items()):
         raise ValueError('Original84 proof identity differs from fixed app or current harness')
     if Path(proof['runtimeDirectory']).resolve() != Path(directory).resolve():
@@ -283,16 +340,18 @@ def prepare(directory, evidence, target='original84'):
             or row.get('workflow_run', {}).get('id') != int(spec['identity']['workflowRun'])
             or row['workflow_run'].get('head_sha') != spec['identity']['sourceRevision']):
         raise ValueError('Original84 artifact API identity changed')
-    if target == 'beta14':
+    if target in ('beta14', 'lite125-original-samples'):
         if row.get('size_in_bytes') != spec['zipBytes']:
-            raise ValueError('beta14 artifact API size differs')
+            raise ValueError(f'{target} artifact API size differs')
         run=reader(f"repos/{release.REPO}/actions/runs/{spec['identity']['workflowRun']}")
-        if (run.get('id') != int(spec['identity']['workflowRun']) or run.get('head_sha') != spec['identity']['sourceRevision']
-                or run.get('run_number') != 107 or run.get('run_attempt') != 1 or run.get('status') != 'completed'):
-            raise ValueError('beta14 original run API identity differs')
+        identity = spec['identity']
+        if (run.get('id') != int(identity['workflowRun']) or run.get('head_sha') != identity['sourceRevision']
+                or run.get('run_number') != int(identity['runNumber'])
+                or run.get('run_attempt') != int(identity['runAttempt']) or run.get('status') != 'completed'):
+            raise ValueError(f'{target} original run API identity differs')
     evidence.mkdir(parents=True, exist_ok=True)
     if target == 'beta14': (evidence / 'original107-run-api.json').write_text(json.dumps(run,indent=2)+'\n')
-    (evidence / ('original84-artifact-api.json' if target == 'original84' else 'original107-artifact-api.json' if target == 'beta14' else 'original94-artifact-api.json')).write_text(json.dumps(row, indent=2) + '\n')
+    (evidence / ('original84-artifact-api.json' if target == 'original84' else 'original107-artifact-api.json' if target == 'beta14' else 'lite125-original-artifact-api.json' if target == 'lite125-original-samples' else 'original94-artifact-api.json')).write_text(json.dumps(row, indent=2) + '\n')
     if target == 'beta14':
         from beta14_runtime import download
         download(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}/zip",archive)
@@ -318,6 +377,8 @@ def prepare(directory, evidence, target='original84'):
         from beta14_runtime import verify_contract
         proof['nativeBundleProof']=verify_contract(directory)
         (evidence / 'BETA14-NATIVE-BUNDLE-PROOF.json').write_text(json.dumps(proof['nativeBundleProof'],indent=2)+'\n')
+    if target == 'lite125-original-samples':
+        proof.update(diagnosticOnly=True, accepted=False)
     path = evidence / ('ORIGINAL84-APP-PROOF.json' if target == 'original84' else 'ORIGINAL-RUNTIME-APP-PROOF.json')
     path.write_text(json.dumps(proof, indent=2) + '\n')
     return path
@@ -326,16 +387,26 @@ def prepare(directory, evidence, target='original84'):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--directory', type=Path, required=True)
-    parser.add_argument('--target', choices=['original84', 'lite94','beta14'], default='original84')
+    parser.add_argument('--target', choices=['original84', 'lite94','beta14','lite125-original-samples'], default='original84')
+    parser.add_argument('--sample', choices=sorted(LITE125_SAMPLES))
     args = parser.parse_args()
+    if (args.target == 'lite125-original-samples') != (args.sample is not None):
+        parser.error('--sample is required only for lite125-original-samples')
     if os.environ.get('AEROVE_QA79_PROOF') or os.environ.get('AEROVE_CURRENT_RENDERER_PROOF') or os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
         raise ValueError('Original84 QA requires fresh unmixed proof')
     evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics/matrix'
     proof = prepare(args.directory, evidence, args.target)
     proof_variable = 'AEROVE_ORIGINAL84_PROOF' if args.target == 'original84' else 'AEROVE_ORIGINAL_RUNTIME_PROOF'
     environment = dict(os.environ, **{proof_variable: str(proof.resolve())})
-    return subprocess.run([sys.executable, str(Path(__file__).with_name('emulator_current.py')),
-                           'matrix', '--runtime-directory', str(args.directory)], env=environment).returncode
+    phase = 'original-sample' if args.sample else 'matrix'
+    command = [sys.executable, str(Path(__file__).with_name('emulator_current.py')), phase,
+               '--runtime-directory', str(args.directory)]
+    if args.sample:
+        command.extend(['--sample', args.sample])
+        environment['AEROVE_ORIGINAL_SAMPLE'] = args.sample
+        sample = LITE125_SAMPLES[args.sample]
+        environment['AEROVE_ORIGINAL_SAMPLE_SELECTOR'] = sample['selector']
+    return subprocess.run(command, env=environment).returncode
 
 
 if __name__ == '__main__':
