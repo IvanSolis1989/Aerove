@@ -374,7 +374,24 @@ class DashboardLayoutUiTest {
                         .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
                     val text = results.single()
                     val detail = "$width $scale $language ${text.layoutInput.text} ${text.size}"
-                    assertTrue(detail, !text.didOverflowWidth && !text.didOverflowHeight)
+                    assertTrue(if (text.didOverflowWidth || text.didOverflowHeight) buildString {
+                        val input = text.layoutInput
+                        append(detail).append(" | pillsGeometry={text='")
+                        append(input.text.text.replace("\n", "\\n").replace("\r", "\\r")).append("',constraints=").append(input.constraints)
+                        append(",density=").append(input.density.density).append(",effectiveFontScale=").append(input.density.fontScale)
+                        append(",style={fontSize=").append(input.style.fontSize).append(",lineHeight=").append(input.style.lineHeight)
+                        append(",letterSpacing=").append(input.style.letterSpacing).append("},size=").append(text.size)
+                        append(",paragraph={width=").append(text.multiParagraph.width).append(",height=").append(text.multiParagraph.height).append('}')
+                        append(",didOverflowWidth=").append(text.didOverflowWidth).append(",didOverflowHeight=").append(text.didOverflowHeight)
+                        append(",nodeBounds=").append(runCatching { node.boundsInRoot.toString() }.getOrElse { rethrowMatrixCancellation(it); "unavailable:${it.javaClass.simpleName}" })
+                        append(",lineCount=").append(text.lineCount).append(",lines=[")
+                        for (line in 0 until text.lineCount) {
+                            if (line > 0) append(',')
+                            append("{index=").append(line).append(",top=").append(text.getLineTop(line))
+                            append(",bottom=").append(text.getLineBottom(line)).append(",baseline=").append(text.getLineBaseline(line)).append('}')
+                        }
+                        append("]}")
+                    } else detail, !text.didOverflowWidth && !text.didOverflowHeight)
                     for (line in 0 until text.lineCount) assertTrue(detail, !text.isLineEllipsized(line))
                     if (language == "zh-CN") for (line in 0 until text.lineCount)
                         assertTrue(detail, text.layoutInput.text.substring(text.getLineStart(line), text.getLineEnd(line)).trim() != "理")
