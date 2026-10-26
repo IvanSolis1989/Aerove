@@ -39,6 +39,20 @@ def require(ok: bool, message: str) -> None:
     if not ok:
         raise GuardError(message)
 
+def verify_signer(signature: str, label: str) -> None:
+    # Match the same legacy and SDK37 certificate formats as verify_apk.py.
+    lines = signature.splitlines()
+    digests = re.findall(r"^(?:Signer #[0-9]+|V2 Signer:) certificate SHA-256 digest: ([0-9a-f]{64})$",
+                         signature, re.MULTILINE)
+    require(digests == [SIGNER_SHA]
+            and sum("Signer" in line and "certificate SHA-256 digest:" in line for line in lines) == 1
+            and lines.count("Verifies") == 1
+            and [line for line in lines if line.startswith("Verified using v2 scheme ")]
+                == ["Verified using v2 scheme (APK Signature Scheme v2): true"]
+            and [line for line in lines if line.startswith("Number of signers:")]
+                == ["Number of signers: 1"],
+            f"original {label} signer readback mismatch")
+
 def sha_bytes(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -164,11 +178,8 @@ def verify_artifact(out: Path) -> dict:
     sdk = Path(os.environ["ANDROID_SDK_ROOT"]) / "build-tools/37.0.0"
     app_signature = checked_run([str(sdk / "apksigner"), "verify", "--verbose", "--print-certs", str(app_apk)]).stdout
     test_signature = checked_run([str(sdk / "apksigner"), "verify", "--verbose", "--print-certs", str(old_test_apk)]).stdout
-    signer = re.compile(r"Signer #1 certificate SHA-256 digest: ([0-9a-f]{64})", re.I)
-    require(signer.search(app_signature) and signer.search(app_signature).group(1).lower() == SIGNER_SHA,
-            "original App signer readback mismatch")
-    require(signer.search(test_signature) and signer.search(test_signature).group(1).lower() == SIGNER_SHA,
-            "original test signer readback mismatch")
+    verify_signer(app_signature, "App")
+    verify_signer(test_signature, "test")
     badging = checked_run([str(sdk / "aapt"), "dump", "badging", str(app_apk)]).stdout
     require("package: name='dev.aerove.lite' versionCode='16' versionName='0.1.0-beta.16'" in badging,
             "original App package/version readback mismatch")
