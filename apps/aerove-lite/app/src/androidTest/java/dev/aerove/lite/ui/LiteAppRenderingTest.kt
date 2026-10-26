@@ -66,10 +66,14 @@ class LiteAppRenderingTest(private val case: RenderCase) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         fun text(id: Int) = context.getString(id)
         val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
-        fun navigate(id: Int) { compose.onNode(tab and hasText(text(id))).performClick() }
+        fun navigate(id: Int) {
+            compose.onNode(tab and hasText(text(id))).performClick()
+            compose.mainClock.advanceTimeByFrame()
+        }
         fun openTool(id: Int) {
             compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(id)) and hasClickAction())
             compose.onNode(hasText(text(id)) and hasClickAction()).performClick()
+            compose.mainClock.advanceTimeByFrame()
         }
         try {
             val disabledStart = hasContentDescription(text(R.string.lite_start)) and
@@ -89,17 +93,21 @@ class LiteAppRenderingTest(private val case: RenderCase) {
             compose.onNodeWithText(text(R.string.lite_no_profiles)).assertExists()
             save("profiles-empty")
             compose.onNodeWithContentDescription(text(R.string.lite_add_subscription)).performClick()
+            compose.mainClock.advanceTimeByFrame()
             compose.onNode(tab).assertDoesNotExist()
             compose.onNode(hasText(text(R.string.lite_add_subscription)) and hasClickAction()).performClick()
+            compose.mainClock.advanceTimeByFrame()
             compose.onNodeWithText(text(R.string.lite_subscription_error)).assertExists()
             save("subscription-validation-modal")
             compose.onNodeWithContentDescription(text(R.string.lite_close)).performClick()
+            compose.mainClock.advanceTimeByFrame()
             navigate(R.string.lite_tab_tools)
             save("tools")
             openTool(R.string.lite_tab_connections)
             compose.onNodeWithText(text(R.string.lite_no_connections)).assertExists()
             save("connections-empty")
             compose.onNodeWithContentDescription(text(R.string.lite_back)).performClick()
+            compose.mainClock.advanceTimeByFrame()
             openTool(R.string.lite_theme)
             save("theme")
             compose.onNodeWithContentDescription(text(R.string.lite_aurora)).performClick()
