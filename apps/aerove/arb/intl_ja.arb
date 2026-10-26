@@ -11,7 +11,6 @@
   "logs": "ログ",
   "resources": "リソース",
   "trafficUsage": "トラフィック統計",
-  "networkSpeed": "ネットワーク速度",
   "outboundMode": "アウトバウンドモード",
   "serviceStatus": "サービスの状態",
   "serviceRestricted": "アクセス制限",
@@ -912,7 +911,6 @@
   "currentOutboundDesc": "起動ボタンがあるため削除できません",
   "running": "実行中",
   "notRunning": "停止中",
-  "trafficPeak": "ピーク {value}",
   "trafficTotal": "累計 {value}",
   "ipQualityShort": "品質",
   "ipTypeUnknown": "タイプ不明",
@@ -989,5 +987,9 @@
   "aboutTelegramGroup": "Telegram グループ",
   "externalLinkOpenFailed": "このリンクを開けません。リンクを開くことができ、許可されたアプリがあるか確認してください。",
   "dashboardNetworkControl": "ネットワーク制御",
-  "dashboardNetworkOverview": "ネットワーク概要"
+  "dashboardNetworkOverview": "ネットワーク概要",
+  "outboundModeCurrent": "アウトバウンドモード：{mode}",
+  "outboundModeNext": "{mode}に切り替え",
+  "trafficUploadSpeed": "アップロード速度: {speed}",
+  "trafficDownloadSpeed": "ダウンロード速度: {speed}"
 }

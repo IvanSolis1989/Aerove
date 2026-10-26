@@ -38,7 +38,7 @@ class DashboardColors {
       track: neutral(colorScheme.surfaceContainerHighest, 0.16),
       thumb: colorScheme.outline,
       series2: Color.alphaBlend(
-        colorScheme.primary.withValues(alpha: 0.45),
+        colorScheme.primary.withValues(alpha: series2Share),
         card,
       ),
       ok: colorScheme.success,
@@ -55,6 +55,9 @@ class DashboardColors {
       onWarnContainer: colorScheme.onWarningContainer,
     );
   }
+
+  /// How much of the primary color the second series keeps.
+  static const series2Share = 0.45;
 
   final Color page;
   final Color card;
@@ -133,11 +136,6 @@ final _groupedFormat = NumberFormat.decimalPattern('en');
 /// phone's width.
 String dashboardCount(int count) =>
     count < 100000 ? _groupedFormat.format(count) : count.compact;
-
-String dashboardTraffic(num bytes) {
-  final show = bytes.traffic;
-  return '${show.value} ${show.unit}';
-}
 
 /// The dashboard's text roles; every figure reads in tabular digits.
 abstract final class DashboardText {

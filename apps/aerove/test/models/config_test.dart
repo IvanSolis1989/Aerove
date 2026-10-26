@@ -217,7 +217,6 @@ void main() {
       });
       expect(restored.dashboardWidgets, [
         DashboardWidget.currentOutbound,
-        DashboardWidget.networkSpeed,
         DashboardWidget.outboundMode,
       ]);
 
@@ -227,26 +226,73 @@ void main() {
       expect(alone.dashboardWidgets, [
         DashboardWidget.currentOutbound,
         DashboardWidget.outboundMode,
-        DashboardWidget.networkSpeed,
       ]);
     });
 
-    test('the traffic usage card folds into the network speed one', () {
-      final restored = AppSettingProps.fromJson({
-        'dashboardWidgets': ['currentOutbound', 'trafficUsage', 'profiles'],
+    test('a saved network speed card is dropped and nothing else moves', () {
+      for (final (saved, kept) in [
+        (
+          [
+            'currentOutbound',
+            'networkSpeed',
+            'outboundMode',
+            'vpnButton',
+            'networkTakeover',
+            'intranetIp',
+            'serviceStatus',
+            'profiles',
+            'proxyGroups',
+            'connectionStats',
+          ],
+          [
+            DashboardWidget.currentOutbound,
+            DashboardWidget.outboundMode,
+            DashboardWidget.vpnButton,
+            DashboardWidget.networkTakeover,
+            DashboardWidget.intranetIp,
+            DashboardWidget.serviceStatus,
+            DashboardWidget.profiles,
+            DashboardWidget.proxyGroups,
+            DashboardWidget.connectionStats,
+          ],
+        ),
+        (
+          ['profiles', 'currentOutbound', 'networkSpeed', 'memoryInfo'],
+          [
+            DashboardWidget.profiles,
+            DashboardWidget.currentOutbound,
+            DashboardWidget.memoryInfo,
+          ],
+        ),
+        (
+          ['currentOutbound', 'trafficUsage', 'profiles'],
+          [DashboardWidget.currentOutbound, DashboardWidget.profiles],
+        ),
+        (
+          ['currentOutbound', 'networkSpeed', 'trafficUsage'],
+          [DashboardWidget.currentOutbound],
+        ),
+      ]) {
+        expect(dashboardWidgetsFromJson(saved), kept, reason: '$saved');
+      }
+    });
+
+    test('a whole saved config listing the network speed card still loads', () {
+      final config = Config.strictFromJson({
+        'appSettingProps': {
+          'dashboardWidgets': ['currentOutbound', 'networkSpeed', 'profiles'],
+          'hideIp': true,
+        },
       });
-      expect(restored.dashboardWidgets, [
+      expect(config.appSettingProps.dashboardWidgets, [
         DashboardWidget.currentOutbound,
-        DashboardWidget.networkSpeed,
         DashboardWidget.profiles,
       ]);
-
-      final both = AppSettingProps.fromJson({
-        'dashboardWidgets': ['currentOutbound', 'networkSpeed', 'trafficUsage'],
-      });
-      expect(both.dashboardWidgets, [
-        DashboardWidget.currentOutbound,
-        DashboardWidget.networkSpeed,
+      expect(config.appSettingProps.hideIp, true);
+      final saved = jsonDecode(jsonEncode(config.toJson())) as Map;
+      expect((saved['appSettingProps'] as Map)['dashboardWidgets'], [
+        'currentOutbound',
+        'profiles',
       ]);
     });
 
@@ -270,6 +316,8 @@ void main() {
       for (final saved in [
         <String>[],
         ['runTime'],
+        ['networkSpeed'],
+        ['trafficUsage', 'runTime'],
       ]) {
         final restored = AppSettingProps.fromJson({'dashboardWidgets': saved});
         expect(restored.dashboardWidgets, [DashboardWidget.currentOutbound]);

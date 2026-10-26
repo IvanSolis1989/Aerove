@@ -11,7 +11,6 @@
   "logs": "Logs",
   "resources": "Resources",
   "trafficUsage": "Traffic usage",
-  "networkSpeed": "Network speed",
   "outboundMode": "Outbound mode",
   "serviceStatus": "Service status",
   "serviceRestricted": "Access restricted",
@@ -912,7 +911,6 @@
   "currentOutboundDesc": "Holds the start button and can't be removed",
   "running": "Running",
   "notRunning": "Not running",
-  "trafficPeak": "Peak {value}",
   "trafficTotal": "Total {value}",
   "ipQualityShort": "Quality",
   "ipTypeUnknown": "Unknown type",
@@ -989,5 +987,9 @@
   "aboutTelegramGroup": "Telegram group",
   "externalLinkOpenFailed": "Unable to open this link. Check that an app is available and allowed to open it.",
   "dashboardNetworkControl": "Network controls",
-  "dashboardNetworkOverview": "Network overview"
+  "dashboardNetworkOverview": "Network overview",
+  "outboundModeCurrent": "Outbound mode: {mode}",
+  "outboundModeNext": "Switch to {mode}",
+  "trafficUploadSpeed": "Upload speed: {speed}",
+  "trafficDownloadSpeed": "Download speed: {speed}"
 }

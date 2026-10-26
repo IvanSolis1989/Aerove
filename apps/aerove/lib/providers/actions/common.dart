@@ -10,10 +10,12 @@ class CommonAction extends _$CommonAction {
   @override
   void build() {
     ref.listen(appVisibleProvider, (_, _) => _trafficRevision++);
+    ref.listen(trafficDemandProvider, (_, _) => _trafficRevision++);
   }
 
   bool get _trafficVisible =>
-      ref.read(appVisibleProvider) ||
+      (ref.read(appVisibleProvider) &&
+          ref.read(trafficDemandProvider).contains(TrafficNeed.traffic)) ||
       (system.isMacOS &&
           !ref.read(safeModeProvider) &&
           ref.read(appSettingProvider).showTrayTitle);
@@ -47,14 +49,7 @@ class CommonAction extends _$CommonAction {
         );
   }
 
-  void updateMode() {
-    ref.read(patchClashConfigProvider.notifier).update((state) {
-      final index = Mode.values.indexWhere((item) => item == state.mode);
-      if (index == -1) return state;
-      final nextIndex = index + 1 > Mode.values.length - 1 ? 0 : index + 1;
-      return state.copyWith(mode: Mode.values[nextIndex]);
-    });
-  }
+  void updateMode() => ref.read(setupActionProvider.notifier).cycleMode();
 
   Future<void> updateTraffic() async {
     if (_isUpdatingTraffic || !_trafficVisible) {

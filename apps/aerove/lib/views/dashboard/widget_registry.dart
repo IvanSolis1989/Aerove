@@ -7,7 +7,6 @@ import 'package:material_ui/material_ui.dart';
 extension DashboardWidgetView on DashboardWidget {
   Widget get card => switch (this) {
     DashboardWidget.currentOutbound => const CurrentOutboundCard(),
-    DashboardWidget.networkSpeed => const NetworkSpeedCard(),
     DashboardWidget.outboundMode => const OutboundModeCard(),
     DashboardWidget.vpnButton => const VpnCard(),
     DashboardWidget.networkTakeover => const NetworkTakeoverCard(),
@@ -21,7 +20,6 @@ extension DashboardWidgetView on DashboardWidget {
 
   Glyph get glyph => switch (this) {
     DashboardWidget.currentOutbound => AppGlyphs.status,
-    DashboardWidget.networkSpeed => AppGlyphs.speed,
     DashboardWidget.outboundMode => AppGlyphs.split,
     DashboardWidget.vpnButton => AppGlyphs.vpn,
     DashboardWidget.networkTakeover => AppGlyphs.shuffle,
@@ -37,7 +35,6 @@ extension DashboardWidgetView on DashboardWidget {
     final appLocalizations = context.appLocalizations;
     return switch (this) {
       DashboardWidget.currentOutbound => appLocalizations.status,
-      DashboardWidget.networkSpeed => appLocalizations.networkSpeed,
       DashboardWidget.outboundMode => appLocalizations.outboundMode,
       DashboardWidget.vpnButton => 'VPN',
       DashboardWidget.networkTakeover => appLocalizations.networkTakeover,

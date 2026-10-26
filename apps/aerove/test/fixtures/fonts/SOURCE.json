@@ -22,5 +22,14 @@
     "version": "Version 2.137; 2017",
     "file": "Roboto-Regular.ttf"
   },
-  "purpose": "Test-only Latin text fixture; not an application asset"
+  "purpose": "Test-only Latin text fixture; not an application asset",
+  "cjkSquare": {
+    "file": "CjkSquare.ttf",
+    "sizeBytes": 976,
+    "sha256": "3334afaf7b6e1621fdf8e90bd5032e69e3071ee3c14e39cb0049c3f25df3dc6f",
+    "generator": "make_cjk_square.py",
+    "tool": "fontTools 4.62.1 (fontBuilder; cmap format 13)",
+    "license": "Project test fixture: one generated square outline, no glyphs or data from any other font",
+    "purpose": "Test-only fallback that advances Han, kana, Hangul and CJK punctuation a full em where no CJK font is installed; not an application asset"
+  }
 }

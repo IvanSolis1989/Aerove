@@ -201,6 +201,9 @@ extension MessageLevelExt on MessageLevel {
 
 enum TrafficUnit { B, KB, MB, GB, TB }
 
+/// What a visible dashboard card reads from the Core's once-a-second sample.
+enum TrafficNeed { traffic, runTime }
+
 enum NavigationItemMode { mobile, desktop, more, moreFull }
 
 enum ProxiesSortType { none, delay, name }
@@ -467,7 +470,6 @@ enum FunctionTag {
 
 enum DashboardWidget {
   currentOutbound,
-  networkSpeed,
   outboundMode,
   vpnButton(platforms: [SupportPlatform.Android]),
   networkTakeover(platforms: desktopPlatforms),

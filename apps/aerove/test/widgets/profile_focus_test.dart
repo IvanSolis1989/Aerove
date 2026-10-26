@@ -221,7 +221,7 @@ void main() {
 
     expect(find.byTooltip(currentAppLocalizations.edit), findsNothing);
     expect(
-      find.text('3KB / 4KB · 75% ${currentAppLocalizations.usedShort}'),
+      find.text('3.0 KB / 4.0 KB · 75% ${currentAppLocalizations.usedShort}'),
       findsOneWidget,
     );
     expect(

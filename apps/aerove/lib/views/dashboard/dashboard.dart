@@ -188,13 +188,6 @@ class _DesktopDashboard extends StatelessWidget {
                   const RepaintBoundary(child: CurrentOutboundCard()),
                 ),
                 sized(
-                  topHeight,
-                  row(const [
-                    (1, SpeedCard(direction: TrafficDirection.upload)),
-                    (1, SpeedCard(direction: TrafficDirection.download)),
-                  ]),
-                ),
-                sized(
                   controlHeight,
                   const RepaintBoundary(child: OutboundModeBar()),
                 ),
@@ -213,14 +206,7 @@ class _DesktopDashboard extends StatelessWidget {
           );
         }
         final rows = [
-          sized(
-            topHeight,
-            row(const [
-              (2, CurrentOutboundCard()),
-              (1, SpeedCard(direction: TrafficDirection.upload)),
-              (1, SpeedCard(direction: TrafficDirection.download)),
-            ]),
-          ),
+          sized(topHeight, const RepaintBoundary(child: CurrentOutboundCard())),
           sized(
             controlHeight,
             row([(2, const OutboundModeBar()), ...switches]),
@@ -361,9 +347,7 @@ class _MobileDashboard extends ConsumerWidget {
 Widget _fusedCard(DashboardFusion group) {
   final members = group.members;
   if (members.contains(DashboardWidget.currentOutbound)) {
-    return CurrentOutboundCard(
-      showTraffic: members.contains(DashboardWidget.networkSpeed),
-    );
+    return const CurrentOutboundCard();
   }
   if (members.any(
     const {

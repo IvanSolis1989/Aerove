@@ -174,7 +174,7 @@ void main() {
     expect(label('P1'), findsOneWidget);
     expect(label('P2'), findsNothing);
     expect(find.textContaining('42%', findRichText: true), findsOneWidget);
-    expect(find.text('42 GB / 100 GB'), findsOneWidget);
+    expect(find.text('42.0 GB / 100.0 GB'), findsOneWidget);
     expect(find.textContaining('30 days left'), findsOneWidget);
   });
 
@@ -199,7 +199,7 @@ void main() {
     expect(label('P1'), findsOneWidget);
     expect(find.text('30 days left'), findsOneWidget);
     expect(find.textContaining('42%', findRichText: true), findsOneWidget);
-    expect(find.text('42 GB / 100 GB'), findsOneWidget);
+    expect(find.text('42.0 GB / 100.0 GB'), findsOneWidget);
     expect(find.byTooltip('Update'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -386,7 +386,7 @@ void main() {
     expect(find.textContaining('Updated'), findsNothing);
     expect(find.textContaining('minutes ago'), findsOneWidget);
     expect(find.textContaining('used', findRichText: true), findsNothing);
-    expect(find.text('42 GB / 100 GB'), findsOneWidget);
+    expect(find.text('42.0 GB / 100.0 GB'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -421,7 +421,7 @@ void main() {
     expect(daysLeft.center.dy, moreOrLessEquals(name.center.dy, epsilon: 1));
     expect(find.byTooltip('Switch profile'), findsOneWidget);
     expect(find.textContaining('minutes ago'), findsNothing);
-    expect(find.text('42 GB / 100 GB'), findsOneWidget);
+    expect(find.text('42.0 GB / 100.0 GB'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

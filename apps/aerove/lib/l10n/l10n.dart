@@ -120,16 +120,6 @@ class AppLocalizations {
     );
   }
 
-  /// `Network speed`
-  String get networkSpeed {
-    return Intl.message(
-      'Network speed',
-      name: 'networkSpeed',
-      desc: '',
-      args: [],
-    );
-  }
-
   /// `Outbound mode`
   String get outboundMode {
     return Intl.message(
@@ -7617,16 +7607,6 @@ class AppLocalizations {
     return Intl.message('Not running', name: 'notRunning', desc: '', args: []);
   }
 
-  /// `Peak {value}`
-  String trafficPeak(Object value) {
-    return Intl.message(
-      'Peak $value',
-      name: 'trafficPeak',
-      desc: '',
-      args: [value],
-    );
-  }
-
   /// `Total {value}`
   String trafficTotal(Object value) {
     return Intl.message(
@@ -7897,8 +7877,7 @@ class AppLocalizations {
   String customImportDroppedSubRules(num count, Object label) {
     return Intl.plural(
       count,
-      one:
-          '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
+      one: '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
       other:
           '$label SUB-RULE rules were dropped, since custom profiles do not support sub-rules',
       name: 'customImportDroppedSubRules',
@@ -8320,6 +8299,46 @@ class AppLocalizations {
       name: 'dashboardNetworkOverview',
       desc: '',
       args: [],
+    );
+  }
+
+  /// `Outbound mode: {mode}`
+  String outboundModeCurrent(Object mode) {
+    return Intl.message(
+      'Outbound mode: $mode',
+      name: 'outboundModeCurrent',
+      desc: '',
+      args: [mode],
+    );
+  }
+
+  /// `Switch to {mode}`
+  String outboundModeNext(Object mode) {
+    return Intl.message(
+      'Switch to $mode',
+      name: 'outboundModeNext',
+      desc: '',
+      args: [mode],
+    );
+  }
+
+  /// `Upload speed: {speed}`
+  String trafficUploadSpeed(Object speed) {
+    return Intl.message(
+      'Upload speed: $speed',
+      name: 'trafficUploadSpeed',
+      desc: '',
+      args: [speed],
+    );
+  }
+
+  /// `Download speed: {speed}`
+  String trafficDownloadSpeed(Object speed) {
+    return Intl.message(
+      'Download speed: $speed',
+      name: 'trafficDownloadSpeed',
+      desc: '',
+      args: [speed],
     );
   }
 }

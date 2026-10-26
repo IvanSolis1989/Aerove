@@ -394,6 +394,18 @@ class _RecordTableHeader<T> extends StatelessWidget {
   }
 }
 
+/// The least width of a column of traffic amounts, or speeds with [rate],
+/// in a record row's own figures.
+double recordTrafficWidth(BuildContext context, {bool rate = false}) =>
+    trafficColumnWidth(
+      context,
+      AppTextStyle.subheadline
+          .of(context)
+          .copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+      _recordCellInset,
+      rate: rate,
+    );
+
 /// The width a fixed column takes to show [label] whole in its header.
 double recordHeaderWidth(BuildContext context, String label) =>
     MeasureScope.of(context)

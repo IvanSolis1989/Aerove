@@ -8,7 +8,6 @@ class DashboardFusion {
 }
 
 const _families = [
-  {DashboardWidget.currentOutbound, DashboardWidget.networkSpeed},
   {
     DashboardWidget.outboundMode,
     DashboardWidget.vpnButton,

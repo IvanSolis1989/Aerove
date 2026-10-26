@@ -377,9 +377,16 @@ void main() {
   group('run time ticker', () {
     late ProviderContainer scoped;
 
+    final card = Object();
+
+    void claim(TrafficNeed need) =>
+        scoped.read(trafficDemandProvider.notifier).claim(card, need);
+
+    void release() => scoped.read(trafficDemandProvider.notifier).release(card);
+
     // Built inside each test, on its fake clock: futures made there never
     // settle in the shared tearDown.
-    SetupAction buildScoped() {
+    SetupAction buildScoped({bool shown = true}) {
       scoped = ProviderContainer(
         overrides: [
           profilesProvider.overrideWith(TestProfiles.new),
@@ -398,7 +405,9 @@ void main() {
           .read(appSettingProvider.notifier)
           .update((state) => state.copyWith(showTrayTitle: false));
       scoped.read(initProvider.notifier).value = true;
-      return scoped.read(setupActionProvider.notifier);
+      final setup = scoped.read(setupActionProvider.notifier);
+      if (shown) claim(TrafficNeed.traffic);
+      return setup;
     }
 
     int trafficUpdates() =>
@@ -426,6 +435,35 @@ void main() {
       expect(trafficUpdates(), 4);
       await tester.pump(const Duration(seconds: 1));
       expect(trafficUpdates(), 5);
+
+      await setup.setRunning(false);
+    });
+
+    testWidgets('reads nothing while no visible card shows traffic', (
+      tester,
+    ) async {
+      final setup = buildScoped(shown: false);
+      await setup.setRunning(true);
+      await tester.pump(const Duration(seconds: 5));
+      expect(trafficUpdates(), 0);
+      expect(scoped.read(isStartProvider), isTrue);
+
+      claim(TrafficNeed.runTime);
+      await tester.pump();
+      final shownAt = scoped.read(runTimeProvider);
+      expect(shownAt, isNotNull);
+      expect(trafficUpdates(), 1);
+
+      claim(TrafficNeed.traffic);
+      await tester.pump();
+      expect(trafficUpdates(), 2);
+      await tester.pump(const Duration(seconds: 2));
+      expect(trafficUpdates(), 4);
+
+      release();
+      await tester.pump(const Duration(seconds: 3));
+      expect(trafficUpdates(), 4);
+      expect(scoped.read(runTimeProvider), shownAt);
 
       await setup.setRunning(false);
     });
@@ -1091,6 +1129,38 @@ void main() {
       scoped.read(setupActionProvider.notifier).changeMode(Mode.global);
 
       expect(scoped.read(patchClashConfigProvider).mode, Mode.global);
+      expect(
+        scoped.read(currentProfileProvider)?.currentGroupName,
+        GroupName.GLOBAL.name,
+      );
+    });
+  });
+
+  group('cycleMode', () {
+    test('steps rule, global, direct and back from the saved mode', () {
+      final profile = Profile.normal(
+        label: 'p',
+      ).copyWith(id: 1, currentGroupName: 'Manual');
+      final scoped = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(() => TestProfiles([profile])),
+          currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
+          setupActionProvider.overrideWith(TestSetupAction.new),
+        ],
+      );
+      addTearDown(scoped.dispose);
+      final setup = scoped.read(setupActionProvider.notifier);
+      scoped
+          .read(patchClashConfigProvider.notifier)
+          .update((state) => state.copyWith(mode: Mode.rule));
+
+      final seen = <Mode>[];
+      for (var tap = 0; tap < 4; tap++) {
+        setup.cycleMode();
+        seen.add(scoped.read(patchClashConfigProvider).mode);
+      }
+
+      expect(seen, [Mode.global, Mode.direct, Mode.rule, Mode.global]);
       expect(
         scoped.read(currentProfileProvider)?.currentGroupName,
         GroupName.GLOBAL.name,

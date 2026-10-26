@@ -328,7 +328,7 @@ void main() {
     final metered = rowOf('metered');
     final usage = find.descendant(
       of: metered,
-      matching: find.text('3KB / 1GB'),
+      matching: find.text('3.0 KB / 1.0 GB'),
     );
     final meter = find.descendant(
       of: metered,

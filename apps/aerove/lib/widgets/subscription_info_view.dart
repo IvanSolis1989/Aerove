@@ -33,8 +33,8 @@ class SubscriptionInfoView extends StatelessWidget {
     final total = info.total;
     final progress = (use / total).clamp(0.0, 1.0).toDouble();
 
-    final useShow = use.traffic.show;
-    final totalShow = total.traffic.show;
+    final useShow = trafficAmount(use);
+    final totalShow = trafficAmount(total);
     final expireShow = info.expire != 0
         ? DateTime.fromMillisecondsSinceEpoch(info.expire * 1000).show
         : context.appLocalizations.infiniteTime;
@@ -43,12 +43,7 @@ class SubscriptionInfoView extends StatelessWidget {
         .copyWith(color: context.colorScheme.onSurfaceVariant);
     final metaStyle = AppTextStyle.footnote.of(context).toLight;
     final trafficLabel = '$useShow / $totalShow';
-    final trafficText = GlassText(
-      trafficLabel,
-      style: valueStyle,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-    );
+    final trafficText = GlassText(trafficLabel, style: valueStyle);
     final expireText = GlassText(
       expireShow,
       style: metaStyle,
@@ -115,11 +110,11 @@ class SubscriptionInfoDetailView extends StatelessWidget {
             items: [
               _buildItem(
                 label: appLocalizations.usedTraffic,
-                value: used.traffic.show,
+                value: trafficAmount(used),
               ),
               _buildItem(
                 label: appLocalizations.totalTraffic,
-                value: subscriptionInfo.total.traffic.show,
+                value: trafficAmount(subscriptionInfo.total),
               ),
             ],
           ),

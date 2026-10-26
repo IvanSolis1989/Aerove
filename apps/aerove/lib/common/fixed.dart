@@ -40,6 +40,10 @@ class FixedList<T> {
 
   List<T> get list => _snapshot ??= List.unmodifiable(_list);
 
+  /// A copy at this revision that later [append]s to this list never reach;
+  /// every list [append] returns shares one store with the list it came from.
+  FixedList<T> frozen() => FixedList._(maxLength, List.of(_list), _revision);
+
   int get length => _list.length;
 
   T operator [](int index) => _list[index];

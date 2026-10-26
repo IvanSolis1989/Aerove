@@ -3,6 +3,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/views/dashboard/label_breaks.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -151,6 +152,8 @@ class DashboardCardHeader extends StatelessWidget {
     this.leading = const [],
     this.trailing = const [],
     this.chevron = false,
+    this.wrap = false,
+    this.titleWrapper,
   });
 
   static const height = 24.0;
@@ -163,6 +166,11 @@ class DashboardCardHeader extends StatelessWidget {
   final List<Widget> leading;
   final List<Widget> trailing;
   final bool chevron;
+
+  /// Keeps the title and [leading] whole: what does not fit beside the title
+  /// moves to a line under it and the header grows.
+  final bool wrap;
+  final Widget Function(Widget title)? titleWrapper;
 
   @override
   Widget build(BuildContext context) {
@@ -182,22 +190,51 @@ class DashboardCardHeader extends StatelessWidget {
           color: colorScheme.onSurfaceVariant,
         ),
     ];
-    final start = Row(
-      spacing: 8,
-      children: [
-        Flexible(
-          child: GlassText(
+    final text = wrap
+        ? GlassText(title, style: style)
+        : GlassText(
             title,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: style,
-          ),
+          );
+    final heading = titleWrapper?.call(text) ?? text;
+    final line = (mobile ? 26 : height) * scale;
+    final start = leading.isEmpty
+        ? Row(children: [Flexible(child: heading)])
+        : _HeaderLine(
+            wrap: wrap,
+            line: line,
+            children: [
+              heading,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: 8,
+                children: [for (final item in leading) Flexible(child: item)],
+              ),
+            ],
+          );
+    if (wrap && end.isEmpty) {
+      return ConstrainedBox(
+        constraints: BoxConstraints(minHeight: line),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 8,
+          children: [
+            if (glyph case final glyph?)
+              SizedBox(
+                height: line,
+                child: Center(
+                  child: GlyphIcon(glyph, size: glyphSize, color: iconColor),
+                ),
+              ),
+            Expanded(child: start),
+          ],
         ),
-        ...leading,
-      ],
-    );
+      );
+    }
     return SizedBox(
-      height: (mobile ? 26 : height) * scale,
+      height: line,
       child: Row(
         spacing: 8,
         children: [
@@ -221,11 +258,188 @@ class DashboardCardHeader extends StatelessWidget {
   }
 }
 
-/// Cut short past [_minScale]: an IPv6 address shrunk any further is unreadable.
+/// Wrapping headers keep title and chip whole; other headers give a long
+/// chip less room before shortening the title.
+class _HeaderLine extends MultiChildRenderObjectWidget {
+  const _HeaderLine({
+    this.wrap = false,
+    this.line = 0,
+    required super.children,
+  });
+
+  static const _spacing = 8.0;
+  static const _runSpacing = 4.0;
+  static const _titleShare = 0.4;
+
+  final bool wrap;
+  final double line;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderHeaderLine(Directionality.of(context), wrap: wrap, line: line);
+
+  @override
+  void updateRenderObject(BuildContext context, RenderObject renderObject) {
+    (renderObject as _RenderHeaderLine)
+      ..textDirection = Directionality.of(context)
+      ..wrap = wrap
+      ..line = line;
+  }
+}
+
+class _HeaderLineParentData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderHeaderLine extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _HeaderLineParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _HeaderLineParentData> {
+  _RenderHeaderLine(
+    this._textDirection, {
+    required bool wrap,
+    required double line,
+  }) : _wrap = wrap,
+       _line = line;
+
+  TextDirection _textDirection;
+  set textDirection(TextDirection value) {
+    if (value == _textDirection) return;
+    _textDirection = value;
+    markNeedsLayout();
+  }
+
+  bool _wrap;
+  set wrap(bool value) {
+    if (value == _wrap) return;
+    _wrap = value;
+    markNeedsLayout();
+  }
+
+  double _line;
+  set line(double value) {
+    if (value == _line) return;
+    _line = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _HeaderLineParentData) {
+      child.parentData = _HeaderLineParentData();
+    }
+  }
+
+  @override
+  double computeMinIntrinsicWidth(double height) => 0;
+
+  @override
+  double computeMaxIntrinsicWidth(double height) {
+    var width = 0.0;
+    for (var child = firstChild; child != null; child = childAfter(child)) {
+      width += child.getMaxIntrinsicWidth(height);
+    }
+    return width + _HeaderLine._spacing * math.max(0, childCount - 1);
+  }
+
+  @override
+  double computeMinIntrinsicHeight(double width) =>
+      _tallest((child) => child.getMinIntrinsicHeight(width));
+
+  @override
+  double computeMaxIntrinsicHeight(double width) =>
+      _tallest((child) => child.getMaxIntrinsicHeight(width));
+
+  double _tallest(double Function(RenderBox child) of) {
+    var height = 0.0;
+    for (var child = firstChild; child != null; child = childAfter(child)) {
+      height = math.max(height, of(child));
+    }
+    return height;
+  }
+
+  void _stack(RenderBox title, RenderBox rest, double width) {
+    final loose = BoxConstraints(maxWidth: width);
+    title.layout(loose, parentUsesSize: true);
+    rest.layout(loose, parentUsesSize: true);
+    final first = math.max(_line, title.size.height);
+    final second = math.max(_line, rest.size.height);
+    final rtl = _textDirection == TextDirection.rtl;
+    (title.parentData! as _HeaderLineParentData).offset = Offset(
+      rtl ? width - title.size.width : 0,
+      (first - title.size.height) / 2,
+    );
+    (rest.parentData! as _HeaderLineParentData).offset = Offset(
+      rtl ? width - rest.size.width : 0,
+      first + _HeaderLine._runSpacing + (second - rest.size.height) / 2,
+    );
+    size = constraints.constrain(
+      Size(width, first + _HeaderLine._runSpacing + second),
+    );
+  }
+
+  @override
+  void performLayout() {
+    final title = firstChild!;
+    final rest = childAfter(title)!;
+    final width = constraints.maxWidth;
+    const spacing = _HeaderLine._spacing;
+    final titleNatural = title.getMaxIntrinsicWidth(double.infinity);
+    final restNatural = rest.getMaxIntrinsicWidth(double.infinity);
+    if (_wrap && titleNatural + spacing + restNatural > width) {
+      _stack(title, rest, width);
+      return;
+    }
+    final kept = titleNatural + spacing + restNatural <= width
+        ? titleNatural
+        : math.min(
+            titleNatural,
+            math.max(
+              width * _HeaderLine._titleShare,
+              width - spacing - restNatural,
+            ),
+          );
+    final loose = constraints.loosen();
+    rest.layout(
+      loose.copyWith(maxWidth: math.max(0, width - spacing - kept)),
+      parentUsesSize: true,
+    );
+    title.layout(
+      loose.copyWith(maxWidth: math.max(0, width - spacing - rest.size.width)),
+      parentUsesSize: true,
+    );
+    final height = constraints.constrainHeight(
+      math.max(
+        _wrap ? _line : 0,
+        math.max(title.size.height, rest.size.height),
+      ),
+    );
+    final rtl = _textDirection == TextDirection.rtl;
+    final restStart = title.size.width + spacing;
+    (title.parentData! as _HeaderLineParentData).offset = Offset(
+      rtl ? width - title.size.width : 0,
+      (height - title.size.height) / 2,
+    );
+    (rest.parentData! as _HeaderLineParentData).offset = Offset(
+      rtl ? width - restStart - rest.size.width : restStart,
+      (height - rest.size.height) / 2,
+    );
+    size = constraints.constrain(Size(width, height));
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) =>
+      defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
+}
+
+/// Shrinks to fit, down to a legible [_minSize]; an address still too long
+/// breaks after its dots and colons rather than being cut short.
 class DashboardFitText extends StatelessWidget {
   const DashboardFitText(this.text, {super.key, required this.style});
 
-  static const _minScale = 0.75;
+  static const _minSize = 11.0;
 
   final String text;
   final TextStyle style;
@@ -234,10 +448,18 @@ class DashboardFitText extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = globalState.measure
-            .computeTextSize(Text(text, style: style))
-            .width;
-        if (width * _minScale <= constraints.maxWidth) {
+        final scaler = MediaQuery.textScalerOf(context);
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
+        final width = painter.width;
+        painter.dispose();
+        final size = style.fontSize ?? 14;
+        final floor = math.min(1.0, _minSize / scaler.scale(size));
+        if (width * floor <= constraints.maxWidth) {
           return FittedBox(
             fit: BoxFit.scaleDown,
             alignment: AlignmentDirectional.centerStart,
@@ -249,14 +471,11 @@ class DashboardFitText extends StatelessWidget {
             ),
           );
         }
-        return TooltipText(
-          text: GlassText(
-            text,
-            inkRole: GlassInkRole.body,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: style,
-          ),
+        return GlassText(
+          text.replaceAllMapped(RegExp('[.:]'), (match) => '${match[0]}\u200B'),
+          semanticsLabel: text,
+          inkRole: GlassInkRole.body,
+          style: style.copyWith(fontSize: size * floor),
         );
       },
     );
@@ -427,11 +646,23 @@ class DashboardConnectedButton extends StatelessWidget {
     required this.background,
     required this.onTap,
     required this.semanticLabel,
+    this.toggled,
+    this.tapHint,
+    this.liveRegion = false,
     required this.builder,
   });
 
   final bool selected;
   final bool pane;
+
+  /// Reads the button as a switch rather than one choice of a group.
+  final bool? toggled;
+
+  /// What a tap does, read after the label; the button then also answers an
+  /// assistive tap itself.
+  final String? tapHint;
+
+  final bool liveRegion;
 
   /// Keeps every button a full pill whatever its selection, as the outbound
   /// modes require on every material.
@@ -454,11 +685,17 @@ class DashboardConnectedButton extends StatelessWidget {
     final glass = LiquidGlassScope.of(context);
     final onGlass = GlassSurfaceScope.of(context);
     final ownPane = glass && pane && !MediaQuery.highContrastOf(context);
+    final grouped = toggled == null && tapHint == null;
     return Semantics(
+      container: !grouped,
       button: true,
-      selected: selected,
-      inMutuallyExclusiveGroup: true,
+      selected: grouped ? selected : null,
+      inMutuallyExclusiveGroup: grouped ? true : null,
+      toggled: toggled,
+      liveRegion: liveRegion ? true : null,
       label: semanticLabel,
+      onTapHint: tapHint,
+      onTap: grouped ? null : onTap,
       excludeSemantics: true,
       child: ElasticPress(
         child: TweenAnimationBuilder<double>(
@@ -556,12 +793,28 @@ class DashboardChip extends StatelessWidget {
     this.tone = DashboardChipTone.idle,
     this.dot = false,
     this.large = false,
+    this.wrap = false,
+    this.dense = false,
   });
+
+  /// The least size a wrapping label shrinks its longest word to.
+  static const minLabelSize = 11.0;
+
+  /// A pill on one line; a chip that wraps keeps its lines inside the
+  /// corners instead of turning round.
+  static const shape = AppShape.md;
 
   final String label;
   final DashboardChipTone tone;
   final bool dot;
   final bool large;
+
+  /// Wraps a label too long for its line and grows, where the chip's row can
+  /// grow; otherwise the label shortens.
+  final bool wrap;
+
+  /// Tighter insets, for a chip that shares a line with other content.
+  final bool dense;
 
   @override
   Widget build(BuildContext context) {
@@ -572,36 +825,185 @@ class DashboardChip extends StatelessWidget {
       DashboardChipTone.ok => (colors.okContainer, colors.onOkContainer),
       DashboardChipTone.warn => (colors.warnContainer, colors.onWarnContainer),
     };
+    final height = large ? 28.0 : 24.0;
+    final style = AppTextStyle.caption1
+        .of(context, emphasized: true)
+        .toTabular
+        .copyWith(color: foreground);
     return Container(
-      height: large ? 28 : 24,
-      padding: EdgeInsets.symmetric(horizontal: large ? 12 : 10),
+      height: wrap ? null : height,
+      constraints: wrap ? BoxConstraints(minHeight: height) : null,
+      padding: EdgeInsets.symmetric(
+        horizontal: large
+            ? 12
+            : dense
+            ? 8
+            : 10,
+        vertical: wrap ? 4 : 0,
+      ),
       decoration: ShapeDecoration(
         color: LiquidGlassScope.surfaceColorOf(context, background),
-        shape: AppShape.full,
+        shape: shape,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        spacing: 6,
-        children: [
-          if (dot)
-            DecoratedBox(
-              decoration: ShapeDecoration(
-                color: foreground,
-                shape: AppShape.circle,
+      // Its own width wherever there is room; a chip wider than the space it
+      // is given shortens its label instead of overflowing the pill.
+      child: IntrinsicWidth(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          spacing: dense ? 4 : 6,
+          children: [
+            if (dot)
+              DecoratedBox(
+                decoration: ShapeDecoration(
+                  color: foreground,
+                  shape: AppShape.circle,
+                ),
+                child: const SizedBox.square(dimension: 6),
               ),
-              child: const SizedBox.square(dimension: 6),
+            Flexible(
+              child: _WordFit(
+                word: wrap ? _longestWord(context, style) : 0,
+                minScale: math.min(
+                  1,
+                  minLabelSize /
+                      MediaQuery.textScalerOf(
+                        context,
+                      ).scale(style.fontSize ?? minLabelSize),
+                ),
+                child: GlassText(
+                  label,
+                  maxLines: wrap ? null : 1,
+                  overflow: wrap ? null : TextOverflow.ellipsis,
+                  style: style,
+                ),
+              ),
             ),
-          GlassText(
-            label,
-            maxLines: 1,
-            style: AppTextStyle.caption1
-                .of(context, emphasized: true)
-                .toTabular
-                .copyWith(color: foreground),
-          ),
-        ],
+          ],
+        ),
       ),
     );
+  }
+
+  double _longestWord(BuildContext context, TextStyle style) {
+    final painter = TextPainter(
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    );
+    final resolved = DefaultTextStyle.of(context).style.merge(style);
+    final width = longestPiece(
+      label,
+      (piece) =>
+          (painter
+                ..text = TextSpan(text: piece, style: resolved)
+                ..layout())
+              .width,
+    );
+    painter.dispose();
+    return width;
+  }
+}
+
+/// Shrinks its text just enough that its longest [word] fits the width it is
+/// given, down to [minScale], so the text wraps between words rather than
+/// inside one.
+class _WordFit extends SingleChildRenderObjectWidget {
+  const _WordFit({
+    required this.word,
+    required this.minScale,
+    required super.child,
+  });
+
+  final double word;
+  final double minScale;
+
+  @override
+  _RenderWordFit createRenderObject(BuildContext context) =>
+      _RenderWordFit(word, minScale);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderWordFit renderObject) {
+    renderObject
+      ..word = word
+      ..minScale = minScale;
+  }
+}
+
+class _RenderWordFit extends RenderProxyBox {
+  _RenderWordFit(this._word, this._minScale);
+
+  final _shrink = LayerHandle<TransformLayer>();
+  var _scale = 1.0;
+
+  double _word;
+  set word(double value) {
+    if (value == _word) return;
+    _word = value;
+    markNeedsLayout();
+  }
+
+  double _minScale;
+  set minScale(double value) {
+    if (value == _minScale) return;
+    _minScale = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    final child = this.child;
+    if (child == null) {
+      size = constraints.smallest;
+      return;
+    }
+    final room = constraints.maxWidth;
+    final word = room.isFinite ? _word : 0.0;
+    _scale = word > room ? math.max(_minScale, room / word) : 1;
+    child.layout(
+      constraints.loosen().copyWith(maxWidth: room / _scale),
+      parentUsesSize: true,
+    );
+    size = constraints.constrain(child.size * _scale);
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final child = this.child;
+    if (child == null) return;
+    if (_scale == 1) {
+      _shrink.layer = null;
+      context.paintChild(child, offset);
+      return;
+    }
+    _shrink.layer = context.pushTransform(
+      needsCompositing,
+      offset,
+      Matrix4.diagonal3Values(_scale, _scale, 1),
+      (context, offset) => context.paintChild(child, offset),
+      oldLayer: _shrink.layer,
+    );
+  }
+
+  @override
+  void applyPaintTransform(RenderBox child, Matrix4 transform) {
+    transform.scaleByDouble(_scale, _scale, 1, 1);
+  }
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    final child = this.child;
+    if (child == null) return false;
+    return result.addWithPaintTransform(
+      transform: Matrix4.diagonal3Values(_scale, _scale, 1),
+      position: position,
+      hitTest: (result, position) => child.hitTest(result, position: position),
+    );
+  }
+
+  @override
+  void dispose() {
+    _shrink.layer = null;
+    super.dispose();
   }
 }
 

@@ -6,24 +6,24 @@ import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
 import 'package:fl_clash/widgets/aurora.dart' show AuroraMotionActivity;
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 class _Skin extends StatelessWidget {
-  const _Skin(this.time, this.wobble);
+  const _Skin(this.skin);
 
-  final double time;
-  final double wobble;
+  final OutboundSkin skin;
 
   @override
   Widget build(BuildContext context) => const SizedBox.square(dimension: 48);
 }
 
 class _Probe extends StatelessWidget {
-  const _Probe(this.phase);
+  const _Probe(this.clock);
 
-  final double phase;
+  final ValueListenable<double> clock;
 
   @override
   Widget build(BuildContext context) => const SizedBox.square(dimension: 100);
@@ -71,7 +71,7 @@ Widget _ring({required bool checking, bool reduced = false}) => ProviderScope(
         alignment: Alignment.topLeft,
         child: OutboundBubble(
           checking: checking,
-          builder: (_, time, wobble, _) => _Skin(time, wobble),
+          builder: (_, skin, _) => _Skin(skin),
         ),
       ),
     ),
@@ -79,16 +79,7 @@ Widget _ring({required bool checking, bool reduced = false}) => ProviderScope(
 );
 
 double _phase(WidgetTester tester) =>
-    tester.widget<_Probe>(find.byType(_Probe)).phase;
-
-T _painter<T extends CustomPainter>(WidgetTester tester) {
-  final paint = tester.widget<CustomPaint>(
-    find.byWidgetPredicate(
-      (widget) => widget is CustomPaint && widget.painter is T,
-    ),
-  );
-  return paint.painter! as T;
-}
+    tester.widget<_Probe>(find.byType(_Probe)).clock.value;
 
 Future<void> _advance(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 200));
@@ -148,7 +139,10 @@ Future<int> _steps(WidgetTester tester) async {
   return steps;
 }
 
-_Skin _skin(WidgetTester tester) => tester.widget<_Skin>(find.byType(_Skin));
+({double time, double wobble}) _skin(WidgetTester tester) {
+  final skin = tester.widget<_Skin>(find.byType(_Skin)).skin;
+  return (time: skin.time, wobble: skin.wobble);
+}
 
 List<Offset> _outline(double time, double wobble) {
   final contour = OutboundDropletClipper(
@@ -415,7 +409,7 @@ void main() {
     expect(frames(), inInclusiveRange(14, 16));
     final phases = [
       for (final probe in tester.widgetList<_Probe>(find.byType(_Probe)))
-        probe.phase,
+        probe.clock.value,
     ];
     expect(phases, hasLength(2));
     expect(phases.last, greaterThan(0));
@@ -617,34 +611,5 @@ void main() {
     );
     expect(await resolve(glass: true), OutboundFinish.clear);
     expect(await resolve(glass: true, contrast: true), OutboundFinish.solid);
-  });
-
-  testWidgets('silver gauze spans the card and high contrast hides it', (
-    tester,
-  ) async {
-    Widget ribbon(bool contrast) => ProviderScope(
-      child: MaterialApp(
-        home: MediaQuery(
-          data: MediaQueryData(highContrast: contrast),
-          child: const Align(
-            alignment: Alignment.topLeft,
-            child: SizedBox(
-              width: 600,
-              height: 208,
-              child: OutboundRibbon(running: false),
-            ),
-          ),
-        ),
-      ),
-    );
-    Finder paint() => find.byWidgetPredicate(
-      (widget) =>
-          widget is CustomPaint && widget.painter is OutboundRibbonPainter,
-    );
-    await tester.pumpWidget(ribbon(false));
-    expect(tester.getSize(paint()), const Size(600, 208));
-    expect(_painter<OutboundRibbonPainter>(tester).visible, isTrue);
-    await tester.pumpWidget(ribbon(true));
-    expect(_painter<OutboundRibbonPainter>(tester).visible, isFalse);
   });
 }

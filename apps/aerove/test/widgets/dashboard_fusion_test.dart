@@ -1,5 +1,3 @@
-import 'dart:ui' show SemanticsAction, SemanticsFlag;
-
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/service_probe.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -14,12 +12,11 @@ import 'package:fl_clash/providers/service_status.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/dashboard/fusion.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
-import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
-import 'package:fl_clash/views/dashboard/widgets/fused_controls.dart';
 import 'package:fl_clash/views/dashboard/widgets/traffic.dart';
 import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
+import 'package:fl_clash/views/dashboard/widgets/status_layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/service_status.dart';
 import 'package:fl_clash/views/dashboard/widgets/connection_stats.dart';
 import 'package:fl_clash/ui/ui.dart';
@@ -30,6 +27,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../helpers/system_test_font.dart';
 import '../helpers/test_app.dart';
 
 class _Ips extends OutboundIpProbe {
@@ -86,7 +84,16 @@ class _TestFlag extends Notifier<bool> {
 final _running = NotifierProvider<_TestFlag, bool>(() => _TestFlag(true));
 final _suspended = NotifierProvider<_TestFlag, bool>(() => _TestFlag(false));
 
+/// The default test font draws every glyph a full em wide; figures need real
+/// proportions to measure as on a phone.
+const _font = 'FusionRoboto';
+
 void main() {
+  setUpAll(() async {
+    final font = FontLoader(_font)..addFont(loadSdkTestFont());
+    await font.load();
+  });
+
   test('fusion preserves first position and never restores hidden modules', () {
     final saved = [
       DashboardWidget.profiles,
@@ -116,6 +123,7 @@ void main() {
     DashboardDensity density = DashboardDensity.mobile,
     double? densityScale,
     ProviderContainer? existing,
+    String? fontFamily,
   }) async {
     tester.view.physicalSize = const Size(1000, 1200);
     tester.view.devicePixelRatio = 1;
@@ -154,6 +162,7 @@ void main() {
         container: container,
         child: TestApp(
           locale: const Locale('zh', 'CN'),
+          theme: fontFamily == null ? null : ThemeData(fontFamily: fontFamily),
           child: Scaffold(
             body: Align(
               alignment: Alignment.topLeft,
@@ -184,13 +193,23 @@ void main() {
     return container;
   }
 
-  testWidgets('traffic replaces the ribbon layer without adding card height', (
+  testWidgets('traffic adds its lines and figures without adding card height', (
     tester,
   ) async {
     final semantics = tester.ensureSemantics();
     try {
-      final container = await pump(tester, const CurrentOutboundCard());
-      final originalHeight = tester.getSize(find.byType(DashboardCard)).height;
+      final container = await pump(
+        tester,
+        const CurrentOutboundCard(),
+        fontFamily: _font,
+      );
+      final layout = tester.renderObject<RenderStatusCardLayout>(
+        find.byType(StatusCardLayout),
+      );
+      expect(layout.overlaid, isTrue);
+      final body = layout.childAfter(layout.firstChild!)!;
+      final originalHeight = body.size.height + 36;
+      expect(tester.getSize(find.byType(DashboardCard)).height, originalHeight);
       final l10n = AppLocalizations.of(
         tester.element(find.byType(CurrentOutboundCard)),
       );
@@ -204,30 +223,24 @@ void main() {
         find.text('Example Organization'),
         find.byType(OutboundBubble),
       ];
-      final originalRects = [
-        for (final part in mainParts) tester.getRect(part),
-      ];
-      final originalChips = [
+      final figuresRect = tester.getRect(find.byType(OutboundTrafficFigures));
+      for (final part in [
+        ...mainParts,
         for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
-          tester.getRect(find.byType(DashboardChip).at(i)),
-      ];
-      await pump(
-        tester,
-        const CurrentOutboundCard(showTraffic: true),
-        existing: container,
-      );
-      final fusedHeight = tester.getSize(find.byType(DashboardCard)).height;
-      expect(fusedHeight, originalHeight);
+          find.byType(DashboardChip).at(i),
+      ]) {
+        expect(figuresRect.overlaps(tester.getRect(part)), isFalse);
+      }
       final status = tester.getRect(find.text('状态'));
       final upload = tester.getRect(find.text('上传'));
       final download = tester.getRect(find.text('下载'));
-      expect(upload.height, 11);
-      expect(download.height, 11);
+      expect(upload.height, 10);
+      expect(download.height, 10);
       expect(upload.height, lessThan(status.height));
       final totals = container.read(totalTrafficProvider);
       final totalValues = [
         for (final direction in TrafficDirection.values)
-          dashboardTraffic(direction.of(totals)),
+          trafficAmount(direction.of(totals)),
       ];
       for (final value in totalValues.toSet()) {
         final count = totalValues.where((item) => item == value).length;
@@ -249,13 +262,6 @@ void main() {
         expect(find.text(l10n.trafficTotal(value)), findsNothing);
       }
 
-      expect([
-        for (final part in mainParts) tester.getRect(part),
-      ], originalRects);
-      expect([
-        for (var i = 0; i < find.byType(DashboardChip).evaluate().length; i++)
-          tester.getRect(find.byType(DashboardChip).at(i)),
-      ], originalChips);
       expect(upload.overlaps(status), isFalse);
       expect(download.overlaps(status), isFalse);
       expect(
@@ -264,19 +270,24 @@ void main() {
             .overlaps(tester.getRect(find.byType(OutboundBubble))),
         isFalse,
       );
+      expect(find.byType(LineChart), findsNWidgets(4));
+      for (final chart in tester.widgetList<LineChart>(
+        find.byType(LineChart),
+      )) {
+        expect(chart.values, isEmpty);
+      }
       container
           .read(trafficsProvider.notifier)
           .addTraffic(const Traffic(up: 1024, down: 4096));
       await tester.pump();
-      expect(find.byType(LineChart), findsNWidgets(2));
-      expect(find.byType(OutboundRibbon), findsNothing);
+      expect(find.byType(LineChart), findsNWidgets(4));
       final charts = tester.widgetList<LineChart>(find.byType(LineChart));
       expect(charts.map((chart) => chart.minScale).toSet(), {8192.0});
       expect(find.byType(OutboundTrafficFigures), findsOneWidget);
       expect(tester.getSize(find.byType(DashboardCard)).height, originalHeight);
       container.read(trafficsProvider.notifier).clear();
       container.read(trafficsProvider.notifier).addTraffic(const Traffic());
-      await tester.pump();
+      await tester.pumpAndSettle();
       for (final chart in tester.widgetList<LineChart>(
         find.byType(LineChart),
       )) {
@@ -296,6 +307,7 @@ void main() {
     double? height,
     DashboardDensity density = DashboardDensity.mobile,
     double? densityScale,
+    String? fontFamily,
   }) async {
     final container = await pump(
       tester,
@@ -305,6 +317,7 @@ void main() {
       height: height,
       density: density,
       densityScale: densityScale,
+      fontFamily: fontFamily,
     );
     container
         .read(trafficsProvider.notifier)
@@ -340,7 +353,7 @@ void main() {
         '${direction.labelOf(context)}\n${speed(direction.of(latest))}',
         AppLocalizations.of(
           context,
-        ).trafficTotal(dashboardTraffic(direction.of(totals))),
+        ).trafficTotal(trafficAmount(direction.of(totals))),
       ],
     ];
     expect(stops.toSet(), hasLength(4));
@@ -384,27 +397,25 @@ void main() {
           // one; its header leaves the overlay room only below that text scale.
           final container = await pumpTraffic(
             tester,
-            const CurrentOutboundCard(showTraffic: true),
+            const CurrentOutboundCard(),
             width: width,
             scale: scale,
             height: density.isDesktop ? 208 : null,
             density: density,
             densityScale: density.isDesktop ? 1 : null,
+            fontFamily: _font,
           );
           expect(
-            find.ancestor(
-              of: find.byType(OutboundTrafficFigures),
-              matching: find.byType(PositionedDirectional),
-            ),
-            overlay ? findsOneWidget : findsNothing,
+            tester
+                .renderObject<RenderStatusCardLayout>(
+                  find.byType(StatusCardLayout),
+                )
+                .overlaid,
+            overlay,
           );
           final context = tester.element(find.byType(OutboundTrafficFigures));
           final (summary, controls) = statusStops(context, container);
-          final traffic = trafficStops(
-            context,
-            container,
-            speed: (speed) => '${dashboardTraffic(speed)}/s',
-          );
+          final traffic = trafficStops(context, container, speed: trafficRate);
           final order = readingOrder(tester);
           expect(
             order,
@@ -428,13 +439,14 @@ void main() {
   for (final (density, width, height) in const [
     (DashboardDensity.mobile, 360.0, null),
     (DashboardDensity.standard, 600.0, 208.0),
-    (DashboardDensity.compact, 520.0, 176.0),
+    (DashboardDensity.standard, 1180.0, 208.0),
+    (DashboardDensity.compact, 600.0, 176.0),
   ]) {
-    testWidgets('the ${density.name} status card without traffic reads the '
-        'same order', (tester) async {
+    testWidgets('the ${density.name} $width status card reads its traffic '
+        'where it is drawn', (tester) async {
       final semantics = tester.ensureSemantics();
       try {
-        final container = await pump(
+        final container = await pumpTraffic(
           tester,
           const CurrentOutboundCard(),
           width: width,
@@ -443,337 +455,28 @@ void main() {
         );
         final context = tester.element(find.byType(CurrentOutboundCard));
         final (summary, controls) = statusStops(context, container);
+        final traffic = trafficStops(context, container, speed: trafficRate);
+        final overlaid = tester
+            .renderObject<RenderStatusCardLayout>(find.byType(StatusCardLayout))
+            .overlaid!;
         final order = readingOrder(tester);
-        expect(order, [...summary, ...controls], reason: order.join(' / '));
+        expect(
+          order,
+          overlaid
+              ? [
+                  ...summary.take(2),
+                  ...traffic,
+                  ...summary.skip(2),
+                  ...controls,
+                ]
+              : [...summary, ...controls, ...traffic],
+          reason: order.join(' / '),
+        );
       } finally {
         semantics.dispose();
       }
     });
   }
-
-  testWidgets('the network speed card reads its title once, then two stops '
-      'per direction', (tester) async {
-    final semantics = tester.ensureSemantics();
-    try {
-      final container = await pumpTraffic(tester, const NetworkSpeedCard());
-      final context = tester.element(find.byType(NetworkSpeedCard));
-      final traffic = trafficStops(
-        context,
-        container,
-        speed: (speed) => '${speed.traffic.value} ${speed.traffic.unit}/s',
-      );
-      final order = readingOrder(tester);
-      expect(order, [
-        AppLocalizations.of(context).networkSpeed,
-        ...traffic,
-      ], reason: order.join(' / '));
-    } finally {
-      semantics.dispose();
-    }
-  });
-
-  for (final direction in TrafficDirection.values) {
-    testWidgets('the desktop ${direction.name} card reads its direction once, '
-        'its total next', (tester) async {
-      final semantics = tester.ensureSemantics();
-      try {
-        final container = await pumpTraffic(
-          tester,
-          SpeedCard(direction: direction),
-          width: 300,
-          height: 208,
-          density: DashboardDensity.standard,
-        );
-        final context = tester.element(find.byType(SpeedCard));
-        final traffic = trafficStops(
-          context,
-          container,
-          speed: (speed) => '${speed.traffic.value} ${speed.traffic.unit}/s',
-        );
-        final speeds = container.read(trafficsProvider).list;
-        final peak = speeds.map(direction.of).reduce((a, b) => a > b ? a : b);
-        final order = readingOrder(tester);
-        expect(order, [
-          ...traffic.skip(direction.index * 2).take(2),
-          AppLocalizations.of(
-            context,
-          ).trafficPeak('${dashboardTraffic(peak)}/s'),
-        ], reason: order.join(' / '));
-      } finally {
-        semantics.dispose();
-      }
-    });
-  }
-
-  for (final scale in [1.0, 2.0]) {
-    testWidgets('network controls retain separate switches at scale $scale', (
-      tester,
-    ) async {
-      final container = await pump(
-        tester,
-        const FusedNetworkControls(
-          members: {
-            DashboardWidget.outboundMode,
-            DashboardWidget.vpnButton,
-            DashboardWidget.intranetIp,
-          },
-        ),
-        scale: scale,
-      );
-      expect(find.byType(DashboardCard), findsOneWidget);
-      expect(find.byType(DashboardSwitch), findsNWidgets(2));
-      final switches = tester
-          .widgetList<DashboardSwitch>(find.byType(DashboardSwitch))
-          .toList();
-      final oldLan = container.read(patchClashConfigProvider).allowLan;
-      switches[0].onChanged!(!switches[0].value);
-      expect(container.read(patchClashConfigProvider).allowLan, oldLan);
-      switches[1].onChanged!(!oldLan);
-      expect(container.read(patchClashConfigProvider).allowLan, !oldLan);
-      expect(tester.takeException(), null);
-    });
-  }
-
-  for (final (width, scale, ip, port) in const [
-    (360.0, 1.0, '1.1.1.1', 80),
-    (328.0, 1.0, '2001:db8:1234:5678:90ab:cdef:1234:5678', 7890),
-    (328.0, 2.0, '2001:db8:1234:5678:90ab:cdef:1234:5678', 7890),
-  ]) {
-    testWidgets(
-      'network full-width centered address and touch targets at $width/$scale',
-      (tester) async {
-        final container = await pump(
-          tester,
-          const FusedNetworkControls(
-            members: {
-              DashboardWidget.outboundMode,
-              DashboardWidget.vpnButton,
-              DashboardWidget.intranetIp,
-            },
-          ),
-          width: width,
-          scale: scale,
-        );
-        container.read(localIpProvider.notifier).value = ip;
-        container
-            .read(vpnSettingProvider.notifier)
-            .update((s) => s.copyWith(enable: true));
-        container
-            .read(patchClashConfigProvider.notifier)
-            .update((s) => s.copyWith(allowLan: true, mixedPort: port));
-        await tester.pump();
-        final l10n = AppLocalizations.of(
-          tester.element(find.byType(FusedNetworkControls)),
-        );
-        final address = ip.contains(':') ? '[$ip]:$port' : '$ip:$port';
-        final semantics = tester.ensureSemantics();
-        try {
-          expect(find.text(l10n.enabled), findsNothing);
-          expect(find.text(l10n.disabled), findsNothing);
-          expect(find.byTooltip(l10n.copy), findsNothing);
-          final addressNode = find.byKey(
-            const ValueKey('dashboard-lan-address'),
-          );
-          final copyNode = find.byKey(const ValueKey('dashboard-lan-copy'));
-          final copy = tester.getRect(copyNode);
-          final addressRect = tester.getRect(addressNode);
-          expect(addressRect.center.dx, closeTo(copy.center.dx, 0.01));
-          expect(addressRect.center.dy, closeTo(copy.center.dy, 0.01));
-          expect(copy.height, greaterThanOrEqualTo(48));
-          expect(
-            copy.width,
-            tester.getSize(find.byType(DashboardCard)).width - 40,
-          );
-          final semanticsData = tester
-              .getSemantics(copyNode)
-              .getSemanticsData();
-          expect(semanticsData.label, l10n.copy);
-          expect(semanticsData.value, address);
-          expect(semanticsData.hasAction(SemanticsAction.tap), isTrue);
-          if (width == 360 && scale == 1) {
-            expect(tester.getSize(find.byType(DashboardCard)).height, 220);
-          }
-          final switches = find.byType(DashboardSwitch);
-          final vpn = tester.getRect(switches.first);
-          final lan = tester.getRect(switches.last);
-          expect(vpn.top, lan.top);
-          expect(vpn.overlaps(lan), isFalse);
-          expect(copy.overlaps(vpn), isFalse);
-          expect(copy.overlaps(lan), isFalse);
-          await tester.tap(switches.first);
-          await tester.pump();
-          expect(container.read(vpnSettingProvider).enable, isFalse);
-          expect(container.read(patchClashConfigProvider).allowLan, isTrue);
-          await tester.tap(switches.last);
-          await tester.pump();
-          expect(container.read(vpnSettingProvider).enable, isFalse);
-          expect(container.read(patchClashConfigProvider).allowLan, isFalse);
-          expect(tester.takeException(), isNull);
-        } finally {
-          semantics.dispose();
-        }
-      },
-    );
-  }
-
-  for (final material in LiquidGlassMode.values) {
-    for (final aurora in [false, true]) {
-      for (final brightness in Brightness.values) {
-        testWidgets(
-          'mode pills remain full and centered $material/$aurora/$brightness',
-          (tester) async {
-            await pump(
-              tester,
-              Theme(
-                data: ThemeData(
-                  colorScheme: ColorScheme.fromSeed(
-                    seedColor: Colors.blue,
-                    brightness: brightness,
-                  ),
-                ),
-                child: AuroraAppearance(
-                  enabled: aurora,
-                  child: LiquidGlassScope(
-                    enabled: material != LiquidGlassMode.none,
-                    quality: material == LiquidGlassMode.ultra
-                        ? LiquidGlassQuality.ultra
-                        : LiquidGlassQuality.standard,
-                    child: LiquidGlassHost(
-                      enabled: material != LiquidGlassMode.none,
-                      child: const FusedNetworkControls(
-                        members: {DashboardWidget.outboundMode},
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            );
-            final buttons = find.byType(DashboardConnectedButton);
-            expect(buttons, findsNWidgets(3));
-            final rectangles = <Rect>[];
-            for (var i = 0; i < Mode.values.length; i++) {
-              final mode = Mode.values[i];
-              final button = buttons.at(i);
-              final rect = tester.getRect(button);
-              final icon = tester.getRect(
-                find.byKey(ValueKey('dashboard-mode-${mode.name}-icon')),
-              );
-              final text = tester.getRect(
-                find.byKey(ValueKey('dashboard-mode-${mode.name}-label')),
-              );
-              final group = icon.expandToInclude(text);
-              expect(icon.center.dx, closeTo(rect.center.dx, 0.01));
-              expect(text.center.dx, closeTo(rect.center.dx, 0.01));
-              expect(group.center.dy, closeTo(rect.center.dy, 0.01));
-              expect(rect.height, greaterThanOrEqualTo(48));
-              final fill = tester.widget<Container>(
-                find
-                    .descendant(
-                      of: button,
-                      matching: find.byWidgetPredicate(
-                        (w) =>
-                            w is Container && w.decoration is ShapeDecoration,
-                      ),
-                    )
-                    .first,
-              );
-              final shape = (fill.decoration! as ShapeDecoration).shape;
-              expect(shape, AppShape.full);
-              final path = shape.getOuterPath(Offset.zero & rect.size);
-              expect(
-                path.contains(Offset(rect.width / 2, rect.height / 2)),
-                isTrue,
-              );
-              expect(path.contains(const Offset(0.1, 0.1)), isFalse);
-              rectangles.add(rect);
-            }
-            for (final rect in rectangles) {
-              expect(rect.width, closeTo(rectangles.first.width, 0.01));
-              expect(rect.height, rectangles.first.height);
-            }
-            expect(tester.takeException(), isNull);
-          },
-        );
-      }
-    }
-  }
-
-  testWidgets('LAN copy preserves complete IPv4 IPv6 and disabled addresses', (
-    tester,
-  ) async {
-    String? copied;
-    final messenger = tester.binding.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') {
-        copied = (call.arguments as Map)['text'] as String;
-      }
-      return null;
-    });
-    addTearDown(
-      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
-    );
-    final container = await pump(
-      tester,
-      const FusedNetworkControls(
-        members: {DashboardWidget.vpnButton, DashboardWidget.intranetIp},
-      ),
-      width: 328,
-      scale: 2,
-    );
-    final l10n = AppLocalizations.of(
-      tester.element(find.byType(FusedNetworkControls)),
-    );
-    final semantics = tester.ensureSemantics();
-    try {
-      for (final (ip, enabled, port, expected)
-          in <(String?, bool, int, String?)>[
-            ('192.0.2.8', true, 7890, '192.0.2.8:7890'),
-            ('192.0.2.8', false, 7890, '192.0.2.8'),
-            ('2001:db8::8', true, 7890, '[2001:db8::8]:7890'),
-            ('2001:db8::8', false, 7890, '2001:db8::8'),
-            ('[2001:db8::8]', true, 7890, '[2001:db8::8]:7890'),
-            (
-              '2001:db8:1234:5678:90ab:cdef:1234:5678',
-              true,
-              7890,
-              '[2001:db8:1234:5678:90ab:cdef:1234:5678]:7890',
-            ),
-            ('', true, 7890, null),
-            (' ', false, 7890, null),
-            (null, true, 7890, null),
-            ('192.0.2.8', true, 0, null),
-            ('192.0.2.8', true, 65536, null),
-          ]) {
-        container.read(localIpProvider.notifier).value = ip;
-        container
-            .read(patchClashConfigProvider.notifier)
-            .update((s) => s.copyWith(allowLan: enabled, mixedPort: port));
-        await tester.pump();
-        final button = find.byKey(const ValueKey('dashboard-lan-copy'));
-        final action = tester.widget<Semantics>(button).properties.onTap;
-        final data = tester.getSemantics(button).getSemanticsData();
-        expect(data.label, l10n.copy);
-        expect(data.hasFlag(SemanticsFlag.isEnabled), expected != null);
-        expect(data.hasAction(SemanticsAction.tap), expected != null);
-        if (expected == null) {
-          expect(action, isNull);
-        } else {
-          expect(find.text(expected), findsOneWidget);
-          copied = null;
-          final vpnBefore = container.read(vpnSettingProvider).enable;
-          final target = tester.getRect(button);
-          await tester.tapAt(Offset(target.left + 2, target.center.dy));
-          await tester.pump();
-          expect(copied, expected);
-          expect(container.read(vpnSettingProvider).enable, vpnBefore);
-          expect(container.read(patchClashConfigProvider).allowLan, enabled);
-        }
-      }
-      expect(tester.takeException(), isNull);
-    } finally {
-      semantics.dispose();
-    }
-  });
 
   testWidgets(
     'service refresh preserves count owner and count events do not refresh services',
@@ -869,12 +572,18 @@ void main() {
         .read(trafficsProvider.notifier)
         .addTraffic(const Traffic(up: 1024, down: 4096));
     await tester.pump();
-    expect(find.byType(LineChart), findsNWidgets(2));
+    expect(find.byType(LineChart), findsNWidgets(4));
     container.read(appVisibleProvider.notifier).value = false;
     await tester.pump();
     container.read(appVisibleProvider.notifier).value = true;
     await tester.pump();
-    expect(find.byType(LineChart), findsNothing);
+    // The lines come back flat at once, without the samples from before.
+    expect(find.byType(LineChart), findsNWidgets(4));
+    for (final chart in tester.widgetList<LineChart>(find.byType(LineChart))) {
+      expect(chart.values, isEmpty);
+      expect(chart.lift!.value, 0);
+    }
+    expect(tester.binding.transientCallbackCount, 0);
     container.read(trafficsProvider.notifier).addTraffic(const Traffic());
     await tester.pump();
     expect(container.read(trafficsProvider).list.length, 2);
@@ -888,34 +597,46 @@ void main() {
     testWidgets('$boundary resume starts a fresh traffic episode', (
       tester,
     ) async {
-      final container = await pump(
-        tester,
-        const CurrentOutboundCard(showTraffic: true),
-      );
+      final container = await pump(tester, const CurrentOutboundCard());
       container
           .read(trafficsProvider.notifier)
           .addTraffic(const Traffic(up: 1024, down: 4096));
       await tester.pump();
-      expect(find.byType(LineChart), findsNWidgets(2));
+      expect(find.byType(LineChart), findsNWidgets(4));
+      double lift() =>
+          tester.widget<LineChart>(find.byType(LineChart).first).lift!.value;
+      // The first sample raises the curve out of the flat line.
+      expect(lift(), 0);
+      await tester.pump(fadeTabDuration ~/ 2);
+      expect(lift(), inExclusiveRange(0, 1));
+      await tester.pump(fadeTabDuration);
+      expect(lift(), 1);
       if (boundary == 'pause') {
         container.read(_suspended.notifier).setValue(true);
       } else {
         container.read(_running.notifier).setValue(false);
       }
       await tester.pump();
-      expect(find.byType(LineChart), findsNothing);
+      await tester.pump(fadeTabDuration ~/ 2);
+      expect(lift(), inExclusiveRange(0, 1));
+      await tester.pump(fadeTabDuration);
+      expect(lift(), 0);
       container
           .read(trafficsProvider.notifier)
           .addTraffic(const Traffic(up: 2048, down: 8192));
       await tester.pump();
-      expect(find.byType(LineChart), findsNothing);
+      expect(lift(), 0);
       if (boundary == 'pause') {
         container.read(_suspended.notifier).setValue(false);
       } else {
         container.read(_running.notifier).setValue(true);
       }
       await tester.pump();
-      expect(find.byType(LineChart), findsNothing);
+      for (final chart in tester.widgetList<LineChart>(
+        find.byType(LineChart),
+      )) {
+        expect(chart.values, isEmpty);
+      }
       container.read(trafficsProvider.notifier).addTraffic(const Traffic());
       await tester.pump();
       expect(container.read(trafficsProvider).list.length, 3);
@@ -931,12 +652,13 @@ void main() {
   testWidgets(
     'status speed and button do not overlap at narrow double text scale',
     (tester) async {
-      final container = await pump(
-        tester,
-        const CurrentOutboundCard(),
-        scale: 2,
-        width: 328,
+      await pump(tester, const CurrentOutboundCard(), scale: 2, width: 328);
+      final layout = tester.renderObject<RenderStatusCardLayout>(
+        find.byType(StatusCardLayout),
       );
+      expect(layout.overlaid, isFalse);
+      final body = layout.childAfter(layout.firstChild!)!;
+      final bodyRect = body.localToGlobal(Offset.zero) & body.size;
       final mainParts = [
         find.text('状态'),
         find.byType(DashboardChip).first,
@@ -944,34 +666,34 @@ void main() {
         find.byType(EmojiCover),
         find.byType(OutboundBubble),
       ];
-      final originalRects = [
-        for (final part in mainParts) tester.getRect(part),
-      ];
-      final originalHeight = tester.getSize(find.byType(DashboardCard)).height;
-      await pump(
-        tester,
-        const CurrentOutboundCard(showTraffic: true),
-        existing: container,
-        scale: 2,
-        width: 328,
-      );
       final figures = tester.getRect(find.byType(OutboundTrafficFigures));
       final chip = tester.getRect(find.byType(DashboardChip).first);
-      final button = tester.getRect(find.byType(OutboundBubble));
-      expect([
-        for (final part in mainParts) tester.getRect(part),
-      ], originalRects);
-      expect(figures.top, greaterThanOrEqualTo(originalHeight - 18));
+      final flag = tester.getRect(find.byType(OutboundBubble));
+      final button = tester.getRect(
+        find.byTooltip(
+          AppLocalizations.of(tester.element(find.byType(DashboardCard))).stop,
+        ),
+      );
+      for (final part in mainParts) {
+        final rect = tester.getRect(part);
+        expect(bodyRect.intersect(rect), rect, reason: '$part');
+      }
+      expect(figures.top, closeTo(bodyRect.bottom + 8, 0.01));
       expect(
         tester.getSize(find.byType(DashboardCard)).height,
-        originalHeight + 8 + figures.height,
+        closeTo(body.size.height + 36 + 8 + figures.height, 0.01),
       );
-      expect(tester.getRect(find.text('上传')).height, 22);
-      expect(tester.getRect(find.text('下载')).height, 22);
+      expect(tester.getRect(find.text('上传')).height, 20);
+      expect(tester.getRect(find.text('下载')).height, 20);
       expect(
         figures.overlaps(chip),
         isFalse,
         reason: 'figures=$figures chip=$chip',
+      );
+      expect(
+        figures.overlaps(flag),
+        isFalse,
+        reason: 'figures=$figures flag=$flag',
       );
       expect(
         figures.overlaps(button),

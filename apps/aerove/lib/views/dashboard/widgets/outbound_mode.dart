@@ -22,9 +22,7 @@ void _changeMode(WidgetRef ref, Mode mode) {
 }
 
 class OutboundModeCard extends ConsumerWidget {
-  const OutboundModeCard({super.key, this.embedded = false});
-
-  final bool embedded;
+  const OutboundModeCard({super.key});
 
   static const _outer = 26.0;
 
@@ -36,12 +34,11 @@ class OutboundModeCard extends ConsumerWidget {
     final tone = DashboardColors.of(context).tone;
     final content = Column(
       children: [
-        if (!embedded)
-          DashboardCardHeader(
-            glyph: AppGlyphs.split,
-            title: context.appLocalizations.outboundMode,
-          ),
-        if (!embedded) const SizedBox(height: 12),
+        DashboardCardHeader(
+          glyph: AppGlyphs.split,
+          title: context.appLocalizations.outboundMode,
+        ),
+        const SizedBox(height: 12),
         DashboardConnectedGroup(
           children: [
             for (final (index, item) in Mode.values.indexed)
@@ -87,12 +84,10 @@ class OutboundModeCard extends ConsumerWidget {
         ),
       ],
     );
-    return embedded
-        ? content
-        : DashboardCard(
-            semanticLabel: context.appLocalizations.outboundMode,
-            child: content,
-          );
+    return DashboardCard(
+      semanticLabel: context.appLocalizations.outboundMode,
+      child: content,
+    );
   }
 }
 

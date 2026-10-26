@@ -20,6 +20,8 @@ List<RecordColumn<TrackerInfo>> trackerInfoColumns(
   // A live table spends its first extra width on the totals.
   final detailed = wide && (!isLive || width >= _fullLiveTableWidth);
   double totalWidth(String label) => max(88, recordHeaderWidth(context, label));
+  final amount = recordTrafficWidth(context);
+  final rate = recordTrafficWidth(context, rate: true);
   return [
     if (!isLive)
       RecordColumn(
@@ -67,12 +69,14 @@ List<RecordColumn<TrackerInfo>> trackerInfoColumns(
         appLocalizations.download,
         (info) => info.downloadSpeed ?? 0,
         perSecond: true,
+        minWidth: rate,
       ),
       _amountColumn(
         'uploadSpeed',
         appLocalizations.upload,
         (info) => info.uploadSpeed ?? 0,
         perSecond: true,
+        minWidth: rate,
       ),
     ],
     if (isLive && wide) ...[
@@ -81,26 +85,35 @@ List<RecordColumn<TrackerInfo>> trackerInfoColumns(
         appLocalizations.totalDownload,
         (info) => info.download,
         width: totalWidth(appLocalizations.totalDownload),
+        minWidth: amount,
       ),
       _amountColumn(
         'upload',
         appLocalizations.totalUpload,
         (info) => info.upload,
         width: totalWidth(appLocalizations.totalUpload),
+        minWidth: amount,
       ),
     ] else if (wide) ...[
       _amountColumn(
         'download',
         appLocalizations.download,
         (info) => info.download,
+        minWidth: amount,
       ),
-      _amountColumn('upload', appLocalizations.upload, (info) => info.upload),
+      _amountColumn(
+        'upload',
+        appLocalizations.upload,
+        (info) => info.upload,
+        minWidth: amount,
+      ),
     ] else
       _amountColumn(
         'traffic',
         appLocalizations.traffic,
         (info) => info.upload + info.download,
         width: 88,
+        minWidth: amount,
       ),
     if (isLive && detailed)
       RecordColumn(
@@ -131,13 +144,14 @@ RecordColumn<TrackerInfo> _amountColumn(
   int Function(TrackerInfo info) amountOf, {
   double width = 100,
   bool perSecond = false,
+  required double minWidth,
 }) {
   return RecordColumn(
-    TableColumn(id, label, width: width, end: true),
+    TableColumn(id, label, width: width, end: true, minWidth: minWidth),
     cell: (_, info) {
       final amount = amountOf(info);
       return RecordCellText(
-        perSecond ? '${amount.traffic.show}/s' : amount.traffic.show,
+        perSecond ? trafficRate(amount) : trafficAmount(amount),
         muted: perSecond && amount == 0,
       );
     },

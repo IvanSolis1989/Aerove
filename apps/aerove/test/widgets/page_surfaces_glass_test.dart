@@ -411,7 +411,7 @@ void main() {
             .update(
               (state) => state.copyWith(
                 dashboardWidgets: const [
-                  DashboardWidget.networkSpeed,
+                  DashboardWidget.memoryInfo,
                   DashboardWidget.outboundMode,
                 ],
               ),

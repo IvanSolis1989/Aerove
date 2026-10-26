@@ -88,4 +88,34 @@ void main() {
       'exit': 70,
     });
   });
+
+  test('a traffic column never gets narrower than its least width', () {
+    const columns = [
+      TableColumn('target', 'Target', flex: 1),
+      TableColumn('traffic', 'Traffic', width: 64, minWidth: 90),
+      TableColumn('exit', 'Exit', width: 120),
+    ];
+
+    expect(tableColumnWidths(columns, 400), [190, 90, 120]);
+    expect(tableColumnWidths(columns, 400, {'traffic': 40})[1], 90);
+    final squeezed = tableColumnWidths(columns, 200, {
+      'target': 300,
+      'traffic': 100,
+    });
+    expect(squeezed[1], 90);
+    expect(_sum(squeezed), closeTo(200, 0.001));
+  });
+
+  test('a drag stops a traffic column at its least width', () {
+    const columns = [
+      TableColumn('traffic', 'Traffic', width: 120, minWidth: 90),
+      TableColumn('exit', 'Exit', width: 120),
+    ];
+    final widths = tableColumnWidths(columns, 240);
+
+    expect(resizedTableColumns(columns, widths, const {}, 0, -100), {
+      'traffic': 90,
+      'exit': 150,
+    });
+  });
 }

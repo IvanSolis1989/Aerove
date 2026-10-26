@@ -101,7 +101,6 @@ void main() {
     await pumpDashboard(tester, const Size(1220, 824));
 
     final current = rectOf(tester, CurrentOutboundCard);
-    final upload = rectOf(tester, SpeedCard);
     final mode = rectOf(tester, OutboundModeBar);
     final systemProxy = tester.getRect(find.byType(NetworkTakeoverTile).first);
     final tun = tester.getRect(find.byType(NetworkTakeoverTile).last);
@@ -110,19 +109,29 @@ void main() {
     final service = rectOf(tester, ServiceStatusCard);
     final table = rectOf(tester, ConnectionsTableCard);
     final groups = rectOf(tester, ProxyGroupsCard);
+    final column = (current.width - 16 * 3) / 4;
 
     expect(current.height, 208);
-    expect(current.width, closeTo(upload.width * 2 + 16, 0.01));
+    expect(current.width, 1220 - 16 - 24);
+    for (final part in [OutboundTrafficFigures, OutboundTrafficBackground]) {
+      expect(
+        find.descendant(
+          of: find.byType(CurrentOutboundCard),
+          matching: find.byType(part),
+        ),
+        findsOneWidget,
+      );
+    }
     expect(mode.top, current.bottom + 16);
     expect(mode.height, 64);
-    expect(mode.width, closeTo(current.width, 0.01));
-    expect(systemProxy.left, closeTo(upload.left, 0.01));
-    expect(tun.right, closeTo(upload.right + 16 + upload.width, 0.01));
+    expect(mode.width, closeTo(column * 2 + 16, 0.01));
+    expect(systemProxy.left, closeTo(mode.right + 16, 0.01));
+    expect(tun.right, closeTo(current.right, 0.01));
     expect(intranet.top, mode.bottom + 16);
     expect(intranet.height, 176);
     expect(profile.top, intranet.top);
     expect(profile.left, closeTo(intranet.right + 16, 0.01));
-    expect(service.width, closeTo(current.width, 0.01));
+    expect(service.width, closeTo(column * 2 + 16, 0.01));
     expect(find.byType(MemoryInfo), findsNothing);
     expect(table.top, intranet.bottom + 16);
     expect(table.width / groups.width, closeTo(1.5, 0.01));
@@ -171,16 +180,13 @@ void main() {
       'services', (tester) async {
     await pumpDashboard(tester, const Size(1440, 900));
 
-    final upload = rectOf(tester, SpeedCard);
+    final current = rectOf(tester, CurrentOutboundCard);
     final service = rectOf(tester, ServiceStatusCard);
     final memory = rectOf(tester, MemoryInfo);
-    expect(service.width, closeTo(upload.width, 0.01));
+    expect(service.width, closeTo((current.width - 16 * 3) / 4, 0.01));
     expect(memory.top, service.top);
     expect(memory.left, closeTo(service.right + 16, 0.01));
-    expect(
-      memory.right,
-      closeTo(rectOf(tester, SpeedCard).right + 16 + upload.width, 0.01),
-    );
+    expect(memory.right, closeTo(current.right, 0.01));
     expect(tester.takeException(), isNull);
 
     await teardown(tester);
@@ -231,7 +237,7 @@ void main() {
     expect(find.byType(ProxyGroupsCard), findsNothing);
     expect(stats.height, greaterThan(112));
     expect(stats.bottom, 660 - 24);
-    expect(stats.width, closeTo(current.width, 0.01));
+    expect(stats.width, closeTo((current.width - 16) / 2, 0.01));
     expect(groups.top, stats.top);
     expect(find.text('12 groups', findRichText: true), findsOneWidget);
     expect(scrollExtentOf(tester), 0);
@@ -276,7 +282,7 @@ void main() {
 
     final current = rectOf(tester, CurrentOutboundCard);
     final memory = rectOf(tester, MemoryInfo);
-    expect(rectOf(tester, SpeedCard).width, 440);
+    expect(current.width, 440 * 4 + 16 * 3);
     expect(current.left - 16, closeTo(2560 - 24 - memory.right, 0.01));
     expect(rectOf(tester, ConnectionsTableCard).bottom, 1440 - 24);
     expect(tester.takeException(), isNull);
@@ -291,7 +297,7 @@ void main() {
     tester.view.physicalSize = const Size(600, 800);
     await tester.pump();
     expect(tester.takeException(), isNull);
-    expect(find.byType(OutboundModeCard), findsOneWidget);
+    expect(find.byKey(const ValueKey('dashboard-mode')), findsOneWidget);
     expect(find.byType(OutboundModeBar), findsNothing);
 
     tester.view.physicalSize = const Size(800, 900);
@@ -348,21 +354,21 @@ void main() {
     );
 
     final current = rectOf(tester, CurrentOutboundCard);
-    final upload = rectOf(tester, SpeedCard);
+    final column = (current.width - gap) / 2;
     final mode = rectOf(tester, OutboundModeBar);
     final tun = tester.getRect(find.byType(NetworkTakeoverTile).last);
     final intranet = rectOf(tester, IntranetIpCard);
     final profile = rectOf(tester, ProfilesCard);
 
     expect(current.width, 800 - 16 - 24);
-    expect(current.width, closeTo(upload.width * 2 + gap, 0.01));
+    expect(mode.top, closeTo(current.bottom + gap, 0.01));
     expect(mode.width, current.width);
-    expect(tun.width, closeTo(upload.width, 0.01));
+    expect(tun.width, closeTo(column, 0.01));
     expect(intranet.top, tun.bottom + gap);
     expect(profile.top, intranet.top);
     expect(profile.left, closeTo(intranet.right + gap, 0.01));
     final service = rectOf(tester, ServiceStatusCard);
-    expect(service.width, closeTo(upload.width, 0.01));
+    expect(service.width, closeTo(column, 0.01));
     expect(rectOf(tester, MemoryInfo).top, service.top);
     expect(find.byType(OutboundModeCard), findsNothing);
     expect(tester.takeException(), isNull);
@@ -374,7 +380,7 @@ void main() {
     );
     final stats = rectOf(tester, ConnectionStatsCard);
     final groups = rectOf(tester, ProxyGroupsSummaryCard);
-    expect(stats.width, closeTo(upload.width, 0.01));
+    expect(stats.width, closeTo(column, 0.01));
     expect(groups.top, stats.top);
     expect(groups.left, closeTo(stats.right + gap, 0.01));
     expect(find.byType(ConnectionsTableCard), findsNothing);
@@ -417,7 +423,7 @@ void main() {
     expect(card.center.dx, closeTo(310, 0.01));
     expect(find.byType(NetworkTakeoverCard), findsOneWidget);
     expect(find.byType(VpnCard), findsNothing);
-    expect(find.byType(OutboundModeCard), findsOneWidget);
+    expect(find.byKey(const ValueKey('dashboard-mode')), findsOneWidget);
     expect(find.byType(OutboundModeBar), findsNothing);
 
     await teardown(tester);
@@ -434,9 +440,9 @@ void main() {
     expect(card.left, 16);
     expect(card.right, 400 - 16);
     final controls = find.byType(FusedNetworkControls);
-    final switches = find.descendant(
+    final buttons = find.descendant(
       of: controls,
-      matching: find.byType(DashboardSwitch),
+      matching: find.byType(DashboardConnectedButton),
     );
     expect(controls, findsOneWidget);
     expect(tester.widget<FusedNetworkControls>(controls).members, {
@@ -444,24 +450,27 @@ void main() {
       DashboardWidget.vpnButton,
       DashboardWidget.intranetIp,
     });
-    expect(switches, findsNWidgets(2));
-    final l10n = tester.element(controls).appLocalizations;
     expect(
-      tester.widgetList<DashboardSwitch>(switches).map((s) => s.semanticLabel),
+      find.descendant(of: controls, matching: find.byType(DashboardSwitch)),
+      findsNothing,
+    );
+    expect(buttons, findsNWidgets(3));
+    final l10n = tester.element(controls).appLocalizations;
+    final row = [
+      for (final name in ['mode', 'vpn', 'lan'])
+        tester.getRect(find.byKey(ValueKey('dashboard-$name'))),
+    ];
+    expect(
+      tester
+          .widgetList<DashboardConnectedButton>(buttons)
+          .map((button) => button.semanticLabel)
+          .skip(1),
       ['VPN', l10n.allowLan],
     );
-    expect(
-      rectOf(tester, OutboundModeCard).bottom,
-      lessThan(tester.getRect(switches.first).top),
-    );
-    expect(
-      tester.getRect(switches.first).left,
-      lessThan(tester.getRect(switches.last).left),
-    );
-    expect(
-      tester.getRect(switches.first).top,
-      tester.getRect(switches.last).top,
-    );
+    for (var index = 1; index < row.length; index++) {
+      expect(row[index].top, row.first.top);
+      expect(row[index].left, greaterThan(row[index - 1].right));
+    }
     final controlsRect = tester.getRect(controls);
     final overview = rectOf(tester, ServiceStatusCard);
     for (final rect in [controlsRect, overview]) {
@@ -470,12 +479,6 @@ void main() {
     }
     expect(controlsRect.top, greaterThan(card.bottom));
     expect(overview.top, greaterThan(controlsRect.bottom));
-    expect(
-      tester
-          .widget<CurrentOutboundCard>(find.byType(CurrentOutboundCard))
-          .showTraffic,
-      isTrue,
-    );
     expect(
       tester
           .widget<ServiceStatusCard>(find.byType(ServiceStatusCard))
@@ -502,15 +505,21 @@ void main() {
     expect(tester.widget<FusedNetworkControls>(controls).members, {
       DashboardWidget.vpnButton,
     });
-    expect(switches, findsOneWidget);
-    expect(tester.widget<DashboardSwitch>(switches).semanticLabel, 'VPN');
+    expect(buttons, findsOneWidget);
+    expect(
+      tester.widget<DashboardConnectedButton>(buttons).semanticLabel,
+      'VPN',
+    );
+    expect(find.byKey(const ValueKey('dashboard-mode')), findsNothing);
     expect(find.byType(OutboundModeCard), findsNothing);
     expect(find.byType(ServiceStatusCard), findsNothing);
     expect(
-      tester
-          .widget<CurrentOutboundCard>(find.byType(CurrentOutboundCard))
-          .showTraffic,
-      isFalse,
+      find.descendant(
+        of: find.byType(CurrentOutboundCard),
+        matching: find.byType(OutboundTrafficFigures),
+      ),
+      findsOneWidget,
+      reason: 'the status card carries the traffic in every layout',
     );
     final reordered = [
       rectOf(tester, ProfilesCard),
@@ -541,7 +550,13 @@ void main() {
       expect(vpn.height, mode.height);
       expect(find.byType(NetworkTakeoverTile), findsNothing);
       expect(find.byType(CurrentOutboundCard), findsOneWidget);
-      expect(find.byType(NetworkSpeedCard), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(CurrentOutboundCard),
+          matching: find.byType(OutboundTrafficFigures),
+        ),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     }
 

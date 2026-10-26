@@ -72,7 +72,7 @@ void main() {
   }
 
   testWidgets('hides expiry when both values do not fit', (tester) async {
-    const trafficLabel = '1KB / 1GB';
+    const trafficLabel = '1.0 KB / 1.0 GB';
 
     await tester.pumpWidget(
       MaterialApp(
@@ -125,7 +125,7 @@ void main() {
         supportedLocales: AppLocalizations.delegate.supportedLocales,
         home: const Scaffold(
           body: SizedBox(
-            width: 300,
+            width: 400,
             child: SubscriptionInfoView(
               subscriptionInfo: SubscriptionInfo(
                 upload: 1024,
@@ -180,8 +180,8 @@ void main() {
     expect(find.text(appLocalizations.usedTraffic), findsOneWidget);
     expect(find.text(appLocalizations.totalTraffic), findsOneWidget);
     expect(find.text(appLocalizations.expireTime), findsOneWidget);
-    expect(find.text('3KB'), findsOneWidget);
-    expect(find.text('1GB'), findsOneWidget);
+    expect(find.text('3.0 KB'), findsOneWidget);
+    expect(find.text('1.0 GB'), findsOneWidget);
     expect(find.byType(DecorationListItem), findsNWidgets(3));
   });
 }

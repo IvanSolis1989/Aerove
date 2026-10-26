@@ -1,7 +1,10 @@
 import 'dart:math' as math;
 
-import 'package:fl_clash/ui/foreground_ink.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
+
+/// Lets an inked stroke and a plain fill be drawn as separate layers.
+enum LineChartPart { both, fill, stroke }
 
 class LineChart extends StatefulWidget {
   const LineChart({
@@ -12,7 +15,11 @@ class LineChart extends StatefulWidget {
     required this.minScale,
     required this.color,
     required this.baselineRatio,
-    this.strokeInk,
+    this.part = LineChartPart.both,
+    this.strokeOpacity = 1,
+    this.fillOpacity = _LineChartPainter.defaultFillOpacity,
+    this.fillToBaseline = false,
+    this.lift,
   }) : assert(capacity > 1),
        assert(minScale > 0);
 
@@ -28,7 +35,14 @@ class LineChart extends StatefulWidget {
   final double minScale;
 
   final Color color;
-  final Color? strokeInk;
+  final LineChartPart part;
+  final double strokeOpacity;
+  final double fillOpacity;
+
+  final bool fillToBaseline;
+
+  /// 0 lays the curve flat on the zero line; it repaints without a rebuild.
+  final ValueListenable<double>? lift;
 
   /// Where the zero line sits, as a share of the height from the top.
   final double baselineRatio;
@@ -65,34 +79,23 @@ class _LineChartState extends State<LineChart> {
 
   @override
   Widget build(BuildContext context) {
-    CustomPaint paint({bool fill = true, bool stroke = true, Color? color}) =>
-        CustomPaint(
+    return RepaintBoundary(
+      child: SizedBox.expand(
+        child: CustomPaint(
           painter: _LineChartPainter(
             series: _series,
             capacity: widget.capacity,
             minScale: widget.minScale,
-            color: color ?? widget.color,
+            color: widget.color,
             baselineRatio: widget.baselineRatio,
-            drawFill: fill,
-            drawStroke: stroke,
+            drawFill: widget.part != LineChartPart.stroke,
+            drawStroke: widget.part != LineChartPart.fill,
+            strokeOpacity: widget.strokeOpacity,
+            fillOpacity: widget.fillOpacity,
+            fillToBaseline: widget.fillToBaseline,
+            lift: widget.lift,
           ),
-        );
-    final ink = widget.strokeInk;
-    return RepaintBoundary(
-      child: SizedBox.expand(
-        child: ink == null
-            ? paint()
-            : Stack(
-                fit: StackFit.expand,
-                children: [
-                  paint(stroke: false),
-                  GlassInk(
-                    source: ink,
-                    role: GlassInkRole.icon,
-                    child: paint(fill: false, color: ink),
-                  ),
-                ],
-              ),
+        ),
       ),
     );
   }
@@ -166,15 +169,20 @@ class _LineChartPainter extends CustomPainter {
     required this.baselineRatio,
     this.drawFill = true,
     this.drawStroke = true,
+    this.strokeOpacity = 1,
+    this.fillOpacity = _LineChartPainter.defaultFillOpacity,
+    this.fillToBaseline = false,
+    this.lift,
   }) : _strokePaint = Paint()
-         ..color = color
+         ..color = color.withValues(alpha: color.a * strokeOpacity)
          ..strokeWidth = _strokeWidth
          ..strokeCap = StrokeCap.round
          ..strokeJoin = StrokeJoin.round
-         ..style = PaintingStyle.stroke;
+         ..style = PaintingStyle.stroke,
+       super(repaint: lift);
 
   static const _strokeWidth = 2.0;
-  static const _fillOpacity = 0.14;
+  static const defaultFillOpacity = 0.14;
 
   final _Series series;
   final int capacity;
@@ -183,6 +191,10 @@ class _LineChartPainter extends CustomPainter {
   final double baselineRatio;
   final bool drawFill;
   final bool drawStroke;
+  final double strokeOpacity;
+  final double fillOpacity;
+  final bool fillToBaseline;
+  final ValueListenable<double>? lift;
 
   final Paint _strokePaint;
 
@@ -212,19 +224,20 @@ class _LineChartPainter extends CustomPainter {
       y = nextY;
     }
     final top = math.max(minScale, -curve.getBounds().top);
-    final yScale = (baseline - _strokeWidth) / top;
+    final yScale = (lift?.value ?? 1) * (baseline - _strokeWidth) / top;
     final line = curve.transform(
       (Matrix4.identity()
             ..translateByDouble(0, baseline, 0, 1)
             ..scaleByDouble(1, yScale, 1, 1))
           .storage,
     );
+    final floor = fillToBaseline ? baseline : size.height;
     final area = Path.from(line)
-      ..lineTo(x, size.height)
-      ..lineTo(firstX, size.height)
+      ..lineTo(x, floor)
+      ..lineTo(firstX, floor)
       ..close();
     final fillPaint = Paint()
-      ..color = color.withValues(alpha: color.a * _fillOpacity);
+      ..color = color.withValues(alpha: color.a * fillOpacity);
     canvas
       ..save()
       ..clipRect(Offset.zero & size);
@@ -245,6 +258,10 @@ class _LineChartPainter extends CustomPainter {
         oldDelegate.color != color ||
         oldDelegate.baselineRatio != baselineRatio ||
         oldDelegate.drawFill != drawFill ||
-        oldDelegate.drawStroke != drawStroke;
+        oldDelegate.drawStroke != drawStroke ||
+        oldDelegate.strokeOpacity != strokeOpacity ||
+        oldDelegate.fillOpacity != fillOpacity ||
+        oldDelegate.fillToBaseline != fillToBaseline ||
+        oldDelegate.lift != lift;
   }
 }

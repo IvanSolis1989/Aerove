@@ -145,7 +145,7 @@ void main() {
     seedRequests([_tracker(id: 'a', host: 'alpha.test')]);
 
     await pumpRequests(tester);
-    expect(find.text('251.8KB'), findsNothing);
+    expect(find.text('251.8 KB'), findsNothing);
 
     container.read(requestsProvider.notifier).updateTraffic({
       'a': (upload: 460, download: 257835),
@@ -154,7 +154,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('251.8KB'), findsOneWidget);
+    expect(find.text('251.8 KB'), findsOneWidget);
 
     await teardownView(tester);
   });

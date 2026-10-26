@@ -18,6 +18,7 @@ import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
 import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
+import 'package:fl_clash/views/dashboard/widgets/traffic.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'dart:async';
 import 'dart:ui' as ui;
@@ -209,20 +210,29 @@ int Function() _countFrames(WidgetTester tester) {
   };
 }
 
+/// The box that paints the flag inside its bubble: the live clipped flag
+/// while the bubble writhes, a picture of it once it rests.
+RenderObject _restingPicture(WidgetTester tester, Finder cover) {
+  RenderObject? node = tester.renderObject(cover);
+  while (node != null && node is! RenderRepaintBoundary) {
+    node = node.parent;
+  }
+  final holder = node?.parent;
+  expect(holder, isA<RenderProxyBox>());
+  return holder!;
+}
+
 void main() {
   setUpAll(() => registerFallbackValue(const OutboundIpParams(timeout: 0)));
 
   group('the exit address', () {
     for (final density in DashboardDensity.values) {
       testWidgets(
-        'the flag keeps the ${density.name} badge bounds without a rim',
+        'the flag writhes inside the ${density.name} bubble without a rim',
         (tester) async {
+          final quality = Completer<IpQuality>();
           await tester.pumpWidget(
-            _app(
-              (_, _) async => _residential,
-              countryCode: 'JP',
-              density: density,
-            ),
+            _app((_, _) => quality.future, countryCode: 'JP', density: density),
           );
           await tester.pump();
           final flag = find.byWidgetPredicate(
@@ -245,7 +255,7 @@ void main() {
           );
           expect(tester.getSize(cover), badgeSize);
           expect(tester.getSize(flag).width, greaterThan(badgeSize.width));
-          expect(
+          final skin = tester.widget<ClipPath>(
             find.ancestor(
               of: cover,
               matching: find.byWidgetPredicate(
@@ -254,22 +264,48 @@ void main() {
                     widget.clipper is OutboundDropletClipper,
               ),
             ),
+          );
+          expect(skin.clipBehavior, Clip.antiAliasWithSaveLayer);
+          expect(
+            find.ancestor(
+              of: cover,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is CustomPaint &&
+                    widget.foregroundPainter is OutboundDropletFeather,
+              ),
+            ),
+            findsOneWidget,
+          );
+          expect(
+            find.ancestor(of: cover, matching: find.byType(ShaderMask)),
             findsNothing,
           );
-          final mask = tester.widget<ShaderMask>(
-            find.ancestor(of: cover, matching: find.byType(ShaderMask)),
-          );
-          expect(mask.blendMode, BlendMode.dstIn);
+          expect(find.byType(CircularProgressIndicator), findsNothing);
+          final writhing = _restingPicture(tester, cover);
+          expect(writhing, paints..clipPath());
+          expect(writhing, isNot(paints..drawImageRect()));
           final base = _bubbles(tester);
           final edge =
               _badge(tester).foregroundPainter! as OutboundDropletPainter;
+          expect(base.wobble, 1);
           expect(base.color, Colors.transparent);
           expect(base.shadow, Colors.transparent);
           expect(base.highlight, isFalse);
           expect(edge.highlight, isFalse);
           expect(edge.rim, isNull);
           expect(find.byTooltip('Retry'), findsOneWidget);
+          expect(tester.widget<InkResponse>(_bubble()).onTap, isNull);
+
+          quality.complete(_residential);
+          await tester.pumpAndSettle();
+          expect(_bubbles(tester).wobble, 0);
+          final resting = _restingPicture(tester, cover);
+          expect(resting, paints..drawImageRect());
+          expect(resting, paintsExactlyCountTimes(#saveLayer, 0));
+          expect(resting, paintsExactlyCountTimes(#clipPath, 0));
           expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
+          expect(tester.binding.hasScheduledFrame, isFalse);
           expect(tester.takeException(), isNull);
         },
       );
@@ -279,28 +315,62 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(_app((_, _) async => _residential));
-      await tester.pump();
-      final mask = tester.widget<ShaderMask>(
-        find.descendant(of: _bubble(), matching: find.byType(ShaderMask)),
-      );
+      await tester.pumpAndSettle();
+      final feather =
+          tester
+                  .widget<CustomPaint>(
+                    find.descendant(
+                      of: _bubble(),
+                      matching: find.byWidgetPredicate(
+                        (widget) =>
+                            widget is CustomPaint &&
+                            widget.foregroundPainter is OutboundDropletFeather,
+                      ),
+                    ),
+                  )
+                  .foregroundPainter!
+              as OutboundDropletFeather;
+      expect(feather.wobble, 0);
       await tester.runAsync(() async {
         const bounds = Rect.fromLTWH(0, 0, 48, 48);
+        const ratio = 4.0;
         final recorder = ui.PictureRecorder();
-        ui.Canvas(
-          recorder,
-        ).drawRect(bounds, ui.Paint()..shader = mask.shaderCallback(bounds));
+        final canvas = ui.Canvas(recorder)
+          ..scale(ratio)
+          ..clipPath(
+            const OutboundDropletClipper(irregularity: 0).getClip(bounds.size),
+          )
+          ..saveLayer(bounds, ui.Paint())
+          ..drawRect(bounds, ui.Paint()..color = const Color(0xFFFFFFFF));
+        feather.paint(canvas, bounds.size);
+        canvas.restore();
         final picture = recorder.endRecording();
-        final image = await picture.toImage(48, 48);
-        final bytes = await image.toByteData(
+        final image = await picture.toImage(48 * 4, 48 * 4);
+        final pixels = (await image.toByteData(
           format: ui.ImageByteFormat.rawRgba,
-        );
-        int alpha(int x, int y) => bytes!.getUint8((y * 48 + x) * 4 + 3);
-        expect(alpha(24, 24), 255);
-        expect(alpha(5, 24), 255);
-        expect(alpha(0, 24), inExclusiveRange(0, 255));
-        expect(alpha(0, 0), 0);
+        ))!;
         image.dispose();
         picture.dispose();
+        int alpha(double x, double y) => pixels.getUint8(
+          ((y * ratio).floor() * 48 * 4 + (x * ratio).floor()) * 4 + 3,
+        );
+        const rest = 48 * 0.41;
+        expect(alpha(24, 24), 255);
+        expect(alpha(24 - rest * 0.85, 24), 255);
+        final ramp = [
+          for (var step = 0; step <= 8; step++)
+            alpha(24 - rest * 0.85 - step * rest * 0.15 / 8, 24),
+        ];
+        for (var index = 1; index < ramp.length; index++) {
+          expect(
+            ramp[index],
+            lessThanOrEqualTo(ramp[index - 1]),
+            reason: '$ramp',
+          );
+        }
+        expect(alpha(24 - rest + 0.25, 24), lessThan(64));
+        expect(alpha(1, 24), 0);
+        expect(alpha(1, 1), 0);
       });
     });
 
@@ -370,7 +440,8 @@ void main() {
       expect(find.byGlyph(AppGlyphs.refresh), findsNothing);
       expect(find.byType(ShapeBadge), findsNothing);
       expect(find.byType(OutboundBubble), findsOneWidget);
-      expect(find.byType(OutboundRibbon), findsOneWidget);
+      expect(find.byType(OutboundTrafficBackground), findsOneWidget);
+      expect(find.byType(OutboundTrafficFigures), findsOneWidget);
     });
 
     testWidgets('a little wider than its card shrinks to fit', (tester) async {
@@ -434,8 +505,9 @@ void main() {
       final checking = _bubbles(tester);
       expect(checking.wobble, 1);
       expect(checking.irregularity, 1);
+      final checkedAt = checking.time;
       await tester.pump(const Duration(milliseconds: 300));
-      expect(_bubbles(tester).time, greaterThan(checking.time));
+      expect(_bubbles(tester).time, greaterThan(checkedAt));
 
       quality.complete(_residential);
       await tester.pumpAndSettle();
@@ -446,9 +518,10 @@ void main() {
       final settled = _bubbles(tester);
       expect(settled.wobble, 0);
       expect(settled.irregularity, 0);
+      final settledAt = settled.time;
       expect(
         OutboundDropletClipper(
-          time: settled.time,
+          time: settledAt,
           wobble: settled.wobble,
           irregularity: settled.irregularity,
         ).getClip(const Size.square(48)).getBounds(),
@@ -457,7 +530,7 @@ void main() {
         ).getClip(const Size.square(48)).getBounds(),
       );
       await tester.pump(const Duration(seconds: 1));
-      expect(_bubbles(tester).time, settled.time);
+      expect(_bubbles(tester).time, settledAt);
       expect(tester.widget<InkResponse>(_bubble()).onTap, isNotNull);
     });
 
@@ -791,10 +864,7 @@ void main() {
     OutboundDropletPainter droplet(WidgetTester tester) =>
         _painterIn<OutboundDropletPainter>(tester, startButton());
 
-    double gauze(WidgetTester tester) {
-      final ribbon = find.byType(OutboundRibbon);
-      return _painterIn<OutboundRibbonPainter>(tester, ribbon).phase;
-    }
+    double drift(WidgetTester tester) => droplet(tester).time;
 
     testWidgets('dispatches each toggle through the shared running state', (
       tester,
@@ -962,29 +1032,31 @@ void main() {
       });
     }
 
-    testWidgets('the gauze drifts only while the tunnel runs', (tester) async {
+    testWidgets('the start bubble drifts only while the tunnel runs', (
+      tester,
+    ) async {
       container = containerWith();
       container.read(runTimeProvider.notifier).value = 1;
       await pumpCard(tester, motion: true);
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump(const Duration(milliseconds: 200));
-      expect(gauze(tester), greaterThan(0));
+      expect(drift(tester), greaterThan(0));
 
       await tester.pumpAndSettle();
-      final drifting = gauze(tester);
+      final drifting = drift(tester);
       final frames = _countFrames(tester);
       for (var vsync = 0; vsync < 120; vsync++) {
         await tester.pump(const Duration(microseconds: 8333));
       }
       expect(frames(), inInclusiveRange(14, 16));
-      expect(gauze(tester), greaterThan(drifting));
+      expect(drift(tester), greaterThan(drifting));
 
       container.read(runTimeProvider.notifier).value = null;
       await tester.pump();
-      final stopped = gauze(tester);
+      final stopped = drift(tester);
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump(const Duration(milliseconds: 200));
-      expect(gauze(tester), stopped);
+      expect(drift(tester), stopped);
       await tester.pumpAndSettle();
       expect(tester.binding.hasScheduledFrame, isFalse);
       final idle = _countFrames(tester);
@@ -993,35 +1065,37 @@ void main() {
       expect(tester.binding.transientCallbackCount, 0);
     });
 
-    testWidgets('a suspended tunnel holds the gauze still', (tester) async {
+    testWidgets('a suspended tunnel holds the start bubble still', (
+      tester,
+    ) async {
       container = containerWith(suspended: true);
       container.read(runTimeProvider.notifier).value = 1;
       await pumpCard(tester, motion: true);
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump(const Duration(milliseconds: 200));
-      expect(gauze(tester), 0);
+      expect(drift(tester), 0);
       await tester.pumpAndSettle();
       expect(tester.binding.hasScheduledFrame, isFalse);
     });
 
-    testWidgets('a hidden app holds the gauze still', (tester) async {
+    testWidgets('a hidden app holds the start bubble still', (tester) async {
       container = containerWith();
       container.read(runTimeProvider.notifier).value = 1;
       await pumpCard(tester, motion: true);
       await tester.pump(const Duration(seconds: 1));
       container.read(appVisibleProvider.notifier).value = false;
       await tester.pump();
-      final hidden = gauze(tester);
+      final hidden = drift(tester);
       final idle = _countFrames(tester);
       await tester.pump(const Duration(seconds: 1));
       expect(idle(), 0);
-      expect(gauze(tester), hidden);
+      expect(drift(tester), hidden);
       expect(tester.binding.hasScheduledFrame, isFalse);
       container.read(appVisibleProvider.notifier).value = true;
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
       await tester.pump(const Duration(milliseconds: 200));
-      expect(gauze(tester), greaterThan(hidden));
+      expect(drift(tester), greaterThan(hidden));
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
       final disposed = _countFrames(tester);

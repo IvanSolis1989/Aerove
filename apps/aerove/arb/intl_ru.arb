@@ -11,7 +11,6 @@
   "logs": "Логи",
   "resources": "Ресурсы",
   "trafficUsage": "Статистика трафика",
-  "networkSpeed": "Скорость сети",
   "outboundMode": "Режим исходящего трафика",
   "serviceStatus": "Состояние сервисов",
   "serviceRestricted": "Доступ ограничен",
@@ -912,7 +911,6 @@
   "currentOutboundDesc": "Содержит кнопку запуска, удалить нельзя",
   "running": "Работает",
   "notRunning": "Не запущено",
-  "trafficPeak": "Пик {value}",
   "trafficTotal": "Всего {value}",
   "ipQualityShort": "Качество",
   "ipTypeUnknown": "Тип неизвестен",
@@ -989,5 +987,9 @@
   "aboutTelegramGroup": "Группа Telegram",
   "externalLinkOpenFailed": "Не удалось открыть ссылку. Проверьте, есть ли приложение, которому разрешено её открывать.",
   "dashboardNetworkControl": "Управление сетью",
-  "dashboardNetworkOverview": "Обзор сети"
+  "dashboardNetworkOverview": "Обзор сети",
+  "outboundModeCurrent": "Режим исходящего трафика: {mode}",
+  "outboundModeNext": "Переключить на «{mode}»",
+  "trafficUploadSpeed": "Скорость отправки: {speed}",
+  "trafficDownloadSpeed": "Скорость загрузки: {speed}"
 }

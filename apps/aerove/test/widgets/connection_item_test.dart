@@ -192,11 +192,11 @@ void main() {
 
     await pumpItem(isLive: false);
     expect(find.text(DateTime(2026, 1, 1, 10, 30).showFull), findsOneWidget);
-    expect(find.textContaining('4KB/s'), findsNothing);
+    expect(find.textContaining('4.0 KB/s'), findsNothing);
 
     await pumpItem(isLive: true);
     expect(find.text(DateTime(2026, 1, 1, 10, 30).showFull), findsNothing);
-    expect(find.textContaining('4KB/s'), findsOneWidget);
+    expect(find.textContaining('4.0 KB/s'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byType(RecordHeader),

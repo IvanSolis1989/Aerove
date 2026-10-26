@@ -361,11 +361,7 @@ class _TrafficMeter extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       spacing: 6,
       children: [
-        GlassText(
-          '${used.traffic.show} / ${info.total.traffic.show}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        GlassText('${trafficAmount(used)} / ${trafficAmount(info.total)}'),
         LinearProgressIndicator(
           minHeight: 4,
           value: usage,

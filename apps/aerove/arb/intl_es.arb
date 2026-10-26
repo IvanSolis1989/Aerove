@@ -11,7 +11,6 @@
   "logs": "Registros",
   "resources": "Recursos",
   "trafficUsage": "Uso de tráfico",
-  "networkSpeed": "Velocidad de red",
   "outboundMode": "Modo de salida",
   "serviceStatus": "Estado del servicio",
   "serviceRestricted": "Acceso restringido",
@@ -912,7 +911,6 @@
   "currentOutboundDesc": "Contiene el botón de inicio y no se puede quitar",
   "running": "En ejecución",
   "notRunning": "Detenido",
-  "trafficPeak": "Pico: {value}",
   "trafficTotal": "Total: {value}",
   "ipQualityShort": "Calidad",
   "ipTypeUnknown": "Tipo desconocido",
@@ -989,5 +987,9 @@
   "aboutTelegramGroup": "Grupo de Telegram",
   "externalLinkOpenFailed": "No se puede abrir este enlace. Comprueba que haya una aplicación disponible con permiso para abrirlo.",
   "dashboardNetworkControl": "Controles de red",
-  "dashboardNetworkOverview": "Resumen de red"
+  "dashboardNetworkOverview": "Resumen de red",
+  "outboundModeCurrent": "Modo de salida: {mode}",
+  "outboundModeNext": "Cambiar a {mode}",
+  "trafficUploadSpeed": "Velocidad de subida: {speed}",
+  "trafficDownloadSpeed": "Velocidad de descarga: {speed}"
 }

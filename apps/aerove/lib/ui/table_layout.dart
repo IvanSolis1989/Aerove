@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:fl_clash/common/traffic_format.dart';
 import 'package:fl_clash/ui/shape.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -12,6 +15,7 @@ class TableColumn {
     this.flex = 0,
     this.end = false,
     this.resizable = true,
+    this.minWidth = 0,
   }) : assert((width == null) != (flex == 0));
 
   final String id;
@@ -20,6 +24,51 @@ class TableColumn {
   final double flex;
   final bool end;
   final bool resizable;
+
+  /// The least this column may shrink to, by default or under a drag.
+  final double minWidth;
+
+  double get _floor => math.max(tableColumnMinWidth, minWidth);
+}
+
+final _trafficWidths = <(TextStyle, TextScaler, bool), double>{};
+var _watchingFonts = false;
+
+/// The narrowest a traffic column may be: its widest reading in [style] at
+/// the context's text scale, with [inset] each side, so no value is cut.
+double trafficColumnWidth(
+  BuildContext context,
+  TextStyle style,
+  double inset, {
+  bool rate = false,
+}) {
+  final resolved = DefaultTextStyle.of(context).style.merge(style);
+  final scaler = MediaQuery.textScalerOf(context);
+  final widest = _trafficWidths[(resolved, scaler, rate)] ??= () {
+    if (!_watchingFonts) {
+      _watchingFonts = true;
+      PaintingBinding.instance.systemFonts.addListener(_trafficWidths.clear);
+    }
+    var widest = 0.0;
+    for (final template
+        in rate ? trafficRateTemplates : trafficAmountTemplates) {
+      for (var digit = 0; digit < 10; digit++) {
+        final painter = TextPainter(
+          text: TextSpan(
+            text: template.replaceAll('9', '$digit'),
+            style: resolved,
+          ),
+          textDirection: TextDirection.ltr,
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
+        widest = math.max(widest, painter.width);
+        painter.dispose();
+      }
+    }
+    return widest.ceilToDouble();
+  }();
+  return widest + inset * 2;
 }
 
 List<double> tableColumnWidths(
@@ -28,7 +77,11 @@ List<double> tableColumnWidths(
   Map<String, double> overrides = const {},
 ]) {
   final sized = [
-    for (final column in columns) overrides[column.id] ?? column.width,
+    for (final column in columns)
+      switch (overrides[column.id] ?? column.width) {
+        final size? => math.max(size, column.minWidth),
+        null => null,
+      },
   ];
   var fixed = 0.0;
   var flex = 0.0;
@@ -54,8 +107,29 @@ List<double> tableColumnWidths(
   // The window has shrunk below the dragged widths, or they left no column to
   // take up the slack: everything scales to fit.
   final natural = [for (final size in sized) size ?? tableColumnMinWidth];
-  final total = natural.fold<double>(0, (sum, size) => sum + size);
-  return [for (final size in natural) size * width / total];
+  final floors = [for (final column in columns) column.minWidth];
+  final pinned = <int>{};
+  while (true) {
+    final kept = [
+      for (final index in pinned) floors[index],
+    ].fold<double>(0, (sum, size) => sum + size);
+    final total = [
+      for (final (index, size) in natural.indexed)
+        if (!pinned.contains(index)) size,
+    ].fold<double>(0, (sum, size) => sum + size);
+    final scale = total <= 0 ? 0.0 : math.max(0.0, width - kept) / total;
+    final short = [
+      for (final (index, size) in natural.indexed)
+        if (!pinned.contains(index) && size * scale < floors[index]) index,
+    ];
+    if (short.isEmpty) {
+      return [
+        for (final (index, size) in natural.indexed)
+          pinned.contains(index) ? floors[index] : size * scale,
+      ];
+    }
+    pinned.addAll(short);
+  }
 }
 
 Map<String, double> resizedTableColumns(
@@ -77,7 +151,7 @@ Map<String, double> resizedTableColumns(
       }
       final taken = rest.clamp(
         0.0,
-        (resized[index] - tableColumnMinWidth).clamp(0.0, double.infinity),
+        (resized[index] - columns[index]._floor).clamp(0.0, double.infinity),
       );
       resized[index] -= taken;
       rest -= taken;
@@ -86,7 +160,10 @@ Map<String, double> resizedTableColumns(
   } else {
     final given = (-delta).clamp(
       0.0,
-      (resized[boundary] - tableColumnMinWidth).clamp(0.0, double.infinity),
+      (resized[boundary] - columns[boundary]._floor).clamp(
+        0.0,
+        double.infinity,
+      ),
     );
     resized[boundary] -= given;
     resized[boundary + 1] += given;

@@ -219,6 +219,32 @@ class RunningVpnOptions extends _$RunningVpnOptions
   }
 }
 
+/// What the dashboard cards a user can see right now need sampled.
+@Riverpod(keepAlive: true)
+class TrafficDemand extends _$TrafficDemand {
+  final _claims = <Object, TrafficNeed>{};
+
+  @override
+  Set<TrafficNeed> build() => const {};
+
+  void claim(Object owner, TrafficNeed need) {
+    if (_claims[owner] == need) return;
+    _claims[owner] = need;
+    _publish();
+  }
+
+  void release(Object owner) {
+    if (ref.mounted && _claims.remove(owner) != null) _publish();
+  }
+
+  void _publish() {
+    final needs = _claims.values.toSet();
+    if (needs.length != state.length || !needs.containsAll(state)) {
+      state = Set.unmodifiable(needs);
+    }
+  }
+}
+
 /// False while the window is hidden or the Android activity is in the
 /// background; work that only feeds the UI waits for it to come back.
 @Riverpod(keepAlive: true)

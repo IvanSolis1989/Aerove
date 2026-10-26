@@ -11,7 +11,6 @@
   "logs": "日志",
   "resources": "资源",
   "trafficUsage": "流量统计",
-  "networkSpeed": "网络速度",
   "outboundMode": "出站模式",
   "serviceStatus": "服务状态",
   "serviceRestricted": "访问受限",
@@ -90,7 +89,7 @@
   "profileAutoUpdateIntervalNullValidationDesc": "请输入自动更新间隔时间",
   "profileAutoUpdateIntervalInvalidValidationDesc": "请输入有效间隔时间格式",
   "themeMode": "主题模式",
-  "solidThemeColor": "随选单色",
+  "solidThemeColor": "普通主题色",
   "themeColor": "主题色彩",
   "preview": "预览",
   "auto": "自动",
@@ -912,7 +911,6 @@
   "currentOutboundDesc": "含启动键，不可移除",
   "running": "运行中",
   "notRunning": "未运行",
-  "trafficPeak": "峰值 {value}",
   "trafficTotal": "累计 {value}",
   "ipQualityShort": "质量",
   "ipTypeUnknown": "类型未知",
@@ -989,5 +987,9 @@
   "aboutTelegramGroup": "Telegram 群组",
   "externalLinkOpenFailed": "无法打开此链接。请检查是否有可用且获准打开链接的应用。",
   "dashboardNetworkControl": "网络控制",
-  "dashboardNetworkOverview": "网络概览"
+  "dashboardNetworkOverview": "网络概览",
+  "outboundModeCurrent": "出站模式：{mode}",
+  "outboundModeNext": "切换到{mode}",
+  "trafficUploadSpeed": "上传速度：{speed}",
+  "trafficDownloadSpeed": "下载速度：{speed}"
 }

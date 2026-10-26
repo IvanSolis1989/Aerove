@@ -105,11 +105,11 @@ class TrackerInfoItem extends ConsumerWidget {
               children: [
                 arrow(AppGlyphs.arrowUp),
                 TextSpan(
-                  text: ' ${(trackerInfo.uploadSpeed ?? 0).traffic.show}/s   ',
+                  text: ' ${trafficRate(trackerInfo.uploadSpeed ?? 0)}   ',
                 ),
                 arrow(AppGlyphs.arrowDown),
                 TextSpan(
-                  text: ' ${(trackerInfo.downloadSpeed ?? 0).traffic.show}/s',
+                  text: ' ${trafficRate(trackerInfo.downloadSpeed ?? 0)}',
                 ),
               ],
             ),
@@ -268,8 +268,8 @@ class TrackerInfoDetailView extends StatelessWidget {
             (appLocalizations.networkType, metadata.network),
             (appLocalizations.process, trackerInfo.progressText),
             (appLocalizations.rule, _ruleText(trackerInfo)),
-            (appLocalizations.upload, trackerInfo.upload.traffic.show),
-            (appLocalizations.download, trackerInfo.download.traffic.show),
+            (appLocalizations.upload, trafficAmount(trackerInfo.upload)),
+            (appLocalizations.download, trafficAmount(trackerInfo.download)),
           ]),
         ),
         generateSection(

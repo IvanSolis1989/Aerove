@@ -7,7 +7,6 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
-import 'package:fl_clash/views/dashboard/widgets/traffic.dart';
 import 'package:fl_clash/views/proxies/group_tabs.dart';
 import 'package:fl_clash/widgets/aurora.dart' show SeededAuroraWallpaper;
 import 'package:flutter/rendering.dart';
@@ -42,6 +41,34 @@ class _GroupsState extends State<_Groups> with SingleTickerProviderStateMixin {
   );
 }
 
+/// A card holding one inner tile, built as the dashboard builds its tiles.
+class _TiledCard extends StatelessWidget {
+  const _TiledCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final shape = AppShape.all(DashboardCorner.mobileBlock);
+    return DashboardCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 56),
+          DashboardGlass(
+            shape: shape,
+            child: Container(
+              height: 150,
+              decoration: ShapeDecoration(
+                color: DashboardColors.of(context).tone,
+                shape: shape,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 void _expectBackdropColor(
   List<int> samples,
   Color backdrop,
@@ -65,7 +92,7 @@ void main() {
     for (final quality in LiquidGlassQuality.values) {
       testWidgets('dashboard inner tiles transmit the backdrop on '
           '${brightness.name} ${quality.name}', (tester) async {
-        tester.view.physicalSize = const Size(400, 600);
+        tester.view.physicalSize = const Size(400, 900);
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.reset);
         final key = GlobalKey();
@@ -112,7 +139,7 @@ void main() {
                               scale: 1,
                               child: Column(
                                 children: [
-                                  const NetworkSpeedCard(),
+                                  const _TiledCard(),
                                   const SizedBox(height: 16),
                                   Builder(
                                     builder: (context) =>
@@ -153,14 +180,14 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
-          final context = tester.element(find.byType(NetworkSpeedCard));
+          final context = tester.element(find.byType(_TiledCard));
           final colors = DashboardColors.of(context);
           if (glass) {
             tile = Color.alphaBlend(colors.tone, glassRaisedFillOf(context));
             paneTint = tester
                 .widget<LiquidGlass>(
                   find.descendant(
-                    of: find.byType(NetworkSpeedCard),
+                    of: find.byType(_TiledCard),
                     matching: find.byType(LiquidGlass),
                   ),
                 )
@@ -191,7 +218,7 @@ void main() {
           if (glass) {
             expect(
               find.descendant(
-                of: find.byType(NetworkSpeedCard),
+                of: find.byType(_TiledCard),
                 matching: find.byType(LiquidGlass),
               ),
               findsOneWidget,
@@ -200,7 +227,7 @@ void main() {
           if (glass) {
             for (final pane in tester.widgetList<LiquidGlass>(
               find.descendant(
-                of: find.byType(NetworkSpeedCard),
+                of: find.byType(_TiledCard),
                 matching: find.byType(LiquidGlass),
               ),
             )) {
@@ -209,7 +236,7 @@ void main() {
               expect(pane.style.contrast, 0);
             }
           }
-          final card = tester.getRect(find.byType(NetworkSpeedCard));
+          final card = tester.getRect(find.byType(_TiledCard));
           final boundary =
               key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
           final origin = boundary.localToGlobal(Offset.zero);

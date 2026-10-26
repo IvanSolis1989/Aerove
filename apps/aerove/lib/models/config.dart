@@ -111,7 +111,6 @@ final List<HotKeyAction> defaultHotKeyActions = system.isWindows
 
 const List<DashboardWidget> defaultDashboardWidgets = [
   DashboardWidget.currentOutbound,
-  DashboardWidget.networkSpeed,
   DashboardWidget.outboundMode,
   DashboardWidget.vpnButton,
   DashboardWidget.networkTakeover,
@@ -132,8 +131,8 @@ const _legacyDefaultDashboardWidgets = {
   'intranetIp',
 };
 
-/// The run time has no replacement: it moved onto the current outbound card,
-/// as did the outbound IP, whose card became the intranet one.
+/// The outbound IP moved onto the current outbound card, whose old card
+/// became the intranet one.
 const _legacyDashboardWidgets = {
   'networkDetection': DashboardWidget.intranetIp,
   'outboundModeV2': DashboardWidget.outboundMode,
@@ -142,11 +141,14 @@ const _legacyDashboardWidgets = {
   'connections': DashboardWidget.connectionStats,
   'requests': DashboardWidget.connectionStats,
   'dnsQueries': DashboardWidget.connectionStats,
-  'trafficUsage': DashboardWidget.networkSpeed,
 };
 
+/// The run time and the network speed have no card of their own: both live
+/// on the current outbound card, so a saved list simply drops them.
 const _retiredDashboardWidgets = {
   'runTime',
+  'networkSpeed',
+  'trafficUsage',
   'overrideDnsButton',
   'overrideNtpButton',
 };

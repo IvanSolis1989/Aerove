@@ -290,8 +290,8 @@ void main() {
 
     expect(find.text('Downloaded'), findsOneWidget);
     expect(find.text('Uploaded'), findsOneWidget);
-    expect(find.text('1.5KB'), findsOneWidget);
-    expect(find.text('512B'), findsOneWidget);
+    expect(find.text('1.5 KB'), findsOneWidget);
+    expect(find.text('512 B'), findsOneWidget);
     expect(find.text('Protocol'), findsNothing);
     expect(find.text('Duration'), findsNothing);
 
@@ -299,7 +299,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('Traffic'), findsOneWidget);
-    expect(find.text('2KB'), findsOneWidget);
+    expect(find.text('2.0 KB'), findsOneWidget);
     expect(find.text('Downloaded'), findsNothing);
     expect(tester.takeException(), null);
 

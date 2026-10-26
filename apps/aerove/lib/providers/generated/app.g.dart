@@ -838,6 +838,64 @@ abstract class _$RunningVpnOptions extends $Notifier<VpnOptions?> {
   }
 }
 
+/// What the dashboard cards a user can see right now need sampled.
+
+@ProviderFor(TrafficDemand)
+final trafficDemandProvider = TrafficDemandProvider._();
+
+/// What the dashboard cards a user can see right now need sampled.
+final class TrafficDemandProvider
+    extends $NotifierProvider<TrafficDemand, Set<TrafficNeed>> {
+  /// What the dashboard cards a user can see right now need sampled.
+  TrafficDemandProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'trafficDemandProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$trafficDemandHash();
+
+  @$internal
+  @override
+  TrafficDemand create() => TrafficDemand();
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(Set<TrafficNeed> value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<Set<TrafficNeed>>(value),
+    );
+  }
+}
+
+String _$trafficDemandHash() => r'1ae454bc2d2b2b8fbc23f932a2c4749eb66420a8';
+
+/// What the dashboard cards a user can see right now need sampled.
+
+abstract class _$TrafficDemand extends $Notifier<Set<TrafficNeed>> {
+  Set<TrafficNeed> build();
+  @$mustCallSuper
+  @override
+  WhenComplete runBuild() {
+    final ref = this.ref as $Ref<Set<TrafficNeed>, Set<TrafficNeed>>;
+    final element =
+        ref.element
+            as $ClassProviderElement<
+              AnyNotifier<Set<TrafficNeed>, Set<TrafficNeed>>,
+              Set<TrafficNeed>,
+              Object?,
+              Object?
+            >;
+    return element.handleCreate(ref, build);
+  }
+}
+
 /// False while the window is hidden or the Android activity is in the
 /// background; work that only feeds the UI waits for it to come back.
 

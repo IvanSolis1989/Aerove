@@ -726,6 +726,13 @@ String _ruleKey(TrackerInfo info) =>
 String _exitKey(TrackerInfo info) =>
     (info.chains.firstOrNull ?? '').toLowerCase();
 
+/// A traffic cell's least width: footnote figures, the row's own style.
+double _amountWidth(BuildContext context) => trafficColumnWidth(
+  context,
+  AppTextStyle.footnote.of(context).toTabular,
+  _cellInset,
+);
+
 List<RecordColumn<TrackerInfo>> _connectionColumns(
   BuildContext context,
   double width,
@@ -733,6 +740,7 @@ List<RecordColumn<TrackerInfo>> _connectionColumns(
   final appLocalizations = context.appLocalizations;
   final mid = width >= _midTableWidth;
   final wide = width >= _wideTableWidth;
+  final amount = _amountWidth(context);
   return [
     RecordColumn(
       TableColumn('source', appLocalizations.source, width: wide ? 160 : 140),
@@ -775,8 +783,9 @@ List<RecordColumn<TrackerInfo>> _connectionColumns(
         appLocalizations.download,
         width: wide ? 80 : 70,
         end: true,
+        minWidth: amount,
       ),
-      cell: (_, info) => _Number(dashboardTraffic(info.download)),
+      cell: (_, info) => _Number(trafficAmount(info.download)),
       sortKey: (info) => info.download,
       descendingFirst: true,
     ),
@@ -786,8 +795,9 @@ List<RecordColumn<TrackerInfo>> _connectionColumns(
         appLocalizations.upload,
         width: wide ? 80 : 70,
         end: true,
+        minWidth: amount,
       ),
-      cell: (_, info) => _Number(dashboardTraffic(info.upload)),
+      cell: (_, info) => _Number(trafficAmount(info.upload)),
       sortKey: (info) => info.upload,
       descendingFirst: true,
     ),
@@ -839,8 +849,14 @@ List<RecordColumn<TrackerInfo>> _requestColumns(BuildContext context) {
       sortKey: _exitKey,
     ),
     RecordColumn(
-      TableColumn('traffic', appLocalizations.traffic, width: 64, end: true),
-      cell: (_, info) => _Number(dashboardTraffic(info.upload + info.download)),
+      TableColumn(
+        'traffic',
+        appLocalizations.traffic,
+        width: 64,
+        end: true,
+        minWidth: _amountWidth(context),
+      ),
+      cell: (_, info) => _Number(trafficAmount(info.upload + info.download)),
       sortKey: (info) => info.upload + info.download,
       descendingFirst: true,
     ),

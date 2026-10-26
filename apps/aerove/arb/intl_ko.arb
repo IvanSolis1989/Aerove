@@ -11,7 +11,6 @@
   "logs": "로그",
   "resources": "리소스",
   "trafficUsage": "트래픽 사용량",
-  "networkSpeed": "네트워크 속도",
   "outboundMode": "아웃바운드 모드",
   "serviceStatus": "서비스 상태",
   "serviceRestricted": "접근 제한됨",
@@ -912,7 +911,6 @@
   "currentOutboundDesc": "시작 버튼이 있어 제거할 수 없습니다",
   "running": "실행 중",
   "notRunning": "실행 중 아님",
-  "trafficPeak": "최고 {value}",
   "trafficTotal": "합계 {value}",
   "ipQualityShort": "품질",
   "ipTypeUnknown": "알 수 없는 유형",
@@ -989,5 +987,9 @@
   "aboutTelegramGroup": "Telegram 그룹",
   "externalLinkOpenFailed": "이 링크를 열 수 없습니다. 링크를 열 수 있고 권한이 있는 앱이 있는지 확인하세요.",
   "dashboardNetworkControl": "네트워크 제어",
-  "dashboardNetworkOverview": "네트워크 개요"
+  "dashboardNetworkOverview": "네트워크 개요",
+  "outboundModeCurrent": "아웃바운드 모드: {mode}",
+  "outboundModeNext": "{mode}(으)로 전환",
+  "trafficUploadSpeed": "업로드 속도: {speed}",
+  "trafficDownloadSpeed": "다운로드 속도: {speed}"
 }

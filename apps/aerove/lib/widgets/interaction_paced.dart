@@ -10,10 +10,15 @@ class InteractionPaced extends StatefulWidget {
   const InteractionPaced({
     super.key,
     required this.revision,
+    this.reuseUnchanged = false,
     required this.builder,
   });
 
   final Object? revision;
+
+  /// Keeps the last build while [revision] stays the same. Only for a
+  /// [builder] that reads nothing besides [revision] and its own context.
+  final bool reuseUnchanged;
   final WidgetBuilder builder;
 
   @override
@@ -77,6 +82,10 @@ class _InteractionPacedState extends State<InteractionPaced> {
   @override
   Widget build(BuildContext context) {
     final revision = widget.revision;
+    if (_built case final built?
+        when !_forceBuild && widget.reuseUnchanged && revision == _shown) {
+      return built;
+    }
     if (_built case final built?
         when !_forceBuild && _interacting && revision != _shown) {
       if (revision != _seen) _odd = !_odd;

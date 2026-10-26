@@ -49,15 +49,26 @@ class SetupAction extends _$SetupAction {
   @override
   void build() {
     ref.onDispose(_stopRuntimeTicker);
-    ref.listen(appVisibleProvider, (_, _) => _syncRuntimeTicker());
+    ref.listen(
+      appVisibleProvider,
+      (_, visible) => _syncRuntimeTicker(refresh: visible),
+    );
+    ref.listen(trafficDemandProvider, (previous, next) {
+      final added = previous == null || !previous.containsAll(next);
+      _syncRuntimeTicker(refresh: added);
+    });
     ref.listen(
       appSettingProvider.select((state) => state.showTrayTitle),
       (_, _) => _syncRuntimeTicker(),
     );
   }
 
+  bool _isShown(TrafficNeed need) =>
+      ref.read(appVisibleProvider) &&
+      ref.read(trafficDemandProvider).contains(need);
+
   bool get _isTrafficShown =>
-      ref.read(appVisibleProvider) ||
+      TrafficNeed.values.any(_isShown) ||
       (system.isMacOS &&
           !ref.read(safeModeProvider) &&
           ref.read(appSettingProvider).showTrayTitle);
@@ -111,12 +122,13 @@ class SetupAction extends _$SetupAction {
     _syncRuntimeTicker();
   }
 
-  void _syncRuntimeTicker() {
+  void _syncRuntimeTicker({bool refresh = false}) {
     if (_startTime == null || !_isTrafficShown) {
       _stopRuntimeTicker();
       return;
     }
     if (_runtimeTimer != null) {
+      if (refresh) _refreshRunningState();
       return;
     }
     _refreshRunningState();
@@ -132,7 +144,7 @@ class SetupAction extends _$SetupAction {
   }
 
   void _refreshRunningState() {
-    _updateRunTime();
+    if (_isShown(TrafficNeed.runTime)) _updateRunTime();
     unawaited(ref.read(commonActionProvider.notifier).updateTraffic());
   }
 
@@ -518,6 +530,12 @@ class SetupAction extends _$SetupAction {
           .read(proxiesActionProvider.notifier)
           .updateCurrentGroupName(GroupName.GLOBAL.name);
     }
+  }
+
+  /// Steps from the saved mode, so quick taps each move one step.
+  void cycleMode() {
+    final current = ref.read(patchClashConfigProvider).mode;
+    changeMode(Mode.values[(current.index + 1) % Mode.values.length]);
   }
 
   /// For leaving an editor: a profile whose inputs match the config the Core

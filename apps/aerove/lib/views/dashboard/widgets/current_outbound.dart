@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/service_probe.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -14,11 +17,13 @@ import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
 import 'outbound_motion.dart';
+import 'status_layout.dart';
 import 'traffic.dart';
 
 const _builtinOutbounds = {'DIRECT', 'REJECT', 'REJECT-DROP', 'PASS'};
@@ -34,11 +39,10 @@ enum _CardStop { chip, overlaidTraffic, summary, toggle, appendedTraffic }
 /// The summary reports the exit before it offers the controls acting on it.
 enum _SummaryStop { quality, runTime, organization, retry, address }
 
-/// The address the proxied traffic leaves by, next to the start button.
+/// The address the proxied traffic leaves by, next to the start button, with
+/// the traffic in its corner and its speed lines behind it.
 class CurrentOutboundCard extends ConsumerStatefulWidget {
-  const CurrentOutboundCard({super.key, this.showTraffic = false});
-
-  final bool showTraffic;
+  const CurrentOutboundCard({super.key});
 
   @override
   ConsumerState<CurrentOutboundCard> createState() =>
@@ -104,11 +108,31 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         : isStart
         ? (appLocalizations.running, DashboardChipTone.ok)
         : (appLocalizations.notRunning, DashboardChipTone.idle);
-    final chip = DashboardChip(label: chipLabel, tone: chipTone, dot: isStart);
+    final chip = DashboardChip(
+      label: chipLabel,
+      tone: chipTone,
+      dot: isStart,
+      wrap: true,
+      dense: true,
+    );
     final header = DashboardCardHeader(
       glyph: AppGlyphs.status,
       title: appLocalizations.status,
-      leading: [DashboardStop(order: _CardStop.chip.index, child: chip)],
+      wrap: true,
+      titleWrapper: (title) => StatusForeground(
+        margin: const EdgeInsetsDirectional.only(end: 8),
+        child: title,
+      ),
+      leading: [
+        DashboardStop(
+          order: _CardStop.chip.index,
+          child: StatusForeground(
+            margin: const EdgeInsetsDirectional.only(end: 8),
+            outline: DashboardChip.shape,
+            child: chip,
+          ),
+        ),
+      ],
     );
     final summary = DashboardStop(
       order: _CardStop.summary.index,
@@ -116,28 +140,33 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          _ExitRow(
-            info: ipInfo,
-            failed: failed,
-            loading: loading,
-            checking: phase == ProbePhase.probing || qualityLoading,
-            onRefresh: () => _refresh(ipInfo?.ip),
-            quality: quality,
-            active: isStart,
-            metrics: metrics,
-            large: !density.isDesktop,
+          StatusCurveEdge(
+            child: _ExitRow(
+              info: ipInfo,
+              failed: failed,
+              loading: loading,
+              checking: phase == ProbePhase.probing || qualityLoading,
+              onRefresh: () => _refresh(ipInfo?.ip),
+              quality: quality,
+              active: isStart,
+              metrics: metrics,
+              large: !density.isDesktop,
+            ),
           ),
           if (density.isDesktop) const Spacer() else const SizedBox(height: 16),
-          _Cells(
-            quality: quality,
-            loading: loading,
-            active: isStart && !suspended,
-            gap: metrics.cellGap,
+          StatusCurveEdge(
+            floor: true,
+            child: _Cells(
+              quality: quality,
+              loading: loading,
+              active: isStart && !suspended,
+              gap: metrics.cellGap,
+            ),
           ),
         ],
       ),
     );
-    Widget body() => Row(
+    final body = Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       spacing: metrics.gap,
       children: [
@@ -146,7 +175,7 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               header,
-              SizedBox(height: metrics.ipTop),
+              SizedBox(height: _ipTopOf(context, density, metrics)),
               if (density.isDesktop) Expanded(child: summary) else summary,
             ],
           ),
@@ -156,11 +185,14 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
           child: Center(
             child: DashboardStop(
               order: _CardStop.toggle.index,
-              child: _StartToggle(
-                size: metrics.buttonSize,
-                enabled: hasProfile,
-                running: isStart,
-                suspended: suspended,
+              child: StatusForeground(
+                text: false,
+                child: _StartToggle(
+                  size: metrics.buttonSize,
+                  enabled: hasProfile,
+                  running: isStart,
+                  suspended: suspended,
+                ),
               ),
             ),
           ),
@@ -169,98 +201,34 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     );
     return DashboardCard(
       padding: EdgeInsets.zero,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: ClipPath(
-              clipper: ShapeBorderClipper(
-                shape: AppShape.all(dashboardCardRadius(density)),
-                textDirection: Directionality.of(context),
-              ),
-              child: widget.showTraffic
-                  ? OutboundTrafficBackground(running: isStart && !suspended)
-                  : OutboundRibbon(running: isStart && !suspended),
-            ),
-          ),
-          Padding(
-            padding: metrics.padding,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                if (!widget.showTraffic) return body();
-                final scaler = MediaQuery.textScalerOf(context);
-                final scale = scaler.scale(1);
-                double widthOf(String text, TextStyle style) {
-                  final painter = TextPainter(
-                    text: TextSpan(text: text, style: style),
-                    textDirection: Directionality.of(context),
-                    textScaler: scaler,
-                  )..layout();
-                  final width = painter.width;
-                  painter.dispose();
-                  return width;
-                }
-
-                final headerWidth =
-                    DashboardCardHeader.glyphSize +
-                    16 +
-                    widthOf(
-                      appLocalizations.status,
-                      density.isDesktop
-                          ? DashboardText.cardTitle(context)
-                          : DashboardText.mobileCardTitle(context),
-                    ) +
-                    20 +
-                    (isStart ? 12 : 0) +
-                    widthOf(
-                      chipLabel,
-                      AppTextStyle.caption1.of(context, emphasized: true),
-                    );
-                final figuresWidth = 132 * scale;
-                final headerHeight = (density.isDesktop ? 24 : 26) * scale;
-                final fits =
-                    constraints.maxWidth >= headerWidth + figuresWidth + 8 &&
-                    35 * scale <= headerHeight + metrics.ipTop;
-                final figures = SizedBox(
-                  width: figuresWidth,
-                  child: const OutboundTrafficFigures(),
-                );
-                if (!fits) {
-                  return Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      body(),
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: AlignmentDirectional.centerEnd,
-                        child: DashboardStop(
-                          order: _CardStop.appendedTraffic.index,
-                          child: figures,
-                        ),
-                      ),
-                    ],
-                  );
-                }
-                return Stack(
-                  children: [
-                    body(),
-                    PositionedDirectional(
-                      top: 0,
-                      end: 0,
-                      child: DashboardStop(
-                        order: _CardStop.overlaidTraffic.index,
-                        child: figures,
-                      ),
-                    ),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
+      child: StatusCardLayout(
+        padding: metrics.padding,
+        shape: AppShape.all(dashboardCardRadius(density)),
+        baselineRatio: OutboundTrafficBackground.baselineRatio,
+        backdrop: OutboundTrafficBackground(running: isStart && !suspended),
+        body: body,
+        figures: const OutboundTrafficFigures(),
+        overlaidOrder: _CardStop.overlaidTraffic.index,
+        appendedOrder: _CardStop.appendedTraffic.index,
       ),
     );
   }
+}
+
+/// A desktop card's height is fixed, so the exit row starts below the corner
+/// figures and they always fit beside the header.
+double _ipTopOf(
+  BuildContext context,
+  DashboardDensity density,
+  _OutboundMetrics metrics,
+) {
+  if (!density.isDesktop) return metrics.ipTop;
+  final header =
+      DashboardCardHeader.height * DashboardDensityScope.scaleOf(context);
+  final figures = OutboundTrafficFigures.heightOf(
+    MediaQuery.textScalerOf(context),
+  );
+  return math.max(metrics.ipTop, figures - header);
 }
 
 class _OutboundMetrics {
@@ -380,12 +348,15 @@ class _ExitRow extends StatelessWidget {
       children: [
         DashboardStop(
           order: _SummaryStop.retry.index,
-          child: _CountryBadge(
-            countryCode: info?.countryCode,
-            size: metrics.badgeSize,
-            active: active,
-            checking: checking,
-            onRefresh: onRefresh,
+          child: StatusForeground(
+            text: false,
+            child: _CountryBadge(
+              countryCode: info?.countryCode,
+              size: metrics.badgeSize,
+              active: active,
+              checking: checking,
+              onRefresh: onRefresh,
+            ),
           ),
         ),
         Expanded(
@@ -394,13 +365,15 @@ class _ExitRow extends StatelessWidget {
             children: [
               DashboardStop(
                 order: _SummaryStop.address.index,
-                child: SizedBox(
-                  height:
-                      metrics.ip.leading *
-                      DashboardDensityScope.scaleOf(context),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight:
+                        metrics.ip.leading *
+                        DashboardDensityScope.scaleOf(context),
+                  ),
                   child: Align(
                     alignment: AlignmentDirectional.centerStart,
-                    child: ip,
+                    child: StatusForeground(child: ip),
                   ),
                 ),
               ),
@@ -412,11 +385,13 @@ class _ExitRow extends StatelessWidget {
                         height: _chipHeight(large),
                         child: Align(
                           alignment: AlignmentDirectional.centerStart,
-                          child: GlassText(
-                            appLocalizations.tapIconToRetry,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: DashboardText.label(context),
+                          child: StatusForeground(
+                            child: GlassText(
+                              appLocalizations.tapIconToRetry,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: DashboardText.label(context),
+                            ),
                           ),
                         ),
                       )
@@ -468,46 +443,236 @@ class _IpChips extends StatelessWidget {
   Widget build(BuildContext context) {
     final quality = this.quality;
     final height = _chipHeight(large);
-    // Chips that do not fit wrap onto a clipped second line; the details
-    // sheet still lists them all.
-    return SizedBox(
-      height: height,
-      child: ClipRect(
-        child: Wrap(
-          spacing: 6,
-          runSpacing: height,
-          children: switch (quality) {
-            final quality? => [
-              DashboardChip(label: quality.type.label(context), large: large),
-              DashboardChip(
-                label:
-                    '${context.appLocalizations.ipQualityShort} ${quality.level.label(context)}',
-                tone: switch (quality.level) {
-                  IpQualityLevel.good => DashboardChipTone.ok,
-                  IpQualityLevel.normal => DashboardChipTone.idle,
-                  IpQualityLevel.risky => DashboardChipTone.warn,
-                },
-                large: large,
-              ),
-            ],
-            null when loading => [
-              for (final width in _chipSkeletonWidths)
-                SkeletonPill(width: width, height: height),
-            ],
-            null => [
-              DashboardChip(
-                label: context.appLocalizations.ipTypeUnknown,
-                large: large,
-              ),
-            ],
-          },
+    // A chip that does not fit its line moves to the next and the card grows;
+    // one too long for any line wraps inside its pill.
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final chip in switch (quality) {
+          final quality? => [
+            DashboardChip(
+              label: quality.type.label(context),
+              large: large,
+              wrap: true,
+            ),
+            DashboardChip(
+              label:
+                  '${context.appLocalizations.ipQualityShort} ${quality.level.label(context)}',
+              tone: switch (quality.level) {
+                IpQualityLevel.good => DashboardChipTone.ok,
+                IpQualityLevel.normal => DashboardChipTone.idle,
+                IpQualityLevel.risky => DashboardChipTone.warn,
+              },
+              large: large,
+              wrap: true,
+            ),
+          ],
+          null when loading => [
+            for (final width in _chipSkeletonWidths)
+              SkeletonPill(width: width, height: height),
+          ],
+          null => [
+            DashboardChip(
+              label: context.appLocalizations.ipTypeUnknown,
+              large: large,
+              wrap: true,
+            ),
+          ],
+        })
+          StatusForeground(outline: DashboardChip.shape, child: chip),
+      ],
+    );
+  }
+}
+
+/// Bounds the flag by the bubble's own skin and fades it out at the rim. A
+/// resting bubble shows one picture of that, taken once, so no frame spends
+/// a saved layer on it; only a writhing one clips and feathers as it paints.
+class _FlagSkin extends StatefulWidget {
+  const _FlagSkin({
+    required this.skin,
+    required this.checking,
+    required this.flag,
+    required this.size,
+    required this.child,
+  });
+
+  final OutboundSkin skin;
+  final bool checking;
+  final String flag;
+  final double size;
+  final Widget child;
+
+  @override
+  State<_FlagSkin> createState() => _FlagSkinState();
+}
+
+class _FlagSkinState extends State<_FlagSkin> {
+  final _boundary = GlobalKey();
+  ui.Image? _picture;
+  Object? _pictureKey;
+  var _capturing = false;
+  late bool _resting = _isResting;
+
+  bool get _isResting => !widget.checking && widget.skin.wobble == 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.skin.addListener(_follow);
+  }
+
+  @override
+  void didUpdateWidget(_FlagSkin oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.skin, widget.skin)) {
+      oldWidget.skin.removeListener(_follow);
+      widget.skin.addListener(_follow);
+    }
+    _resting = _isResting;
+  }
+
+  void _follow() {
+    final resting = _isResting;
+    if (resting != _resting) setState(() => _resting = resting);
+  }
+
+  void _drop() {
+    _picture?.dispose();
+    _picture = null;
+    _pictureKey = null;
+  }
+
+  /// Runs once the live flag has painted, so its layer is there to read.
+  void _capture(Object key, double ratio) {
+    if (_capturing) return;
+    _capturing = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _capturing = false;
+      final boundary = _boundary.currentContext?.findRenderObject();
+      if (!mounted ||
+          !_resting ||
+          _picture != null ||
+          boundary is! RenderRepaintBoundary) {
+        return;
+      }
+      var painted = true;
+      assert(() {
+        painted = !boundary.debugNeedsPaint;
+        return true;
+      }());
+      if (!painted) return;
+      setState(() {
+        _picture = boundary.toImageSync(pixelRatio: ratio);
+        _pictureKey = key;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.skin.removeListener(_follow);
+    _drop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    final key = (widget.flag, widget.size, ratio);
+    if (!_resting || (_pictureKey != null && _pictureKey != key)) _drop();
+    return _RestingPicture(
+      picture: _picture,
+      scale: ratio,
+      onPainted: _resting && _picture == null
+          ? () => _capture(key, ratio)
+          : null,
+      child: RepaintBoundary(
+        key: _boundary,
+        child: ClipPath(
+          clipper: OutboundDropletClipper(
+            skin: widget.skin,
+            irregularity: null,
+          ),
+          clipBehavior: Clip.antiAliasWithSaveLayer,
+          child: CustomPaint(
+            foregroundPainter: OutboundDropletFeather(skin: widget.skin),
+            child: widget.child,
+          ),
         ),
       ),
     );
   }
 }
 
-const _flagCover = 0.92;
+/// Paints [picture] in place of its child once there is one; the child
+/// stays laid out and keeps its semantics, so only its pixels are reused.
+class _RestingPicture extends SingleChildRenderObjectWidget {
+  const _RestingPicture({
+    required this.picture,
+    required this.scale,
+    required this.onPainted,
+    required super.child,
+  });
+
+  final ui.Image? picture;
+  final double scale;
+  final VoidCallback? onPainted;
+
+  @override
+  _RenderRestingPicture createRenderObject(BuildContext context) =>
+      _RenderRestingPicture(picture, scale)..onPainted = onPainted;
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderRestingPicture renderObject,
+  ) {
+    renderObject
+      ..picture = picture
+      ..scale = scale
+      ..onPainted = onPainted;
+  }
+}
+
+class _RenderRestingPicture extends RenderProxyBox {
+  _RenderRestingPicture(this._picture, this._scale);
+
+  VoidCallback? onPainted;
+
+  ui.Image? _picture;
+  set picture(ui.Image? value) {
+    if (identical(value, _picture)) return;
+    _picture = value;
+    markNeedsPaint();
+  }
+
+  double _scale;
+  set scale(double value) {
+    if (value == _scale) return;
+    _scale = value;
+    markNeedsPaint();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final picture = _picture;
+    if (picture == null) {
+      super.paint(context, offset);
+      onPainted?.call();
+      return;
+    }
+    paintImage(
+      canvas: context.canvas,
+      rect: offset & size,
+      image: picture,
+      scale: _scale,
+      fit: BoxFit.fill,
+      filterQuality: FilterQuality.low,
+    );
+  }
+}
 
 class _CountryBadge extends StatefulWidget {
   const _CountryBadge({
@@ -578,21 +743,19 @@ class _CountryBadgeState extends State<_CountryBadge> {
                 !MediaQuery.highContrastOf(context),
             child: OutboundBubble(
               checking: widget.checking,
-              builder: (_, time, wobble, child) => SizedBox.square(
+              builder: (_, skin, child) => SizedBox.square(
                 dimension: size,
                 child: CustomPaint(
                   painter: OutboundDropletPainter(
-                    time: time,
-                    wobble: wobble,
-                    irregularity: wobble.abs(),
+                    skin: skin,
+                    irregularity: null,
                     color: hasFlag ? Colors.transparent : well,
                     shadow: hasFlag ? Colors.transparent : shadow,
                     highlight: false,
                   ),
                   foregroundPainter: OutboundDropletPainter(
-                    time: time,
-                    wobble: wobble,
-                    irregularity: wobble.abs(),
+                    skin: skin,
+                    irregularity: null,
                     color: Colors.transparent,
                     highlight:
                         !hasFlag &&
@@ -604,17 +767,12 @@ class _CountryBadgeState extends State<_CountryBadge> {
                     ring: _focused ? focusRingSide(colorScheme) : null,
                   ),
                   child: hasFlag
-                      ? ShaderMask(
-                          blendMode: BlendMode.dstIn,
-                          shaderCallback: (bounds) => const RadialGradient(
-                            colors: [
-                              Colors.white,
-                              Colors.white,
-                              Colors.transparent,
-                            ],
-                            stops: [0, 0.88, 1],
-                          ).createShader(bounds),
-                          child: child,
+                      ? _FlagSkin(
+                          skin: skin,
+                          checking: widget.checking,
+                          flag: flag,
+                          size: size,
+                          child: child!,
                         )
                       : child,
                 ),
@@ -630,7 +788,7 @@ class _CountryBadgeState extends State<_CountryBadge> {
                   : Semantics(
                       label: code,
                       child: ExcludeSemantics(
-                        child: EmojiCover(flag, size: size * _flagCover),
+                        child: EmojiCover(flag, size: size),
                       ),
                     ),
             ),
@@ -676,28 +834,138 @@ class _Cells extends StatelessWidget {
     );
     final runtimeStop = DashboardStop(
       order: _SummaryStop.runTime.index,
-      child: runtime,
+      child: StatusForeground(child: runtime),
     );
     final identityStop = DashboardStop(
       order: _SummaryStop.organization.index,
-      child: identity,
+      child: StatusForeground(child: identity),
     );
-    if (!DashboardDensityScope.of(context).isDesktop &&
-        MediaQuery.textScalerOf(context).scale(1) > 1.3) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        spacing: 8,
-        children: [runtimeStop, identityStop],
-      );
-    }
-    return Row(
-      spacing: gap,
-      children: [
-        runtimeStop,
-        Flexible(child: identityStop),
-      ],
+    return _CellLine(
+      gap: gap,
+      stacked:
+          !DashboardDensityScope.of(context).isDesktop &&
+          MediaQuery.textScalerOf(context).scale(1) > 1.3,
+      textDirection: Directionality.of(context),
+      children: [runtimeStop, identityStop],
     );
   }
+}
+
+/// The run time and the organization side by side while the run time and
+/// the organization's longest word fit, one under the other otherwise or
+/// when [stacked]; neither is ever squeezed or cut.
+class _CellLine extends MultiChildRenderObjectWidget {
+  const _CellLine({
+    required this.gap,
+    required this.stacked,
+    required this.textDirection,
+    required super.children,
+  });
+
+  static const runGap = 8.0;
+
+  final double gap;
+  final bool stacked;
+  final TextDirection textDirection;
+
+  @override
+  _RenderCellLine createRenderObject(BuildContext context) =>
+      _RenderCellLine(gap, stacked, textDirection);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderCellLine renderObject) {
+    renderObject
+      ..gap = gap
+      ..stacked = stacked
+      ..textDirection = textDirection;
+  }
+}
+
+class _CellLineParentData extends ContainerBoxParentData<RenderBox> {}
+
+class _RenderCellLine extends RenderBox
+    with
+        ContainerRenderObjectMixin<RenderBox, _CellLineParentData>,
+        RenderBoxContainerDefaultsMixin<RenderBox, _CellLineParentData> {
+  _RenderCellLine(this._gap, this._stacked, this._textDirection);
+
+  double _gap;
+  set gap(double value) {
+    if (value == _gap) return;
+    _gap = value;
+    markNeedsLayout();
+  }
+
+  bool _stacked;
+  set stacked(bool value) {
+    if (value == _stacked) return;
+    _stacked = value;
+    markNeedsLayout();
+  }
+
+  TextDirection _textDirection;
+  set textDirection(TextDirection value) {
+    if (value == _textDirection) return;
+    _textDirection = value;
+    markNeedsLayout();
+  }
+
+  @override
+  void setupParentData(RenderBox child) {
+    if (child.parentData is! _CellLineParentData) {
+      child.parentData = _CellLineParentData();
+    }
+  }
+
+  void _place(RenderBox child, double x, double y, double width) =>
+      (child.parentData! as _CellLineParentData).offset = Offset(
+        _textDirection == TextDirection.rtl ? width - x - child.size.width : x,
+        y,
+      );
+
+  @override
+  void performLayout() {
+    final first = firstChild;
+    final second = first == null ? null : childAfter(first);
+    if (first == null || second == null) {
+      size = constraints.smallest;
+      return;
+    }
+    final width = constraints.maxWidth;
+    final start = first.getMaxIntrinsicWidth(double.infinity);
+    final beside =
+        !_stacked &&
+        start + _gap + second.getMinIntrinsicWidth(double.infinity) <= width;
+    if (beside) {
+      first.layout(BoxConstraints(maxWidth: start), parentUsesSize: true);
+      second.layout(
+        BoxConstraints(maxWidth: width - first.size.width - _gap),
+        parentUsesSize: true,
+      );
+      _place(first, 0, 0, width);
+      _place(second, first.size.width + _gap, 0, width);
+      size = constraints.constrain(
+        Size(width, math.max(first.size.height, second.size.height)),
+      );
+      return;
+    }
+    final loose = BoxConstraints(maxWidth: width);
+    first.layout(loose, parentUsesSize: true);
+    second.layout(loose, parentUsesSize: true);
+    _place(first, 0, 0, width);
+    _place(second, 0, first.size.height + _CellLine.runGap, width);
+    size = constraints.constrain(
+      Size(width, first.size.height + _CellLine.runGap + second.size.height),
+    );
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) =>
+      defaultPaint(context, offset);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) =>
+      defaultHitTestChildren(result, position: position);
 }
 
 class _Cell extends StatelessWidget {
@@ -712,12 +980,7 @@ class _Cell extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        GlassText(
-          label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: DashboardText.label(context),
-        ),
+        GlassText(label, style: DashboardText.label(context)),
         const SizedBox(height: 2),
         value,
       ],
@@ -735,12 +998,7 @@ class _CellText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GlassText(
-      text,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: _cellStyle(context),
-    );
+    return GlassText(text, style: _cellStyle(context));
   }
 }
 
@@ -753,15 +1011,77 @@ class _Placeholder extends StatelessWidget {
   }
 }
 
-class _RunTimeValue extends ConsumerWidget {
+/// Ticks behind its own repaint boundary, and only while the card is in
+/// view: scrolled away it lets go of the run time, which then stops.
+class _RunTimeValue extends StatelessWidget {
   const _RunTimeValue();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final runTime = ref.watch(runTimeProvider);
-    return InteractionPaced(
-      revision: runTime,
-      builder: (_) => _CellText(getTimeText(runTime)),
+  Widget build(BuildContext context) => OutboundSampleGate(
+    builder: (context, inView) => TrafficClaim(
+      need: TrafficNeed.runTime,
+      enabled: inView,
+      child: RepaintBoundary(
+        child: Consumer(
+          builder: (context, ref, _) {
+            final runTime = ref.watch(runTimeProvider);
+            return InteractionPaced(
+              revision: runTime,
+              reuseUnchanged: true,
+              builder: (_) => _TickingText(getTimeText(runTime)),
+            );
+          },
+        ),
+      ),
+    ),
+  );
+}
+
+/// Takes the box its text needs in the widest digits, so a tick lays out
+/// this line and nothing around it.
+class _TickingText extends StatefulWidget {
+  const _TickingText(this.text);
+
+  final String text;
+
+  @override
+  State<_TickingText> createState() => _TickingTextState();
+}
+
+class _TickingTextState extends State<_TickingText> {
+  Object? _key;
+  var _box = Size.zero;
+
+  Size _boxOf(String template, TextStyle style) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    final key = (template, style, scaler, direction);
+    if (key == _key) return _box;
+    _key = key;
+    var box = Size.zero;
+    for (var digit = 0; digit < 10; digit++) {
+      final painter = TextPainter(
+        text: TextSpan(text: template.replaceAll('0', '$digit'), style: style),
+        textDirection: direction,
+        textScaler: scaler,
+        maxLines: 1,
+      )..layout();
+      box = Size(
+        math.max(box.width, painter.width),
+        math.max(box.height, painter.height),
+      );
+      painter.dispose();
+    }
+    return _box = Size(box.width.ceilToDouble(), box.height.ceilToDouble());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _cellStyle(context);
+    final text = widget.text;
+    return SizedBox.fromSize(
+      size: _boxOf(text.replaceAll(RegExp('[0-9]'), '0'), style),
+      child: GlassText(text, maxLines: 1, softWrap: false, style: style),
     );
   }
 }
@@ -901,7 +1221,7 @@ class _StartToggleState extends ConsumerState<_StartToggle>
             enabled: enabled && !context.disableAnimations && !highContrast,
             child: OutboundDrift(
               moving: widget.running && !widget.suspended,
-              builder: (_, time, child) => TweenAnimationBuilder<double>(
+              builder: (_, clock, child) => TweenAnimationBuilder<double>(
                 tween: Tween(end: _overlay),
                 duration: stateDuration,
                 builder: (_, overlay, child) => TweenAnimationBuilder<double>(
@@ -925,12 +1245,13 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                         ink.withValues(alpha: overlay),
                         fill,
                       );
+                      final skin = OutboundSkin(clock);
                       return CustomPaint(
                         painter: OutboundDropletPainter(
                           phase: phase,
                           fullness: progress,
                           squeeze: squeeze,
-                          time: time,
+                          skin: skin,
                           wobble: wobble,
                           color: glass ? null : color,
                           shadow: shadow,
@@ -952,7 +1273,7 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                                     phase: phase,
                                     fullness: progress,
                                     squeeze: squeeze,
-                                    time: time,
+                                    skin: skin,
                                     wobble: wobble,
                                   ),
                                   pressed: _pressed,

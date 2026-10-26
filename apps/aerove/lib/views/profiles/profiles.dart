@@ -325,7 +325,7 @@ class ProfileItem extends ConsumerWidget {
     final info = _subscriptionInfo;
     if (info != null && info.usage != null) {
       final used = info.upload + info.download;
-      final traffic = '${used.traffic.show} / ${info.total.traffic.show}';
+      final traffic = '${trafficAmount(used)} / ${trafficAmount(info.total)}';
       final percent = SubscriptionUsageFill.percentageOf(context, info);
       return percent == null
           ? traffic
@@ -561,12 +561,7 @@ class _ProfileCardTitle extends StatelessWidget {
           style: AppTextStyle.headline.of(context),
         ),
         const SizedBox(height: _infoGap),
-        GlassText(
-          subtitle,
-          style: AppTextStyle.footnote.of(context).toLighter,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
+        GlassText(subtitle, style: AppTextStyle.footnote.of(context).toLighter),
       ],
     );
   }

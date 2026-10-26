@@ -572,6 +572,9 @@ void main() {
       test('updates runtime and traffic while core start is pending', () async {
         final startCompleter = Completer<bool>();
         final container = raceContainer();
+        container.read(trafficDemandProvider.notifier)
+          ..claim(Object(), TrafficNeed.runTime)
+          ..claim(Object(), TrafficNeed.traffic);
         final action =
             container.read(setupActionProvider.notifier) as _RaceSetupAction;
         final commonAction =

@@ -208,7 +208,12 @@ class ProfilesCard extends ConsumerWidget {
           if (profile != null) ...[
             if (mobile) const SizedBox(height: 14) else const Spacer(),
             if (usage != null)
-              _UsageMeter(usage: usage, figure: figure, gap: mobile ? 8 : 6)
+              _UsageMeter(
+                usage: usage,
+                figure: figure,
+                gap: mobile ? 8 : 6,
+                grows: mobile,
+              )
             else
               _ConfigStats(figure: figure),
           ],
@@ -315,11 +320,15 @@ class _UsageMeter extends StatelessWidget {
     required this.usage,
     required this.figure,
     required this.gap,
+    required this.grows,
   });
 
   final _Usage usage;
   final AppTextStyle figure;
   final double gap;
+
+  /// A desktop card has a fixed height, so its usage scales down instead.
+  final bool grows;
 
   @override
   Widget build(BuildContext context) {
@@ -355,40 +364,59 @@ class _UsageMeter extends StatelessWidget {
             ).copyWith(color: glass ? source : null);
             final used = ' ${context.appLocalizations.usedShort}';
             final traffic =
-                '${dashboardTraffic(usage.used)} / ${dashboardTraffic(usage.total)}';
+                '${trafficAmount(usage.used)} / ${trafficAmount(usage.total)}';
             final trafficStyle = AppTextStyle.footnote
                 .of(context)
                 .toTabular
                 .copyWith(color: context.colorScheme.onSurfaceVariant);
+            final percentWidth = _widthOf(_percentOf(usage.share), percent);
+            final trafficWidth = _widthOf(traffic, trafficStyle);
+            final inline =
+                percentWidth + _rowGap + trafficWidth <= constraints.maxWidth;
             final showUnit =
-                _widthOf(_percentOf(usage.share), percent) +
-                    _widthOf(used, unit) +
-                    _rowGap +
-                    _widthOf(traffic, trafficStyle) <=
+                percentWidth + _widthOf(used, unit) + _rowGap + trafficWidth <=
                 constraints.maxWidth;
+            final share = GlassText.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: _percentOf(usage.share), style: percent),
+                  if (showUnit) TextSpan(text: used, style: unit),
+                ],
+              ),
+              style: glass ? TextStyle(color: source) : null,
+              inkRole: GlassInkRole.body,
+            );
+            final amounts = GlassText(
+              traffic,
+              textAlign: TextAlign.end,
+              style: trafficStyle,
+            );
+            if (!inline && grows) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  share,
+                  Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: amounts,
+                  ),
+                ],
+              );
+            }
             return Row(
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
               spacing: _rowGap,
               children: [
-                GlassText.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: _percentOf(usage.share), style: percent),
-                      if (showUnit) TextSpan(text: used, style: unit),
-                    ],
-                  ),
-                  style: glass ? TextStyle(color: source) : null,
-                  inkRole: GlassInkRole.body,
-                ),
+                share,
                 Expanded(
-                  child: GlassText(
-                    traffic,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.end,
-                    style: trafficStyle,
-                  ),
+                  child: inline
+                      ? amounts
+                      : FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: amounts,
+                        ),
                 ),
               ],
             );

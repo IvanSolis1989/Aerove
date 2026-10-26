@@ -41,6 +41,37 @@ void main() {
   );
 
   test(
+    'the CJK square fixture matches its record and advances a full em',
+    () async {
+      final source =
+          (jsonDecode(
+                    await File(
+                      'test/fixtures/fonts/SOURCE.json',
+                    ).readAsString(),
+                  )
+                  as Map<String, dynamic>)['cjkSquare']
+              as Map<String, dynamic>;
+      final bytes = await File(
+        'test/fixtures/fonts/${source['file']}',
+      ).readAsBytes();
+      expect(bytes.length, source['sizeBytes']);
+      expect(sha256.convert(bytes).toString(), source['sha256']);
+      await (FontLoader(
+        'PinnedCjkSquare',
+      )..addFont(Future.value(ByteData.sublistView(bytes)))).load();
+      final painter = TextPainter(
+        text: const TextSpan(
+          text: '局域网プロキシ허용',
+          style: TextStyle(fontFamily: 'PinnedCjkSquare', fontSize: 10),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      expect(painter.width, 90);
+      painter.dispose();
+    },
+  );
+
+  test(
     'the fixture renders proportional Latin glyphs without SDK path lookup',
     () async {
       await (FontLoader(

@@ -115,25 +115,58 @@ Path _dropletPath(
   return path..close();
 }
 
-class OutboundDropletClipper extends CustomClipper<Path> {
-  const OutboundDropletClipper({
-    this.phase = 0,
-    this.fullness = 0,
-    this.squeeze = 0,
-    this.time = 0,
-    this.wobble = 0,
-    this.irregularity = 1,
-  });
+/// Read at paint by painters and clippers, so a moving bubble repaints itself
+/// and rebuilds nothing around it.
+@immutable
+class OutboundSkin implements Listenable {
+  OutboundSkin(this._clock, [this._rest])
+    : _changes = Listenable.merge([_clock, _rest]);
 
-  final double phase;
-  final double fullness;
-  final double squeeze;
-  final double time;
-  final double wobble;
-  final double irregularity;
+  final ValueListenable<double> _clock;
+
+  /// 1 at rest, 0 while a check writhes the skin fully.
+  final Animation<double>? _rest;
+  final Listenable _changes;
+
+  double get time => _clock.value;
+
+  double get wobble => 1 - (_rest?.value ?? 1);
 
   @override
-  Path getClip(Size size) => _dropletPath(
+  void addListener(VoidCallback listener) => _changes.addListener(listener);
+
+  @override
+  void removeListener(VoidCallback listener) =>
+      _changes.removeListener(listener);
+
+  @override
+  bool operator ==(Object other) =>
+      other is OutboundSkin &&
+      identical(other._clock, _clock) &&
+      identical(other._rest, _rest);
+
+  @override
+  int get hashCode =>
+      Object.hash(identityHashCode(_clock), identityHashCode(_rest));
+}
+
+/// A null irregularity follows the wobble, smoothing the lobes away at rest.
+mixin _DropletShape {
+  double get phase;
+  double get fullness;
+  double get squeeze;
+  double get fixedTime;
+  double get fixedWobble;
+  double? get fixedIrregularity;
+  OutboundSkin? get skin;
+
+  double get time => fixedTime + (skin?.time ?? 0);
+
+  double get wobble => fixedWobble + (skin?.wobble ?? 0);
+
+  double get irregularity => fixedIrregularity ?? wobble.abs();
+
+  Path pathOf(Size size) => _dropletPath(
     size,
     phase: phase,
     fullness: fullness,
@@ -143,37 +176,137 @@ class OutboundDropletClipper extends CustomClipper<Path> {
     irregularity: irregularity,
   );
 
-  @override
-  bool shouldReclip(OutboundDropletClipper oldClipper) =>
-      oldClipper.phase != phase ||
-      oldClipper.fullness != fullness ||
-      oldClipper.squeeze != squeeze ||
-      oldClipper.time != time ||
-      oldClipper.wobble != wobble ||
-      oldClipper.irregularity != irregularity;
+  bool sameShape(_DropletShape other) =>
+      other.phase == phase &&
+      other.fullness == fullness &&
+      other.squeeze == squeeze &&
+      other.fixedTime == fixedTime &&
+      other.fixedWobble == fixedWobble &&
+      other.fixedIrregularity == fixedIrregularity &&
+      other.skin == skin;
 }
 
-class OutboundDropletPainter extends CustomPainter {
+class OutboundDropletClipper extends CustomClipper<Path> with _DropletShape {
+  const OutboundDropletClipper({
+    this.phase = 0,
+    this.fullness = 0,
+    this.squeeze = 0,
+    double time = 0,
+    double wobble = 0,
+    double? irregularity = 1,
+    this.skin,
+  }) : fixedTime = time,
+       fixedWobble = wobble,
+       fixedIrregularity = irregularity,
+       super(reclip: skin);
+
+  @override
+  final double phase;
+  @override
+  final double fullness;
+  @override
+  final double squeeze;
+  @override
+  final double fixedTime;
+  @override
+  final double fixedWobble;
+  @override
+  final double? fixedIrregularity;
+  @override
+  final OutboundSkin? skin;
+
+  @override
+  Path getClip(Size size) => pathOf(size);
+
+  @override
+  bool shouldReclip(OutboundDropletClipper oldClipper) =>
+      !sameShape(oldClipper);
+}
+
+/// Fades what lies under it out at the droplet's skin; paint it in a layer.
+class OutboundDropletFeather extends CustomPainter with _DropletShape {
+  const OutboundDropletFeather({
+    double time = 0,
+    double wobble = 0,
+    double? irregularity,
+    this.skin,
+  }) : fixedTime = time,
+       fixedWobble = wobble,
+       fixedIrregularity = irregularity,
+       super(repaint: skin);
+
+  static const halfBand = 0.41 * 0.06;
+
+  @override
+  double get phase => 0;
+  @override
+  double get fullness => 0;
+  @override
+  double get squeeze => 0;
+  @override
+  final double fixedTime;
+  @override
+  final double fixedWobble;
+  @override
+  final double? fixedIrregularity;
+  @override
+  final OutboundSkin? skin;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty) return;
+    final half = size.shortestSide * halfBand;
+    canvas.drawPath(
+      pathOf(size),
+      Paint()
+        ..blendMode = BlendMode.dstOut
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2 * half
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, half / 3),
+    );
+  }
+
+  @override
+  bool shouldRepaint(OutboundDropletFeather oldDelegate) =>
+      !sameShape(oldDelegate);
+
+  @override
+  bool shouldRebuildSemantics(OutboundDropletFeather oldDelegate) => false;
+}
+
+class OutboundDropletPainter extends CustomPainter with _DropletShape {
   const OutboundDropletPainter({
     this.phase = 0,
     this.fullness = 0,
     this.squeeze = 0,
-    this.time = 0,
-    this.wobble = 0,
-    this.irregularity = 1,
+    double time = 0,
+    double wobble = 0,
+    double? irregularity = 1,
+    this.skin,
     required this.color,
     this.shadow = Colors.transparent,
     this.ring,
     this.rim,
     this.highlight = true,
-  });
+  }) : fixedTime = time,
+       fixedWobble = wobble,
+       fixedIrregularity = irregularity,
+       super(repaint: skin);
 
+  @override
   final double phase;
+  @override
   final double fullness;
+  @override
   final double squeeze;
-  final double time;
-  final double wobble;
-  final double irregularity;
+  @override
+  final double fixedTime;
+  @override
+  final double fixedWobble;
+  @override
+  final double? fixedIrregularity;
+  @override
+  final OutboundSkin? skin;
 
   /// No color leaves the inside to glass, and [shadow] then falls only
   /// outside the droplet, as one under glass would show.
@@ -187,15 +320,7 @@ class OutboundDropletPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     final extent = size.shortestSide;
-    final path = _dropletPath(
-      size,
-      phase: phase,
-      fullness: fullness,
-      squeeze: squeeze,
-      time: time,
-      wobble: wobble,
-      irregularity: irregularity,
-    );
+    final path = pathOf(size);
     final color = this.color;
     if (shadow.a > 0) {
       canvas.save();
@@ -265,12 +390,7 @@ class OutboundDropletPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(OutboundDropletPainter oldDelegate) =>
-      oldDelegate.phase != phase ||
-      oldDelegate.fullness != fullness ||
-      oldDelegate.squeeze != squeeze ||
-      oldDelegate.time != time ||
-      oldDelegate.wobble != wobble ||
-      oldDelegate.irregularity != irregularity ||
+      !sameShape(oldDelegate) ||
       oldDelegate.color != color ||
       oldDelegate.shadow != shadow ||
       oldDelegate.ring != ring ||
@@ -287,7 +407,8 @@ final _bubbleSettle = SpringCurve(
 );
 
 /// A bubble that writhes while [checking], then settles; [builder] draws it
-/// from the drift [time] and the skin's [wobble], negative past rest.
+/// once, handing its layers the [OutboundSkin] they repaint from, whose
+/// wobble swings negative past rest.
 class OutboundBubble extends StatefulWidget {
   const OutboundBubble({
     super.key,
@@ -297,12 +418,7 @@ class OutboundBubble extends StatefulWidget {
   });
 
   final bool checking;
-  final Widget Function(
-    BuildContext context,
-    double time,
-    double wobble,
-    Widget? child,
-  )
+  final Widget Function(BuildContext context, OutboundSkin skin, Widget? child)
   builder;
   final Widget? child;
 
@@ -361,12 +477,8 @@ class _OutboundBubbleState extends State<OutboundBubble>
   @override
   Widget build(BuildContext context) => OutboundDrift(
     moving: widget.checking,
-    builder: (_, time, child) => AnimatedBuilder(
-      animation: _rest,
-      builder: (context, child) =>
-          widget.builder(context, time, 1 - _rest.value, child),
-      child: child,
-    ),
+    builder: (context, clock, child) =>
+        widget.builder(context, OutboundSkin(clock, _rest), child),
     child: widget.child,
   );
 }
@@ -380,7 +492,12 @@ class OutboundDrift extends ConsumerStatefulWidget {
   });
 
   final bool moving;
-  final Widget Function(BuildContext context, double phase, Widget? child)
+
+  final Widget Function(
+    BuildContext context,
+    ValueListenable<double> clock,
+    Widget? child,
+  )
   builder;
   final Widget? child;
 
@@ -388,8 +505,7 @@ class OutboundDrift extends ConsumerStatefulWidget {
   ConsumerState<OutboundDrift> createState() => _OutboundDriftState();
 }
 
-/// Every drift on screen reads one paced clock, so the badge and the gauze
-/// moving together share their frames rather than asking for their own.
+/// One paced clock for every drift on screen, so bubbles share their frames.
 abstract final class _DriftClock {
   static const _restRate = 15;
   static const _interactionRate = 10;
@@ -575,12 +691,7 @@ class _OutboundDriftState extends ConsumerState<OutboundDrift>
     return RepaintBoundary(
       child: _OutboundVisibility(
         onPaint: _painted,
-        child: AnimatedBuilder(
-          animation: _phase,
-          builder: (context, child) =>
-              widget.builder(context, _phase.value, child),
-          child: widget.child,
-        ),
+        child: widget.builder(context, _phase, widget.child),
       ),
     );
   }
@@ -686,138 +797,4 @@ class _OutboundSampleGateState extends State<OutboundSampleGate> {
     },
     child: widget.builder(context, _visible),
   );
-}
-
-class OutboundRibbon extends StatelessWidget {
-  const OutboundRibbon({super.key, required this.running});
-
-  final bool running;
-
-  @override
-  Widget build(BuildContext context) => IgnorePointer(
-    child: ExcludeSemantics(
-      child: OutboundDrift(
-        moving: running && !MediaQuery.highContrastOf(context),
-        builder: (context, phase, _) => CustomPaint(
-          painter: OutboundRibbonPainter(
-            phase: phase,
-            dark: Theme.of(context).brightness == Brightness.dark,
-            visible: !MediaQuery.highContrastOf(context),
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
-class OutboundRibbonPainter extends CustomPainter {
-  const OutboundRibbonPainter({
-    required this.phase,
-    required this.dark,
-    required this.visible,
-  });
-
-  /// Each gauze strand as (height, sweep, wave number, wave rate, thickness,
-  /// twist number, twist rate, opacity, offset); their own rates and
-  /// directions keep the layers sliding past one another.
-  static const _strands = [
-    (0.58, 0.15, 5.2, 1.0, 0.12, 3.1, 0.8, 1.0, 0.0),
-    (0.46, 0.11, 6.6, -0.75, 0.075, 4.4, -1.1, 0.7, 2.1),
-    (0.7, 0.09, 4.3, 1.35, 0.06, 2.6, 1.4, 0.55, 4.3),
-  ];
-  static const _samples = 36;
-
-  final double phase;
-  final bool dark;
-  final bool visible;
-
-  static List<(Offset, Offset)> _edges(
-    (double, double, double, double, double, double, double, double, double)
-    strand,
-    double phase,
-  ) {
-    final (height, sweep, wave, rate, thickness, twist, turn, _, offset) =
-        strand;
-    final run = rate * phase;
-    final edges = <(Offset, Offset)>[];
-    for (var index = 0; index <= _samples; index++) {
-      final x = -0.08 + 1.16 * index / _samples;
-      final center =
-          height -
-          0.22 * (x - 0.5) +
-          sweep * math.sin(wave * x - run + offset) +
-          0.35 * sweep * math.sin(1.9 * wave * x + 0.6 * run + 2 * offset);
-      final fold = math.cos(twist * x - turn * phase + offset).abs();
-      final half = thickness * (0.18 + 0.82 * fold);
-      edges.add((Offset(x, center - half), Offset(x, center + half)));
-    }
-    return edges;
-  }
-
-  static void _through(Path path, List<Offset> points) {
-    for (var index = 1; index < points.length - 1; index++) {
-      final mid = Offset.lerp(points[index], points[index + 1], 0.5)!;
-      path.quadraticBezierTo(
-        points[index].dx,
-        points[index].dy,
-        mid.dx,
-        mid.dy,
-      );
-    }
-    path.lineTo(points.last.dx, points.last.dy);
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (!visible || size.isEmpty) return;
-    canvas
-      ..save()
-      ..scale(size.width, size.height);
-    final bright = dark ? 0.12 : 0.26;
-    final shade = dark ? 0.08 : 0.13;
-    for (final strand in _strands) {
-      final opacity = strand.$8;
-      final edges = _edges(strand, phase);
-      final upper = [for (final (top, _) in edges) top];
-      final lower = [for (final (_, bottom) in edges) bottom].reversed.toList();
-      final band = Path()..moveTo(upper.first.dx, upper.first.dy);
-      _through(band, upper);
-      band.lineTo(lower.first.dx, lower.first.dy);
-      _through(band, lower);
-      band.close();
-      canvas.drawPath(
-        band,
-        Paint()
-          ..shader = LinearGradient(
-            colors: [
-              const Color(0xFFD8E4EF).withValues(alpha: 0.02 * opacity),
-              Colors.white.withValues(alpha: bright * opacity),
-              const Color(0xFF73859B).withValues(alpha: shade * opacity),
-              Colors.white.withValues(alpha: 0.8 * bright * opacity),
-              const Color(0xFF73859B).withValues(alpha: 0.02 * opacity),
-            ],
-            stops: const [0, 0.27, 0.5, 0.72, 1],
-          ).createShader(const Rect.fromLTWH(0, 0, 1, 1)),
-      );
-      final sheen = Path()..moveTo(upper.first.dx, upper.first.dy);
-      _through(sheen, upper);
-      canvas.drawPath(
-        sheen,
-        Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.2 / size.height
-          ..color = Colors.white.withValues(alpha: 1.6 * bright * opacity),
-      );
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(OutboundRibbonPainter oldDelegate) =>
-      oldDelegate.phase != phase ||
-      oldDelegate.dark != dark ||
-      oldDelegate.visible != visible;
-
-  @override
-  bool shouldRebuildSemantics(OutboundRibbonPainter oldDelegate) => false;
 }

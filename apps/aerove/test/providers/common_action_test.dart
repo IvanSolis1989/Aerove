@@ -4,15 +4,14 @@ import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
-import 'package:fl_clash/providers/action.dart';
-import 'package:fl_clash/providers/app.dart';
-import 'package:fl_clash/providers/config.dart';
-import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:riverpod/riverpod.dart';
+
+import '../helpers/test_profiles.dart';
 
 class MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
@@ -35,13 +34,25 @@ void main() {
 
   setUp(() => reset(core));
 
-  ProviderContainer buildContainer() {
+  /// A container where a visible dashboard card shows traffic, unless
+  /// [shown] is false.
+  ProviderContainer buildContainer({bool shown = true}) {
+    final profile = Profile.normal(
+      label: 'p',
+    ).copyWith(id: 1, currentGroupName: 'Manual');
     final container = ProviderContainer(
       overrides: [
         coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+        profilesProvider.overrideWith(() => TestProfiles([profile])),
+        currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
       ],
     );
     addTearDown(container.dispose);
+    if (shown) {
+      container
+          .read(trafficDemandProvider.notifier)
+          .claim(Object(), TrafficNeed.traffic);
+    }
     return container;
   }
 
@@ -61,6 +72,11 @@ void main() {
 
       expect(seen.sublist(0, Mode.values.length), Mode.values);
       expect(seen.last, Mode.values.first, reason: 'wraps after the last mode');
+      expect(
+        container.read(currentProfileProvider)?.currentGroupName,
+        GroupName.GLOBAL.name,
+        reason: 'passing global selects its group, as the dashboard does',
+      );
     });
   });
 
@@ -79,6 +95,40 @@ void main() {
   });
 
   group('CommonAction.updateTraffic', () {
+    test('asks the Core nothing while no visible card shows traffic', () async {
+      final container = buildContainer(shown: false);
+      when(
+        () => core.getTraffic(any()),
+      ).thenAnswer((_) async => const Traffic(up: 1, down: 2));
+      when(
+        () => core.getTotalTraffic(any()),
+      ).thenAnswer((_) async => const Traffic(up: 3, down: 4));
+      final action = container.read(commonActionProvider.notifier);
+      final owner = Object();
+
+      await action.updateTraffic();
+      verifyNever(() => core.getTraffic(any()));
+      verifyNever(() => core.getTotalTraffic(any()));
+      expect(container.read(trafficsProvider).list, isEmpty);
+
+      container
+          .read(trafficDemandProvider.notifier)
+          .claim(owner, TrafficNeed.runTime);
+      await action.updateTraffic();
+      verifyNever(() => core.getTraffic(any()));
+
+      container
+          .read(trafficDemandProvider.notifier)
+          .claim(owner, TrafficNeed.traffic);
+      await action.updateTraffic();
+      verify(() => core.getTraffic(any())).called(1);
+      expect(container.read(trafficsProvider).list.last.down, 2);
+
+      container.read(trafficDemandProvider.notifier).release(owner);
+      await action.updateTraffic();
+      verifyNever(() => core.getTraffic(any()));
+    });
+
     test('drops an answer from before hide even after resume', () async {
       final container = buildContainer();
       final answer = Completer<Traffic>();
