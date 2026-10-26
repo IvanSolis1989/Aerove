@@ -25,12 +25,63 @@ class CombinationCoverageTest(unittest.TestCase):
         self.assertEqual(set(ci_verify.SUITES), set(LEGACY_DIGESTS))
         for name, suite in ci_verify.SUITES.items():
             original = {key: value for key, value in suite.items() if key != 'shards'}
+            if name == 'regression-software':
+                self.assertEqual(suite['paths'], ci_verify.REGRESSION_SOFTWARE_PATHS
+                                 + ci_verify.CURRENT_REGRESSION_PATHS)
+                original['paths'] = ci_verify.REGRESSION_SOFTWARE_PATHS
             digest = hashlib.sha256(json.dumps(
                 original, sort_keys=True, separators=(',', ':'),
             ).encode()).hexdigest()
             with self.subTest(suite=name):
                 self.assertEqual(digest, LEGACY_DIGESTS[name])
                 self.assertTrue(all(path.startswith('test/') for path in suite['paths']))
+
+    def test_current_regressions_are_selected_in_every_existing_software_shard(self):
+        tests = [
+            'test/common/preferences_store_skip_test.dart',
+            'test/common/system_test_font_test.dart',
+            'test/common/traffic_format_test.dart',
+            'test/core/lib_test.dart',
+            'test/interactions/connections_activity_test.dart',
+            'test/interactions/counts_null_test.dart',
+            'test/interactions/counts_pending_test.dart',
+            'test/interactions/outbound_activity_test.dart',
+            'test/interactions/pacer_stop_build_test.dart',
+            'test/interactions/publication_and_counts_test.dart',
+            'test/interactions/shared_source_and_pacer_test.dart',
+            'test/manager/app_manager_lifecycle_test.dart',
+            'test/manager/connectivity_ssid_tracking_test.dart',
+            'test/manager/theme_font_watch_test.dart',
+            'test/manager/tray_lazy_menu_test.dart',
+            'test/manager/window_minimize_save_test.dart',
+            'test/plugins/service_test.dart',
+            'test/providers/automatic_maintenance_reset_test.dart',
+            'test/providers/automatic_update_backoff_test.dart',
+            'test/providers/setup_action_test.dart',
+            'test/providers/tray_title_state_test.dart',
+            'test/state_storage/fixed_ring_test.dart',
+            'test/state_storage/profile_select_test.dart',
+            'test/state_storage/profile_write_test.dart',
+            'test/state_storage/request_index_test.dart',
+            'test/ui/list_row_separator_scene_test.dart',
+            'test/ui/route_motion_hold_hidden_test.dart',
+            'test/views/connections_test.dart',
+            'test/views/hidden_feed_refresh_test.dart',
+            'test/views/proxy_providers_view_test.dart',
+            'test/views/requests_test.dart',
+        ]
+        suite = ci_verify.SUITES['regression-software']
+        self.assertEqual(suite['shards'], 4)
+        self.assertEqual(suite['impeller'], False)
+        self.assertIsNone(suite['require_impeller'])
+        self.assertTrue(suite['rust'])
+        for shard in range(suite['shards']):
+            command = ci_verify.command('regression-software', shard)
+            for test in tests:
+                with self.subTest(shard=shard, test=test):
+                    self.assertTrue(any(test == path or path.endswith('/')
+                                        and test.startswith(path)
+                                        for path in command))
 
     def test_shards_cover_every_original_argument_without_expanding_or_omitting_directories(self):
         matrices = ci_verify.matrices()

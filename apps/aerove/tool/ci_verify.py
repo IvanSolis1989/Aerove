@@ -239,6 +239,31 @@ REGRESSION_SOFTWARE_PATHS = ['test/application_theme_test.dart',
  'test/l10n/',
  'test/lint/']
 
+CURRENT_REGRESSION_PATHS = [
+    'test/common/preferences_store_skip_test.dart',
+    'test/common/system_test_font_test.dart',
+    'test/common/traffic_format_test.dart',
+    'test/core/lib_test.dart',
+    'test/interactions/',
+    'test/manager/app_manager_lifecycle_test.dart',
+    'test/manager/connectivity_ssid_tracking_test.dart',
+    'test/manager/theme_font_watch_test.dart',
+    'test/manager/tray_lazy_menu_test.dart',
+    'test/manager/window_minimize_save_test.dart',
+    'test/plugins/service_test.dart',
+    'test/providers/automatic_maintenance_reset_test.dart',
+    'test/providers/automatic_update_backoff_test.dart',
+    'test/providers/setup_action_test.dart',
+    'test/providers/tray_title_state_test.dart',
+    'test/state_storage/',
+    'test/ui/list_row_separator_scene_test.dart',
+    'test/ui/route_motion_hold_hidden_test.dart',
+    'test/views/connections_test.dart',
+    'test/views/hidden_feed_refresh_test.dart',
+    'test/views/proxy_providers_view_test.dart',
+    'test/views/requests_test.dart',
+]
+
 SUITES = {
     'luminous': {
         'paths': LUMINOUS_PATHS,
@@ -290,7 +315,7 @@ SUITES = {
         'shards': 2,
     },
     'regression-software': {
-        'paths': REGRESSION_SOFTWARE_PATHS,
+        'paths': REGRESSION_SOFTWARE_PATHS + CURRENT_REGRESSION_PATHS,
         'impeller': False,
         'require_impeller': None,
         'rust': True,
