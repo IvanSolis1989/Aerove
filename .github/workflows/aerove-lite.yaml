@@ -741,25 +741,45 @@ jobs:
           label: matrix
           artifact_suffix: matrix
         - phase: remaining
-          label: remaining shard 0/4
-          artifact_suffix: remaining-shard-0-of-4
-          shard_count: 4
+          label: remaining shard 0/8
+          artifact_suffix: remaining-shard-0-of-8
+          shard_count: 8
           shard_index: 0
         - phase: remaining
-          label: remaining shard 1/4
-          artifact_suffix: remaining-shard-1-of-4
-          shard_count: 4
+          label: remaining shard 1/8
+          artifact_suffix: remaining-shard-1-of-8
+          shard_count: 8
           shard_index: 1
         - phase: remaining
-          label: remaining shard 2/4
-          artifact_suffix: remaining-shard-2-of-4
-          shard_count: 4
+          label: remaining shard 2/8
+          artifact_suffix: remaining-shard-2-of-8
+          shard_count: 8
           shard_index: 2
         - phase: remaining
-          label: remaining shard 3/4
-          artifact_suffix: remaining-shard-3-of-4
-          shard_count: 4
+          label: remaining shard 3/8
+          artifact_suffix: remaining-shard-3-of-8
+          shard_count: 8
           shard_index: 3
+        - phase: remaining
+          label: remaining shard 4/8
+          artifact_suffix: remaining-shard-4-of-8
+          shard_count: 8
+          shard_index: 4
+        - phase: remaining
+          label: remaining shard 5/8
+          artifact_suffix: remaining-shard-5-of-8
+          shard_count: 8
+          shard_index: 5
+        - phase: remaining
+          label: remaining shard 6/8
+          artifact_suffix: remaining-shard-6-of-8
+          shard_count: 8
+          shard_index: 6
+        - phase: remaining
+          label: remaining shard 7/8
+          artifact_suffix: remaining-shard-7-of-8
+          shard_count: 8
+          shard_index: 7
     name: acceptance (${{ matrix.label }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -856,7 +876,7 @@ jobs:
       if: ${{ matrix.phase == 'remaining' && success() }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: AEROVE-Lite-shard-selection-${{ matrix.shard_index }}-of-4-attempt-${{ github.run_attempt }}
+        name: AEROVE-Lite-shard-selection-${{ matrix.shard_index }}-of-8-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/lite-diagnostics/remaining/TEST-SELECTION.json
         if-no-files-found: error
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -883,13 +903,13 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         persist-credentials: false
-    - name: Fetch the four exact APK shard selection receipts
+    - name: Fetch the eight exact APK shard selection receipts
       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
-        pattern: AEROVE-Lite-shard-selection-*-of-4-attempt-${{ github.run_attempt }}
+        pattern: AEROVE-Lite-shard-selection-*-of-8-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/lite-shard-selection
         merge-multiple: false
-    - name: Verify the four runtime-discovered shard sets form one complete APK test selection
+    - name: Verify the 8 runtime-discovered shard sets form one complete APK test selection
       run: |
         python3 apps/aerove-lite/tool/instrumentation_shards.py aggregate \
           --directory "$RUNNER_TEMP/lite-shard-selection" --source "$GITHUB_SHA" \

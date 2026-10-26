@@ -13,7 +13,7 @@ class ShardSelectionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.descriptions = [f"case{index}[Solid](a.b.Test)" for index in range(20)]
+        self.descriptions = [f"case{index}[Solid](a.b.Test)" for index in range(40)]
         self.identity = dict(sourceRevision="a" * 40, sourceTree="b" * 40, workflowRun="11", runAttempt="2", runNumber="3")
 
     def log(self, descriptions, statuses=None):
@@ -34,8 +34,8 @@ class ShardSelectionTests(unittest.TestCase):
         return path
 
     def discovery(self, index):
-        return dict(numShards=4, shardIndex=index, identity=self.identity, runner="androidx.test:runner:1.6.2",
-                    junit="junit:junit:4.13.2", algorithm="abs(Description.hashCode()) % 4", apkSha256={"app": "c" * 64},
+        return dict(numShards=shards.SHARD_COUNT, shardIndex=index, identity=self.identity, runner="androidx.test:runner:1.6.2",
+                    junit="junit:junit:4.13.2", algorithm=f"abs(Description.hashCode()) % {shards.SHARD_COUNT}", apkSha256={"app": "c" * 64},
                     runtimeManifestSha256="d" * 64, dependencyReportSha256="e" * 64,
                     discoveryFingerprint=shards.fingerprint(sorted(self.descriptions)), discoveredDescriptions=sorted(self.descriptions),
                     discoveryCount=len(self.descriptions), excludedClass=shards.MATRIX_CLASS)
@@ -44,9 +44,9 @@ class ShardSelectionTests(unittest.TestCase):
         return sorted(description for description in self.descriptions if shards.shard_for(description) == index)
 
     def artifact_receipts(self):
-        for index in range(4):
+        for index in range(shards.SHARD_COUNT):
             receipt = shards.verify(self.discovery(index), self.write_log(self.expected(index)))
-            path = self.root / f"AEROVE-Lite-shard-selection-{index}-of-4-attempt-2" / "TEST-SELECTION.json"
+            path = self.root / f"AEROVE-Lite-shard-selection-{index}-of-{shards.SHARD_COUNT}-attempt-2" / "TEST-SELECTION.json"
             path.parent.mkdir()
             path.write_text(json.dumps(receipt))
 
@@ -60,7 +60,7 @@ class ShardSelectionTests(unittest.TestCase):
 
     def test_log_only_needs_complete_statuses_but_no_ok_summary(self):
         records = shards.parse_log(self.write_log(self.descriptions))
-        self.assertEqual(20, len(records))
+        self.assertEqual(len(self.descriptions), len(records))
         self.assertEqual(set(self.descriptions), {record["description"] for record in records})
 
     def test_discovery_binds_resolved_runner_graph_apks_source_and_never_calls_it_passed(self):
@@ -76,14 +76,14 @@ class ShardSelectionTests(unittest.TestCase):
         apks = {"app-release.apk": "c" * 64, "app-release-androidTest.apk": "d" * 64}
         proof.write_text(json.dumps(dict(runtimeDirectory=str(runtime), apks=apks)))
         source = self.root / "SOURCE.json"
-        source.write_text(json.dumps(dict(self.identity, phase="remaining", testShard=dict(numShards=4, shardIndex=0,
+        source.write_text(json.dumps(dict(self.identity, phase="remaining", testShard=dict(numShards=shards.SHARD_COUNT, shardIndex=0,
             runner="androidx.test.runner.AndroidJUnitRunner", excludedClass=shards.MATRIX_CLASS))))
         sums = self.root / "APK_SHA256SUMS"
         sums.write_text("".join(f"{value}  apks/{name}\n" for name, value in apks.items()))
         log = self.write_log(self.descriptions)
         receipt = shards.discover(log, proof, source, sums)
         self.assertEqual([], receipt["passedTests"])
-        self.assertEqual(20, receipt["discoveryCount"])
+        self.assertEqual(len(self.descriptions), receipt["discoveryCount"])
         graph.write_text(graph.read_text().replace("1.6.2", "1.7.0"))
         with self.assertRaisesRegex(ValueError, "source-bound"):
             shards.discover(log, proof, source, sums)
@@ -95,7 +95,7 @@ class ShardSelectionTests(unittest.TestCase):
     def test_parse_rejects_partial_duplicate_failure_unknown_and_excluded_class(self):
         good = self.log(self.descriptions)
         invalid = [good.replace("INSTRUMENTATION_CODE: -1", "INSTRUMENTATION_CODE: 0"),
-                   good.replace("numtests=20", "numtests=21"),
+                   good.replace(f"numtests={len(self.descriptions)}", f"numtests={len(self.descriptions) + 1}"),
                    good.replace("current=2\n", "current=1\n"),
                    good.replace("INSTRUMENTATION_STATUS_CODE: 0", "INSTRUMENTATION_STATUS_CODE: -2", 1),
                    good.replace("INSTRUMENTATION_STATUS_CODE: 0", "INSTRUMENTATION_STATUS_CODE: 9", 1),
@@ -110,11 +110,11 @@ class ShardSelectionTests(unittest.TestCase):
                 shards.parse_log(path)
 
     def test_exact_shard_rejects_missing_extra_and_other_shard(self):
-        for index in range(4):
+        for index in range(shards.SHARD_COUNT):
             expected = self.expected(index)
             receipt = shards.verify(self.discovery(index), self.write_log(expected))
             self.assertTrue(receipt["allExpectedPassed"])
-            for invalid in (expected[:-1], self.descriptions, self.expected((index + 1) % 4)):
+            for invalid in (expected[:-1], self.descriptions, self.expected((index + 1) % shards.SHARD_COUNT)):
                 with self.subTest(index=index), self.assertRaises(ValueError):
                     shards.verify(self.discovery(index), self.write_log(invalid))
 
@@ -128,12 +128,12 @@ class ShardSelectionTests(unittest.TestCase):
         self.assertNotIn(expected[0], receipt["terminalStatuses"]["passed"])
         self.assertNotIn(expected[1], receipt["terminalStatuses"]["passed"])
 
-    def test_aggregate_requires_exact_four_artifacts_and_same_discovery_apk_source(self):
+    def test_aggregate_requires_exact_eight_artifacts_and_same_discovery_apk_source(self):
         self.artifact_receipts()
         result = shards.aggregate(self.root, "a" * 40, "11", "2")
-        self.assertEqual(20, result["discoveredCount"])
+        self.assertEqual(len(self.descriptions), result["discoveredCount"])
         self.assertTrue(result["allDiscoveredPassed"])
-        path = self.root / "AEROVE-Lite-shard-selection-2-of-4-attempt-2/TEST-SELECTION.json"
+        path = self.root / "AEROVE-Lite-shard-selection-2-of-8-attempt-2/TEST-SELECTION.json"
         original = json.loads(path.read_text())
         for key, invalid in (("shardIndex", 1), ("numShards", 3), ("discoveryFingerprint", "x"),
                              ("apkSha256", {"app": "f" * 64}), ("identity", dict(self.identity, runAttempt="1"))):
@@ -150,9 +150,25 @@ class ShardSelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             shards.aggregate(self.root, "a" * 40, "11", "2")
 
+    def test_aggregate_rejects_legacy_four_shard_receipts(self):
+        for index in range(4):
+            old = self.root / f"AEROVE-Lite-shard-selection-{index}-of-4-attempt-2"
+            old.mkdir()
+            (old / "TEST-SELECTION.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "8 unique shard artifacts"):
+            shards.aggregate(self.root, "a" * 40, "11", "2")
+
+    def test_aggregate_rejects_a_ninth_selection_receipt(self):
+        self.artifact_receipts()
+        extra = self.root / "AEROVE-Lite-shard-selection-8-of-8-attempt-2"
+        extra.mkdir()
+        (extra / "TEST-SELECTION.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "8 unique shard artifacts"):
+            shards.aggregate(self.root, "a" * 40, "11", "2")
+
     def test_aggregate_rejects_skipped_promoted_to_passed(self):
         self.artifact_receipts()
-        path = self.root / "AEROVE-Lite-shard-selection-0-of-4-attempt-2/TEST-SELECTION.json"
+        path = self.root / "AEROVE-Lite-shard-selection-0-of-8-attempt-2/TEST-SELECTION.json"
         expected = self.expected(0)
         receipt = shards.verify(self.discovery(0), self.write_log(expected, {expected[0]: -3}))
         path.write_text(json.dumps(receipt))
@@ -165,7 +181,6 @@ class ShardSelectionTests(unittest.TestCase):
     def test_split_invocations_keep_original_discovery_and_exact_shard_union(self):
         self.descriptions += [shards.SSID_DESCRIPTION]
         index = shards.shard_for(shards.SSID_DESCRIPTION)
-        self.assertEqual(1, index)
         discovery = self.discovery(index)
         expected = self.expected(index)
         ordinary = [value for value in expected if value != shards.SSID_DESCRIPTION]
@@ -175,7 +190,7 @@ class ShardSelectionTests(unittest.TestCase):
         isolated.write_text(self.log([shards.SSID_DESCRIPTION]))
         receipt = shards.verify(discovery, normal, isolated)
         self.assertEqual(expected, receipt["actualDescriptions"])
-        self.assertEqual(21, receipt["discovery"]["discoveryCount"])
+        self.assertEqual(len(self.descriptions), receipt["discovery"]["discoveryCount"])
         self.assertEqual(discovery["discoveryFingerprint"], receipt["discovery"]["discoveryFingerprint"])
         with self.assertRaisesRegex(ValueError, "terminal/start set|separate scoped"):
             shards.verify(discovery, normal)
@@ -190,7 +205,7 @@ class ShardSelectionTests(unittest.TestCase):
 
     def test_split_aggregate_binds_both_invocations_to_same_source_and_apks(self):
         self.descriptions += [shards.SSID_DESCRIPTION]
-        for index in range(4):
+        for index in range(shards.SHARD_COUNT):
             expected = self.expected(index)
             isolated = self.root / f"ssid-{index}.log"
             ordinary = self.root / f"ordinary-{index}.log"
@@ -198,13 +213,13 @@ class ShardSelectionTests(unittest.TestCase):
             ordinary.write_text(self.log([value for value in expected if value not in selected]))
             isolated.write_text(self.log(selected))
             receipt = shards.verify(self.discovery(index), ordinary, isolated if selected else None)
-            path = self.root / f"AEROVE-Lite-shard-selection-{index}-of-4-attempt-2/TEST-SELECTION.json"
+            path = self.root / f"AEROVE-Lite-shard-selection-{index}-of-{shards.SHARD_COUNT}-attempt-2/TEST-SELECTION.json"
             path.parent.mkdir()
             path.write_text(json.dumps(receipt))
         result = shards.aggregate(self.root, "a" * 40, "11", "2")
-        self.assertEqual(21, result["discoveredCount"])
-        self.assertEqual(21, result["passedCount"])
-        path = self.root / "AEROVE-Lite-shard-selection-1-of-4-attempt-2/TEST-SELECTION.json"
+        self.assertEqual(len(self.descriptions), result["discoveredCount"])
+        self.assertEqual(len(self.descriptions), result["passedCount"])
+        path = self.root / "AEROVE-Lite-shard-selection-1-of-8-attempt-2/TEST-SELECTION.json"
         original = json.loads(path.read_text())
         for field, value in (("apkSha256", {"app": "x" * 64}), ("identity", {}), ("descriptions", [])):
             changed = copy.deepcopy(original)

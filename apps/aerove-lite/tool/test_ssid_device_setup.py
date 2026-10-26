@@ -91,7 +91,7 @@ class DeviceScopeTests(unittest.TestCase):
         ordinary = next(f"case{i}(a.b.Test)" for i in range(100) if shards.shard_for(f"case{i}(a.b.Test)") == index)
         descriptions = sorted([ordinary, shards.SSID_DESCRIPTION])
         identity = dict(sourceRevision="a" * 40, sourceTree="b" * 40, workflowRun="11", runAttempt="2", runNumber="3")
-        discovery = dict(numShards=4, shardIndex=index, discoveredDescriptions=descriptions,
+        discovery = dict(numShards=shards.SHARD_COUNT, shardIndex=index, discoveredDescriptions=descriptions,
                          discoveryFingerprint=shards.fingerprint(descriptions), identity=identity, apkSha256={"app": "c" * 64})
         source = dict(identity, deviceKind="CI-emulator", deviceSerial="emulator-5554", isolatedBackgroundPolicy=True, phase="remaining")
         proof = dict(deviceSerial="emulator-5554", apks=discovery["apkSha256"])
@@ -112,7 +112,7 @@ class DeviceScopeTests(unittest.TestCase):
         index = shards.shard_for(shards.SSID_DESCRIPTION)
         ordinary = [f"case{i}(a.b.Test)" for i in range(100) if shards.shard_for(f"case{i}(a.b.Test)") == index][:2]
         descriptions = sorted(ordinary + [shards.SSID_DESCRIPTION])
-        discovery = dict(numShards=4, shardIndex=index, discoveredDescriptions=descriptions,
+        discovery = dict(numShards=shards.SHARD_COUNT, shardIndex=index, discoveredDescriptions=descriptions,
                          discoveryFingerprint=shards.fingerprint(descriptions))
         formatter = shard_tests.ShardSelectionTests()
         good = formatter.log(ordinary) + "OK (2 tests)\n"

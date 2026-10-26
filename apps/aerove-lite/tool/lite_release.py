@@ -13,6 +13,9 @@ import subprocess
 import sys
 import zipfile
 
+import instrumentation_shards
+
+SHARD_COUNT = instrumentation_shards.SHARD_COUNT
 TOOL_DIR = Path(__file__).resolve().parent
 APP_DIR = TOOL_DIR.parent
 REPO = "IvanSolis1989/Aerove"
@@ -81,15 +84,15 @@ def _candidate_jobs(run, attempt):
         "resolve": ("Stable lock and host production regression",),
         "verify": ("Kotlin data, lifecycle and UI compilation checks",),
         "accepted": ("All exact-source acceptance gates passed",
-                     "Verify the four runtime-discovered shard sets form one complete APK test selection"),
+                     f"Verify the {SHARD_COUNT} runtime-discovered shard sets form one complete APK test selection"),
         "acceptance (matrix)": ("Real API 33 matrix verification",),
     }
-    for shard_index in range(4):
-        expected[f"acceptance (remaining shard {shard_index}/4)"] = ("Real API 33 remaining verification",)
+    for shard_index in range(SHARD_COUNT):
+        expected[f"acceptance (remaining shard {shard_index}/{SHARD_COUNT})"] = ("Real API 33 remaining verification",)
     acceptance_names = [job.get("name") for job in jobs if str(job.get("name", "")).startswith("acceptance (")]
     expected_acceptance = [name for name in expected if name.startswith("acceptance (")]
     if sorted(acceptance_names) != sorted(expected_acceptance):
-        raise PromotionError("Acceptance run requires exactly the matrix and four unique remaining shards 0..3/4")
+        raise PromotionError(f"Acceptance run requires exactly the matrix and {SHARD_COUNT} unique remaining shards 0..{SHARD_COUNT - 1}/{SHARD_COUNT}")
     for abi in ("arm64-v8a", "x86_64"):
         prefix = f"build ({abi}) / "
         expected[prefix + "rust"] = ("Build the pinned Rust Android bridge",)

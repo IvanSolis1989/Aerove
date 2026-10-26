@@ -21,8 +21,8 @@ shard_index="${AEROVE_REMAINING_SHARD_INDEX:-}"
 remaining_timeout=()
 if [[ "$phase" == original-sample ]]; then remaining_timeout=(timeout --signal=TERM --kill-after=20s 240s); fi
 if [[ -v AEROVE_REMAINING_SHARD_COUNT || -v AEROVE_REMAINING_SHARD_INDEX ]]; then
-    if [[ "$phase" != remaining || "$shard_count" != 4 || ! "$shard_index" =~ ^[0-3]$ ]]; then
-        echo 'Sharding requires remaining, count=4 and one index in 0..3; omit both variables for an unsharded run.' >&2
+    if [[ "$phase" != remaining || "$shard_count" != 8 || ! "$shard_index" =~ ^[0-7]$ ]]; then
+        echo 'Sharding requires remaining, count=8 and one index in 0..7; omit both variables for an unsharded run.' >&2
         exit 2
     fi
     selection+=(-e numShards "$shard_count" -e shardIndex "$shard_index")

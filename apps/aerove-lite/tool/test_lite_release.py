@@ -1,6 +1,7 @@
 import importlib.util
 import hashlib
 import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -14,6 +15,19 @@ notes_tool = Path(__file__).with_name("lite_release_notes.py")
 notes_spec = importlib.util.spec_from_file_location("lite_release_notes", notes_tool)
 notes = importlib.util.module_from_spec(notes_spec)
 notes_spec.loader.exec_module(notes)
+
+
+def workflow_aggregate_step():
+    workflow = Path(__file__).resolve().parents[3] / ".github/workflows/aerove-lite.yaml"
+    text = workflow.read_text(encoding="utf-8")
+    section_match = re.search(r"(?ms)^  accepted:\s*\n(?P<section>.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", text)
+    if not section_match:
+        raise AssertionError("accepted job is absent from the actual Lite workflow")
+    steps = re.findall(r"(?m)^    - name: (.+)$", section_match.group("section"))
+    matches = [name for name in steps if "runtime-discovered shard sets form one complete APK test selection" in name]
+    if len(matches) != 1:
+        raise AssertionError(f"expected one aggregate acceptance step in the actual Lite workflow, got {matches!r}")
+    return matches[0]
 
 
 class LitePromotionGateTests(unittest.TestCase):
@@ -172,15 +186,19 @@ class LitePromotionGateTests(unittest.TestCase):
             self.assertIn("already matches", (root / "summary.md").read_text(encoding="utf-8"))
 
     def test_parallel_jobs_require_every_producer_and_android_phase_in_same_attempt(self):
+        actual_aggregate_step = workflow_aggregate_step()
+        self.assertEqual(
+            f"Verify the {release.SHARD_COUNT} runtime-discovered shard sets form one complete APK test selection",
+            actual_aggregate_step,
+        )
         required = {
             "resolve": ["Stable lock and host production regression"],
             "verify": ["Kotlin data, lifecycle and UI compilation checks"],
-            "accepted": ["All exact-source acceptance gates passed",
-                         "Verify the four runtime-discovered shard sets form one complete APK test selection"],
+            "accepted": ["All exact-source acceptance gates passed", actual_aggregate_step],
             "acceptance (matrix)": ["Real API 33 matrix verification"],
         }
-        for shard_index in range(4):
-            required[f"acceptance (remaining shard {shard_index}/4)"] = ["Real API 33 remaining verification"]
+        for shard_index in range(release.SHARD_COUNT):
+            required[f"acceptance (remaining shard {shard_index}/{release.SHARD_COUNT})"] = ["Real API 33 remaining verification"]
         for abi in ("arm64-v8a", "x86_64"):
             prefix = f"build ({abi}) / "
             required[prefix+"rust"] = ["Build the pinned Rust Android bridge"]
@@ -191,7 +209,7 @@ class LitePromotionGateTests(unittest.TestCase):
         jobs = [dict(name=name,status="completed",conclusion="success",run_id=11,run_attempt=2,
             steps=[dict(name=step,conclusion="success") for step in steps]) for name,steps in required.items()]
         with mock.patch.object(release,"_gh_json",return_value={"jobs":jobs}):
-            self.assertEqual(14,len(release._candidate_jobs(11,2)))
+            self.assertEqual(len(required),len(release._candidate_jobs(11,2)))
             for target in range(len(jobs)):
                 removed = jobs.pop(target)
                 with self.subTest(missing=removed["name"]), self.assertRaises(release.PromotionError):
@@ -204,8 +222,9 @@ class LitePromotionGateTests(unittest.TestCase):
                 with self.subTest(duplicate=job["name"]), self.assertRaises(release.PromotionError):
                     release._candidate_jobs(11,2)
                 jobs.pop()
-            for unexpected in ("acceptance (remaining)", "acceptance (remaining shard 4/4)",
-                               "acceptance (remaining shard 0/3)", "acceptance (remaining shard 0/4) extra"):
+            for unexpected in ("acceptance (remaining)", "acceptance (remaining shard 8/8)",
+                               "acceptance (remaining shard 0/7)", "acceptance (remaining shard 0/8) extra",
+                               "acceptance (remaining shard 0/4)"):
                 jobs.append(dict(jobs[0], name=unexpected))
                 with self.subTest(mixed=unexpected), self.assertRaises(release.PromotionError):
                     release._candidate_jobs(11,2)
