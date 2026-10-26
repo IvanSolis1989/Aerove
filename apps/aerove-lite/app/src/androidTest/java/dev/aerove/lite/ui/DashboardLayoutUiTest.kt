@@ -20,6 +20,8 @@ import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import java.io.File
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction
 import android.view.accessibility.AccessibilityNodeProvider
@@ -61,6 +63,8 @@ import androidx.compose.ui.text.font.FontSynthesis
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -311,7 +315,9 @@ class DashboardLayoutUiTest {
     }
 
     @Test
-    fun serviceCellsGrowForTwoLinesAtLargeText() {
+    fun serviceCellsGrowForTwoLinesAtLargeText() = withLayoutFailureScreenshot("service-cells-large-text") { serviceCellsGrowForTwoLinesAtLargeTextCase() }
+
+    private fun serviceCellsGrowForTwoLinesAtLargeTextCase() {
         val initial = fixture(listOf(DashboardWidget.ServiceStatus))
         launch(initial.copy(diagnostics = initial.diagnostics.copy(services = listOf(
             ServiceCheckView("netflix", "available", checkedAt = 1),
@@ -324,8 +330,15 @@ class DashboardLayoutUiTest {
                 node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
                 node.fetchSemanticsNode().boundsInRoot to layouts.single()
             }
-            val measurement = "service=$id cell=$cell density=$density fontScale=$effectiveFontScale " +
-                "lines=${lines.map { (bounds, result) -> "bounds=$bounds size=${result.size} baseline=${result.firstBaseline} overflow=${result.didOverflowHeight}" }}"
+            val measurement = buildString {
+                append("service=$id cell=$cell density=$density fontScale=$effectiveFontScale lines=[")
+                append(lines.mapIndexed { index, (bounds, result) ->
+                    val input = result.layoutInput
+                    val paragraph = result.multiParagraph
+                    "line$index{bounds=$bounds,text='${input.text.text.replace("\n", "\\n").replace("\r", "\\r")}',constraints=${input.constraints},softWrap=${input.softWrap},overflow=${input.overflow},maxLines=${input.maxLines},style={fontSize=${input.style.fontSize},lineHeight=${input.style.lineHeight},letterSpacing=${input.style.letterSpacing},fontFamily=${input.style.fontFamily}},size=${result.size},paragraph={width=${paragraph.width},height=${paragraph.height},minIntrinsicWidth=${paragraph.minIntrinsicWidth},maxIntrinsicWidth=${paragraph.maxIntrinsicWidth}},baseline=${result.firstBaseline}/${result.lastBaseline},overflowWidth=${result.didOverflowWidth},overflowHeight=${result.didOverflowHeight},ellipsized=${(0 until result.lineCount).map { result.isLineEllipsized(it) }}}"
+                }.joinToString())
+                append(']')
+            }
             assertTrue(measurement, cell.height >= (36f + 32f) * density - 1f)
             assertTrue(measurement, cell.height >= 50f * effectiveFontScale.coerceAtLeast(1f) * density - 1f)
             lines.forEach { (bounds, result) ->
@@ -361,7 +374,9 @@ class DashboardLayoutUiTest {
     }
 
     @Test
-    fun networkPillsKeepAllLabelsAndWordsAcrossDeviceFontLocaleMatrix() {
+    fun networkPillsKeepAllLabelsAndWordsAcrossDeviceFontLocaleMatrix() = withLayoutFailureScreenshot("network-pills-matrix") { networkPillsKeepAllLabelsAndWordsAcrossDeviceFontLocaleMatrixCase() }
+
+    private fun networkPillsKeepAllLabelsAndWordsAcrossDeviceFontLocaleMatrixCase() {
         val initial = fixture(listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp))
         launch(initial, maxWidth = 320.dp)
         // Each entry rebuilds the actual Android text paragraphs using system typefaces and fallbacks.
@@ -379,10 +394,18 @@ class DashboardLayoutUiTest {
                         append(detail).append(" | pillsGeometry={text='")
                         append(input.text.text.replace("\n", "\\n").replace("\r", "\\r")).append("',constraints=").append(input.constraints)
                         append(",density=").append(input.density.density).append(",effectiveFontScale=").append(input.density.fontScale)
+                        append(",softWrap=").append(input.softWrap).append(",overflow=").append(input.overflow).append(",maxLines=").append(input.maxLines)
                         append(",style={fontSize=").append(input.style.fontSize).append(",lineHeight=").append(input.style.lineHeight)
                         append(",letterSpacing=").append(input.style.letterSpacing).append("},size=").append(text.size)
-                        append(",paragraph={width=").append(text.multiParagraph.width).append(",height=").append(text.multiParagraph.height).append('}')
+                        append(",paragraph={width=").append(text.multiParagraph.width).append(",height=").append(text.multiParagraph.height)
+                            .append(",minIntrinsicWidth=").append(text.multiParagraph.minIntrinsicWidth)
+                            .append(",maxIntrinsicWidth=").append(text.multiParagraph.maxIntrinsicWidth).append('}')
                         append(",didOverflowWidth=").append(text.didOverflowWidth).append(",didOverflowHeight=").append(text.didOverflowHeight)
+                        append(",hasVisualOverflow=").append(text.hasVisualOverflow)
+                        append(",pillBounds=").append(listOf("dashboard-mode-cycle", "dashboard-vpn", "dashboard-intranet").map { tag ->
+                            tag to runCatching { compose.onNodeWithTag(tag).fetchSemanticsNode().boundsInRoot.toString() }
+                                .getOrElse { rethrowMatrixCancellation(it); "unavailable:${it.javaClass.simpleName}" }
+                        })
                         append(",nodeBounds=").append(runCatching { node.boundsInRoot.toString() }.getOrElse { rethrowMatrixCancellation(it); "unavailable:${it.javaClass.simpleName}" })
                         append(",lineCount=").append(text.lineCount).append(",lines=[")
                         for (line in 0 until text.lineCount) {
@@ -1130,14 +1153,66 @@ class DashboardLayoutUiTest {
     }
 
     @Test
-    fun narrowLargeTextKeepsStatusAndSpeedForegroundsSeparate() {
+    fun narrowLargeTextKeepsStatusAndSpeedForegroundsSeparate() = withLayoutFailureScreenshot("status-narrow-large-text") { narrowLargeTextKeepsStatusAndSpeedForegroundsSeparateCase() }
+
+    private fun narrowLargeTextKeepsStatusAndSpeedForegroundsSeparateCase() {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
         launch(initial, fontScale = 2f, maxWidth = 328.dp, deviceDensity = 2.625f)
         addTrafficAndAssertOriginalForeground(expectedOverlay = null)
-        compose.onNodeWithText(context.getString(R.string.lite_status)).assertIsDisplayed()
+        val statusLabel = context.getString(R.string.lite_status)
+        val statusMatcher = compose.onNodeWithText(statusLabel)
+        try {
+            statusMatcher.assertIsDisplayed()
+        } catch (failure: AssertionError) {
+            val matchedNode = runCatching { statusMatcher.fetchSemanticsNode() }
+                .getOrElse { rethrowMatrixCancellation(it); null }
+            val titleNode = runCatching {
+                compose.onNodeWithTag("dashboard-status-title", useUnmergedTree = true).fetchSemanticsNode()
+            }.getOrElse { rethrowMatrixCancellation(it); null }
+            val tagBounds = listOf("dashboard-status", "dashboard-status-content", "dashboard-status-heading", "dashboard-status-title")
+                .map { tag -> tag to runCatching { compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode().boundsInRoot.toString() }
+                    .getOrElse { rethrowMatrixCancellation(it); "unavailable:${it.javaClass.simpleName}" } }
+            val mergedTree = runCatching { compose.onRoot(useUnmergedTree = false).printToString().take(6000) }
+                .getOrElse { rethrowMatrixCancellation(it); "unavailable:${it.javaClass.simpleName}" }
+            val unmergedTree = runCatching { compose.onRoot(useUnmergedTree = true).printToString().take(6000) }
+                .getOrElse { rethrowMatrixCancellation(it); "unavailable:${it.javaClass.simpleName}" }
+            throw AssertionError(
+                "Status display failure label='$statusLabel' density=$density effectiveFontScale=$effectiveFontScale " +
+                    "matchedNode=${matchedNode?.boundsInRoot} ${matchedNode?.config} titleNode=${titleNode?.boundsInRoot} ${titleNode?.config} " +
+                    "tagBounds=$tagBounds mergedTree=$mergedTree unmergedTree=$unmergedTree",
+                failure,
+            )
+        }
         // The figures speak through one cleared description, so their visible labels live in the unmerged tree.
         compose.onNodeWithTag("dashboard-upload-value", useUnmergedTree = true).assertIsDisplayed()
         compose.onNodeWithTag("dashboard-download-value", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    /** Captures the current display buffer only after a target layout assertion fails; this is not a frame-commit gate. */
+    private inline fun withLayoutFailureScreenshot(label: String, block: () -> Unit) {
+        try {
+            block()
+        } catch (failure: Throwable) {
+            val detail = try {
+                val instrumentation = InstrumentationRegistry.getInstrumentation()
+                val bitmap = requireNotNull(instrumentation.uiAutomation.takeScreenshot()) { "UiAutomation returned no display screenshot" }
+                try {
+                    val root = File(requireNotNull(context.getExternalFilesDir(null)), "captures/layout-diagnostics-v3")
+                    check(root.mkdirs() || root.isDirectory) { "Cannot create diagnostic capture directory: $root" }
+                    val target = File(root, "$label-${System.currentTimeMillis()}.png")
+                    target.outputStream().use { output ->
+                        check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) { "PNG encoding failed" }
+                    }
+                    "saved=${target.absolutePath}"
+                } finally {
+                    bitmap.recycle()
+                }
+            } catch (captureFailure: Throwable) {
+                "captureFailed=${captureFailure.javaClass.simpleName}:${captureFailure.message}"
+            }
+            failure.addSuppressed(AssertionError("Layout failure screenshot is diagnostic only (latest display buffer; no frame-commit wait): $detail"))
+            throw failure
+        }
     }
 
 }

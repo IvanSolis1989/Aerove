@@ -887,7 +887,7 @@ private fun NetworkControlPill(label: String, icon: LiteGlyph, selected: Boolean
         Column(Modifier.align(Alignment.Center).padding(horizontal = plan.inset, vertical = 7.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
             LiteIcon(icon, color = visuals.secondaryInk, size = 18.dp)
-            Text(shown, Modifier.testTag("dashboard-control-label").semantics { hideFromAccessibility() },
+            Text(shown, Modifier.fillMaxWidth().testTag("dashboard-control-label").semantics { hideFromAccessibility() },
                 color = visuals.ink, style = LiteType.Footnote.copy(fontFamily = LocalLiteFontFamily.current,
                     fontSize = LiteType.Footnote.fontSize * plan.scale, lineHeight = LiteType.Footnote.lineHeight * plan.scale,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
