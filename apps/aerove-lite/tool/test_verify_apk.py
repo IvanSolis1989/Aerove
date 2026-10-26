@@ -677,6 +677,23 @@ class ApkInspectionTests(unittest.TestCase):
     def test_mrs_reader_requires46_source_tests_format_proof_and_retains42_native_targets(self):
         self._provider_general_receipt_contract(resource_health=True,mrs_reader=True)
 
+    def test_independent_core_approved_tables_match_producer_for_all_modes(self):
+        producer_spec=importlib.util.spec_from_file_location("producer_core_cases",Path(__file__).resolve().parents[1]/"meow-native/core_tests.py")
+        producer=importlib.util.module_from_spec(producer_spec);producer_spec.loader.exec_module(producer)
+        tables={producer.MODE:tuple((p,f,n,"lib",(),False) for p,f,n in module.CORE_POLICY_TEST_CASES),
+            producer.MODE_V2:module.CORE_POLICY_TEST_CASES_V2,producer.MODE_TRAFFIC:module.CORE_POLICY_TEST_CASES_V2,
+            producer.MODE_OBSERVABILITY:module.CORE_POLICY_TEST_CASES_OBSERVABILITY,
+            producer.MODE_PROVIDER_GENERAL:module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL,
+            producer.MODE_RESOURCE_HEALTH:module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL,
+            producer.MODE_MRS_READER:module.CORE_POLICY_TEST_CASES_MRS_READER,
+            producer.MODE_PROVIDER_READER:module.CORE_POLICY_TEST_CASES_PROVIDER_READER}
+        for mode,approved in tables.items():
+            normalized=tuple(row if len(row)==6 else row+(False,) for row in approved)
+            authored=tuple((row['package'],row['filter'],row['expectedPass'],row['target'],tuple(row['requiredFeatures']),row.get('exact',False)) for row in producer.entries(mode))
+            with self.subTest(mode=mode):self.assertEqual(authored,normalized)
+        specs=tables[producer.MODE_PROVIDER_READER]
+        self.assertEqual((32,179),(len(specs),sum(row[2] for row in specs)))
+
     def test_provider_reader_requires_all_mrs_commands_51_provider_tests_both_format_proofs_and42_native_targets(self):
         self._provider_general_receipt_contract(resource_health=True,mrs_reader=True,provider_reader=True)
 
@@ -691,10 +708,12 @@ class ApkInspectionTests(unittest.TestCase):
             cases=module.CORE_POLICY_TEST_CASES_PROVIDER_READER if provider_reader else module.CORE_POLICY_TEST_CASES_MRS_READER if mrs_reader else module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
             self.assertEqual(12,cases[0][2])
             self.assertEqual(module.CORE_POLICY_TEST_CASES_OBSERVABILITY[1:],tuple(r[:5] for r in cases[1:18]))
-            self.assertEqual(31 if provider_reader else 29 if mrs_reader else 26,len(cases));self.assertEqual(177 if provider_reader else 121 if mrs_reader else 75,sum(row[2] for row in cases))
+            self.assertEqual(32 if provider_reader else 29 if mrs_reader else 26,len(cases));self.assertEqual(179 if provider_reader else 121 if mrs_reader else 75,sum(row[2] for row in cases))
             if provider_reader:
                 self.assertEqual(module.CORE_POLICY_TEST_CASES_MRS_READER,cases[:29])
-                self.assertEqual((('meow-config','rule_provider::reader::tests::reader15_',15,'lib',(),False),('meow-config','rule_provider::tests::',41,'lib',(),False)),cases[29:])
+                self.assertEqual((31,177),(len(cases[:31]),sum(row[2] for row in cases[:31])))
+                self.assertEqual(('meow-rules','mrs_parser::host_admission_index_tests::',2,'lib',(),False),cases[31])
+                self.assertEqual((('meow-config','rule_provider::reader::tests::reader15_',15,'lib',(),False),('meow-config','rule_provider::tests::',41,'lib',(),False)),cases[29:31])
                 self.assertEqual(['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs'],
                     [name.rsplit('/',1)[1] for name in module.CORE_PROVIDER_READER_FORMAT_COMMAND[4:]])
             packages=tuple(sorted(set(module.CORE_PROVIDER_GENERAL_PACKAGES)|({"meow-rules"} if mrs_reader else set())))
@@ -746,6 +765,15 @@ class ApkInspectionTests(unittest.TestCase):
                 mrs_policy=dict(policy,coreTests='policy-runtime-mrs-reader-v1')
                 with self.assertRaises(ValueError):module.validate_core_test_receipt(dict(state,mode='policy-runtime-mrs-reader-v1'),mrs_policy,root)
             module.validate_core_test_receipt(state,policy,root)
+            if provider_reader:
+                with self.assertRaisesRegex(ValueError,'complete approved Core unit proof'):
+                    module.validate_core_test_receipt(dict(state,commands=commands[:31]),policy,root)
+                with self.assertRaises(ValueError):
+                    module.validate_core_test_receipt(dict(state,commands=commands+[copy.deepcopy(commands[-1])]),policy,root)
+                for key,value in [('filter','mrs_parser::tests::'),('expectedPass',1),('expectedPass',3),('exact',True),('package','meow-config'),('command',commands[-1]['command']+['--exact'])]:
+                    bad=copy.deepcopy(state);bad['commands'][-1][key]=value
+                    with self.subTest(host_admission=key,value=value),self.assertRaises(ValueError):
+                        module.validate_core_test_receipt(bad,policy,root)
             old74=copy.deepcopy(state)
             for index,count in [(0,11)]:
                 old74['commands'][index].update(expectedPass=count,passed=count)

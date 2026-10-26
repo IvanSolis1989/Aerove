@@ -204,6 +204,7 @@ CORE_MRS_READER_FORMAT_COMMAND = ['rustfmt','--check','--edition','2021',
 CORE_POLICY_TEST_CASES_PROVIDER_READER = CORE_POLICY_TEST_CASES_MRS_READER + (
     ('meow-config', 'rule_provider::reader::tests::reader15_', 15, 'lib', (), False),
     ('meow-config', 'rule_provider::tests::', 41, 'lib', (), False))
+CORE_POLICY_TEST_CASES_PROVIDER_READER += (('meow-rules', 'mrs_parser::host_admission_index_tests::', 2, 'lib', (), False),)
 CORE_PROVIDER_READER_FORMAT_COMMAND = ['rustfmt','--check','--edition','2021',
     '.upstream/meow-rs/crates/meow-config/src/rule_provider.rs',
     '.upstream/meow-rs/crates/meow-config/src/rule_pages.rs',
