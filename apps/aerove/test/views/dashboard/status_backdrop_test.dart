@@ -480,7 +480,6 @@ void main() {
     });
   }
 
-  // Continuous curves stay behind the foreground; there are no text cutouts.
   for (final (locale, device, scale, ip) in const [
     (Locale('en'), 360.0, 1.0, '203.0.113.9'),
     (Locale('zh', 'CN'), 360.0, 1.0, '203.0.113.9'),
