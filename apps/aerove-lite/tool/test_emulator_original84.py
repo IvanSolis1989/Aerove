@@ -162,7 +162,7 @@ class Original84Tests(unittest.TestCase):
         program = shell.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
         output = self.root / 'SOURCE.json'
         with mock.patch.dict(os.environ, AEROVE_CURRENT_RENDERER_PROOF=str(path)), \
-                mock.patch.object(owner.sys, 'argv', ['snapshot', str(output), 'matrix', '600000', 'emulator-5554']):
+                mock.patch.object(owner.sys, 'argv', ['snapshot', str(output), 'matrix', '600000', 'emulator-5554', '', '', 'dev.aerove.lite.ui.LiteDashboardMatrixTest']):
             os.environ.pop('AEROVE_QA79_PROOF', None)
             exec(compile(program, 'original84-source-snapshot', 'exec'), {})
         source = json.loads(output.read_text())
@@ -173,6 +173,7 @@ class Original84Tests(unittest.TestCase):
         self.assertEqual('900', source['workflowRun'])
         self.assertEqual(2, source['runAttempt'])
         self.assertIs(source['promotionAccepted'], False)
+        self.assertIsNone(source['testShard'])
         for identity in (original.ORIGINAL, self.harness):
             with self.assertRaises(original.release.PromotionError):
                 original.release._verify_matrix(self.root, self.runtime, identity['sourceRevision'],

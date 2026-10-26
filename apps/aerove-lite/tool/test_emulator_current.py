@@ -134,7 +134,7 @@ class Original84BoundaryTests(unittest.TestCase):
                        GITHUB_RUN_NUMBER='100', GITHUB_RUN_ATTEMPT='2')
             with patch.dict(os.environ, env), \
                     patch.object(current, 'validate_renderer_proof', return_value=verified), \
-                    patch.object(sys, 'argv', ['snapshot', str(output), 'matrix', '600000', 'emulator-5554']), \
+                    patch.object(sys, 'argv', ['snapshot', str(output), 'matrix', '600000', 'emulator-5554', '', '', 'dev.aerove.lite.ui.LiteDashboardMatrixTest']), \
                     patch.object(current.subprocess, 'check_output', side_effect=AssertionError('must not replace original tree')):
                 os.environ.pop('AEROVE_QA79_PROOF', None)
                 exec(compile(program, 'original84-source-snapshot', 'exec'), {})
@@ -148,6 +148,7 @@ class Original84BoundaryTests(unittest.TestCase):
             self.assertEqual(100, result['runNumber'])
             self.assertEqual(2, result['runAttempt'])
             self.assertIs(False, result['promotionAccepted'])
+            self.assertIsNone(result['testShard'])
 
     def test_original_optin_without_validated_current_renderer_fails_closed(self):
         import sys
