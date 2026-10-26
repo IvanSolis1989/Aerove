@@ -65,7 +65,15 @@ internal class HardwareCapture(
         FrameCommitObservation(label, root).use { observation ->
             rule.runOnUiThread {
                 assertTrue("A software View canvas is not an optical acceptance path", probe.view.isHardwareAccelerated)
-                assertTrue("The tested window must be visible and focused", probe.view.isShown && probe.view.hasWindowFocus())
+                val view = probe.view
+                val shown = view.isShown
+                val focused = view.hasWindowFocus()
+                val attached = view.isAttachedToWindow
+                val windowVisibility = view.windowVisibility
+                val width = view.width
+                val height = view.height
+                assertTrue("The tested window must be visible and focused: shown=$shown, focused=$focused, attached=$attached, " +
+                    "windowVisibility=$windowVisibility, width=$width, height=$height", shown && focused)
                 observation.registerAndInvalidate(probe.view, probe.view.context.activity().window)
             }
             assertTrue("No hardware frame was committed", observation.awaitOriginalDeadline())
@@ -86,7 +94,15 @@ internal class HardwareCapture(
             observation.use {
                 rule.runOnUiThread {
                     assertTrue("A software View canvas is not an optical acceptance path", probe.view.isHardwareAccelerated)
-                    assertTrue("The tested window must be visible and focused", probe.view.isShown && probe.view.hasWindowFocus())
+                    val view = probe.view
+                    val shown = view.isShown
+                    val focused = view.hasWindowFocus()
+                    val attached = view.isAttachedToWindow
+                    val windowVisibility = view.windowVisibility
+                    val width = view.width
+                    val height = view.height
+                    assertTrue("The tested window must be visible and focused: shown=$shown, focused=$focused, attached=$attached, " +
+                        "windowVisibility=$windowVisibility, width=$width, height=$height", shown && focused)
                     observation.registerAndInvalidate(probe.view, probe.view.context.activity().window)
                     observation.assertMatrixTargetUnchanged()
                 }
