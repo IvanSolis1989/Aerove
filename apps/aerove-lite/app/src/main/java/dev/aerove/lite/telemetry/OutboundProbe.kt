@@ -48,6 +48,7 @@ internal class OutboundProbe<K : Any>(
     parent: CoroutineScope,
     private val read: suspend (K) -> OutboundAnswer,
     private val isCurrent: (K) -> Boolean,
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) : Closeable {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private val mutableState = MutableStateFlow(OutboundProbeState())
@@ -135,6 +136,7 @@ internal class OutboundProbe<K : Any>(
 
     fun synchronize(picks: Map<String, String>, coreEpoch: ULong? = null,
         routeVersion: ULong? = null, held: Boolean? = null) {
+        if (olderRoute(coreEpoch, routeVersion)) return
         val reset = coreEpoch != null && this.coreEpoch != coreEpoch
         val moved = routeVersion != null && this.routeVersion != routeVersion
         if (reset || moved) {
@@ -144,7 +146,7 @@ internal class OutboundProbe<K : Any>(
             if (reset || held == false) {
                 cached = null
                 failed = false
-                mutableState.value = OutboundProbeState(mutableState.value.identity)
+                mutableState.value = if (reset) OutboundProbeState() else OutboundProbeState(mutableState.value.identity)
             } else if (held == true) cached = cached?.copy(coreEpoch = coreEpoch, routeVersion = routeVersion)
         }
         this.coreEpoch = coreEpoch ?: this.coreEpoch
@@ -158,8 +160,15 @@ internal class OutboundProbe<K : Any>(
 
     // Only the completing HTTP operation may use this after checking its actual hits.
     fun confirmRoute(picks: Map<String, String>, coreEpoch: ULong, routeVersion: ULong) {
+        if (olderRoute(coreEpoch, routeVersion)) return
         this.picks = picks.toMap(); this.coreEpoch = coreEpoch; this.routeVersion = routeVersion
         routePending = false; synced = true; signals.value++
+    }
+
+    private fun olderRoute(epoch: ULong?, version: ULong?): Boolean {
+        val previous = coreEpoch ?: return false
+        return epoch != null && (epoch < previous ||
+            (epoch == previous && version != null && routeVersion?.let { version < it } == true))
     }
 
     fun beginSelection(): Long = (++selectionId).also { selections += it; changed() }
@@ -197,7 +206,7 @@ internal class OutboundProbe<K : Any>(
             cancelTask()
             failed = false
             staleUnder = null
-            mutableState.value = OutboundProbeState(mutableState.value.identity)
+            mutableState.value = OutboundProbeState()
         }
         if (cached != null && task == null && !forced) mutableState.value = OutboundProbeState(cached?.identity)
         if (active && (readActive || manualPending) && task == null && (forced || (cached == null && !failed))) start(current)
@@ -207,7 +216,7 @@ internal class OutboundProbe<K : Any>(
         answer.coreEpoch == coreEpoch && answer.routeVersion == routeVersion
     else answer.chains.indices.drop(1).all { index -> picks[answer.chains[index]]?.let { it == answer.chains[index - 1] } != false }
 
-    private fun now(): Long = System.nanoTime() / 1_000_000
+    private fun now(): Long = nowMillis()
 
     private fun routeOf(chains: List<String>, picks: Map<String, String>): List<Pair<String, String?>> =
         chains.drop(1).map { it to picks[it] }
@@ -243,7 +252,7 @@ internal class OutboundProbe<K : Any>(
                     mutableState.value = OutboundProbeState(answer.identity)
                 } else {
                     cached = null
-                    mutableState.value = OutboundProbeState(mutableState.value.identity, loading = true)
+                    mutableState.value = OutboundProbeState(loading = true)
                     val previous = staleUnder
                     val hops = answer.chains.drop(1) + failedChain.orEmpty().drop(1)
                     stale = previous == null || hops.any { previous[it] != picks[it] }
