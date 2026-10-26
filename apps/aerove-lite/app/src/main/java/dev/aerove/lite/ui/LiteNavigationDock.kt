@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.runtime.Composable
@@ -40,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
@@ -104,7 +106,7 @@ internal fun LiteNavigationDock(
         val lensHeight = height - 8.dp
         fun logical(x: Float) = (((if (rtl) widthPx - x else x) - insetPx) / pitchPx - 0.5f)
         LitePane(
-            Modifier.width(width).height(height).selectableGroup().pointerInput(items, rtl, widthPx, enabled) {
+            Modifier.width(width).height(height).testTag("floating-navigation").selectableGroup().pointerInput(items, rtl, widthPx, enabled) {
                 if (!enabled) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -149,8 +151,9 @@ internal fun LiteNavigationDock(
             val grownWidth = (lensWidth + (16 * lift).dp) * (1 + stretch)
             val grownHeight = (lensHeight + (16 * lift).dp) * (1 - stretch * 1.4f)
             LitePane(
-                Modifier.offset(x = 8.dp + pitch * (position + 0.5f) - grownWidth / 2, y = (height - grownHeight) / 2)
-                    .size(grownWidth, grownHeight),
+                Modifier.wrapContentSize(Alignment.TopStart, unbounded = true)
+                    .offset(x = 8.dp + pitch * (position + 0.5f) - grownWidth / 2, y = (height - grownHeight) / 2)
+                    .size(grownWidth, grownHeight).testTag("floating-navigation-selected-lens"),
                 corner = LiteCorner.Full, selected = true,
                 glassTint = if (visuals.material == dev.aerove.lite.MaterialTier.Frosted) visuals.surface.copy(alpha = 0.24f) else androidx.compose.ui.graphics.Color.Transparent,
                 glassStyle = AeroveGlassStyle.lens(visuals.dark),
