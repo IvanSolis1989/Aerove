@@ -45,7 +45,19 @@ pub fn validate_config_syntax(source: &str) -> Result<(), String> {
 /// Runs the real fixed parser/converter inside an owned offline load scope; never flips CLI globals.
 pub async fn validate_config(source: &str) -> Result<(), String> {
     let normalized = normalize_config_fields(source)?;
-    meow_config::validate_offline_config(&normalized).await
+    let work: futures::future::BoxFuture<'_, Result<(), String>> = Box::pin(meow_config::validate_offline_config(&normalized));
+    work.await
+}
+
+// The Core conversion state must not expand inside Native cancellation and worker futures.
+pub(crate) fn scoped_offline_validation<'a>(source: &'a str, scope: &'a Arc<OwnedLoadScope>)
+    -> futures::future::BoxFuture<'a, Result<(), String>> {
+    Box::pin(meow_config::validate_offline_config_with_scope(source, scope))
+}
+
+pub(crate) fn scoped_prepared_validation<'a>(source: &'a str, scope: &'a Arc<OwnedLoadScope>)
+    -> futures::future::BoxFuture<'a, Result<(), String>> {
+    Box::pin(meow_config::validate_prepared_config_with_scope(source, scope))
 }
 
 /// Strict field projection only; callers must still await validate_config for real conversion.
@@ -372,7 +384,7 @@ async fn validate_offline_cancellable(normalized: &str, cancel: &CancellationTok
     let converted = std::panic::AssertUnwindSafe(async {
         tokio::select! {
             biased;
-            result = meow_config::validate_offline_config_with_scope(normalized, &scope) => result,
+            result = scoped_offline_validation(normalized, &scope) => result,
             never = forward => match never {},
         }
     }).catch_unwind().await;
