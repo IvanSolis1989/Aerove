@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "b5a5a587c592e700a286a485934ffb64a702fbf1fa3a75e9e4c75d0f04eae1ed",
+  "patchSha256": "af3a4459e600c8958e983670ff4ebe97d503ee2608fc5fdab7a60ebd44733309",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "85dba53fc58b771d14d1a162b80fe3cefb693f660d1ea34e563d1d13c3a53fd6",
+  "adaptedFileManifestSha256": "d9c009ade2009df76fe2da033f7a6b6948dffc36ab9abdee5e6f7142a709edd2",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -147,7 +147,7 @@
     },
     "crates/meow-config/src/rule_provider.rs": {
       "beforeSha256": "858ee08aa5043b1885e2c0f26f05d0413e8b8ddc9d60d41356c824ead0de55c1",
-      "afterSha256": "637123ac33ba97b75084b3a9e0bec09e873139cdab8181314a5e4de2c7a2ffbf"
+      "afterSha256": "39d755c8212f99c11c92e47c47b68a7536b31ab32a04efd95a425c88568af77b"
     },
     "crates/meow-config/src/rule_provider_refresh.rs": {
       "beforeSha256": "5522ffc29b8fdb4a2542a0af1579a139494826c890cff764fd451be6c536d83c",
@@ -464,6 +464,14 @@
     "crates/meow-tunnel/src/udp.rs": {
       "beforeSha256": "a508eb67ed9b8b3cc8224600fe564c99f0deb3b1f31b561489f363d33e621700",
       "afterSha256": "545f8645644116fb6beed2e1291bc7b8e7acaad66d739508b65497654244c274"
+    },
+    "crates/meow-config/src/rule_provider_reader.rs": {
+      "beforeSha256": null,
+      "afterSha256": "31ef10793e010eb60ce5eb28b6ad1a33b9927e6ff53eeca6d91336f9b64adaa3"
+    },
+    "crates/meow-config/src/rule_provider_reader_tests.rs": {
+      "beforeSha256": null,
+      "afterSha256": "eeff3d12a9392c21283f79baf2b7face351841e747b17b34b70c4948b5af6b0d"
     }
   },
   "files": {
@@ -1251,7 +1259,7 @@
     "crates/meow-config/src/raw.rs": "4bcb90da02d20a7a9655699ad598e15c04694590c62b549cf132dfdad2525bfb",
     "crates/meow-config/src/rule_pages.rs": "b7272602516df3993bc96972b9711110339b7fc190661a42f034b0c52cbb9fa3",
     "crates/meow-config/src/rule_parser.rs": "2929e7231203aeaa8923ec85567249cb37d001903b0ba23f9529d8df5ceec61a",
-    "crates/meow-config/src/rule_provider.rs": "637123ac33ba97b75084b3a9e0bec09e873139cdab8181314a5e4de2c7a2ffbf",
+    "crates/meow-config/src/rule_provider.rs": "39d755c8212f99c11c92e47c47b68a7536b31ab32a04efd95a425c88568af77b",
     "crates/meow-config/src/rule_provider_refresh.rs": "6344453cf6894ffb210012ee9b0ec0635417586b5aa1057d23deeae0117d3010",
     "crates/meow-config/src/safe_path.rs": "761de54fcb4601f158f12b2869f8a49c101cdbd3e87531fe82a02c5f0752b5f4",
     "crates/meow-config/src/subscription.rs": "b8189f27e1204f011932de1a69f44fa4cda0d3aba4de434e37480a4d5c45ec39",
@@ -1554,6 +1562,8 @@
     ".claude/skills/i-impeccable/scripts/detector/engines/static-html/detect-html.mjs": "6a1160d43b7e7380d16c5aeb6ddc571c98807f3ab1995bc6dd2e42973ce470c2",
     ".claude/skills/i-impeccable/scripts/detector/engines/visual/screenshot-contrast.mjs": "b4520b3f001079bd175bf20d46c5197b1b8ec5fb98fdf72c50a24c0b6598ee99",
     ".claude/skills/i-impeccable/scripts/detector/browser/injected/index.mjs": "c15e13202c56f85f7ef87b1e2d5954149bdfd5b8b25f9b8aca8e6f1530bcf57d",
-    "crates/meow-common/src/observations.rs": "51c931853a8ea870f7debc2c6e7bbd98a5a0c638cd0c2023c8266235d0b9dd68"
+    "crates/meow-common/src/observations.rs": "51c931853a8ea870f7debc2c6e7bbd98a5a0c638cd0c2023c8266235d0b9dd68",
+    "crates/meow-config/src/rule_provider_reader.rs": "31ef10793e010eb60ce5eb28b6ad1a33b9927e6ff53eeca6d91336f9b64adaa3",
+    "crates/meow-config/src/rule_provider_reader_tests.rs": "eeff3d12a9392c21283f79baf2b7face351841e747b17b34b70c4948b5af6b0d"
   }
 }

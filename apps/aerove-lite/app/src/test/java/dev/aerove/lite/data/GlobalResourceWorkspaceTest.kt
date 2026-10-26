@@ -15,8 +15,8 @@ class GlobalResourceWorkspaceTest {
         val validator = CompatibilityValidator(NativeConfigValidator { null }, File(root, "runtime"))
         // This boundary supplies parser receipts; the test verifies real shared IO/CAS/headers, not JNI.
         val inspector = object : NativeRulePayloadInspector {
-            override fun inspect(path: String) = RulePayloadInspection("text", "domain", File(path).readLines().size)
-            override fun dump(path: String, behavior: String, format: String) = File(path).readText()
+            override suspend fun inspect(path: String) = RulePayloadInspection("text", "domain", File(path).readLines().size)
+            override suspend fun dump(path: String, behavior: String, format: String) = File(path).readText()
         }
         val manager = ResourceBundleManager(File(root, "runtime"), validator, NativeResourceValidator { _, _, _, _ -> null }, offlineRules = inspector)
         val profiles = ProfileRepository(root, ProfileValidator {}, resources = manager, globalResources = library)

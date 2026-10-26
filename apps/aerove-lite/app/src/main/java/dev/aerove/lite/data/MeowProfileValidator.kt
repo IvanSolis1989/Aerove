@@ -4,17 +4,25 @@ import java.io.File
 
 /** Final native conversion requires the real sealed generation, including its trusted geo resources. */
 fun interface NativePreparedConfigValidator {
-    fun validate(yaml: String, resourceReadRoot: File): String?
+    suspend fun validate(yaml: String, resourceReadRoot: File): String?
 }
 
 internal interface ProfileCompatibilitySchema {
     val coreVersion: String
     fun resourceInput(yaml: String): MutableMap<String, Any?>
-    fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight?
+    suspend fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight?
     fun providerDownloadInput(yaml: String): String
-    fun validate(yaml: String, managed: Boolean, bundleDirectory: File?)
+    suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?)
     fun validateProxyPayload(source: String)
-    fun validateRulePayload(lines: List<String>, path: String)
+    fun ruleLineIssue(line: String): String?
+    fun validateRulePayload(lines: List<String>, path: String) = RuleLineCheck(path, ::ruleLineIssue).run { lines.forEachIndexed(::line); finish() }
+}
+
+/** Issues of one payload, collected line by line so a streamed payload is never held as a list. */
+internal class RuleLineCheck(private val path: String, private val issue: (String) -> String?) {
+    private val problems = mutableListOf<ConfigIssue>()
+    fun line(index: Int, line: String) { issue(line)?.let { problems += ConfigIssue("$path[$index]", it) } }
+    fun finish() { if (problems.isNotEmpty()) throw ConfigValidationException(problems.toList()) }
 }
 
 internal class MeowProfileValidator(private val native: NativeConfigValidator,
@@ -39,7 +47,7 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
         return root
     }
 
-    override fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight? =
+    override suspend fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight? =
         preparedRules?.preflight(path, behavior, format)
 
     override fun providerDownloadInput(yaml: String): String = ConfigYaml.dump(engineView(yaml))
@@ -69,7 +77,7 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
         return MeowCompatibilityValidator.normalize(root, features)
     }
 
-    override fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
+    override suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
         val engine = engineView(yaml)
         val problems = mutableListOf<ConfigIssue>()
         fun check(value: Any?, path: String) {
@@ -106,11 +114,8 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
         // Native conversion needs the complete materialized provider graph.
         MeowCompatibilityValidator.normalize(parsed, features)
     }
-    override fun validateRulePayload(lines: List<String>, path: String) {
-        val problems = lines.mapIndexedNotNull { index, line -> if (line.isBlank()) ConfigIssue("$path[$index]", "Empty rule payload") else null }
-        if (problems.isNotEmpty()) throw ConfigValidationException(problems)
-        // Native checked conversion owns logical expressions and Android metadata after materialization.
-    }
+    // Native checked conversion owns logical expressions and Android metadata after materialization.
+    override fun ruleLineIssue(line: String): String? = if (line.isBlank()) "Empty rule payload" else null
     private fun nativeFailure(diagnostic: String): Nothing {
         val field = diagnostic.substringBefore(": ").takeIf { it.startsWith("$") } ?: "$"
         throw ConfigValidationException(listOf(ConfigIssue(field, diagnostic.take(2000))))

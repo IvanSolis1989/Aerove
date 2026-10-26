@@ -104,7 +104,7 @@ internal fun EditorScreen(
     val saveCallback = remember { arrayOf<() -> Unit>({}) }
     val document = remember(session) {
         EditorDocumentController(context.applicationContext, scope, session.readOnly, session::contentChanged,
-            save = { saveCallback[0]() }, find = { replace -> searching = true; replacing = replace && !session.readOnly })
+            save = { saveCallback[0]() }, find = { replace -> searching = true; replacing = replace && !session.readOnly }, maxBytes = session.maxBytes)
     }
     val documentState by document.state.collectAsState()
     val visuals = LocalLiteVisuals.current

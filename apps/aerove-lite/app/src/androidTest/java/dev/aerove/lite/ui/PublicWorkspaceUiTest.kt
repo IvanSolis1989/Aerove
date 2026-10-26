@@ -27,6 +27,7 @@ class PublicWorkspaceUiTest {
     @Test fun suspendedCoreKeepsRunningControlAndDisconnectsInsteadOfStartingAnotherRun() {
         val actions = UiTestActions {}
         val state = LiteState(phase = VpnPhase.Running, suspended = true, listening = false,
+            profiles = listOf(ProfileSummary("suspended-fixture", "Suspended fixture", null, 0)), selectedProfile = "suspended-fixture",
             listenerError = "Listener rejected", settings = LiteSettings(material = MaterialTier.Solid, aurora = false))
         compose.replaceAppContent { LiteApp(state, actions) }
         compose.onNodeWithText(context.getString(R.string.integration_suspended)).assertIsDisplayed()

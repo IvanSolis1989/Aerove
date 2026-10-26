@@ -677,15 +677,26 @@ class ApkInspectionTests(unittest.TestCase):
     def test_mrs_reader_requires46_source_tests_format_proof_and_retains42_native_targets(self):
         self._provider_general_receipt_contract(resource_health=True,mrs_reader=True)
 
-    def _provider_general_receipt_contract(self, resource_health=False, mrs_reader=False):
+    def test_provider_reader_requires_all_mrs_commands_51_provider_tests_both_format_proofs_and42_native_targets(self):
+        self._provider_general_receipt_contract(resource_health=True,mrs_reader=True,provider_reader=True)
+
+    def _provider_general_receipt_contract(self, resource_health=False, mrs_reader=False, provider_reader=False):
         import copy
         with tempfile.TemporaryDirectory() as directory:
-            root=Path(directory);(root/'overlay.json').write_text(json.dumps(dict(files={'Cargo.lock':'a'*64})))
-            policy=dict(coreTests='policy-runtime-mrs-reader-v1' if mrs_reader else 'policy-runtime-resource-health-v1' if resource_health else 'policy-runtime-provider-general-v1',coreTestLockSha256='b'*64,overlay='overlay.json')
-            cases=module.CORE_POLICY_TEST_CASES_MRS_READER if mrs_reader else module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+            gated=module.CORE_MRS_READER_FORMAT_COMMAND[4:]+module.CORE_PROVIDER_READER_FORMAT_COMMAND[4:] if provider_reader else []
+            format_files={name:f'{index+1:064x}' for index,name in enumerate(gated)}
+            adapted=dict({'Cargo.lock':'a'*64},**{name.removeprefix('.upstream/meow-rs/'):value for name,value in format_files.items()})
+            root=Path(directory);(root/'overlay.json').write_text(json.dumps(dict(files=adapted)))
+            policy=dict(coreTests='policy-runtime-provider-reader-v1' if provider_reader else 'policy-runtime-mrs-reader-v1' if mrs_reader else 'policy-runtime-resource-health-v1' if resource_health else 'policy-runtime-provider-general-v1',coreTestLockSha256='b'*64,overlay='overlay.json')
+            cases=module.CORE_POLICY_TEST_CASES_PROVIDER_READER if provider_reader else module.CORE_POLICY_TEST_CASES_MRS_READER if mrs_reader else module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
             self.assertEqual(12,cases[0][2])
             self.assertEqual(module.CORE_POLICY_TEST_CASES_OBSERVABILITY[1:],tuple(r[:5] for r in cases[1:18]))
-            self.assertEqual(28 if mrs_reader else 26,len(cases));self.assertEqual(121 if mrs_reader else 75,sum(row[2] for row in cases))
+            self.assertEqual(31 if provider_reader else 29 if mrs_reader else 26,len(cases));self.assertEqual(177 if provider_reader else 121 if mrs_reader else 75,sum(row[2] for row in cases))
+            if provider_reader:
+                self.assertEqual(module.CORE_POLICY_TEST_CASES_MRS_READER,cases[:29])
+                self.assertEqual((('meow-config','rule_provider::reader::tests::reader15_',15,'lib',(),False),('meow-config','rule_provider::tests::',41,'lib',(),False)),cases[29:])
+                self.assertEqual(['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs'],
+                    [name.rsplit('/',1)[1] for name in module.CORE_PROVIDER_READER_FORMAT_COMMAND[4:]])
             packages=tuple(sorted(set(module.CORE_PROVIDER_GENERAL_PACKAGES)|({"meow-rules"} if mrs_reader else set())))
             features={p:sorted({f for package,_,_,_,required,_ in cases if package==p for f in required}) for p in packages}
             commands=[]
@@ -705,11 +716,35 @@ class ApkInspectionTests(unittest.TestCase):
                 workspaceMembers=list(packages),features=features,commands=commands,compileCheck=check)
             if mrs_reader:
                 fmt=dict(command=module.CORE_MRS_READER_FORMAT_COMMAND,exit=0,stdoutSha256='e'*64,stderrSha256='f'*64)
+                if provider_reader:fmt['files']={name:format_files[name] for name in fmt['command'][4:]}
                 state['formatCheck']=fmt
                 for key,value in [('exit',1),('exit',False),('command',fmt['command'][:-1]),('stdoutSha256',None)]:
                     with self.subTest(format=key),self.assertRaises(ValueError):
                         module.validate_core_test_receipt(dict(state,formatCheck=dict(fmt,**{key:value})),policy,root)
                 with self.assertRaises(ValueError):module.validate_core_test_receipt(dict(state,formatCheck=None),policy,root)
+            if provider_reader:
+                provider_fmt=dict(command=module.CORE_PROVIDER_READER_FORMAT_COMMAND,exit=0,stdoutSha256='e'*64,stderrSha256='f'*64,
+                    files={name:format_files[name] for name in module.CORE_PROVIDER_READER_FORMAT_COMMAND[4:]})
+                with self.assertRaises(ValueError):module.validate_core_test_receipt(state,policy,root)
+                state['providerFormatCheck']=provider_fmt
+                pages=module.CORE_PROVIDER_READER_FORMAT_COMMAND[5]
+                self.assertTrue(pages.endswith('/rule_pages.rs'))
+                for key,files in [('providerFormatCheck',None),('providerFormatCheck',{n:v for n,v in provider_fmt['files'].items() if n!=pages}),
+                        ('providerFormatCheck',dict(provider_fmt['files'],**{pages:'0'*64})),('providerFormatCheck',dict(provider_fmt['files'],extra='1'*64)),
+                        ('formatCheck',None),('formatCheck',dict(fmt['files'],**{fmt['command'][4]:'0'*64}))]:
+                    gate=dict(state[key],files=files) if files is not None else {k:v for k,v in state[key].items() if k!='files'}
+                    with self.subTest(format_files=key,files=None if files is None else sorted(files)),self.assertRaises(ValueError):
+                        module.validate_core_test_receipt(dict(state,**{key:gate}),policy,root)
+                (root/'overlay.json').write_text(json.dumps(dict(files={n:v for n,v in adapted.items() if not n.endswith('/rule_pages.rs')})))
+                with self.assertRaises(ValueError):module.validate_core_test_receipt(state,policy,root)
+                (root/'overlay.json').write_text(json.dumps(dict(files=adapted)))
+                for key,value in [('exit',1),('exit',False),('command',provider_fmt['command'][:-1]),('command',module.CORE_MRS_READER_FORMAT_COMMAND),('stdoutSha256',None),('stderrSha256','bad')]:
+                    with self.subTest(provider_format=key,value=value),self.assertRaises(ValueError):
+                        module.validate_core_test_receipt(dict(state,providerFormatCheck=dict(provider_fmt,**{key:value})),policy,root)
+                for changes in [dict(providerFormatCheck=None),dict(formatCheck=provider_fmt),dict(commands=commands[:29]),dict(mode='policy-runtime-mrs-reader-v1')]:
+                    with self.subTest(provider_state=sorted(changes)),self.assertRaises(ValueError):module.validate_core_test_receipt(dict(state,**changes),policy,root)
+                mrs_policy=dict(policy,coreTests='policy-runtime-mrs-reader-v1')
+                with self.assertRaises(ValueError):module.validate_core_test_receipt(dict(state,mode='policy-runtime-mrs-reader-v1'),mrs_policy,root)
             module.validate_core_test_receipt(state,policy,root)
             old74=copy.deepcopy(state)
             for index,count in [(0,11)]:
@@ -736,7 +771,7 @@ class ApkInspectionTests(unittest.TestCase):
                 return module.sha256(path)
             manifest=write('Cargo.toml','manifest');lock=write('Cargo.lock','accepted-bridge')
             core_lock=write('core-tests.lock','accepted-core');patch=write('patch','patch')
-            overlay=write('overlay.json',dict(files={'Cargo.lock':'a'*64},patch='patch',patchSha256=patch,adaptedFileManifestSha256='d'*64))
+            overlay=write('overlay.json',dict(files=adapted,patch='patch',patchSha256=patch,adaptedFileManifestSha256='d'*64))
             write('source.json',dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveSha256='e'*64))
             targets=list(module.HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS if resource_health else module.HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS)
             self.assertEqual(42 if resource_health else 41,len(targets))

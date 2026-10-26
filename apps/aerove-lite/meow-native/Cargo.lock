@@ -64,6 +64,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "unsafe-libyaml",
  "uuid",
  "zstd",
 ]

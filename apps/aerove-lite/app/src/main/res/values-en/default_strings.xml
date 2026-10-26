@@ -336,7 +336,8 @@
     <string name="lite_delete">Delete</string>
     <string name="lite_refresh">Refresh</string>
     <string name="lite_search">Search</string>
-    <string name="lite_connect">Connect</string>
+    <string name="lite_start">Start</string>
+    <string name="lite_stop">Stop</string>
     <string name="lite_connected">Connected</string>
     <string name="lite_disconnected">Disconnected</string>
     <string name="lite_connecting">Connecting…</string>
@@ -470,7 +471,10 @@
     <string name="lite_type_mobile">Mobile</string>
     <string name="lite_type_business">Business</string>
     <string name="lite_type_hosting">Hosting</string>
-    <string name="lite_outbound_refresh">Refresh outbound address</string>
+    <string name="lite_outbound_retry">Retry</string>
+    <string name="lite_details">%1$s details</string>
+    <string name="lite_outbound_ip">Outbound IP</string>
+    <string name="lite_tap_icon_to_retry">Tap the icon to retry</string>
     <string name="lite_outbound_loading">Checking outbound address…</string>
     <string name="lite_open_logs">Enable logs</string>
     <string name="lite_open_logs_detail">Collect core logs and show the Logs page.</string>

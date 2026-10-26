@@ -15,12 +15,9 @@ import dev.aerove.lite.R
 import dev.aerove.lite.images.GroupIconLoader
 import dev.aerove.lite.integration.GlobalResourceWorkspace
 import dev.aerove.lite.profilebuilder.GlobalLibraryFile
-import java.io.ByteArrayOutputStream
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 private class GlobalFileRequest(val id: String = UUID.randomUUID().toString()) {
@@ -64,18 +61,9 @@ internal fun GlobalResourcePage(workspace: GlobalResourceWorkspace, icons: Group
                 val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
                     if (cursor.moveToFirst()) cursor.getString(0) else null
                 } ?: uri.lastPathSegment.orEmpty()
-                resolver.openInputStream(uri)?.use { input ->
-                    val output = ByteArrayOutputStream()
-                    val buffer = ByteArray(8192)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        require(output.size().toLong() + count <= 32L * 1024 * 1024) { "Rule resource exceeds 32 MiB" }
-                        output.write(buffer, 0, count)
-                    }
-                    GlobalLibraryFile(name, output.toByteArray())
-                } ?: error("Cannot open selected resource")
+                GlobalLibraryFile(name) {
+                    withContext(Dispatchers.IO) { resolver.openInputStream(uri) ?: error("Cannot open selected resource") }
+                }
             }
         } finally {
             current.result.cancel()

@@ -70,7 +70,7 @@ class LiteAppRenderingTest(private val case: RenderCase) {
             compose.onNode(hasText(text(id)) and hasClickAction()).performClick()
         }
         try {
-            compose.onNodeWithContentDescription(text(R.string.lite_connect)).assertIsNotEnabled()
+            compose.onNodeWithContentDescription(text(R.string.lite_start)).assertIsNotEnabled()
             compose.onAllNodes(tab).assertCountEquals(3)
             compose.onNode(tab and hasText(text(R.string.lite_tab_proxies))).assertDoesNotExist()
             save("home")

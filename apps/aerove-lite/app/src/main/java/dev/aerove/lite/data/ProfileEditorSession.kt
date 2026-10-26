@@ -1,6 +1,7 @@
 package dev.aerove.lite.data
 
 import java.io.File
+import okio.utf8Size
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -32,6 +33,7 @@ class ProfileEditorSession private constructor(
     val title: String,
     val readOnly: Boolean,
     private val source: ProfileEditorSource,
+    val maxBytes: Int = MAX_PROFILE_BYTES,
 ) {
     private val operation = Mutex()
     private val mutableState = MutableStateFlow(ProfileEditorState())
@@ -42,7 +44,7 @@ class ProfileEditorSession private constructor(
         if (savedText != null) return@withLock
         mutableState.update { it.copy(loading = true, error = null) }
         try {
-            val text = withContext(Dispatchers.IO) { source.read().also(::checkEditorSize) }
+            val text = withContext(Dispatchers.IO) { source.read().also { checkEditorSize(it, maxBytes) } }
             savedText = text
             mutableState.value = ProfileEditorState(initialText = text)
         } catch (cancelled: CancellationException) {
@@ -75,7 +77,7 @@ class ProfileEditorSession private constructor(
             if (!before.dirty || before.loading) return false
             mutableState.update { it.copy(saving = true, error = null) }
             try {
-                val candidate = withContext(Dispatchers.IO) { readDocument().also(::checkEditorSize) }
+                val candidate = withContext(Dispatchers.IO) { readDocument().also { checkEditorSize(it, maxBytes) } }
                 // An atomic store commit must finish even if the route's coroutine is cancelled.
                 withContext(NonCancellable + Dispatchers.IO) {
                     source.replace(expected, candidate)
@@ -116,18 +118,22 @@ class ProfileEditorSession private constructor(
                 }
             })
 
-        fun editable(title: String, source: ProfileEditorSource): ProfileEditorSession = ProfileEditorSession(title, false, source)
+        fun editable(title: String, source: ProfileEditorSource, maxBytes: Int = MAX_PROFILE_BYTES): ProfileEditorSession = ProfileEditorSession(title, false, source, maxBytes)
 
-        fun preview(title: String, readRuntimeConfig: suspend () -> String): ProfileEditorSession =
+        fun ruleEditable(title: String, source: ProfileEditorSource): ProfileEditorSession =
+            ProfileEditorSession(title, false, source, MAX_RULE_PREVIEW_BYTES)
+
+        fun preview(title: String, maxBytes: Int = MAX_PROFILE_BYTES, readRuntimeConfig: suspend () -> String): ProfileEditorSession =
             ProfileEditorSession(title, true, object : ProfileEditorSource {
                 override suspend fun read(): String = readRuntimeConfig()
                 override suspend fun replace(expected: String, replacement: String): Unit = error("Preview is read-only")
-            })
+            }, maxBytes)
     }
 }
 
-internal fun checkEditorSize(text: String) {
-    require(text.length <= MAX_PROFILE_BYTES && text.toByteArray(Charsets.UTF_8).size <= MAX_PROFILE_BYTES) {
-        "Configuration exceeds $MAX_PROFILE_BYTES UTF-8 bytes"
-    }
+internal fun checkEditorSize(text: String, maxBytes: Int = MAX_PROFILE_BYTES) {
+    if (text.length > maxBytes || text.utf8Size() > maxBytes) editorSizeFailure(maxBytes)
 }
+
+/** The editor's refusal, raised before a source too large to open is read into memory. */
+internal fun editorSizeFailure(maxBytes: Int = MAX_PROFILE_BYTES): Nothing = throw IllegalArgumentException("Configuration exceeds $maxBytes UTF-8 bytes")

@@ -23,8 +23,8 @@ class ProfileDetailWorkspaceTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val validator = CompatibilityValidator(NativeConfigValidator { null }, File(root, "runtime"))
         val inspector = object : NativeRulePayloadInspector {
-            override fun inspect(path: String) = RulePayloadInspection("text", "domain", 1)
-            override fun dump(path: String, behavior: String, format: String) = File(path).readText()
+            override suspend fun inspect(path: String) = RulePayloadInspection("text", "domain", 1)
+            override suspend fun dump(path: String, behavior: String, format: String) = File(path).readText()
         }
         val manager = ResourceBundleManager(File(root, "runtime"), validator, NativeResourceValidator { _, _, _, _ -> null }, offlineRules = inspector)
         val library = dev.aerove.lite.profilebuilder.BuilderResourceLibrary(root)
@@ -58,9 +58,9 @@ class ProfileDetailWorkspaceTest {
         suspend fun close() { page.quiesce(); page.close(); scope.cancel(); root.deleteRecursively() }
     }
     private val updates = AtomicInteger()
-    private fun dispatcher(onPut: (RecordedRequest) -> Unit = {}) = object : Dispatcher() {
+    private fun dispatcher(payload: String = "payload:\n - '+.before.example'\n", onPut: (RecordedRequest) -> Unit = {}) = object : Dispatcher() {
         override fun dispatch(request: RecordedRequest): MockResponse {
-            if (request.path == "/payload") return MockResponse().setBody("payload:\n - '+.before.example'\n")
+            if (request.path == "/payload") return MockResponse().setBody(payload)
             if (request.method == "PUT") { updates.incrementAndGet(); onPut(request); return MockResponse().setResponseCode(204) }
             val proxy="""{"vehicleType":"HTTP","proxies":[{"name":"node","type":"Direct"}]}"""
             val rule="""{"vehicleType":"HTTP","behavior":"domain","format":"yaml","ruleCount":${updates.get()+1},"updatedAt":"2026-10-23T00:00:00Z"}"""
@@ -126,6 +126,28 @@ class ProfileDetailWorkspaceTest {
                 assertTrue(f.profiles.resourceEditSnapshot(f.profile.id,"$.rule-providers.one").bytes.toString(Charsets.UTF_8).contains("after.example"))
                 assertEquals(1, f.applied.get()); assertEquals(1, f.changed.get())
             } finally { f.close() }
+        }
+    }
+    @Test fun ruleProviderEditorOpensUpToTheEditorBoundAndNeverLoadsALargerFile() = runBlocking<Unit> {
+        for ((size, editable) in listOf(MAX_PROFILE_BYTES to false, MAX_PROFILE_BYTES + 1 to false, MAX_PROFILE_BYTES + 1 to true, 5 * 1024 * 1024 to true)) {
+            val payload = StringBuilder("payload:\n - '+.before.example'\n").apply {
+                while (length + 1001 <= size) append('#').append("x".repeat(999)).append('\n')
+                val rest = size - length - 2
+                append('#').append("x".repeat(rest)).append('\n')
+            }.toString()
+            MockWebServer().use { server ->
+                server.dispatcher = dispatcher(payload); server.start(); val f = Fixture(server)
+                try {
+                    f.load(); val provider = f.page.state.value.providers.single { it.kind == ProviderKind.Rule }
+                    val saved = f.profiles.resourceEditSnapshot(f.profile.id, "$.rule-providers.one")
+                    assertEquals(size > MAX_PROFILE_BYTES, saved.editorOversize)
+                    assertEquals(if (saved.editorOversize) 0 else size, saved.bytes.size)
+                    f.page.open(provider, editable)
+                    val editor = withTimeout(5000) { f.page.state.first { it.document != null }.document!!.session }
+                    editor.open()
+                    assertEquals(payload, editor.state.value.initialText)
+                } finally { f.close() }
+            }
         }
     }
     @Test fun staleEditorKeepsDraftAndNeverAppliesOverNewerResource() = runBlocking<Unit> {

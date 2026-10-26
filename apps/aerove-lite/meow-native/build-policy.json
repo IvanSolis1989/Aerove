@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "manifestSha256": "a1c719f09d0d4433e2de27e1958b936f6f0e70d84d84267003c13289cb682604",
+  "manifestSha256": "531c020a641809833d9dd73b495fbce202025d4a3c4fa470a46ca8cb4f9b96be",
   "resolveLock": false,
-  "expectedLockBeforeSha256": "8fe66a0abaf15008aba0ab4175277489a7b52a98f486c2d307f160c0e7048762",
+  "expectedLockBeforeSha256": "8760f0367ca6596d3ac9ecf6436326b32f9ae7226adc753c58fce26ee916b0bd",
   "targets": [
     "lib",
     "anytls_owned_shutdown",
@@ -48,8 +48,8 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "3ecbfa401accbe4b67da2a91064db2f0cc3a5c2fa94f93ed6d34b017787008a8",
+  "overlaySha256": "ec903175c96374d1ed7ebc82e1476ccc787af6912ff892090635d731308c8e6d",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-mrs-reader-v1",
+  "coreTests": "policy-runtime-provider-reader-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
 }

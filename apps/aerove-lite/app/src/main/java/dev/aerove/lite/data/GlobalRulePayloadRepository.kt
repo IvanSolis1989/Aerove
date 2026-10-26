@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import okio.utf8Size
 import dev.aerove.lite.profilebuilder.BuilderEntry
 import dev.aerove.lite.profilebuilder.BuilderResourceLibrary
 import dev.aerove.lite.profilebuilder.BuilderResourceSnapshot
@@ -69,9 +70,10 @@ class GlobalRulePayloadRepository(
     suspend fun preview(expected: BuilderResourceSnapshot, name: String): GlobalRulePayloadPreview = payload(expected, name) { metadata, file ->
         val editable = metadata.localId != null && metadata.format != "mrs"
         val text = if (metadata.format == "mrs") inspector.dump(file.path, metadata.behavior, metadata.format)
-            else file.inputStream().use { it.readBounded(MAX_TEXT.toInt()).strictUtf8() }
-        require(text.toByteArray(Charsets.UTF_8).size <= MAX_TEXT) { "Rule preview exceeds text limit" }
-        GlobalRulePayloadPreview(text, editable)
+            else file.readEditorRuleText(MAX_TEXT) ?: return@payload GlobalRulePayloadPreview("", editable, oversize = true)
+        val size = text.utf8Size()
+        require(size <= MAX_TEXT) { "Rule preview exceeds $MAX_TEXT UTF-8 bytes" }
+        if (size > MAX_RULE_PREVIEW_BYTES) GlobalRulePayloadPreview("", editable, oversize = true) else GlobalRulePayloadPreview(text, editable)
     }
 
     suspend fun info(expected: BuilderResourceSnapshot, name: String): GlobalRulePayloadInfo = payload(expected, name) { value, _ ->
@@ -98,7 +100,7 @@ class GlobalRulePayloadRepository(
                     else checkNotNull(input).use { copyLocalRuleResource(it, source, MAX_BINARY) }
                 currentCoroutineContext().ensureActive()
                 val inspection = inspector.inspect(source.path)
-                require(inspection.format == "mrs" || digest.bytes <= MAX_TEXT) { "Rule payload exceeds text limit" }
+                require(inspection.format == "mrs" || digest.bytes <= MAX_TEXT) { "Rule payload exceeds $MAX_TEXT bytes" }
                 require(url == null || inspection.count > 0) { "Remote rule payload is empty" }
                 val token = UUID.randomUUID().toString()
                 val fields = if (refreshTicket == null) linkedMapOf<String, Any?>() else entry(expected, checkNotNull(previousName)).fields.toMutableMap()
@@ -146,21 +148,21 @@ class GlobalRulePayloadRepository(
         require(expected.resources.ruleProviders.none { it.name == name && it.id != previousName }) { "Duplicate rule resource name" }
         if (previousName != null) entry(expected, previousName)
     }
-    companion object { private const val MAX_TEXT = 8L * 1024 * 1024; private const val MAX_BINARY = 32L * 1024 * 1024 }
+    companion object { private const val MAX_TEXT = MAX_RULE_TEXT_BYTES; private const val MAX_BINARY = MAX_RULE_INPUT_BYTES }
 }
 
-/** Pure file parser callbacks; production binds the two no-handle NativeCore APIs. */
+/** Owned file parser callbacks; production cancels and joins each Native worker. */
 interface NativeRulePayloadInspector {
-    fun inspect(path: String): RulePayloadInspection
-    fun dump(path: String, behavior: String, format: String): String
+    suspend fun inspect(path: String): RulePayloadInspection
+    suspend fun dump(path: String, behavior: String, format: String): String
 }
 
 class NativeJsonRulePayloadInspector(
-    private val inspectJson: (String) -> String,
-    private val dumpText: (String, String, String) -> String,
+    private val inspectJson: suspend (String) -> String,
+    private val dumpText: suspend (String, String, String) -> String,
 ) : NativeRulePayloadInspector {
-    override fun inspect(path: String): RulePayloadInspection = RulePayloadInspection.decode(inspectJson(path))
-    override fun dump(path: String, behavior: String, format: String): String = dumpText(path, behavior, format)
+    override suspend fun inspect(path: String): RulePayloadInspection = RulePayloadInspection.decode(inspectJson(path))
+    override suspend fun dump(path: String, behavior: String, format: String): String = dumpText(path, behavior, format)
 }
 
 data class RulePayloadInspection(val format: String, val behavior: String, val count: Int) {
@@ -185,7 +187,7 @@ data class RulePayloadInspection(val format: String, val behavior: String, val c
     }
 }
 
-data class GlobalRulePayloadPreview(val text: String, val editable: Boolean)
+data class GlobalRulePayloadPreview(val text: String, val editable: Boolean, val oversize: Boolean = false)
 data class GlobalRulePayloadInfo(val behavior: String, val format: String, val count: Int?, val bytes: Long,
     val sha256: String, val updatedAt: Long, val remote: Boolean)
 

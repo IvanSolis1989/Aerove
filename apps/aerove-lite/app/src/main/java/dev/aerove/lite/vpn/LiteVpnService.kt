@@ -241,6 +241,8 @@ class LiteVpnService : VpnService() {
             return START_NOT_STICKY
         }
         requested(true)
+        val now = System.nanoTime()
+        val requestedAt = intent?.getLongExtra(EXTRA_REQUESTED_AT_NANOS, 0L)?.takeIf { it != 0L && now - it >= 0L } ?: now
         scope.launch {
             try {
                 val profile = checkNotNull(graph.profiles.snapshot().selectedId) { "Import and select a configuration first" }
@@ -253,7 +255,7 @@ class LiteVpnService : VpnService() {
                 }) { "VPN authorization and TUN mode are required for a system VPN request" }
                 lastPlan = plan.copy(ownerIntentToken = generation)
                 syncListenerPolicy()
-                if (reconfigure) coordinator.reconfigure(checkNotNull(lastPlan)) else coordinator.start(checkNotNull(lastPlan))
+                if (reconfigure) coordinator.reconfigure(checkNotNull(lastPlan)) else coordinator.start(checkNotNull(lastPlan), requestedAt)
             } catch (failure: Exception) {
                 if (generation == intentGeneration) {
                     graph.publishVpn(owner, VpnSnapshot(VpnPhase.Failed, error = failure.message))
@@ -550,6 +552,7 @@ class LiteVpnService : VpnService() {
 
     companion object {
         const val ACTION_START = "dev.aerove.lite.START"
+        const val EXTRA_REQUESTED_AT_NANOS = "dev.aerove.lite.REQUESTED_AT_NANOS"
         const val ACTION_STOP = "dev.aerove.lite.STOP"
         const val ACTION_RECONFIGURE = "dev.aerove.lite.RECONFIGURE"
         const val ACTION_RETRY_NETWORK = "dev.aerove.lite.RETRY_NETWORK"

@@ -38,11 +38,15 @@ async fn large_controlled_upstream_mrs_preflight_uses_checked_core_and_still_req
     assert_eq!(summary, serde_json::json!({"format":"mrs","behavior":"domain","count":411_634}));
     validate_resource("ruleset", &path, "domain", "mrs").await.unwrap();
     validate_resource("rule-provider", &path, "DOMAIN", "MRS").await.unwrap();
-    assert_eq!(dump_rule_set(&path, "domain", "mrs").unwrap_err(), "rule_set_invalid: $.payload.mrs: rule_set_dump_count_limit_exceeded");
+    // Official MRS dumps add no host entry cap, as Standard's handleDumpRuleSet; beyond the Core decode bounds only the 64 MiB text budget applies.
+    let dump = dump_rule_set(&path, "domain", "mrs").unwrap();
+    assert_eq!(dump.lines().count(), 411_634);
+    assert_eq!(dump.lines().collect::<std::collections::BTreeSet<_>>().len(), 411_634);
+    assert!(dump.len() <= validation::MAX_DUMP_TEXT_BYTES);
 }
 
 #[tokio::test]
-async fn upstream_mrs_preflight_rejects_identity_corruption_and_64m_expansion_without_relaxing_other_caps() {
+async fn upstream_mrs_preflight_rejects_identity_corruption_and_256m_expansion_without_relaxing_other_caps() {
     let valid = Fixture::new(&controlled_upstream_mrs());
     assert_eq!(validation::preflight_rule_resource(&valid.0, "ipcidr", "mrs").unwrap_err(),
         "rule_set_invalid: $.behavior: rule_set_behavior_mismatch");
@@ -68,7 +72,7 @@ async fn upstream_mrs_preflight_rejects_identity_corruption_and_64m_expansion_wi
         assert_eq!(inspect_rule_set(&invalid.0).unwrap_err(), error);
         assert_eq!(validate_resource("ruleset", &invalid.0, "domain", "mrs").await.unwrap_err(), error);
     }
-    let expansion = std::io::Read::take(std::io::repeat(0), validation::MAX_EXPANDED_BYTES as u64 + 1);
+    let expansion = std::io::Read::take(std::io::repeat(0), validation::MAX_MRS_EXPANDED_BYTES as u64 + 1);
     let excessive = Fixture::new(&zstd::encode_all(expansion, 0).unwrap());
     let error = validation::preflight_rule_resource(&excessive.0, "domain", "mrs").unwrap_err();
     assert!(error.starts_with("rule_set_invalid: $.payload.mrs: ")); assert!(error.contains("decompressed_payload"));
@@ -77,16 +81,16 @@ async fn upstream_mrs_preflight_rejects_identity_corruption_and_64m_expansion_wi
     let oversized_input = Fixture::new(&[]);
     fs::OpenOptions::new().write(true).open(&oversized_input.0).unwrap()
         .set_len(validation::MAX_INPUT_BYTES as u64 + 1).unwrap();
-    assert_eq!(inspect_rule_set(&oversized_input.0).unwrap_err(), "resource input limit exceeded");
-    assert_eq!(validate_resource("ruleset", &oversized_input.0, "domain", "mrs").await.unwrap_err(), "resource input limit exceeded");
-    assert_eq!(validation::preflight_rule_resource(&oversized_input.0, "domain", "mrs").unwrap_err(), "resource input limit exceeded");
+    assert_eq!(inspect_rule_set(&oversized_input.0).unwrap_err(), "resource input exceeds 67108864 bytes");
+    assert_eq!(validate_resource("ruleset", &oversized_input.0, "domain", "mrs").await.unwrap_err(), "resource input exceeds 67108864 bytes");
+    assert_eq!(validation::preflight_rule_resource(&oversized_input.0, "domain", "mrs").unwrap_err(), "resource input exceeds 67108864 bytes");
     let text = Fixture::new("example.test\n".repeat(validation::MAX_ENTRIES + 1).as_bytes());
-    assert!(validation::preflight_rule_resource(&text.0, "domain", "text").unwrap_err().contains("count/line limit exceeded"));
+    assert!(validation::preflight_rule_resource(&text.0, "domain", "text").unwrap_err().contains("rule-provider payload exceeds 250000 entries"));
     let mut legacy = meow_config::offline_rules::mrs_parser::write_ruleset_mrs(0, &["example.test"]).unwrap();
     legacy[6..10].copy_from_slice(&((validation::MAX_ENTRIES + 1) as u32).to_be_bytes());
     let legacy = Fixture::new(&legacy);
     assert_eq!(validation::preflight_rule_resource(&legacy.0, "domain", "mrs").unwrap_err(),
-        "rule_set_invalid: $.payload.mrs: rule_set_dump_count_limit_exceeded");
+        "rule_set_invalid: $.payload.mrs: MRS! header declares 250001 entries, over 250000");
 }
 
 #[tokio::test]
@@ -216,6 +220,23 @@ fn gzip_all_members_crc_truncation_and_expansion_bound() {
     let mut trailing = first.clone(); trailing.extend_from_slice(b"not-a-gzip-member");
     assert!(validation::unpack_geodata(&trailing, 64).is_err());
     assert!(validation::unpack_geodata(&[0x1f,0x8b,0x00],64).is_err());
+}
+#[test]
+fn zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder() {
+    use meow_config::offline_rules::mrs_parser::decompress_payload_bounded;
+    let frame = |bytes: &[u8]| zstd::encode_all(std::io::Cursor::new(bytes.to_vec()), 0).unwrap();
+    let mut two = frame(b"first"); two.extend(frame(b"second"));
+    let exact = frame(&[7u8; 4096]);
+    let truncated = { let whole = frame(&[9u8; 70_000]); whole[..whole.len() - 3].to_vec() };
+    let mut trailing = frame(b"payload"); trailing.extend_from_slice(b"not-a-zstd-frame");
+    let large = frame(&vec![3u8; 300 * 1024]);
+    let cases = [(two, 64usize), (exact.clone(), 4096), (exact, 4095), (truncated, 1 << 20), (trailing, 64),
+        (vec![0x28, 0xb5, 0x2f, 0xfd, 0], 64), (large.clone(), 300 * 1024), (large, 300 * 1024 - 1)];
+    for (input, limit) in cases {
+        let expected = decompress_payload_bounded(&input, limit as u64).map_err(|error| error.to_string());
+        assert_eq!(validation::unpack_geodata(&input, limit), expected, "limit {limit}");
+    }
+    assert_eq!(validation::unpack_geodata(&frame(b"firstsecond"), 64).unwrap(), b"firstsecond");
 }
 fn ss_fields(plugin: &str, opts: &str, extra: &str) -> Result<String,String> {
     validation::normalize_config_fields(&format!("proxies: [{{name: node, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: secret, plugin: '{plugin}', plugin-opts: {opts}{extra}}}]"))
@@ -360,8 +381,144 @@ async fn rule_content_errors_and_identity_mismatches_keep_typed_specific_reasons
     assert_eq!(fs::read(&good.0).unwrap(), b"example.com\n");
     let excessive = Fixture::new(format!("{}\n", "a".repeat(2049)).as_bytes());
     assert_eq!(inspect_rule_set(&excessive.0).unwrap_err(),
-        "rule_set_invalid: $.payload: rule-provider payload count/line limit exceeded");
+        "rule_set_invalid: $.payload: rule-provider entry 0 exceeds 2048 bytes");
     // File identity failures are resource errors, not rewritten as bad rules.
     assert_eq!(validate_resource("ruleset", &std::env::temp_dir(), "domain", "yaml").await.unwrap_err(),
         "resource candidate must be a regular file");
+}
+
+#[test]
+fn official_mrs_above_64m_expanded_reaches_the_actual_strict_matcher() {
+    use std::io::{Cursor, Read};
+    let body = upstream_mrs::encode_domain_set(&["example.test"]);
+    // Reserved header bytes push the expansion past 64 MiB while staying under the Core's 256 MiB bound.
+    let mut header = meow_config::offline_rules::mrs_parser::UPSTREAM_MRS_MAGIC.to_vec();
+    header.push(0); header.extend_from_slice(&1i64.to_be_bytes());
+    let reserved = 65 * 1024 * 1024;
+    header.extend_from_slice(&(reserved as i64).to_be_bytes());
+    let source = Cursor::new(header).chain(std::io::repeat(0).take(reserved)).chain(Cursor::new(body));
+    let file = Fixture::new(&zstd::encode_all(source, 0).unwrap());
+    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&file.0).unwrap()).unwrap();
+    assert_eq!(summary["count"], 1);
+    assert_eq!(dump_rule_set(&file.0, "domain", "mrs").unwrap(), "example.test\n");
+    let bad_body = upstream_mrs::encode_domain_set(&["."]);
+    let bad = Fixture::new(&upstream_mrs::encode_upstream_mrs(0, 1, &bad_body));
+    assert!(inspect_rule_set(&bad.0).unwrap_err().contains("$.payload.mrs"));
+}
+#[test]
+fn official_mrs_compressed_size_and_cancel_are_independent_of_expanded_budget() {
+    let file = Fixture::new(&upstream_mrs::encode_upstream_mrs(0, 1, &upstream_mrs::encode_domain_set(&["example.test"])));
+    let cancel = tokio_util::sync::CancellationToken::new(); cancel.cancel();
+    assert!(validation::inspect_rule_set_controlled(&file.0, cancel.clone()).unwrap_err().contains("Cancelled"));
+    assert!(validation::dump_rule_set_controlled(&file.0, "domain", "mrs", cancel.clone()).unwrap_err().contains("Cancelled"));
+    assert!(validation::preflight_rule_resource_controlled(&file.0, "domain", "mrs", cancel).unwrap_err().contains("Cancelled"));
+    fs::OpenOptions::new().write(true).open(&file.0).unwrap().set_len(validation::MAX_INPUT_BYTES as u64 + 1).unwrap();
+    assert_eq!(inspect_rule_set(&file.0).unwrap_err(), "resource input exceeds 67108864 bytes");
+}
+#[tokio::test]
+async fn official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds() {
+    use std::io::{Cursor, Read};
+    // Pseudo-random reserved header bytes stay incompressible, so the zstd file lands between 32 and 64 MiB.
+    let reserved = 40 * 1024 * 1024;
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut noise = Vec::with_capacity(reserved);
+    while noise.len() < reserved {
+        state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+        noise.extend_from_slice(&state.to_le_bytes());
+    }
+    let mut header = meow_config::offline_rules::mrs_parser::UPSTREAM_MRS_MAGIC.to_vec();
+    header.push(0); header.extend_from_slice(&1i64.to_be_bytes());
+    header.extend_from_slice(&(reserved as i64).to_be_bytes());
+    let body = upstream_mrs::encode_domain_set(&["example.test"]);
+    let source = Cursor::new(header).chain(Cursor::new(noise)).chain(Cursor::new(body));
+    let file = Fixture::new(&zstd::encode_all(source, 1).unwrap());
+    let size = fs::metadata(&file.0).unwrap().len();
+    assert!(size > 32 * 1024 * 1024 && size <= validation::MAX_INPUT_BYTES as u64, "{size}");
+    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&file.0).unwrap()).unwrap();
+    assert_eq!(summary, serde_json::json!({"format":"mrs","behavior":"domain","count":1}));
+    validate_resource("ruleset", &file.0, "domain", "mrs").await.unwrap();
+    let receipt: serde_json::Value = serde_json::from_str(&validation::preflight_rule_resource(&file.0, "domain", "mrs").unwrap()).unwrap();
+    assert_eq!(receipt["state"], "validated");
+    assert_eq!(dump_rule_set(&file.0, "domain", "mrs").unwrap(), "example.test\n");
+    fs::OpenOptions::new().write(true).open(&file.0).unwrap().set_len(validation::MAX_INPUT_BYTES as u64 + 1).unwrap();
+    let errors = [inspect_rule_set(&file.0).unwrap_err(), dump_rule_set(&file.0, "domain", "mrs").unwrap_err(),
+        validate_resource("ruleset", &file.0, "domain", "mrs").await.unwrap_err(),
+        validation::preflight_rule_resource(&file.0, "domain", "mrs").unwrap_err()];
+    for error in errors { assert_eq!(error, "resource input exceeds 67108864 bytes"); }
+}
+
+#[test]
+fn upstream_source_count_can_differ_from_the_accepted_matcher_count() {
+    // Mihomo records successful source Insert calls, before deduplication/merging.
+    let file = Fixture::new(&upstream_mrs::encode_upstream_mrs(0, 7, &upstream_mrs::encode_domain_set(&["example.test"])));
+    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&file.0).unwrap()).unwrap();
+    assert_eq!(summary["count"], 1);
+    assert_eq!(dump_rule_set(&file.0, "domain", "mrs").unwrap(), "example.test\n");
+}
+#[tokio::test]
+async fn text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds() {
+    use std::io::Write as _;
+    let mut bytes = b"example.test\n#".to_vec();
+    bytes.resize(validation::MAX_RULE_TEXT_BYTES - 1, b'x');
+    bytes.push(b'\n');
+    let file = Fixture::new(&bytes);
+    drop(bytes);
+    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&file.0).unwrap()).unwrap();
+    assert_eq!(summary, serde_json::json!({"format":"text","behavior":"domain","count":1}));
+    validate_resource("ruleset", &file.0, "domain", "text").await.unwrap();
+    let receipt: serde_json::Value = serde_json::from_str(&validation::preflight_rule_resource(&file.0, "domain", "text").unwrap()).unwrap();
+    assert_eq!(receipt["state"], "validated"); assert_eq!(receipt["count"], 1);
+    assert_eq!(dump_rule_set(&file.0, "domain", "text").unwrap(), "example.test\n");
+    fs::OpenOptions::new().append(true).open(&file.0).unwrap().write_all(b"\n").unwrap();
+    assert_eq!(fs::metadata(&file.0).unwrap().len(), validation::MAX_RULE_TEXT_BYTES as u64 + 1);
+    let errors = [inspect_rule_set(&file.0).unwrap_err(), validate_resource("ruleset", &file.0, "domain", "text").await.unwrap_err(),
+        validation::preflight_rule_resource(&file.0, "domain", "text").unwrap_err(), dump_rule_set(&file.0, "domain", "text").unwrap_err()];
+    for error in errors { assert_eq!(error, "resource input exceeds 67108864 bytes"); }
+}
+fn official_domain_mrs(entries: &[String]) -> Fixture {
+    let borrowed: Vec<&str> = entries.iter().map(String::as_str).collect();
+    Fixture::new(&upstream_mrs::encode_upstream_mrs(0, entries.len(), &upstream_mrs::encode_domain_set(&borrowed)))
+}
+#[test]
+fn official_mrs_text_between_8m_and_64m_stays_previewable() {
+    let label = "b".repeat(80);
+    let entries: Vec<String> = (0..100_000).map(|index| format!("rule{index:06}.{label}.test")).collect();
+    let file = official_domain_mrs(&entries);
+    let dump = dump_rule_set(&file.0, "domain", "mrs").unwrap();
+    assert!(dump.len() > validation::MAX_TEXT_BYTES && dump.len() <= validation::MAX_DUMP_TEXT_BYTES, "{}", dump.len());
+    assert_eq!(dump.lines().count(), 100_000);
+}
+#[test]
+fn official_mrs_text_over_budget_is_an_error_but_binary_inspection_still_succeeds() {
+    let label = "a".repeat(60);
+    let entries: Vec<String> = (0..345_000).map(|index| format!("rule{index:06}.{label}.{label}.{label}.test")).collect();
+    assert!(entries.iter().map(|entry| entry.len() + 1).sum::<usize>() > validation::MAX_DUMP_TEXT_BYTES);
+    let file = official_domain_mrs(&entries);
+    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&file.0).unwrap()).unwrap();
+    assert_eq!(summary["count"], 345_000);
+    assert_eq!(dump_rule_set(&file.0, "domain", "mrs").unwrap_err(), "rule_set_invalid: $.payload: rule-set text exceeds 67108864 bytes");
+}
+
+#[tokio::test]
+async fn controlled_native_entrypoints_reject_bad_utf8_inverted_range_and_negative_source_count() {
+    // Core03's invalid-only domain fixture: one leaf carrying an invalid UTF-8 byte.
+    let mut bad_utf8 = vec![1];
+    bad_utf8.extend_from_slice(&1i64.to_be_bytes()); bad_utf8.extend_from_slice(&2u64.to_be_bytes());
+    bad_utf8.extend_from_slice(&1i64.to_be_bytes()); bad_utf8.extend_from_slice(&6u64.to_be_bytes());
+    bad_utf8.extend_from_slice(&1i64.to_be_bytes()); bad_utf8.push(0xff);
+    let mut bad_range = vec![1]; bad_range.extend_from_slice(&1i64.to_be_bytes());
+    bad_range.extend_from_slice(&std::net::Ipv6Addr::from(2u128).octets());
+    bad_range.extend_from_slice(&std::net::Ipv6Addr::from(1u128).octets());
+    for (behavior, tag, body, reason) in [("domain", 0, bad_utf8, "UTF-8"), ("ipcidr", 1, bad_range, "range")] {
+        let file = Fixture::new(&upstream_mrs::encode_upstream_mrs(tag, 1, &body));
+        let error = inspect_rule_set(&file.0).unwrap_err(); assert!(error.contains(reason), "{error}");
+        assert_eq!(dump_rule_set(&file.0, behavior, "mrs").unwrap_err(), error);
+        assert_eq!(validation::preflight_rule_resource(&file.0, behavior, "mrs").unwrap_err(), error);
+        assert_eq!(validate_resource("ruleset", &file.0, behavior, "mrs").await.unwrap_err(), error);
+    }
+    let bytes = upstream_mrs::encode_upstream_mrs(0, 1, &upstream_mrs::encode_domain_set(&["example.test"]));
+    let mut expanded = zstd::decode_all(std::io::Cursor::new(bytes)).unwrap();
+    expanded[5..13].copy_from_slice(&(-1i64).to_be_bytes());
+    let file = Fixture::new(&zstd::encode_all(std::io::Cursor::new(expanded), 0).unwrap());
+    assert!(inspect_rule_set(&file.0).unwrap_err().contains("count"));
 }

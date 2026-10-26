@@ -52,6 +52,7 @@ internal class EditorDocumentController(
     private val changed: () -> Unit,
     private val save: () -> Unit,
     private val find: (Boolean) -> Unit,
+    private val maxBytes: Int = MAX_PROFILE_BYTES,
 ) {
     private val mutableState = MutableStateFlow(EditorDocumentState())
     val state = mutableState.asStateFlow()
@@ -272,7 +273,7 @@ internal class EditorDocumentController(
     fun replaceAll(replacement: String) {
         if (query.text.isEmpty()) return
         val replacingQuery = query
-        bulk { text -> EditorSearch.replaceAll(text, replacingQuery, replacement) }
+        bulk { text -> EditorSearch.replaceAll(text, replacingQuery, replacement, maxBytes) }
     }
 
     fun insertLarge(insertion: CharSequence) {
@@ -280,8 +281,7 @@ internal class EditorDocumentController(
         val start = cursor.left
         val end = cursor.right
         bulk { text ->
-            require(insertion.length <= MAX_PROFILE_BYTES) { "Insertion exceeds the configuration limit" }
-            (text.substring(0, start) + insertion + text.substring(end)).also(::checkEditorSize)
+            editorInsertion(text, start, end, insertion, maxBytes)
         }
     }
 
@@ -367,7 +367,7 @@ internal class EditorDocumentController(
         runCatching {
             val clip = context.getSystemService(ClipboardManager::class.java).primaryClip
             val text = clip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text ?: return
-            require(text.length <= MAX_PROFILE_BYTES) { "Clipboard text is too large" }
+            require(text.length <= maxBytes) { "Clipboard text exceeds $maxBytes UTF-8 bytes" }
             if (text.length > INLINE_EDIT_LIMIT) insertLarge(text) else view?.commitText(text, false, false)
         }.onFailure(::error)
     }

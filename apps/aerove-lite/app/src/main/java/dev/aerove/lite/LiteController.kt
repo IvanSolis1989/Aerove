@@ -1,5 +1,7 @@
 package dev.aerove.lite
 
+import dev.aerove.lite.vpn.uptimeStartNanos
+
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -136,7 +138,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     override val resourceManagement get() = resourceManagementOwner.value
     private val globalResourcesOwner = lazy {
         dev.aerove.lite.integration.GlobalResourceWorkspace(application.builderResourceLibrary, application.profiles,
-            application.globalRulePayloads, { yaml -> withContext(Dispatchers.Default) { dev.aerove.lite.core.MeowNativeCore.validate(yaml) } },
+            application.globalRulePayloads, { yaml -> dev.aerove.lite.core.JniResourceFetch.offlineRead { dev.aerove.lite.core.MeowNativeCore.validate(it, yaml) } },
             { sourceApplyOwner.value.request() })
     }
     override val globalResources get() = globalResourcesOwner.value
@@ -601,10 +603,10 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         }
         viewModelScope.launch {
             combine(visible, application.vpn) { foreground, snapshot ->
-                if (foreground.active && snapshot.phase == VpnPhase.Running) snapshot.runningSinceNanos else 0L
+                snapshot.uptimeStartNanos(foreground.active)
             }.distinctUntilChanged().collectLatest { started ->
                 if (started == 0L) {
-                    if (application.vpn.value.phase != VpnPhase.Running) mutableState.update { it.copy(uptimeMillis = 0) }
+                    if (application.vpn.value.uptimeStartNanos(true) == 0L) mutableState.update { it.copy(uptimeMillis = 0) }
                 } else while (true) {
                     val elapsed = ((System.nanoTime() - started) / 1_000_000).coerceAtLeast(0)
                     mutableState.update { it.copy(uptimeMillis = elapsed) }
@@ -785,7 +787,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             return
         }
         ContextCompat.startForegroundService(application, Intent(application, LiteVpnService::class.java)
-            .setAction(LiteVpnService.ACTION_START))
+            .setAction(LiteVpnService.ACTION_START).putExtra(LiteVpnService.EXTRA_REQUESTED_AT_NANOS, System.nanoTime()))
     }
 
     override fun disconnect() {

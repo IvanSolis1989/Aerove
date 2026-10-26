@@ -73,9 +73,9 @@ internal fun GlobalResourceLibraryScreen(session: GlobalResourceLibrarySession, 
     }
     fun ruleEditor(name: String, previous: String?, preview: GlobalRuleLibraryPreview) {
         val opened = requireNotNull(session.state.value.snapshot)
-        val editor = if (!preview.editable) ProfileEditorSession.preview(name) { preview.text }
-        else ProfileEditorSession.editable(name, object : ProfileEditorSource {
-            override suspend fun read() = preview.text
+        val editor = if (!preview.editable) ProfileEditorSession.preview(name, dev.aerove.lite.data.MAX_RULE_PREVIEW_BYTES) { preview.editorText() }
+        else ProfileEditorSession.ruleEditable(name, object : ProfileEditorSource {
+            override suspend fun read() = preview.editorText()
             override suspend fun replace(expected: String, replacement: String) {
                 check(expected == preview.text)
                 check(session.perform { current ->

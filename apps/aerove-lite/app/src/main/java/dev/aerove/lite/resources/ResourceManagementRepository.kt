@@ -4,7 +4,14 @@ import dev.aerove.lite.data.PreparedProfile
 import dev.aerove.lite.data.ConfigYaml
 import dev.aerove.lite.data.ProfileRepository
 import dev.aerove.lite.data.NativeRulePayloadInspector
+import dev.aerove.lite.data.MAX_RULE_INPUT_BYTES
+import dev.aerove.lite.data.MAX_RULE_PREVIEW_BYTES
+import dev.aerove.lite.data.MAX_RULE_TEXT_BYTES
+import dev.aerove.lite.data.countRuleLines
 import dev.aerove.lite.data.readBounded
+import dev.aerove.lite.data.editorSizeFailure
+import dev.aerove.lite.data.readEditorRuleText
+import dev.aerove.lite.data.readRuleYaml
 import dev.aerove.lite.data.strictUtf8
 import java.io.File
 import java.io.InputStream
@@ -54,7 +61,7 @@ class ResourceManagementRepository(private val profiles: ProfileRepository,
                     checkNotNull(offlineRules) { "Offline ruleset inspector is not configured" }
                         .dump(target.path, record.getString("behavior"), "mrs")
                         .also { currentCoroutineContext().ensureActive() }
-                } else target.inputStream().use { it.readBounded(8 * 1024 * 1024).strictUtf8() }
+                } else target.readEditorRuleText(MAX_RULE_TEXT_BYTES) ?: editorSizeFailure(MAX_RULE_PREVIEW_BYTES)
             }
         } finally { profiles.release(lease) }
     }
@@ -74,10 +81,15 @@ class ResourceManagementRepository(private val profiles: ProfileRepository,
                     val count = if (kind in setOf("ruleset", "source-proxy") && format in setOf("yaml", "text")) {
                         val file = File(directory, row.getString("file")).canonicalFile
                         require(file.toPath().startsWith(directory.canonicalFile.toPath()))
-                        val content = file.inputStream().use { it.readBounded(8 * 1024 * 1024).strictUtf8() }
-                        if (format == "text") content.lineSequence().map(String::trim)
-                            .count { it.isNotEmpty() && !it.startsWith('#') && !it.startsWith("//") }
-                        else (ConfigYaml.parse(content, 8 * 1024 * 1024)[if (kind == "ruleset") "payload" else "proxies"] as List<*>).size
+                        if (kind == "ruleset") {
+                            if (format == "text") file.countRuleLines(MAX_RULE_INPUT_BYTES)
+                            else (file.readRuleYaml(MAX_RULE_INPUT_BYTES)["payload"] as List<*>).size
+                        } else {
+                            val content = file.inputStream().use { it.readBounded(8 * 1024 * 1024).strictUtf8() }
+                            if (format == "text") content.lineSequence().map(String::trim)
+                                .count { it.isNotEmpty() && !it.startsWith('#') && !it.startsWith("//") }
+                            else (ConfigYaml.parse(content, 8 * 1024 * 1024)["proxies"] as List<*>).size
+                        }
                     } else null
                     ManagedResource(row.getString("key"), row.getString("kind"), row.getString("sha256"), row.getLong("bytes"),
                         row.optLong("updatedAt", manifest.getLong("createdAt")), if (row.isNull("url")) null else row.getString("url"), path,

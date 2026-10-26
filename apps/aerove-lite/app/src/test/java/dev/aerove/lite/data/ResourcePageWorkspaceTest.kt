@@ -20,8 +20,8 @@ class ResourcePageWorkspaceTest {
         var preparations = 0
         val validator = CompatibilityValidator(NativeConfigValidator { preparations++; null }, File(root, "runtime"))
         val parser = object : NativeRulePayloadInspector {
-            override fun inspect(path: String) = RulePayloadInspection("text", "domain", 1)
-            override fun dump(path: String, behavior: String, format: String) = File(path).readText()
+            override suspend fun inspect(path: String) = RulePayloadInspection("text", "domain", 1)
+            override suspend fun dump(path: String, behavior: String, format: String) = File(path).readText()
         }
         val manager = ResourceBundleManager(File(root, "runtime"), validator, NativeResourceValidator { _, _, _, _ -> null }, offlineRules = parser)
         val builder = BuilderResourceLibrary(root)

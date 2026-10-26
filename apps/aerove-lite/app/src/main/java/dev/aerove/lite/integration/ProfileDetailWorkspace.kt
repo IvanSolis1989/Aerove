@@ -270,9 +270,9 @@ class ProfileDetailWorkspace(private val profiles: ProfileRepository, private va
         } finally { mutable.update { it.copy(busy = it.busy - keys) } }
     }
     private fun key(provider: RuntimeProvider) = "$.${if (provider.kind == ProviderKind.Proxy) "proxy-providers" else "rule-providers"}.${provider.name}"
-    private suspend fun snapshot(active: ProviderPageBinding, provider: RuntimeProvider): ProfileResourceEditSnapshot {
+    private suspend fun snapshot(active: ProviderPageBinding, provider: RuntimeProvider, textLimit: Int = MAX_PROFILE_BYTES): ProfileResourceEditSnapshot {
         check(current(active)) { "Running configuration changed" }
-        val saved = profiles.resourceEditSnapshot(checkNotNull(selected()).id, key(provider))
+        val saved = profiles.resourceEditSnapshot(checkNotNull(selected()).id, key(provider), textLimit)
         check(current(active) && (active.endpoint.profileRevision == null || active.endpoint.profileRevision == saved.revision) &&
             (active.endpoint.resourceGeneration == null || active.endpoint.resourceGeneration == saved.generation)) { "Running resource generation changed" }
         return saved
@@ -281,14 +281,16 @@ class ProfileDetailWorkspace(private val profiles: ProfileRepository, private va
         val token = synchronized(gate) { if (!visible || !foreground) return; ++documentGeneration }
         launch {
         val active = checkNotNull(currentBinding.value)
-        val saved = snapshot(active, provider)
-        val original = if (provider.format == "mrs") resources.preview(saved.profileId, saved.key) else saved.bytes.strictUtf8()
+        val editorLimit = if (provider.kind == ProviderKind.Proxy) MAX_PROFILE_BYTES else MAX_RULE_PREVIEW_BYTES
+        val saved = snapshot(active, provider, if (editable) editorLimit else -1)
+        val original = if (provider.format == "mrs" || !editable) resources.preview(saved.profileId, saved.key)
+            else if (saved.editorOversize) null else saved.bytes.strictUtf8()
         check(current(active))
-        val editor = if (!editable) ProfileEditorSession.preview(provider.name) { original }
+        val editor = if (!editable) ProfileEditorSession.preview(provider.name, MAX_RULE_PREVIEW_BYTES) { original ?: editorSizeFailure(MAX_RULE_PREVIEW_BYTES) }
         else {
             require(provider.format != "mrs") { "Binary rule sets are read-only" }
             ProfileEditorSession.editable(provider.name, object : ProfileEditorSource {
-                override suspend fun read() = original
+                override suspend fun read() = original ?: editorSizeFailure(editorLimit)
                 override suspend fun replace(expected: String, replacement: String) = tracked(protect = true) {
                     check(expected == original && current(active)) { "Running resource changed" }
                     val prepared = replacement.byteInputStream().use { profiles.replaceResource(saved, it) }
@@ -296,7 +298,7 @@ class ProfileDetailWorkspace(private val profiles: ProfileRepository, private va
                     apply(prepared)
                     groupsChanged()
                 }
-            })
+            }, maxBytes = editorLimit)
         }
         synchronized(gate) { if (visible && token == documentGeneration && current(active)) mutable.update { it.copy(document = ProviderEditorDocument(provider.name, editor)) } }
         updateLoadedActivity()

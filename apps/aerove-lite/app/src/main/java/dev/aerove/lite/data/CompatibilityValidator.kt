@@ -1,6 +1,7 @@
 package dev.aerove.lite.data
 
 import java.io.File
+import java.io.Reader
 import java.io.StringWriter
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -12,6 +13,7 @@ import org.yaml.snakeyaml.constructor.SafeConstructor
 import org.yaml.snakeyaml.emitter.Emitter
 import org.yaml.snakeyaml.error.MarkedYAMLException
 import org.yaml.snakeyaml.nodes.Tag
+import org.yaml.snakeyaml.parser.Parser
 import org.yaml.snakeyaml.parser.ParserImpl
 import org.yaml.snakeyaml.reader.StreamReader
 import org.yaml.snakeyaml.representer.LiteSafeRepresenter
@@ -23,20 +25,38 @@ internal object ConfigYaml {
         if (source.toByteArray(Charsets.UTF_8).size > maxBytes) {
             throw ConfigValidationException(listOf(ConfigIssue("$", "Configuration is too large")))
         }
-        val options = LoaderOptions().apply {
-            isAllowDuplicateKeys = false
-            allowRecursiveKeys = false
-            maxAliasesForCollections = 50
-            nestingDepthLimit = 50
-            codePointLimit = maxBytes
-        }
+        return load(StreamReader(source), maxBytes, MAX_EXPANDED_VALUES)
+    }
+
+    fun parse(source: Reader, maxBytes: Int, maxValues: Int): MutableMap<String, Any?> = load(StreamReader(source), maxBytes, maxValues)
+
+    /** The same loader with every event counted before the Composer sees it, so no input builds more nodes than the budget. */
+    internal fun parseRule(stream: BoundedYamlStream, maxBytes: Int, maxValues: Int): MutableMap<String, Any?> {
+        val options = options(maxBytes)
+        return load(options, YamlValueBudget(maxValues, options, stopAtEarlierError = false).guard(ParserImpl(stream, options), stream), maxValues)
+    }
+
+    internal fun options(maxBytes: Int) = LoaderOptions().apply {
+        isAllowDuplicateKeys = false
+        allowRecursiveKeys = false
+        maxAliasesForCollections = 50
+        nestingDepthLimit = 50
+        codePointLimit = maxBytes
+    }
+
+    private fun load(stream: StreamReader, maxBytes: Int, maxValues: Int): MutableMap<String, Any?> =
+        options(maxBytes).let { load(it, ParserImpl(stream, it), maxValues) }
+
+    private fun load(options: LoaderOptions, parser: Parser, maxValues: Int): MutableMap<String, Any?> {
         val value = try {
             val constructor = SafeConstructor(options)
             constructor.setAllowDuplicateKeys(options.isAllowDuplicateKeys)
             constructor.setWarnOnDuplicateKeys(options.isWarnOnDuplicateKeys)
             constructor.setWrappedToRootException(options.isWrappedToRootException)
-            constructor.setComposer(Composer(ParserImpl(StreamReader(source), options), CoreResolver(), options))
+            constructor.setComposer(Composer(parser, CoreResolver(), options))
             constructor.getSingleData(Any::class.java)
+        } catch (bound: ConfigValidationException) {
+            throw bound
         } catch (failure: Exception) {
             val line = (failure as? MarkedYAMLException)?.problemMark?.line?.plus(1)
             throw ConfigValidationException(listOf(ConfigIssue("$", "Invalid YAML${line?.let { " at line $it" } ?: ""}")))
@@ -44,7 +64,7 @@ internal object ConfigYaml {
         val ancestors = Collections.newSetFromMap(IdentityHashMap<Any, Boolean>())
         var values = 0
         fun copy(item: Any?, path: String): Any? {
-            if (++values > 100000) throw ConfigValidationException(listOf(ConfigIssue(path, "Expanded configuration exceeds 100000 values")))
+            if (++values > maxValues) throw ConfigValidationException(listOf(ConfigIssue(path, "Expanded configuration exceeds $maxValues values")))
             if (item !is Map<*, *> && item !is List<*>) return item
             if (!ancestors.add(item)) throw ConfigValidationException(listOf(ConfigIssue(path, "Recursive YAML alias")))
             try {
@@ -64,6 +84,8 @@ internal object ConfigYaml {
         return copy(value, "$") as? MutableMap<String, Any?>
             ?: throw ConfigValidationException(listOf(ConfigIssue("$", "Expected one configuration mapping")))
     }
+
+    private const val MAX_EXPANDED_VALUES = 100000
 
     fun dump(value: Map<String, Any?>): String {
         val writer = StringWriter()
@@ -101,16 +123,16 @@ class CompatibilityValidator private constructor(
     val coreVersion: String get() = coreSchema?.coreVersion ?: CORE_VERSION
     internal fun resourceInput(yaml: String): MutableMap<String, Any?> = coreSchema?.resourceInput(yaml) ?: ConfigYaml.parse(yaml)
     internal fun providerDownloadInput(yaml: String): String = coreSchema?.providerDownloadInput(yaml) ?: yaml
-    internal fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight? =
+    internal suspend fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight? =
         coreSchema?.preflightPreparedRule(path, behavior, format)
 
-    override fun validate(yaml: String) = validate(yaml, false, null)
+    override suspend fun validate(yaml: String) = validate(yaml, false, null)
 
-    internal fun validateManagedSource(yaml: String) = validate(yaml, true, null)
+    internal suspend fun validateManagedSource(yaml: String) = validate(yaml, true, null)
 
-    internal fun validatePrepared(yaml: String, bundleDirectory: File) = validate(yaml, true, bundleDirectory)
+    internal suspend fun validatePrepared(yaml: String, bundleDirectory: File) = validate(yaml, true, bundleDirectory)
 
-    private fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
+    private suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
         coreSchema?.let { it.validate(yaml, managed, bundleDirectory); return }
         val root = ConfigYaml.parse(yaml)
         val issues = mutableListOf<ConfigIssue>()
@@ -408,7 +430,7 @@ class CompatibilityValidator private constructor(
     private fun checkResource(value: String, path: String, issues: MutableList<ConfigIssue>, bundleDirectory: File? = null) =
         checkProfileResource(value, path, issues, resourceDirectory, bundleDirectory)
 
-    internal fun validateProxyPayload(source: String) {
+    internal suspend fun validateProxyPayload(source: String) {
         coreSchema?.let { it.validateProxyPayload(source); return }
         val parsed = ConfigYaml.parse(source)
         if (parsed.keys != setOf("proxies") || parsed["proxies"] !is List<*>) {
@@ -417,17 +439,15 @@ class CompatibilityValidator private constructor(
         validateManagedSource(source)
     }
 
-    internal fun validateRulePayload(lines: List<String>, path: String) {
-        coreSchema?.let { it.validateRulePayload(lines, path); return }
-        val problems = lines.mapIndexedNotNull { index, line ->
-            when {
-                line.isBlank() -> ConfigIssue("$path[$index]", "Empty rule payload")
-                ANDROID_RULE.containsMatchIn(line) -> ConfigIssue("$path[$index]", "UID, IN-USER and process regex/wildcard rules have no Android matcher in fixed clash-rs")
-                else -> null
-            }
+    internal fun validateRulePayload(lines: List<String>, path: String) = ruleLineCheck(path).run { lines.forEachIndexed(::line); finish() }
+
+    internal fun ruleLineCheck(path: String): RuleLineCheck = RuleLineCheck(path, coreSchema?.let { it::ruleLineIssue } ?: { line ->
+        when {
+            line.isBlank() -> "Empty rule payload"
+            ANDROID_RULE.containsMatchIn(line) -> "UID, IN-USER and process regex/wildcard rules have no Android matcher in fixed clash-rs"
+            else -> null
         }
-        if (problems.isNotEmpty()) throw ConfigValidationException(problems)
-    }
+    })
 
     companion object {
         fun forMeow(native: NativeConfigValidator, resourceDirectory: File,

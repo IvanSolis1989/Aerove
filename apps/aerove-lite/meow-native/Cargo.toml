@@ -41,6 +41,8 @@ parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
+# Event-level rule YAML bound before serde_yaml loads a document: the same locked parser serde_yaml 0.9.34 drives.
+unsafe-libyaml = "=0.2.11"
 subtle = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
@@ -52,6 +54,8 @@ async-trait = "0.1"
 ipnet = "2"
 uuid = "1"
 flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+# Host-side zstd geodata streaming; the same locked 0.13.3 the fixed Core already links.
+zstd = "=0.13.3"
 
 [target.'cfg(unix)'.dependencies]
 lwip = { package = "meow-lwip", path = ".upstream/meow-rs/crates/meow-lwip" }
@@ -61,7 +65,6 @@ libc = "0.2"
 rquickjs = { version = "=0.12.2", default-features = false, features = ["bindgen"] }
 
 [dev-dependencies]
-zstd = "=0.13.3"
 hickory-proto = "0.26"
 boring = "5.2"
 tokio-boring = "5.2"

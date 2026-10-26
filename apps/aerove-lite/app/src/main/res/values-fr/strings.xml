@@ -423,7 +423,8 @@
     <string name="lite_dismiss">Fermer</string>
     <string name="lite_message">Message</string>
     <string name="lite_refresh">Actualiser</string>
-    <string name="lite_connect">Connecter</string>
+    <string name="lite_start">Démarrer</string>
+    <string name="lite_stop">Arrêter</string>
     <string name="lite_disconnecting">Déconnexion…</string>
     <string name="lite_failed">Échec de la connexion</string>
     <string name="lite_profile_required">Importez un profil pour vous connecter</string>
@@ -516,7 +517,10 @@
     <string name="lite_traffic_total">Total %1$s</string>
     <string name="lite_type_mobile">Mobile</string>
     <string name="lite_type_hosting">Hébergement</string>
-    <string name="lite_outbound_refresh">Actualiser l’adresse sortante</string>
+    <string name="lite_outbound_retry">Réessayer</string>
+    <string name="lite_details">Détails de %1$s</string>
+    <string name="lite_outbound_ip">IP sortante</string>
+    <string name="lite_tap_icon_to_retry">Appuyez sur l’icône pour réessayer</string>
     <string name="lite_outbound_loading">Vérification de l’adresse sortante…</string>
     <string name="lite_open_logs">Activer les journaux</string>
     <string name="lite_open_logs_detail">Collecter les journaux du cœur et afficher la page Journaux.</string>

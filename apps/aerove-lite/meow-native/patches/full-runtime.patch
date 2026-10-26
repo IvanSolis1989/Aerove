@@ -5064,7 +5064,7 @@
      ParserContext, RuleSet, RuleSetBehavior, RuleSetFormat,
  };
  use parking_lot::RwLock;
-@@ -38,6 +38,11 @@
+@@ -38,6 +38,13 @@
      BACKGROUND_RETRY_MAX, BACKGROUND_RETRY_MIN, MAX_REVALIDATION_ATTEMPTS,
  };
  use crate::raw::RawRuleProvider;
@@ -5072,11 +5072,13 @@
 +mod rule_pages;
 +pub use rule_pages::{RulePage, RulePages};
 +use rule_pages::PageCapture;
++#[path = "rule_provider_reader.rs"]
++mod reader;
 +type ParsedPayload = (Box<dyn RuleSet>, RuleSetFormat, Option<Arc<RulePages>>, u64, Option<bool>);
  
  // ---------------------------------------------------------------------------
  // Public types
-@@ -86,6 +91,10 @@
+@@ -86,6 +93,10 @@
  /// protected by a short-held `RwLock` (just a pointer swap on write);
  /// refresh parse work runs on a blocking thread (ADR-0008 §7 sub-area 3).
  pub struct RuleProvider {
@@ -5087,7 +5089,7 @@
      pub name: String,
      pub provider_type: ProviderType,
      pub behavior: RuleSetBehavior,
-@@ -220,6 +229,19 @@
+@@ -220,6 +231,19 @@
  }
  
  impl RuleProvider {
@@ -5107,7 +5109,7 @@
      /// Return a snapshot of the current rule set.
      ///
      /// A snapshot is detached from later `refresh()`es — anything that must
-@@ -263,6 +285,7 @@
+@@ -263,6 +287,7 @@
      /// databases the initial load saw. Refresh callers therefore cannot
      /// accidentally pass a different (e.g. empty) context.
      pub async fn refresh(&self) -> Result<()> {
@@ -5115,17 +5117,21 @@
          let refreshed = self.fetch_and_install().await;
          if let Err(e) = &refreshed {
              self.logbook_failed(&format!("{e:#}"));
-@@ -271,6 +294,7 @@
+@@ -271,19 +296,23 @@
      }
  
      async fn fetch_and_install(&self) -> Result<()> {
+-        let bytes = match self.provider_type {
 +        let operation = self.binding.begin().map_err(anyhow::Error::msg)?;
-         let bytes = match self.provider_type {
++        let source = match self.provider_type {
              ProviderType::Http => {
                  fetch_http_async(
-@@ -280,10 +304,13 @@
+                     &self.vehicle,
+                     self.fetch.proxy.as_ref(),
+                     &self.fetch.headers,
                  )
-                 .await?
+-                .await?
++                .await.map(|bytes| reader::Source::bytes(Arc::new(bytes)))?
              }
 -            ProviderType::File => tokio::fs::read(&self.vehicle)
 -                .await
@@ -5133,7 +5139,7 @@
 -            ProviderType::Inline => return Ok(()),
 +            ProviderType::File => {
 +                let path = self.vehicle.clone(); let held = operation.clone();
-+                crate::spawn_blocking_with_current_dispatcher(move || { let _operation = held; std::fs::read(path) }).await
++                reader::spawn_owned(&self.binding, move || { let _operation = held; reader::Source::open(Path::new(&path)) })?.await
 +                    .map_err(|error| anyhow!("provider read task: {error}"))?
 +                    .with_context(|| format!("reading provider file {}", self.vehicle))?
 +            }
@@ -5141,16 +5147,16 @@
          };
          // Generation taken when the fetch completes: under the write lock
          // an older refresh that finishes after a newer one already wrote
-@@ -293,7 +320,7 @@
+@@ -293,7 +322,7 @@
              reason = "identity on 64-bit; narrows u64 on targets without 64-bit atomics"
          )]
          let gen: u64 = self.refresh_gen.fetch_add(1, Ordering::Relaxed).into();
 -        self.install_payload(Arc::new(bytes), gen).await
-+        self.install_payload_with_operation(Arc::new(bytes), gen, operation).await
++        self.install_source_with_operation(source, gen, operation).await
      }
  
      /// Install the startup download a deadline left running. `Ok(false)`
-@@ -313,72 +340,39 @@
+@@ -313,72 +342,43 @@
      /// Parse fetched payload bytes on a blocking thread, persist them, and
      /// install them as refresh generation `gen`.
      async fn install_payload(&self, bytes: Arc<Vec<u8>>, gen: u64) -> Result<()> {
@@ -5169,14 +5175,23 @@
 -            // initial-load-era file (issue #543). The
 -            // write+rename runs on this blocking thread: synchronous fs
 -            // I/O on the async worker can stall the executor (issue #621).
+-            if let Some(path) = &cache_path {
+-                let mut written_gen = cache_write_lock.lock();
+-                if *written_gen < gen && write_cache(path, &bytes) {
+-                    *written_gen = gen;
+-                }
 +        let _refresh = if self.binding.observed() { Some(self.refresh_lock.try_lock().map_err(|_| anyhow!("providerBusy"))?) } else { None };
 +        let operation = self.binding.begin().map_err(anyhow::Error::msg)?;
 +        self.install_payload_with_operation(bytes, gen, operation).await
 +    }
 +    async fn install_payload_with_operation(&self, bytes: Arc<Vec<u8>>, gen: u64,
 +        operation: Arc<dyn crate::provider_events::ProviderLease>) -> Result<()> {
-+        let hash = hash_payload(&bytes);
-+        if !self.binding.observed() && *self.content_hash.lock() == Some(hash) {
++        self.install_source_with_operation(reader::Source::bytes(bytes), gen, operation).await
++    }
++    async fn install_source_with_operation(&self, source: reader::Source, gen: u64,
++        operation: Arc<dyn crate::provider_events::ProviderLease>) -> Result<()> {
++        let hash = source.as_bytes().map(hash_payload);
++        if !self.binding.observed() && hash.is_some() && *self.content_hash.lock() == hash {
 +            if *self.install_gen.lock() >= gen { return if self.binding.observed() { Err(anyhow!("supersededProviderUpdate")) } else { Ok(()) }; }
 +            operation.commit(false, &mut || { *self.install_gen.lock() = gen; self.touch(); }).map_err(anyhow::Error::msg)?;
 +            self.logbook_updated(Some(self.rule_count()), self.rule_count());
@@ -5185,20 +5200,16 @@
 +        let behavior = self.behavior; let strict = self.strict; let ctx = self.ctx.clone(); let format = self.format;
 +        let binding = self.binding.clone(); let cache_path = self.cache_path.clone(); let cache_write_lock = self.cache_write_lock.clone();
 +        let held = operation.clone(); let previous_pages = self.page_snapshot(); let previous_format = self.format();
-+        let parsed = crate::spawn_blocking_with_current_dispatcher(move || {
++        let parsed = reader::spawn_owned(&self.binding, move || {
 +            let _operation = held;
-+            let mut parsed = parse_for_provider(&bytes, behavior, format, &ctx, strict, &binding)?;
++            let mut parsed = source.parse(behavior, format, &ctx, strict, &binding)?;
 +            parsed.4 = match (&previous_pages, &parsed.2) {
 +                (Some(previous), Some(candidate)) => Some(previous_format != parsed.1 || !previous.same_entries(candidate).map_err(anyhow::Error::msg)?),
 +                _ => None,
 +            };
-             if let Some(path) = &cache_path {
--                let mut written_gen = cache_write_lock.lock();
--                if *written_gen < gen && write_cache(path, &bytes) {
--                    *written_gen = gen;
--                }
++            if let (Some(path), Some(bytes)) = (&cache_path, source.as_bytes()) {
 +                let mut written = cache_write_lock.lock();
-+                if *written < gen && write_cache(path, &bytes) { *written = gen; }
++                if *written < gen && write_cache(path, bytes) { *written = gen; }
              }
              Ok::<_, anyhow::Error>(parsed)
 -        })
@@ -5245,7 +5256,7 @@
 -        *installed = gen;
 -        self.touch();
 -        debug!(provider = %self.name, "rule-provider refreshed: {} rules", count);
-+        }).await.map_err(|error| anyhow!("parse task failed: {error}"))??;
++        })?.await.map_err(|error| anyhow!("parse task failed: {error}"))??;
 +        let count = parsed.0.len();
 +        let previous = self.filled.load(Ordering::Relaxed).then(|| self.rule_count());
 +        self.install_parsed(parsed, Some(gen), operation)?;
@@ -5253,7 +5264,7 @@
          self.logbook_updated(previous, count);
          Ok(())
      }
-@@ -429,7 +423,7 @@
+@@ -429,7 +429,7 @@
          if matches!(owed, InitialFetch::Settled) {
              return None;
          }
@@ -5262,7 +5273,7 @@
      }
  
      fn owe(&self, owed: InitialFetch) {
-@@ -457,6 +451,7 @@
+@@ -457,6 +457,7 @@
      /// Atomically install a freshly-parsed rule set (initial fill after an
      /// acquisition-then-parse load, or a refresh), with the format its
      /// payload parsed as.
@@ -5270,7 +5281,7 @@
      fn swap_rules(&self, (rules, format): (Box<dyn RuleSet>, RuleSetFormat)) {
          *self.rules.write() = Arc::from(rules);
          *self.payload_format.lock() = format;
-@@ -465,9 +460,27 @@
+@@ -465,9 +466,27 @@
      }
  
      /// [`Self::swap_rules`] with a payload fetched or read for this load.
@@ -5300,7 +5311,54 @@
      }
  }
  
-@@ -706,9 +719,9 @@
+@@ -576,7 +595,7 @@
+         self.entries.insert(name, Prefetched::Fresh(bytes));
+     }
+ 
+-    /// Every acquired payload. Failed and still-running downloads have none.
++    /// Byte snapshots used by geo scanning. Upstream MRS file sources contain only domain/IP sets and need no geo scan.
+     pub fn iter(&self) -> impl Iterator<Item = (&str, &[u8])> {
+         self.entries
+             .iter()
+@@ -590,8 +609,12 @@
+ 
+ /// How [`prefetch_payloads`] acquired one provider's payload.
+ enum Prefetched {
+-    /// Bytes parsed as-is: a `file` payload, or one a caller supplied.
++    /// Bytes a caller supplied, parsed as-is.
+     Fresh(Vec<u8>),
++    /// A `file` payload opened by the prefetch: upstream MRS keeps its descriptor, other formats their bytes.
++    Opened(reader::Source),
++    /// An http provider's on-disk cache, opened without a request.
++    CachedFile { source: reader::Source, modified: Option<SystemTime> },
+     /// An http download that just completed. The first load pass that
+     /// parses it writes the provider's cache, so the cache only ever holds
+     /// a payload that parsed.
+@@ -599,11 +622,6 @@
+         bytes: Vec<u8>,
+         persisted: AtomicBool,
+     },
+-    /// An http provider's on-disk cache, read without a request.
+-    Cached {
+-        bytes: Vec<u8>,
+-        modified: Option<SystemTime>,
+-    },
+     /// The download failed; the load pass reports it.
+     Failed(String),
+     /// Still downloading at the fetch deadline.
+@@ -613,9 +631,10 @@
+ impl Prefetched {
+     fn bytes(&self) -> Option<&[u8]> {
+         match self {
+-            Self::Fresh(bytes) | Self::Downloaded { bytes, .. } | Self::Cached { bytes, .. } => {
++            Self::Fresh(bytes) | Self::Downloaded { bytes, .. } => {
+                 Some(bytes)
+             }
++            Self::Opened(source) | Self::CachedFile { source, .. } => source.as_bytes(),
+             Self::Failed(_) | Self::Pending(_) => None,
+         }
+     }
+@@ -706,9 +725,9 @@
      let deadline_at = deadline.and_then(|d| std::time::Instant::now().checked_add(d));
      let worker_board = Arc::clone(&board);
      let dispatch = tracing::dispatcher::get_default(Clone::clone);
@@ -5313,7 +5371,7 @@
              tracing::dispatcher::with_default(&dispatch, || {
                  let _abandon = AbandonRemaining(Arc::clone(&worker_board), count);
                  let runtime = match tokio::runtime::Builder::new_current_thread()
-@@ -721,23 +734,36 @@
+@@ -721,23 +740,36 @@
                          return;
                      }
                  };
@@ -5355,7 +5413,16 @@
              });
          });
      if let Err(e) = spawned {
-@@ -879,7 +905,7 @@
+@@ -864,7 +896,7 @@
+     let mut downloads = Vec::new();
+     for (name, cfg) in raw_providers {
+         let entry = match cfg.provider_type.as_str() {
+-            "file" => read_file_payload(name, cfg, cache_dir).map(Prefetched::Fresh),
++            "file" => read_file_payload(name, cfg, cache_dir).map(Prefetched::Opened),
+             "http" => {
+                 let proxy = match effective_download_proxy(cfg, default_proxy, lookup) {
+                     Ok(p) => p,
+@@ -879,7 +911,7 @@
                  };
                  match http_source(name, cfg, cache_dir) {
                      Err(e) => Err(e),
@@ -5364,7 +5431,45 @@
                          Some(cached) => Ok(cached),
                          None if crate::is_offline_validate() => {
                              Ok(Prefetched::Failed(offline_miss(url)))
-@@ -1216,21 +1242,8 @@
+@@ -913,10 +945,10 @@
+     name: &str,
+     cfg: &RawRuleProvider,
+     cache_dir: Option<&Path>,
+-) -> Result<Vec<u8>> {
++) -> Result<reader::Source> {
+     let path = resolve_path(cfg, cache_dir, name, false)?
+         .ok_or_else(|| anyhow!("file provider '{name}' requires a 'path'"))?;
+-    std::fs::read(&path).with_context(|| format!("reading provider file {}", path.display()))
++    reader::Source::open(&path).with_context(|| format!("reading provider file {}", path.display()))
+ }
+ 
+ /// An http provider's `url:` and resolved cache location.
+@@ -935,11 +967,11 @@
+ /// The on-disk cache of an http provider, if it has a readable one.
+ fn read_cache(cache_path: Option<&Path>) -> Option<Prefetched> {
+     let path = cache_path?;
+-    match std::fs::read(path) {
+-        Ok(bytes) => {
++    match reader::Source::open(path) {
++        Ok(source) => {
+             debug!("rule-provider cache hit: {}", path.display());
+-            let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+-            Some(Prefetched::Cached { bytes, modified })
++            let modified = source.modified();
++            Some(Prefetched::CachedFile { source, modified })
+         }
+         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+         Err(e) => {
+@@ -1186,7 +1218,7 @@
+             cache_dir,
+             behavior,
+             ctx,
+-            prefetched.and_then(Prefetched::bytes),
++            prefetched,
+             strict,
+         ),
+         "http" => load_http(
+@@ -1216,21 +1248,8 @@
  }
  
  /// Parse payload bytes into a rule set, honoring `strict` per-entry: strict
@@ -5387,7 +5492,7 @@
  
  fn load_inline(
      name: &str,
-@@ -1250,7 +1263,6 @@
+@@ -1250,7 +1269,6 @@
              "rule-provider '{name}': inline type requires `payload:`"
          ))
      })?;
@@ -5395,7 +5500,7 @@
      // `format:` does not apply to a payload written in the config itself,
      // but a declared one is still what the provider reports.
      let declared = parse_explicit_format(cfg)
-@@ -1268,8 +1280,13 @@
+@@ -1268,8 +1286,13 @@
          ctx.clone(),
          None,
          None,
@@ -5411,28 +5516,59 @@
      Ok(provider)
  }
  
-@@ -1316,7 +1333,7 @@
+@@ -1279,7 +1302,7 @@
+     cache_dir: Option<&Path>,
+     behavior: RuleSetBehavior,
+     ctx: &ParserContext,
+-    prefetched: Option<&[u8]>,
++    prefetched: Option<&Prefetched>,
+     strict: bool,
+ ) -> Result<RuleProvider, LoadError> {
+     if cfg.interval.is_some_and(|i| i > 0) {
+@@ -1316,29 +1339,21 @@
          // A file provider's path *is* the payload source — `refresh()`
          // re-reads it; there is no separate cache to write.
          None,
 -    );
+-    let bytes_owned;
+-    let bytes: &[u8] = match prefetched {
+-        Some(b) => b,
+-        None => match std::fs::read(&path) {
+-            Ok(b) => {
+-                bytes_owned = b;
+-                &bytes_owned
+-            }
+-            // Move the empty provider into the error so the caller can
+-            // register it — the name stays resolvable for `RULE-SET` and a
+-            // manual refresh re-reads the path.
+-            Err(e) => {
+-                return Err(LoadError::Acquisition(
+-                    Box::new(provider),
+-                    anyhow!(e).context(format!("reading provider file {}", path.display())),
+-                ));
+-            }
 +    )?;
-     let bytes_owned;
-     let bytes: &[u8] = match prefetched {
-         Some(b) => b,
-@@ -1336,9 +1353,8 @@
-             }
++    let acquired;
++    // A failed or still-pending prefetch has nothing to read; the path itself is read, as before.
++    let entry = match prefetched.filter(|entry| !matches!(entry, Prefetched::Failed(_) | Prefetched::Pending(_))) {
++        Some(entry) => entry,
++        None => match reader::Source::open(&path) {
++            Ok(source) => { acquired = Prefetched::Opened(source); &acquired }
++            // The empty provider moves into the error so the caller registers it: the name stays resolvable for
++            // `RULE-SET` and a manual refresh re-reads the path.
++            Err(error) => return Err(LoadError::Acquisition(Box::new(provider),
++                anyhow!(error).context(format!("reading provider file {}", path.display())))),
          },
      };
 -    let parsed = parse_bytes_to_ruleset_with_format(bytes, behavior, explicit_format, ctx, strict)
 -        .map_err(LoadError::Payload)?;
 -    provider.fill_fresh(parsed);
-+    let parsed = parse_for_provider(bytes, behavior, explicit_format, ctx, strict, &provider.binding).map_err(LoadError::Payload)?;
++    let parsed = parse_prefetched(entry, behavior, explicit_format, ctx, strict, &provider.binding).map_err(LoadError::Payload)?;
 +    provider.fill_fresh(parsed).map_err(LoadError::Payload)?;
      Ok(provider)
  }
  
-@@ -1391,12 +1407,12 @@
+@@ -1391,12 +1406,12 @@
          ctx.clone(),
          explicit_format,
          cache_path.clone(),
@@ -5447,7 +5583,7 @@
                  Some(cached) => Ok(cached),
                  None if crate::is_offline_validate() => Err(anyhow!(offline_miss(url))),
                  None => fetch_http_blocking(url, download_proxy, &headers).map(|bytes| {
-@@ -1419,14 +1435,14 @@
+@@ -1419,23 +1434,26 @@
          }
      };
      let parse = |bytes: &[u8]| {
@@ -5458,6 +5594,9 @@
          Prefetched::Fresh(bytes) => {
 -            provider.fill_fresh(parse(bytes).map_err(LoadError::Payload)?);
 +            provider.fill_fresh(parse(bytes).map_err(LoadError::Payload)?).map_err(LoadError::Payload)?;
++        }
++        Prefetched::Opened(source) => {
++            provider.fill_fresh(source.parse(behavior, explicit_format, ctx, strict, &provider.binding).map_err(LoadError::Payload)?).map_err(LoadError::Payload)?;
          }
          Prefetched::Downloaded { bytes, persisted } => {
 -            provider.fill_fresh(parse(bytes).map_err(LoadError::Payload)?);
@@ -5465,16 +5604,18 @@
              if let Some(path) = &cache_path {
                  if !persisted.swap(true, Ordering::Relaxed) {
                      write_cache(path, bytes);
-@@ -1435,7 +1451,7 @@
+                 }
+             }
          }
-         Prefetched::Cached { bytes, modified } => match parse(bytes) {
+-        Prefetched::Cached { bytes, modified } => match parse(bytes) {
++        Prefetched::CachedFile { modified, .. } => match parse_prefetched(entry, behavior, explicit_format, ctx, strict, &provider.binding) {
              Ok(parsed) => {
 -                provider.swap_rules(parsed);
 +                provider.install_parsed(parsed, None, provider.binding.begin().map_err(|error| LoadError::Payload(anyhow!(error)))?).map_err(LoadError::Payload)?;
                  // Report the cache's age, not the load time.
                  if let Some(modified) = modified {
                      provider.set_updated_at(*modified);
-@@ -1489,14 +1505,17 @@
+@@ -1489,14 +1507,17 @@
      ctx: ParserContext,
      format: Option<RuleSetFormat>,
      cache_path: Option<PathBuf>,
@@ -5494,7 +5635,7 @@
          name: name.to_string(),
          provider_type,
          behavior,
-@@ -1518,7 +1537,7 @@
+@@ -1518,7 +1539,7 @@
          initial_fetch: parking_lot::Mutex::new(InitialFetch::Settled),
          load_note: parking_lot::Mutex::new(None),
          filled: AtomicBool::new(false),
@@ -5503,7 +5644,7 @@
  }
  
  /// Minimal provider for supervisor/refresh tests — an empty domain ruleset
-@@ -1552,7 +1571,7 @@
+@@ -1552,7 +1573,7 @@
          ParserContext::empty(),
          None,
          None,
@@ -5512,7 +5653,7 @@
      provider.swap_rules((
          meow_rules::build_rule_set(RuleSetBehavior::Domain, &[], &ParserContext::empty()),
          RuleSetFormat::Yaml,
-@@ -1582,16 +1601,14 @@
+@@ -1582,16 +1603,14 @@
  /// Parse payload bytes into a rule set, returned with the format they
  /// parsed as: MRS when declared or when the bytes carry the MRS magic,
  /// otherwise the declared format (YAML when undeclared).
@@ -5534,7 +5675,7 @@
              .map(|rules| (rules, RuleSetFormat::Mrs))
              .map_err(|e| anyhow!("mrs parse error: {e}"));
      }
-@@ -1603,11 +1620,11 @@
+@@ -1603,11 +1622,11 @@
          RuleSetFormat::Mrs => unreachable!("handled above"),
      };
      if strict {
@@ -5548,7 +5689,7 @@
  }
  
  fn parse_yaml_payload(raw: &str, strict: bool) -> Result<Vec<String>> {
-@@ -1673,6 +1690,18 @@
+@@ -1673,6 +1692,18 @@
      name: &str,
      emit_warnings: bool,
  ) -> Result<Option<PathBuf>> {
@@ -5567,7 +5708,7 @@
      // Only file (payload location) and http (on-disk cache) providers ever
      // read the resolved path; other types must not fail on a stray `path:`.
      if !matches!(cfg.provider_type.as_str(), "file" | "http") {
-@@ -3312,3 +3341,41 @@
+@@ -3312,3 +3343,51 @@
          assert_eq!(origin.hits(), 1, "a later commit does not fetch again");
      }
  }
@@ -5583,8 +5724,18 @@
 +    let roots = scope.provider_roots().map_err(anyhow::Error::msg)?.ok_or_else(|| anyhow!("providerCacheRootMissing"))?;
 +    PageCapture::create(&roots.cache_root).map(Some).map_err(anyhow::Error::msg)
 +}
++fn parse_prefetched(entry: &Prefetched, behavior: RuleSetBehavior, format: Option<RuleSetFormat>, ctx: &ParserContext, strict: bool,
++    binding: &crate::provider_events::ProviderBinding) -> Result<ParsedPayload> {
++    match entry {
++        Prefetched::Opened(source) | Prefetched::CachedFile { source, .. } => source.parse(behavior, format, ctx, strict, binding),
++        _ => parse_for_provider(entry.bytes().ok_or_else(|| anyhow!("providerPayloadUnavailable"))?, behavior, format, ctx, strict, binding),
++    }
++}
 +fn parse_for_provider(bytes: &[u8], behavior: RuleSetBehavior, format: Option<RuleSetFormat>, ctx: &ParserContext, strict: bool,
 +    binding: &crate::provider_events::ProviderBinding) -> Result<ParsedPayload> {
++    if bytes.starts_with(&meow_rules::mrs_parser::ZSTD_MAGIC) {
++        return reader::parse_upstream(std::io::Cursor::new(bytes), behavior, strict, binding, hash_payload(bytes));
++    }
 +    let capture = capture_pages(binding)?;
 +    let sink = capture.as_ref().map(|capture| capture.clone() as Arc<dyn meow_rules::rule_set::AcceptedEntrySink>);
 +    let (rules, format) = parse_bytes_with_sink(bytes, behavior, format, ctx, strict, sink)?;
@@ -5609,6 +5760,539 @@
 +    let (_, seed) = owned_http_paths(cfg, name, &roots).ok()?;
 +    read_cache(seed.as_deref())
 +}
+--- /dev/null
++++ b/crates/meow-config/src/rule_provider_reader.rs
+@@ -0,0 +1,175 @@
++use std::{
++    collections::hash_map::DefaultHasher,
++    fs::{File, OpenOptions},
++    hash::{Hash, Hasher},
++    io::{self, Read, Seek, SeekFrom},
++    path::Path,
++    sync::Arc,
++    time::SystemTime,
++};
++
++use anyhow::{anyhow, Result};
++use meow_rules::{mrs_parser::{MrsError, MrsReadControl, UpstreamRuleSetReader, ZSTD_MAGIC}, ParserContext, RuleSetBehavior, RuleSetFormat};
++
++use super::{ParsedPayload, capture_pages};
++
++pub(super) fn spawn_owned<F, R>(binding: &crate::provider_events::ProviderBinding, work: F) -> Result<tokio::task::JoinHandle<R>>
++where F: FnOnce() -> R + Send + 'static, R: Send + 'static {
++    let dispatch = tracing::dispatcher::get_default(Clone::clone);
++    let work = move || tracing::dispatcher::with_default(&dispatch, work);
++    let Some(scope) = binding.scope() else { return Ok(crate::owned_load::spawn_blocking(work)); };
++    scope.spawn_blocking_owned(work).map_err(anyhow::Error::msg)
++}
++
++#[derive(Clone)]
++pub(super) struct Source {
++    body: Body,
++    modified: Option<SystemTime>,
++}
++
++#[derive(Clone)]
++enum Body {
++    Bytes(Arc<Vec<u8>>),
++    Upstream { file: Arc<parking_lot::Mutex<File>>, length: u64 },
++}
++
++impl Source {
++    pub(super) fn bytes(bytes: Arc<Vec<u8>>) -> Self {
++        Self { body: Body::Bytes(bytes), modified: None }
++    }
++
++    pub(super) fn open(path: &Path) -> io::Result<Self> {
++        let mut options = OpenOptions::new();
++        options.read(true);
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::OpenOptionsExt;
++            options.custom_flags(libc::O_NONBLOCK);
++        }
++        let mut file = options.open(path)?;
++        let metadata = file.metadata()?;
++        if !metadata.is_file() {
++            return Err(io::Error::new(io::ErrorKind::InvalidInput, "provider source is not a regular file"));
++        }
++        let modified = metadata.modified().ok();
++        let scope = crate::owned_load::OwnedLoadScope::current();
++        let check = || {
++            if scope.as_ref().is_some_and(|scope| scope.is_cancelled()) {
++                Err(io::Error::other(MrsError::Cancelled))
++            } else { Ok(()) }
++        };
++        check()?;
++        let mut prefix = Vec::with_capacity(4);
++        Read::by_ref(&mut file).take(4).read_to_end(&mut prefix)?;
++        check()?;
++        file.seek(SeekFrom::Start(0))?;
++        if prefix == ZSTD_MAGIC {
++            return Ok(Self { body: Body::Upstream { file: Arc::new(parking_lot::Mutex::new(file)), length: metadata.len() }, modified });
++        }
++        let mut bytes = Vec::new();
++        let mut buffer = [0; 64 * 1024];
++        loop {
++            check()?;
++            let count = file.read(&mut buffer)?;
++            check()?;
++            if count == 0 { break; }
++            bytes.extend_from_slice(&buffer[..count]);
++        }
++        Ok(Self { body: Body::Bytes(Arc::new(bytes)), modified })
++    }
++
++    pub(super) fn modified(&self) -> Option<SystemTime> { self.modified }
++
++    pub(super) fn as_bytes(&self) -> Option<&[u8]> {
++        match &self.body { Body::Bytes(bytes) => Some(bytes), Body::Upstream { .. } => None }
++    }
++
++    pub(super) fn parse(&self, behavior: RuleSetBehavior, format: Option<RuleSetFormat>, ctx: &ParserContext, strict: bool,
++        binding: &crate::provider_events::ProviderBinding) -> Result<ParsedPayload> {
++        match &self.body {
++            Body::Bytes(bytes) => super::parse_for_provider(bytes, behavior, format, ctx, strict, binding),
++            Body::Upstream { file, length } => {
++                let mut file = file.lock();
++                file.seek(SeekFrom::Start(0))?;
++                let mut input = Fingerprinted::new(&mut *file, *length)?;
++                let (rules, pages) = build_upstream(&mut input, behavior, strict, binding)?;
++                let consumed = input.consumed;
++                let hash = input.hash.finish();
++                drop(input);
++                let metadata = file.metadata()?;
++                if consumed != *length || metadata.len() != *length || metadata.modified().ok() != self.modified {
++                    return Err(anyhow!("providerFileChangedDuringRead"));
++                }
++                Ok((rules, RuleSetFormat::Mrs, pages, hash, None))
++            }
++        }
++    }
++}
++
++struct Fingerprinted<R> {
++    inner: R,
++    hash: DefaultHasher,
++    consumed: u64,
++}
++
++impl<R> Fingerprinted<R> {
++    fn new(inner: R, length: u64) -> io::Result<Self> {
++        let length = usize::try_from(length).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "provider file length exceeds address space"))?;
++        let mut hash = DefaultHasher::new();
++        length.hash(&mut hash);
++        Ok(Self { inner, hash, consumed: 0 })
++    }
++}
++
++impl<R: Read> Read for Fingerprinted<R> {
++    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
++        let count = self.inner.read(output)?;
++        self.hash.write(&output[..count]);
++        self.consumed += count as u64;
++        Ok(count)
++    }
++}
++
++/// The provider-facing MRS failure, kept typed for callers. `MrsError` already renders its own cause, so no
++/// source is chained and `{:#}` prints the whole message once.
++#[derive(Debug)]
++struct MrsParseError(MrsError);
++
++impl std::fmt::Display for MrsParseError {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        write!(formatter, "mrs parse error: {}", self.0)
++    }
++}
++
++impl std::error::Error for MrsParseError {}
++
++fn mrs_error(error: MrsError) -> anyhow::Error {
++    anyhow::Error::new(MrsParseError(error))
++}
++
++fn build_upstream<R: Read>(source: R, behavior: RuleSetBehavior, strict: bool,
++    binding: &crate::provider_events::ProviderBinding) -> Result<(Box<dyn meow_rules::RuleSet>, Option<Arc<super::RulePages>>)> {
++    let scope = binding.scope();
++    let limits = MrsReadControl::default();
++    let control = MrsReadControl::new(limits.compressed_limit(), limits.expanded_limit(),
++        move || scope.as_ref().is_some_and(|scope| scope.is_cancelled()));
++    control.check().map_err(mrs_error)?;
++    let capture = capture_pages(binding)?;
++    let sink = capture.as_ref().map(|capture| capture.clone() as Arc<dyn meow_rules::rule_set::AcceptedEntrySink>);
++    let reader = UpstreamRuleSetReader::open_from_reader(source, control.clone()).map_err(mrs_error)?;
++    let rules = meow_rules::rule_set::build_rule_set_from_upstream_reader(reader, Some(behavior), strict, sink).map_err(mrs_error)?;
++    control.check().map_err(mrs_error)?;
++    let pages = capture.map(|capture| capture.finish(rules.len())).transpose().map_err(anyhow::Error::msg)?;
++    control.check().map_err(mrs_error)?;
++    Ok((rules, pages))
++}
++
++pub(super) fn parse_upstream<R: Read>(source: R, behavior: RuleSetBehavior, strict: bool,
++    binding: &crate::provider_events::ProviderBinding, hash: u64) -> Result<ParsedPayload> {
++    let (rules, pages) = build_upstream(source, behavior, strict, binding)?;
++    Ok((rules, RuleSetFormat::Mrs, pages, hash, None))
++}
++
++#[cfg(test)]
++#[path = "rule_provider_reader_tests.rs"]
++mod tests;
+--- /dev/null
++++ b/crates/meow-config/src/rule_provider_reader_tests.rs
+@@ -0,0 +1,352 @@
++use super::*;
++use crate::rule_provider as provider;
++use crate::{owned_load::{LoadContext, OwnedLoadScope, OwnedWork, ProviderRoots}, provider_events::{ProviderBinding, ProviderIdentity, ProviderKind, ProviderLease, ProviderObserver}};
++use std::{collections::HashMap, io::{Cursor, Write}, sync::atomic::{AtomicU64, Ordering}, time::Duration};
++
++fn binding() -> ProviderBinding { ProviderBinding::capture(ProviderKind::Rule, "reader15").unwrap() }
++
++fn parse(source: &Source, binding: &ProviderBinding) -> Result<ParsedPayload> {
++    source.parse(RuleSetBehavior::Domain, None, &ParserContext::empty(), true, binding)
++}
++
++fn mrs(error: &anyhow::Error) -> Option<&MrsError> { error.downcast_ref::<MrsParseError>().map(|error| &error.0) }
++
++fn changed(error: &anyhow::Error) -> bool { error.to_string() == "providerFileChangedDuringRead" }
++
++struct Observer(Arc<AtomicU64>);
++struct Lease { epoch: u64, current: Arc<AtomicU64> }
++impl ProviderLease for Lease {
++    fn commit(&self, _changed: bool, install: &mut dyn FnMut()) -> Result<(), String> {
++        if self.current.load(Ordering::Acquire) != self.epoch { return Err("staleProviderSource".into()); }
++        install(); Ok(())
++    }
++}
++impl ProviderObserver for Observer {
++    fn validate(&self, _kind: ProviderKind, _name: &str) -> Result<(), String> { Ok(()) }
++    fn begin(&self, _identity: &ProviderIdentity) -> Result<Arc<dyn ProviderLease>, String> {
++        Ok(Arc::new(Lease { epoch: self.0.load(Ordering::Acquire), current: self.0.clone() }))
++    }
++}
++struct Context { roots: ProviderRoots, epoch: Arc<AtomicU64> }
++impl LoadContext for Context {
++    fn provider_roots(&self) -> Option<ProviderRoots> { Some(self.roots.clone()) }
++    fn provider_observer(&self) -> Option<Arc<dyn ProviderObserver>> { Some(Arc::new(Observer(self.epoch.clone()))) }
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++fn owner(read: &Path, cache: &Path, epoch: Arc<AtomicU64>) -> Arc<OwnedLoadScope> {
++    OwnedLoadScope::with_context(Arc::new(Context { roots: ProviderRoots { resource_read_root: Some(read.to_owned()), cache_root: cache.to_owned() }, epoch }))
++}
++fn cfg(path: &Path) -> crate::raw::RawRuleProvider {
++    crate::raw::RawRuleProvider { provider_type: "file".into(), behavior: "domain".into(), path: Some(path.to_string_lossy().into_owned()),
++        format: None, url: None, interval: None, proxy: None, header: None, payload: None }
++}
++
++#[test]
++fn reader15_prefetch_retains_open_descriptor_across_path_replacement_and_repeated_parse() {
++    let directory = tempfile::tempdir().unwrap(); let path = directory.path().join("rules.mrs");
++    std::fs::write(&path, DOMAIN).unwrap();
++    let source = Source::open(&path).unwrap(); assert!(source.as_bytes().is_none());
++    let held = directory.path().join("old.mrs"); std::fs::rename(&path, &held).unwrap();
++    std::fs::write(&path, INVALID_UTF8).unwrap();
++    for _ in 0..2 {
++        let parsed = parse(&source, &binding()).unwrap();
++        assert_eq!(parsed.0.len(), 2); assert_eq!(parsed.1, RuleSetFormat::Mrs);
++        assert!(parsed.0.matches_domain("a.test")); assert_eq!(parsed.3, provider::hash_payload(DOMAIN));
++    }
++    let entry = provider::Prefetched::Opened(source);
++    let loaded = provider::load_file("reader15", &cfg(&path), Some(directory.path()), RuleSetBehavior::Domain,
++        &ParserContext::empty(), Some(&entry), true).unwrap_or_else(|error| panic!("{error}"));
++    assert_eq!(loaded.rule_count(), 2);
++}
++
++#[test]
++fn reader15_file_and_borrowed_http_bytes_use_same_typed_malformed_errors_and_actual_counts() {
++    let directory = tempfile::tempdir().unwrap(); let path = directory.path().join("rules.mrs");
++    for bytes in [DOMAIN, SOURCE_COUNT] {
++        std::fs::write(&path, bytes).unwrap(); let file = parse(&Source::open(&path).unwrap(), &binding()).unwrap();
++        let borrowed = provider::parse_for_provider(bytes, RuleSetBehavior::Domain, None, &ParserContext::empty(), true, &binding()).unwrap();
++        assert_eq!(file.0.len(), 2); assert_eq!(borrowed.0.len(), 2); assert_eq!(file.3, borrowed.3);
++    }
++    std::fs::write(&path, INVALID_UTF8).unwrap();
++    let error = parse(&Source::open(&path).unwrap(), &binding()).err().unwrap();
++    assert!(matches!(mrs(&error), Some(MrsError::Utf8("domain_set_leaf", _))));
++    let bytes_error = provider::parse_for_provider(INVALID_UTF8, RuleSetBehavior::Domain, None, &ParserContext::empty(), true, &binding()).err().unwrap();
++    assert!(matches!(mrs(&bytes_error), Some(MrsError::Utf8("domain_set_leaf", _))));
++    let old = meow_rules::rule_set::build_rule_set_from_mrs_with_behavior(INVALID_UTF8, &ParserContext::empty(), Some(RuleSetBehavior::Domain), true).unwrap();
++    assert_eq!(old.len(), 0, "public old byte factory keeps its compatibility policy");
++}
++
++#[test]
++fn reader15_file_ip_ranges_keep_mapped_semantics_and_reject_inverted_before_success() {
++    let directory = tempfile::tempdir().unwrap(); let path = directory.path().join("ip.mrs");
++    std::fs::write(&path, IP_RANGE).unwrap();
++    let source = Source::open(&path).unwrap();
++    let parsed = source.parse(RuleSetBehavior::IpCidr, None, &ParserContext::empty(), true, &binding()).unwrap();
++    let metadata = meow_common::Metadata { dst_ip: Some("192.0.2.8".parse().unwrap()), ..Default::default() };
++    assert!(parsed.0.matches(&metadata, &meow_common::RuleMatchHelper)); assert_eq!(parsed.0.len(), 1);
++    std::fs::write(&path, INVERTED_RANGE).unwrap();
++    let error = Source::open(&path).unwrap().parse(RuleSetBehavior::IpCidr, None, &ParserContext::empty(), true, &binding()).err().unwrap();
++    assert!(matches!(mrs(&error), Some(MrsError::InvalidIpCidrRange { .. })));
++}
++
++#[test]
++fn reader15_text_and_legacy_mrs_keep_full_byte_snapshots_and_old_factory_semantics() {
++    let directory = tempfile::tempdir().unwrap(); let path = directory.path().join("rules");
++    let text = b"payload:\n  - a.test\n  - b.test\n";
++    std::fs::write(&path, text).unwrap(); let source = Source::open(&path).unwrap();
++    assert_eq!(source.as_bytes().unwrap(), text); assert_eq!(parse(&source, &binding()).unwrap().0.len(), 2);
++    let legacy = meow_rules::mrs_parser::write_ruleset_mrs(meow_rules::mrs_parser::TYPE_DOMAIN, &["a.test", "b.test"]).unwrap();
++    std::fs::write(&path, &legacy).unwrap(); let source = Source::open(&path).unwrap();
++    assert_eq!(source.as_bytes().unwrap(), legacy); assert_eq!(parse(&source, &binding()).unwrap().0.len(), 2);
++    let mut prefetched = provider::PrefetchedPayloads::new();
++    prefetched.entries.insert("text".into(), provider::Prefetched::Opened(Source::bytes(Arc::new(text.to_vec()))));
++    assert_eq!(prefetched.iter().next().unwrap().1, text);
++}
++
++#[tokio::test]
++async fn reader15_real_accepted_page_capture_matches_matcher_and_cleans_rejected_partial_state() {
++    let read = tempfile::tempdir().unwrap(); let cache = tempfile::tempdir().unwrap();
++    let path = read.path().join("rules.mrs"); std::fs::write(&path, DOMAIN).unwrap();
++    let scope = owner(read.path(), cache.path(), Arc::new(AtomicU64::new(1)));
++    scope.run(async {
++        let binding = binding(); let parsed = parse(&Source::open(&path).unwrap(), &binding).unwrap();
++        let pages = parsed.2.as_ref().unwrap(); let page = pages.page(0, 10).unwrap();
++        assert_eq!(page.rule_count, parsed.0.len()); assert_eq!(page.rules, vec!["a.test", "b.test"]);
++        drop(parsed);
++        assert_eq!(std::fs::read_dir(cache.path().join("rule-pages")).unwrap().count(), 0);
++        std::fs::write(&path, INVALID_UTF8).unwrap();
++        assert!(parse(&Source::open(&path).unwrap(), &binding).is_err());
++        assert_eq!(std::fs::read_dir(cache.path().join("rule-pages")).unwrap().count(), 0);
++    }).await;
++    scope.close().await.unwrap();
++}
++
++#[tokio::test]
++async fn reader15_refresh_last_good_generation_and_source_lease_commit_are_preserved() {
++    let read = tempfile::tempdir().unwrap(); let cache = tempfile::tempdir().unwrap();
++    let path = read.path().join("rules.mrs"); std::fs::write(&path, DOMAIN).unwrap();
++    let epoch = Arc::new(AtomicU64::new(1)); let scope = owner(read.path(), cache.path(), epoch.clone());
++    let provider = scope.run(async {
++        let mut output = provider::load_providers(&std::collections::HashMap::from([("reader15".into(), cfg(&path))]),
++            Some(read.path()), &ParserContext::empty(), None, true).unwrap();
++        output.remove("reader15").unwrap()
++    }).await;
++    let old = provider.snapshot();
++    std::fs::write(&path, INVALID_UTF8).unwrap();
++    assert!(provider.refresh_owned().await.is_err());
++    assert!(Arc::ptr_eq(&old, &provider.snapshot())); assert_eq!(provider.rule_count(), 2);
++    std::fs::write(&path, DOMAIN).unwrap();
++    provider.refresh_owned().await.unwrap();
++    let accepted = provider.snapshot(); let gen = *provider.install_gen.lock();
++    let operation = provider.binding.begin().unwrap();
++    let error = provider.install_source_with_operation(Source::open(&path).unwrap(), gen, operation).await.err().unwrap();
++    assert!(error.to_string().contains("supersededProviderUpdate")); assert!(Arc::ptr_eq(&accepted, &provider.snapshot()));
++    let operation = provider.binding.begin().unwrap(); epoch.fetch_add(1, Ordering::AcqRel);
++    assert!(provider.install_source_with_operation(Source::open(&path).unwrap(), gen + 1, operation).await.is_err());
++    assert!(Arc::ptr_eq(&accepted, &provider.snapshot()));
++    drop(provider); scope.close().await.unwrap();
++}
++
++#[tokio::test]
++async fn reader15_scope_cancel_is_typed_and_real_blocking_worker_lease_is_joined() {
++    struct Gate { inner: Cursor<&'static [u8]>, entered: Option<std::sync::mpsc::Sender<()>>, release: std::sync::mpsc::Receiver<()> }
++    impl Read for Gate {
++        fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++            if let Some(entered) = self.entered.take() { entered.send(()).unwrap(); self.release.recv().unwrap(); }
++            self.inner.read(bytes)
++        }
++    }
++    let scope = OwnedLoadScope::new(); let binding = scope.run(async { binding() }).await;
++    let operation = binding.begin().unwrap(); let weak = Arc::downgrade(&operation);
++    let (entered, seen) = std::sync::mpsc::channel(); let (release, wait) = std::sync::mpsc::channel();
++    let captured = binding.clone();
++    let worker = spawn_owned(&binding, move || {
++        let _operation = operation;
++        parse_upstream(Gate { inner: Cursor::new(DOMAIN), entered: Some(entered), release: wait },
++            RuleSetBehavior::Domain, true, &captured, provider::hash_payload(DOMAIN))
++    }).unwrap();
++    tokio::task::spawn_blocking(move || seen.recv_timeout(Duration::from_secs(5)).unwrap()).await.unwrap();
++    scope.cancel();
++    assert!(tokio::time::timeout(Duration::from_millis(25), scope.close()).await.is_err());
++    assert!(weak.upgrade().is_some(), "operation lease is still held by the actual read");
++    release.send(()).unwrap();
++    let error = worker.await.unwrap().err().unwrap();
++    assert!(matches!(mrs(&error), Some(MrsError::Cancelled)));
++    scope.close().await.unwrap(); assert!(weak.upgrade().is_none());
++}
++
++#[test]
++fn reader15_open_regular_file_checks_descriptor_and_rejects_directory() {
++    let directory = tempfile::tempdir().unwrap();
++    let error = Source::open(directory.path()).err().unwrap();
++    if cfg!(unix) { assert_eq!(error.kind(), io::ErrorKind::InvalidInput); }
++}
++
++#[cfg(unix)]
++#[test]
++fn reader15_fifo_is_rejected_without_waiting_for_a_writer() {
++    use std::os::unix::ffi::OsStrExt;
++    let directory = tempfile::tempdir().unwrap(); let fifo = directory.path().join("fifo");
++    let path = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
++    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
++    assert_eq!(Source::open(&fifo).err().unwrap().kind(), io::ErrorKind::InvalidInput);
++}
++
++#[test]
++fn reader15_fingerprints_are_identical_to_original_slice_hash_across_short_reads() {
++    for bytes in [DOMAIN, IP_RANGE, SOURCE_COUNT] {
++        let mut reader = Fingerprinted::new(Cursor::new(bytes), bytes.len() as u64).unwrap(); let mut buffer = [0; 3];
++        while reader.read(&mut buffer).unwrap() != 0 {}
++        assert_eq!(reader.consumed, bytes.len() as u64); assert_eq!(reader.hash.finish(), provider::hash_payload(bytes));
++    }
++}
++
++fn http_cfg(interval: Option<u64>) -> crate::raw::RawRuleProvider {
++    crate::raw::RawRuleProvider { provider_type: "http".into(), behavior: "domain".into(), path: Some("cache.mrs".into()),
++        format: None, url: Some("http://127.0.0.1:9/reader15.mrs".into()), interval, proxy: None, header: None, payload: None }
++}
++
++#[test]
++fn reader15_provider_file_changed_after_open_is_rejected_for_append_rewrite_and_truncate() {
++    let directory = tempfile::tempdir().unwrap(); let path = directory.path().join("rules.mrs");
++    let mut concatenated = DOMAIN.to_vec(); concatenated.extend_from_slice(EMPTY_FRAME);
++    std::fs::write(&path, &concatenated).unwrap();
++    assert_eq!(parse(&Source::open(&path).unwrap(), &binding()).unwrap().0.len(), 2, "an unchanged trailing empty frame is accepted");
++
++    std::fs::write(&path, DOMAIN).unwrap(); let source = Source::open(&path).unwrap();
++    OpenOptions::new().append(true).open(&path).unwrap().write_all(EMPTY_FRAME).unwrap();
++    assert!(changed(&parse(&source, &binding()).err().unwrap()), "appended after open");
++
++    std::fs::write(&path, DOMAIN).unwrap(); let source = Source::open(&path).unwrap();
++    let mut writer = OpenOptions::new().write(true).open(&path).unwrap();
++    writer.set_len(0).unwrap(); writer.write_all(SOURCE_COUNT).unwrap();
++    writer.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_007)).unwrap(); drop(writer);
++    assert_eq!(std::fs::metadata(&path).unwrap().len(), DOMAIN.len() as u64);
++    assert!(changed(&parse(&source, &binding()).err().unwrap()), "truncated and rewritten to the same length after open");
++
++    std::fs::write(&path, DOMAIN).unwrap(); let source = Source::open(&path).unwrap();
++    OpenOptions::new().write(true).open(&path).unwrap().set_len(20).unwrap();
++    assert!(parse(&source, &binding()).is_err(), "truncated after open");
++
++    std::fs::write(&path, DOMAIN).unwrap();
++    let entry = provider::Prefetched::Opened(Source::open(&path).unwrap());
++    OpenOptions::new().append(true).open(&path).unwrap().write_all(EMPTY_FRAME).unwrap();
++    match provider::load_file("reader15", &cfg(&path), Some(directory.path()), RuleSetBehavior::Domain,
++        &ParserContext::empty(), Some(&entry), true) {
++        Err(provider::LoadError::Payload(error)) => assert!(changed(&error), "{error:#}"),
++        _ => panic!("a prefetched file changed after open must not be installed"),
++    }
++}
++
++#[test]
++fn reader15_http_cache_descriptor_reports_cache_age_revalidates_and_ignores_malformed_cache() {
++    let directory = tempfile::tempdir().unwrap(); let path = directory.path().join("cache.mrs");
++    let load = |interval| provider::load_http("reader15", &http_cfg(interval), Some(directory.path()), RuleSetBehavior::Domain,
++        &ParserContext::empty(), None, None, None, true);
++    std::fs::write(&path, DOMAIN).unwrap();
++    OpenOptions::new().write(true).open(&path).unwrap().set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000)).unwrap();
++    let stale = match load(Some(86_400)) { Ok(loaded) => loaded, Err(error) => panic!("{error}") };
++    assert_eq!(stale.rule_count(), 2); assert_eq!(stale.format(), RuleSetFormat::Mrs);
++    assert_eq!(stale.updated_at_secs(), 1_000_000_000);
++    assert!(matches!(*stale.initial_fetch.lock(), provider::InitialFetch::Revalidate));
++    OpenOptions::new().write(true).open(&path).unwrap().set_modified(SystemTime::now()).unwrap();
++    let current = match load(Some(86_400)) { Ok(loaded) => loaded, Err(error) => panic!("{error}") };
++    assert_eq!(current.rule_count(), 2); assert!(matches!(*current.initial_fetch.lock(), provider::InitialFetch::Settled));
++    std::fs::write(&path, INVALID_UTF8).unwrap();
++    match load(Some(86_400)) {
++        Err(provider::LoadError::Acquisition(empty, error)) => {
++            let text = format!("{error:#}");
++            assert!(text.starts_with("ignoring the on-disk cache, which no longer parses: mrs parse error: mrs: invalid UTF-8 in domain_set_leaf"), "{text}");
++            assert_eq!(text.matches("invalid UTF-8").count(), 1, "{text}");
++            assert_eq!(empty.rule_count(), 0); assert!(matches!(*empty.initial_fetch.lock(), provider::InitialFetch::Retry));
++        }
++        _ => panic!("a malformed cache is refetched, never installed or reported as a definition defect"),
++    }
++}
++
++#[test]
++fn reader15_geo_scan_reads_text_sources_and_skips_upstream_descriptors_like_their_bytes() {
++    let directory = tempfile::tempdir().unwrap();
++    let text = directory.path().join("rules.txt"); std::fs::write(&text, b"GEOSITE,reader15\n").unwrap();
++    let upstream = directory.path().join("rules.mrs"); std::fs::write(&upstream, DOMAIN).unwrap();
++    let raw = crate::raw::RawConfig { rule_providers: Some(HashMap::from([("text".to_string(), cfg(&text)), ("mrs".to_string(), cfg(&upstream))])),
++        ..Default::default() };
++    let mut opened = provider::PrefetchedPayloads::new();
++    opened.entries.insert("text".into(), provider::Prefetched::Opened(Source::open(&text).unwrap()));
++    opened.entries.insert("mrs".into(), provider::Prefetched::Opened(Source::open(&upstream).unwrap()));
++    assert_eq!(opened.iter().map(|(name, _)| name).collect::<Vec<_>>(), vec!["text"]);
++    let mut bytes = provider::PrefetchedPayloads::new();
++    bytes.insert("text".into(), b"GEOSITE,reader15\n".to_vec()); bytes.insert("mrs".into(), DOMAIN.to_vec());
++    let lines = crate::collect_geo_scan_lines(&raw, &opened);
++    assert_eq!(lines, crate::collect_geo_scan_lines(&raw, &bytes)); assert_eq!(lines, vec!["GEOSITE,reader15".to_string()]);
++}
++
++#[tokio::test]
++async fn reader15_strict_provider_rejection_names_field_and_reason_once() {
++    let read = tempfile::tempdir().unwrap(); let cache = tempfile::tempdir().unwrap();
++    let scope = owner(read.path(), cache.path(), Arc::new(AtomicU64::new(1)));
++    let path = read.path().join("rules.mrs");
++    for (bytes, behavior, field) in [(INVALID_UTF8, "domain", "invalid UTF-8 in domain_set_leaf"), (INVERTED_RANGE, "ipcidr", "invalid ip-cidr range")] {
++        std::fs::write(&path, bytes).unwrap();
++        let providers = HashMap::from([("reader15".to_string(), crate::raw::RawRuleProvider { behavior: behavior.into(), ..cfg(&path) })]);
++        let error = scope.run(async { provider::load_providers(&providers, Some(read.path()), &ParserContext::empty(), None, true).err().unwrap() }).await;
++        let text = format!("{error:#}");
++        assert!(text.starts_with("rule-provider 'reader15' failed to load (strict mode): mrs parse error: mrs: "), "{text}");
++        assert_eq!(text.matches(field).count(), 1, "{text}"); assert_eq!(text, error.to_string());
++    }
++    scope.close().await.unwrap();
++}
++
++#[tokio::test]
++async fn reader15_refused_lease_keeps_a_failed_acquisition_registered_empty() {
++    struct Refusing;
++    impl ProviderObserver for Refusing {
++        fn validate(&self, _kind: ProviderKind, _name: &str) -> Result<(), String> { Ok(()) }
++        fn begin(&self, _identity: &ProviderIdentity) -> Result<Arc<dyn ProviderLease>, String> { Err("cancelled".into()) }
++    }
++    struct Refused;
++    impl LoadContext for Refused {
++        fn provider_observer(&self) -> Option<Arc<dyn ProviderObserver>> { Some(Arc::new(Refusing)) }
++        fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++        fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++    }
++    let directory = tempfile::tempdir().unwrap(); let missing = directory.path().join("missing.mrs");
++    let scope = OwnedLoadScope::with_context(Arc::new(Refused));
++    scope.run(async {
++        let file = provider::load_file("reader15", &cfg(&missing), Some(directory.path()), RuleSetBehavior::Domain,
++            &ParserContext::empty(), None, true);
++        assert!(matches!(file, Err(provider::LoadError::Acquisition(..))));
++        let failed = provider::Prefetched::Failed("offline".into());
++        let http = provider::load_http("reader15", &http_cfg(None), Some(directory.path()), RuleSetBehavior::Domain,
++            &ParserContext::empty(), None, Some(&failed), None, true);
++        assert!(matches!(http, Err(provider::LoadError::Acquisition(..))));
++    }).await;
++    scope.close().await.unwrap();
++}
++
++const DOMAIN: &[u8] = &[
++    40, 181, 47, 253, 32, 69, 45, 1, 0, 160, 77, 82, 83, 1, 0, 2, 0, 192, 1, 114,
++    170, 0, 7, 116, 115, 101, 116, 46, 97, 98, 7, 0, 96, 32, 24, 12, 100, 89, 33, 80,
++    147, 0, 144, 113, 6, 180,
++];
++const INVALID_UTF8: &[u8] = &[
++    40, 181, 47, 253, 32, 63, 205, 0, 0, 72, 77, 82, 83, 1, 0, 2, 0, 6, 255, 6,
++    0, 128, 200, 76, 2, 192, 64, 154, 68, 176, 76, 224, 2, 45,
++];
++const IP_RANGE: &[u8] = &[
++    40, 181, 47, 253, 32, 62, 5, 1, 0, 120, 77, 82, 83, 1, 1, 0, 0, 0, 0, 255,
++    255, 192, 0, 2, 255, 6, 0, 51, 9, 24, 138, 48, 32, 193, 82, 96, 133, 128, 1, 20,
++    1,
++];
++const INVERTED_RANGE: &[u8] = &[
++    40, 181, 47, 253, 32, 62, 45, 1, 0, 184, 77, 82, 83, 1, 1, 0, 0, 0, 0, 255,
++    255, 192, 0, 2, 2, 0, 0, 255, 255, 192, 0, 2, 1, 5, 0, 68, 145, 3, 4, 88,
++    10, 172, 16, 48, 128, 34,
++];
++const SOURCE_COUNT: &[u8] = &[
++    40, 181, 47, 253, 32, 69, 45, 1, 0, 160, 77, 82, 83, 1, 0, 15, 0, 192, 1, 114,
++    170, 0, 7, 116, 115, 101, 116, 46, 97, 98, 7, 0, 96, 32, 24, 12, 100, 89, 33, 80,
++    147, 0, 144, 113, 6, 180,
++];
++const EMPTY_FRAME: &[u8] = &[40, 181, 47, 253, 32, 0, 1, 0, 0];
 --- a/crates/meow-config/src/rule_provider_refresh.rs
 +++ b/crates/meow-config/src/rule_provider_refresh.rs
 @@ -77,8 +77,8 @@

@@ -12,7 +12,6 @@ import dev.aerove.lite.data.ProviderDownloadScope
 import dev.aerove.lite.vpn.captureMeowPhysical
 import java.io.File
 import java.security.MessageDigest
-import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
@@ -29,12 +28,23 @@ object JniResourceFetch {
     @JvmStatic private external fun nativeDownload(handle: Long, request: String): String
     @JvmStatic private external fun nativeCancel(handle: Long)
     @JvmStatic private external fun nativeCloseJoin(handle: Long)
-    @JvmStatic private external fun nativeValidatePrepared(candidate: String, readRoot: String, cacheRoot: String): String?
+    @JvmStatic private external fun nativeValidatePrepared(handle: Long, candidate: String, readRoot: String, cacheRoot: String): String?
 
-    @JvmStatic private external fun nativePreflightRuleResource(path: String, behavior: String, format: String): String
+    @JvmStatic private external fun nativePreflightRuleResource(handle: Long, path: String, behavior: String, format: String): String
 
-    fun preflightRuleResource(path: File, behavior: String, format: String): String =
-        nativePreflightRuleResource(path.canonicalPath, behavior, format)
+    /** The real JNI edges; the offline compositions in OfflineResourceRead.kt are shared with their JVM tests. */
+    private val offline = object : OfflineResourceNative {
+        override fun create(plan: String) = nativeCreate(plan)
+        override fun cancel(handle: Long) = nativeCancel(handle)
+        override fun closeJoin(handle: Long) = nativeCloseJoin(handle)
+        override fun validatePrepared(handle: Long, candidate: String, readRoot: String, cacheRoot: String) =
+            nativeValidatePrepared(handle, candidate, readRoot, cacheRoot)
+    }
+
+    suspend fun preflightRuleResource(path: File, behavior: String, format: String): String =
+        offlineRead { handle -> nativePreflightRuleResource(handle, path.path, behavior, format) }
+
+    internal suspend fun <T> offlineRead(work: (Long) -> T): T = offlineResourceRead(offline, work)
 
     fun factory(context: Context): ProviderDownloadFactory {
         val app = context.applicationContext
@@ -42,9 +52,9 @@ object JniResourceFetch {
             var allocated: NativeScope? = null
             try {
                 withContext(Dispatchers.IO) {
-                    val staging = privateDirectory(app, input.stagingRoot)
-                    val read = input.resourceReadRoot?.let { privateDirectory(app, it) }
-                    val cache = cacheDirectory(app)
+                    val staging = privateResourceDirectory(app.filesDir, input.stagingRoot)
+                    val read = input.resourceReadRoot?.let { privateResourceDirectory(app.filesDir, it) }
+                    val cache = resourceCacheDirectory(app.cacheDir)
                     try {
                         val manager = app.getSystemService(ConnectivityManager::class.java)
                         val available = manager.allNetworks.filter { network ->
@@ -78,17 +88,8 @@ object JniResourceFetch {
         }
     }
 
-    fun preparedValidator(context: Context): NativePreparedConfigValidator {
-        val app = context.applicationContext
-        return NativePreparedConfigValidator { yaml, resourceReadRoot ->
-            val read = privateDirectory(app, resourceReadRoot)
-            val bundles = File(app.filesDir, "runtime/resources/bundles").canonicalFile.toPath()
-            require(read.toPath().startsWith(bundles) && read.toPath() != bundles) { "Prepared validation requires a sealed resource generation" }
-            val cache = cacheDirectory(app)
-            try { nativeValidatePrepared(yaml, read.path, cache.path) }
-            finally { cache.deleteRecursively() }
-        }
-    }
+    fun preparedValidator(context: Context): NativePreparedConfigValidator =
+        context.applicationContext.let { app -> preparedResourceValidator(app.filesDir, app.cacheDir, offline) }
 
     private class NativeScope(val handle: Long, private val cache: File) : ProviderDownloadScope {
         private val close = Mutex()
@@ -130,15 +131,4 @@ object JniResourceFetch {
             }
         }
     }
-    private fun privateDirectory(context: Context, file: File): File {
-        val root = context.filesDir.canonicalFile.toPath()
-        val canonical = file.canonicalFile
-        require(file.absoluteFile == canonical && canonical.isDirectory && canonical.toPath().startsWith(root) && canonical.toPath() != root) {
-            "Resource directory must be a canonical app-private child"
-        }
-        return canonical
-    }
-    private fun cacheDirectory(context: Context): File = File(context.cacheDir, "meow-resource-${UUID.randomUUID()}").apply {
-        check(mkdir()) { "Could not create resource validation cache" }
-    }.canonicalFile
 }

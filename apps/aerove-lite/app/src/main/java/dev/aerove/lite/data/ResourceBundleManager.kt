@@ -202,8 +202,8 @@ class ResourceBundleManager(
             return ResourceDigest(response.sha256, response.bytes,
                 dev.aerove.lite.resources.ResourceSubscriptionInfo.parse(response.subscriptionUserInfo)?.header())
         }
-        val ruleLines = mutableListOf<String>()
-        (rootConfig["rules"] as? List<*>)?.filterIsInstance<String>()?.let(ruleLines::addAll)
+        val ruleGeo = GeoRuleScan()
+        (rootConfig["rules"] as? List<*>)?.filterIsInstance<String>()?.let(ruleGeo::addAll)
 
         suspend fun materialize(
             key: String,
@@ -224,7 +224,7 @@ class ResourceBundleManager(
             val file = File(assets, "$identity.bin")
             val limit = when (kind) {
                 "proxy-provider", "source-proxy" -> MAX_PROFILE_BYTES.toLong()
-                "ruleset" -> if (format == "mrs") MAX_MRS_BYTES else MAX_RULE_BYTES
+                "ruleset" -> MAX_RULE_INPUT_BYTES
                 else -> MAX_GEO_BYTES
             }
             val override = overridePath(key, identity).takeIf { localFile(profileId, it).isFile }
@@ -292,13 +292,13 @@ class ResourceBundleManager(
             val dns = rootConfig["dns"] as? Map<*, *>
             val fallback = dns?.get("fallback") as? List<*>
             val fallbackFilter = dns?.get("fallback-filter") as? Map<*, *>
-            val needsCountry = ruleLines.any { GEOIP.containsMatchIn(it) } ||
+            val needsCountry = ruleGeo.country ||
                 (!fallback.isNullOrEmpty() && fallbackFilter?.get("geoip") != false)
-            val needsSite = ruleLines.any { GEOSITE.containsMatchIn(it) } ||
+            val needsSite = ruleGeo.site ||
                 (dns?.get("nameserver-policy") as? Map<*, *>)?.keys?.any { (it as? String)?.startsWith("geosite:", ignoreCase = true) == true } == true
             val geo = listOf(
                 Triple("mmdb", needsCountry, geoUrls["mmdb"] ?: DEFAULT_COUNTRY_URL),
-                Triple("asn-mmdb", ruleLines.any { ASN.containsMatchIn(it) }, geoUrls["asn-mmdb"] ?: DEFAULT_ASN_URL),
+                Triple("asn-mmdb", ruleGeo.asn, geoUrls["asn-mmdb"] ?: DEFAULT_ASN_URL),
                 Triple("geosite", needsSite, geoUrls["geosite"] ?: DEFAULT_GEOSITE_URL),
             )
             geo.forEach { (key, needed, defaultUrl) ->
@@ -340,7 +340,7 @@ class ResourceBundleManager(
                         val lines = stringList(inline, "$key.payload")
                         if (lines.isNotEmpty()) {
                             validator.validateRulePayload(lines, "$key.payload")
-                            ruleLines += lines
+                            ruleGeo.addAll(lines)
                             derived("$key.payload", "ruleset", ConfigYaml.dump(mapOf("payload" to lines)), behavior)
                         }
                     }
@@ -358,14 +358,14 @@ class ResourceBundleManager(
                     )
                     val payloadFile = File(candidate, record.file)
                     if (rule && record.format != "mrs") {
-                        val text = payloadFile.inputStream().use { it.readBounded(MAX_RULE_BYTES.toInt()).strictUtf8() }
-                        val lines = if (record.format == "yaml") yamlRuleLines(text, key) else if (record.format == "text") {
-                            text.lineSequence().map(String::trim).filter {
-                                it.isNotEmpty() && !it.startsWith('#') && !it.startsWith("//")
-                            }.toList()
-                        } else throw problem("$key.format", "Unsupported ruleset format")
-                        validator.validateRulePayload(lines, key)
-                        ruleLines += lines
+                        val check = validator.ruleLineCheck(key)
+                        val scan = when (record.format) {
+                            "yaml" -> { yamlRuleLines(payloadFile, key).forEachIndexed { index, line -> check.line(index, line); ruleGeo.add(line) }; null }
+                            "text" -> payloadFile.forEachRuleLine(MAX_RULE_INPUT_BYTES) { index, line -> check.line(index, line); ruleGeo.add(line) }
+                            else -> throw problem("$key.format", "Unsupported ruleset format")
+                        }
+                        check.finish()
+                        scan?.requireEntryBound(key)
                     }
                     if (!rule) {
                         val text = payloadFile.inputStream().use { it.readBounded(MAX_PROFILE_BYTES).strictUtf8() }
@@ -710,8 +710,8 @@ class ResourceBundleManager(
             val value = payloads.firstOrNull { it.resource.let { item -> item.kind == kind && item.url == url && item.behavior == behavior && item.format == format } } ?: return
             result[overridePath(key, materializedSourceIdentity(key, kind, url, behavior, format))] = value.file
         }
-        val lines = mutableListOf<String>()
-        (config["rules"] as? List<*>)?.filterIsInstance<String>()?.let(lines::addAll)
+        val ruleGeo = GeoRuleScan()
+        (config["rules"] as? List<*>)?.filterIsInstance<String>()?.let(ruleGeo::addAll)
         (config["rule-providers"] as? Map<*, *>)?.forEach { (name, raw) ->
             val provider = raw as? Map<*, *> ?: return@forEach
             val url = provider["url"] as? String ?: return@forEach
@@ -720,14 +720,18 @@ class ResourceBundleManager(
             val format = provider["format"] as? String ?: "yaml"
             bind("$.rule-providers.$name", "ruleset", url, behavior, format)
             payloads.firstOrNull { it.resource.kind == "ruleset" && it.resource.url == url && it.resource.behavior == behavior && it.resource.format == format }
-                ?.takeIf { format != "mrs" }?.let { lines += it.file.inputStream().use { input -> input.readBounded(MAX_RULE_BYTES.toInt()).strictUtf8() } }
+                ?.takeIf { format != "mrs" }?.let { cached ->
+                    // Scanned per rule line as preparation does, so a later line's GEOIP or GEOSITE still binds its database.
+                    if (format == "text") cached.file.forEachRuleLine(MAX_RULE_INPUT_BYTES) { _, line -> ruleGeo.add(line) }.requireEntryBound("$.rule-providers.$name")
+                    else (cached.file.readRuleYaml(MAX_RULE_INPUT_BYTES)["payload"] as? List<*>)?.filterIsInstance<String>()?.let(ruleGeo::addAll)
+                }
         }
         val dns = config["dns"] as? Map<*, *>
         val fallback = dns?.get("fallback") as? List<*>
         val filter = dns?.get("fallback-filter") as? Map<*, *>
-        listOf(Triple("mmdb", lines.any { GEOIP.containsMatchIn(it) } || (!fallback.isNullOrEmpty() && filter?.get("geoip") != false), DEFAULT_COUNTRY_URL),
-            Triple("asn-mmdb", lines.any { ASN.containsMatchIn(it) }, DEFAULT_ASN_URL),
-            Triple("geosite", lines.any { GEOSITE.containsMatchIn(it) }, DEFAULT_GEOSITE_URL)).forEach { (key, needed, defaultUrl) ->
+        listOf(Triple("mmdb", ruleGeo.country || (!fallback.isNullOrEmpty() && filter?.get("geoip") != false), DEFAULT_COUNTRY_URL),
+            Triple("asn-mmdb", ruleGeo.asn, DEFAULT_ASN_URL),
+            Triple("geosite", ruleGeo.site, DEFAULT_GEOSITE_URL)).forEach { (key, needed, defaultUrl) ->
             if (needed || config["$key-download-url"] != null) {
                 val url = config["$key-download-url"] as? String ?: geoUrls[key] ?: defaultUrl
                 bind("$.$key", if (key == "geosite") "geosite" else "mmdb", url)
@@ -745,8 +749,8 @@ class ResourceBundleManager(
         return ".overrides/${sha256(key)}-$sourceId.bin"
     }
 
-    private fun yamlRuleLines(text: String, path: String): List<String> {
-        val content = ConfigYaml.parse(text, MAX_RULE_BYTES.toInt())
+    private fun yamlRuleLines(file: File, path: String): List<String> {
+        val content = file.readRuleYaml(MAX_RULE_INPUT_BYTES)
         if (content.keys != setOf("payload")) throw problem(path, "Ruleset YAML must contain only payload; no fields are ignored")
         return stringList(content["payload"], "$path.payload")
     }
@@ -758,6 +762,19 @@ class ResourceBundleManager(
 
     private fun removeBundle(directory: File) {
         deletePrivateTree(File(root, "bundles"), directory)
+    }
+
+    /** The same per-line matches as collecting every rule line first, without keeping the lines. */
+    private class GeoRuleScan {
+        var country = false; private set
+        var asn = false; private set
+        var site = false; private set
+        fun add(line: String) {
+            country = country || GEOIP.containsMatchIn(line)
+            asn = asn || ASN.containsMatchIn(line)
+            site = site || GEOSITE.containsMatchIn(line)
+        }
+        fun addAll(lines: Iterable<String>) = lines.forEach(::add)
     }
 
     private class BundleState {
@@ -792,8 +809,6 @@ class ResourceBundleManager(
         const val DEFAULT_ASN_URL = "https://git.io/GeoLite2-ASN.mmdb"
         const val DEFAULT_GEOSITE_URL = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202406182210/geosite.dat"
         private const val MAX_GEO_BYTES = 64L * 1024 * 1024
-        private const val MAX_RULE_BYTES = 8L * 1024 * 1024
-        private const val MAX_MRS_BYTES = 32L * 1024 * 1024
         private const val MAX_BUNDLE_BYTES = 256L * 1024 * 1024
         private const val MAX_RESOURCES = 256
         private const val MAX_INTERVAL_SECONDS = 366L * 24 * 60 * 60

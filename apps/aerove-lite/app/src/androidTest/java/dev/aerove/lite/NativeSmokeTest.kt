@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dev.aerove.lite.core.JniResourceFetch
 import dev.aerove.lite.core.MeowNativeCore
 import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.vpn.LiteVpnService
@@ -52,8 +53,10 @@ class NativeSmokeTest {
 
     @Test
     fun nativeParserRejectsUnknownConfiguration() {
-        assertNotNull(MeowNativeCore.validate("unknown-aerove-field: true\n"))
-        assertNull(MeowNativeCore.validate("mode: direct\nrules: ['MATCH,DIRECT']\n"))
+        // Production owner path: real offline create, owned conversion scope, worker join and closeJoin.
+        fun validate(yaml: String) = runBlocking { JniResourceFetch.offlineRead { MeowNativeCore.validate(it, yaml) } }
+        assertNotNull(validate("unknown-aerove-field: true\n"))
+        assertNull(validate("mode: direct\nrules: ['MATCH,DIRECT']\n"))
     }
 
     @Test

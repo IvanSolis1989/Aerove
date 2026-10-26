@@ -29,8 +29,8 @@ class ResourcePageRootUiTest {
             .copy(material = MaterialTier.Solid, aurora = false)))
         val validator = CompatibilityValidator(NativeConfigValidator { error("Global Resources must not compile a profile") }, File(directory, "runtime"))
         val inspector = object : NativeRulePayloadInspector {
-            override fun inspect(path: String): RulePayloadInspection = error("No payload operation")
-            override fun dump(path: String, behavior: String, format: String): String = error("No payload operation")
+            override suspend fun inspect(path: String): RulePayloadInspection = error("No payload operation")
+            override suspend fun dump(path: String, behavior: String, format: String): String = error("No payload operation")
         }
         val library = BuilderResourceLibrary(directory)
         val manager = ResourceBundleManager(File(directory, "runtime"), validator, NativeResourceValidator { _, _, _, _ -> error("No sync operation") }, offlineRules = inspector)

@@ -37,12 +37,14 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.BackdropEffectScope
 import com.kyant.backdrop.RuntimeShader
 import com.kyant.backdrop.asAndroidRuntimeShader
 import com.kyant.backdrop.drawPlainBackdrop
@@ -133,7 +135,7 @@ private fun rememberLiteOpticsSources(): LiteOpticsSources {
     return remember(assets) { LiteOpticsSourceCache.get(assets) }
 }
 
-private class PaneGeometry(private val shape: Shape) {
+internal class PaneGeometry(private val shape: Shape) {
     private var key: Triple<Size, LayoutDirection, Float>? = null
     lateinit var geometry: AeroveSuperellipseGeometry
     var profile: FloatArray? = null
@@ -198,25 +200,7 @@ internal fun Modifier.liteGlassBackdrop(source: Backdrop, shape: Shape, style: A
     val tracked = onGloballyPositioned { coordinates = it }
     if (style.haze == 0f) return tracked.drawPlainBackdrop(
         backdrop = source, shape = { BackdropBufferShape },
-        effects = {
-            if (size.minDimension > 0f) {
-                geometry.resolve(size, layoutDirection, this)
-                val pad = ceil(max(20.dp.toPx(), 3f * (style.blur + style.rimBlur) * density))
-                padding = pad
-                coordinates?.takeIf { it.isAttached }?.let {
-                    effect(viewport.effect(size.width.toInt() + 2 * pad.toInt(), size.height.toInt() + 2 * pad.toInt(), pad, it))
-                }
-                val sigma = style.blur * density
-                if (sigma > 0f) blur(sigma)
-                val capture = AeroveGlassCapture(size.width.toInt() + 2 * pad, size.height.toInt() + 2 * pad, density, pad, sigma)
-                runtimeShaderEffect("AeroveGlassSource-v1", sources.glass, "content") {
-                    configureAeroveGlass(geometry.geometry, style, capture, profile = geometry.profile,
-                        glow = explicitGlow ?: glow?.resolve(size, density) ?: dev.aerove.lite.optics.AeroveGlassGlow(),
-                        shine = rim?.uniforms(Size(geometry.geometry.width.toFloat(), geometry.geometry.height.toFloat()), geometry.geometry.radii[0].toFloat()) ?: dev.aerove.lite.optics.AeroveGlassShine.none())
-                    setFloatUniform("uHazeOffset", 0f)
-                }
-            }
-        },
+        effects = glassBackdropEffects(LocalDensity.current, style, geometry, sources.glass, glow, rim, explicitGlow, viewport.tracking { coordinates }),
     )
     val sharp = rememberGraphicsLayer()
     val hazy = rememberGraphicsLayer()
@@ -316,18 +300,53 @@ internal fun Modifier.liteFrostBackdrop(source: Backdrop, style: AeroveGlassStyl
     var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null, neverEqualPolicy()) }
     return onGloballyPositioned { coordinates = it }.drawPlainBackdrop(
         backdrop = source, shape = { BackdropBufferShape },
-        effects = {
-            if (size.minDimension > 0f) {
-                val pad = ceil(3f * style.blur * density)
-                padding = pad
-                coordinates?.takeIf { it.isAttached }?.let {
-                    effect(viewport.effect(size.width.toInt() + 2 * pad.toInt(), size.height.toInt() + 2 * pad.toInt(), pad, it))
-                }
-                blur(style.blur * density)
-            }
-        },
+        effects = frostBackdropEffects(LocalDensity.current, style, viewport.tracking { coordinates }),
         onDrawSurface = { drawRect(style.tint.composeColor()) },
     )
+}
+
+internal typealias BackdropViewport = (width: Int, height: Int, pad: Float) -> androidx.compose.ui.graphics.RenderEffect?
+
+private fun ViewportClamp.tracking(coordinates: () -> LayoutCoordinates?): BackdropViewport =
+    { width, height, pad -> coordinates()?.takeIf { it.isAttached }?.let { effect(width, height, pad, it) } }
+
+internal fun frostBackdropEffects(composition: Density, style: AeroveGlassStyle, viewport: BackdropViewport) =
+    plainBackdropEffects(composition, style, Density::frostBackdropPadding, viewport) { _, _ -> }
+
+internal fun glassBackdropEffects(
+    composition: Density, style: AeroveGlassStyle, geometry: PaneGeometry, glassSource: String, glow: LitePressGlow?, rim: LiteGlassRim?,
+    explicitGlow: dev.aerove.lite.optics.AeroveGlassGlow?, viewport: BackdropViewport,
+) = plainBackdropEffects(composition, style, Density::glassBackdropPadding, viewport) { pad, sigma ->
+    geometry.resolve(size, layoutDirection, this)
+    val capture = AeroveGlassCapture(size.width.toInt() + 2 * pad, size.height.toInt() + 2 * pad, density, pad, sigma)
+    runtimeShaderEffect("AeroveGlassSource-v1", glassSource, "content") {
+        configureAeroveGlass(geometry.geometry, style, capture, profile = geometry.profile,
+            glow = explicitGlow ?: glow?.resolve(size, density) ?: dev.aerove.lite.optics.AeroveGlassGlow(),
+            shine = rim?.uniforms(Size(geometry.geometry.width.toFloat(), geometry.geometry.height.toFloat()), geometry.geometry.radii[0].toFloat()) ?: dev.aerove.lite.optics.AeroveGlassShine.none())
+        setFloatUniform("uHazeOffset", 0f)
+    }
+}
+
+internal fun Density.glassBackdropPadding(style: AeroveGlassStyle) = ceil(max(20.dp.toPx(), 3f * (style.blur + style.rimBlur) * density))
+internal fun Density.frostBackdropPadding(style: AeroveGlassStyle) = ceil(3f * style.blur * density)
+internal fun Density.backdropBlurRadius(style: AeroveGlassStyle) = style.blur * density
+
+// Kyant 2.0.1 keeps `padding` in snapshot state and rereads it in the draw that reruns these effects; see LiteBackdropPaddingTest.
+private fun plainBackdropEffects(
+    composition: Density, style: AeroveGlassStyle, padFor: Density.(AeroveGlassStyle) -> Float, viewport: BackdropViewport,
+    shade: BackdropEffectScope.(pad: Float, sigma: Float) -> Unit,
+): BackdropEffectScope.() -> Unit {
+    val pad = composition.padFor(style)
+    return {
+        padding = pad
+        if (size.minDimension > 0f) {
+            viewport(size.width.toInt() + 2 * pad.toInt(), size.height.toInt() + 2 * pad.toInt(), pad)?.let { effect(it) }
+            val sigma = backdropBlurRadius(style)
+            require(sigma <= pad) { "Backdrop blur radius $sigma exceeds its padding $pad" }
+            if (sigma > 0f) blur(sigma)
+            shade(pad, sigma)
+        }
+    }
 }
 
 private fun DrawScope.recordTile(layer: GraphicsLayer, size: IntSize, draw: DrawScope.() -> Unit) {

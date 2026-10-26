@@ -238,7 +238,6 @@
     <string name="lite_color_style">Стиль палитры</string>
     <string name="lite_color_system">Система</string>
     <string name="lite_confirm">Подтвердить</string>
-    <string name="lite_connect">Подключиться</string>
     <string name="lite_connected">Подключено</string>
     <string name="lite_connecting">Подключение…</string>
     <string name="lite_connection_count">%1$d соединения</string>
@@ -263,6 +262,7 @@
     <string name="lite_delete">Удалить</string>
     <string name="lite_delete_profile">Удалить профиль?</string>
     <string name="lite_delete_profile_detail">Профиль «%1$s» будет удален с этого устройства.</string>
+    <string name="lite_details">Сведения: %1$s</string>
     <string name="lite_disabled">Выключено</string>
     <string name="lite_disconnected">Отключено</string>
     <string name="lite_disconnecting">Отключение…</string>
@@ -272,7 +272,7 @@
     <string name="lite_dns_empty">Введите хотя бы один сервер DNS.</string>
     <string name="lite_dns_follow_profile">Следуйте конфигурации</string>
     <string name="lite_dns_servers">Серверы DNS, по одному на линию</string>
-    <string name="lite_download">Скачать</string>
+    <string name="lite_download">Загрузка</string>
     <string name="lite_download_total">Общая загрузка</string>
     <string name="lite_edit">Редактировать</string>
     <string name="lite_enabled">Включено</string>
@@ -327,8 +327,9 @@
     <string name="lite_open_source">Лицензии с открытым исходным кодом</string>
     <string name="lite_organization">Организация</string>
     <string name="lite_other">Другое</string>
+    <string name="lite_outbound_ip">Исходящий IP</string>
     <string name="lite_outbound_loading">Проверка исходящего адреса…</string>
-    <string name="lite_outbound_refresh">Обновить исходящий адрес</string>
+    <string name="lite_outbound_retry">Повторить</string>
     <string name="lite_palette_brightness">Яркость</string>
     <string name="lite_palette_grid">Сетка</string>
     <string name="lite_palette_hue">Оттенок</string>
@@ -339,7 +340,7 @@
     <string name="lite_profile_required">Импортируйте профиль для подключения</string>
     <string name="lite_profile_required_detail">Добавьте URL-адрес подписки или импортируйте локальную конфигурацию Clash. О неподдерживаемых настройках сообщается вместе с путями их конфигурации.</string>
     <string name="lite_proxy_mode">Режим исходящего трафика</string>
-    <string name="lite_rate">%1$s/с</string>
+    <string name="lite_rate">%1$s/s</string>
     <string name="lite_refresh">Обновить</string>
     <string name="lite_reset">Сброс</string>
     <string name="lite_rule">Правило</string>
@@ -364,7 +365,9 @@
     <string name="lite_selected">Выбрано</string>
     <string name="lite_settings_saved_notice">Изменения в сети применяются службой VPN.</string>
     <string name="lite_solid">Твердый</string>
+    <string name="lite_start">Старт</string>
     <string name="lite_status">Статус</string>
+    <string name="lite_stop">Стоп</string>
     <string name="lite_style_monochrome">Монохром</string>
     <string name="lite_style_soft">Мягкий</string>
     <string name="lite_style_tinted">Тонированный</string>
@@ -378,6 +381,7 @@
     <string name="lite_tab_proxies">Прокси</string>
     <string name="lite_tab_settings">Настройки</string>
     <string name="lite_tab_tools">Инструменты</string>
+    <string name="lite_tap_icon_to_retry">Нажмите на значок, чтобы повторить</string>
     <string name="lite_test_group">Тестовая задержка</string>
     <string name="lite_testing">Тестирование…</string>
     <string name="lite_theme">Тема</string>

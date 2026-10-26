@@ -10,18 +10,22 @@ import subprocess
 import sys
 import tomllib
 from prepare import prepare
-from build_policy import load_policy, digest, feature_boundary_command
+from build_policy import load_policy, digest, feature_boundary_command, full_native_suite
 from clang_probe import probe as probe_libclang
 from core_tests import execute as execute_core_tests
 from verify_source import ROOT, sha, verify
+import jni_abi
 
 TARGETS={'aarch64-linux-android':('arm64-v8a',183),'x86_64-linux-android':('x86_64',62)}
-SCRIPT_JNI_SYMBOLS=['Java_dev_aerove_lite_overrides_NativeScriptEngine_native'+name for name in ['Begin','Evaluate','Cancel','Release']]
-RUNTIME_JNI_SYMBOLS=['Java_dev_aerove_lite_core_MeowNativeCore_'+name for name in ['startOwned','status','listenerStatus','awaitReady','stop','awaitExit','listenerCommand','configurePolicies','policyStatus','capabilities','validate','inspectRuleSet','dumpRuleSet','validateResource','hostPolicyCommand']]
+# Strict descriptor tables: jni_abi checks Rust exports, Kotlin externals and verify_apk.py against them.
+SCRIPT_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_overrides_NativeScriptEngine_nativeBegin': '()J', 'Java_dev_aerove_lite_overrides_NativeScriptEngine_nativeEvaluate': '(Ljava/lang/String;Ljava/lang/String;J)Ljava/lang/String;', 'Java_dev_aerove_lite_overrides_NativeScriptEngine_nativeCancel': '(J)V', 'Java_dev_aerove_lite_overrides_NativeScriptEngine_nativeRelease': '(J)V'}
+SCRIPT_JNI_SYMBOLS = list(SCRIPT_JNI_DESCRIPTORS)
+RUNTIME_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_MeowNativeCore_startOwned': '(Ljava/lang/String;ILdev/aerove/lite/core/SocketProtector;Ldev/aerove/lite/core/ConnectionOwnerLookup;)J', 'Java_dev_aerove_lite_core_MeowNativeCore_status': '(J)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_listenerStatus': '(J)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_awaitReady': '(J)V', 'Java_dev_aerove_lite_core_MeowNativeCore_stop': '(J)V', 'Java_dev_aerove_lite_core_MeowNativeCore_awaitExit': '(J)V', 'Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand': '(JLjava/lang/String;I)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_configurePolicies': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_policyStatus': '(J)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_capabilities': '()Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_validate': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_inspectRuleSet': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_dumpRuleSet': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_validateResource': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_MeowNativeCore_hostPolicyCommand': '(JLjava/lang/String;)Ljava/lang/String;'}
+RUNTIME_JNI_SYMBOLS = list(RUNTIME_JNI_DESCRIPTORS)
 
-RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate': '(Ljava/lang/String;)J', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad': '(JLjava/lang/String;)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource': '(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}
+RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate': '(Ljava/lang/String;)J', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad': '(JLjava/lang/String;)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}
 RESOURCE_JNI_SYMBOLS = tuple(RESOURCE_JNI_DESCRIPTORS)
-RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default']}
+RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default', 'prepared_validation_forwards_the_owner_token_into_geodata_reading', 'transport_load_forwards_the_fetch_token_into_dns_geodata_reading', 'a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children', 'zstd_geo_expansion_observes_cancellation_between_chunks_not_only_around_the_resource', 'interrupted_reads_are_retried_like_read_to_end_and_other_errors_stay_specific', 'text_rule_entries_stop_at_either_entry_bound_before_they_are_collected', 'yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it', 'streaming_text_admission_checks_the_entry_before_retaining_the_tail', 'streaming_yaml_admission_counts_events_before_the_rest_is_read', 'streaming_rule_admission_keeps_utf8_size_and_cancel_ahead_of_semantic_errors'], 'config_validation': ['zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder', 'official_mrs_text_between_8m_and_64m_stays_previewable', 'official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds', 'text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds']}
 
 def verify_resource_jni_source(root):
     source=(Path(root)/'src/meow_jni.rs').read_text()
@@ -35,6 +39,8 @@ def verify_resource_jni_source(root):
         try:descriptor='('+''.join(table[t] for t in types)+')'+table[result.strip()]
         except KeyError:raise ValueError('Resource JNI source type unsupported: '+symbol)
         if descriptor!=expected:raise ValueError('Resource JNI source descriptor mismatch: '+symbol)
+    # The admission contract calls this one source gate; it also holds every runtime and script export to its Kotlin declaration.
+    jni_abi.verify(root,{**RUNTIME_JNI_DESCRIPTORS,**SCRIPT_JNI_DESCRIPTORS,**RESOURCE_JNI_DESCRIPTORS})
     return dict(RESOURCE_JNI_DESCRIPTORS)
 
 def added_native_test_proof(output):
@@ -147,7 +153,7 @@ def main():
     modes=parser.add_mutually_exclusive_group();modes.add_argument('--initialize-lock',action='store_true');modes.add_argument('--resolve-lock',action='store_true')
     parser.add_argument('--target',choices=TARGETS);parser.add_argument('--ndk',type=Path);args=parser.parse_args()
     policy=load_policy(ROOT)
-    if policy and policy.get("coreTests") in ("policy-runtime-resource-health-v1","policy-runtime-mrs-reader-v1"):verify_resource_jni_source(ROOT)
+    if full_native_suite(policy):verify_resource_jni_source(ROOT)
     if args.resolve_lock and (policy is None or not policy['resolveLock']):raise ValueError('Lock resolution requires an explicit approved build policy')
     if args.target and (args.initialize_lock or args.resolve_lock or policy is not None and policy['resolveLock'] or not args.ndk or sys.platform!='linux'):
         raise ValueError('Android link requires committed lock/policy and Linux NDK; resolution is host-only')
@@ -188,8 +194,8 @@ def main():
             receipt['ndkSourceProperties']=(args.ndk/'source.properties').read_text()
             receipt['bindgenEnvironment']={key:environment[key] for key in ['LIBCLANG_PATH','CLANG_PATH','BINDGEN_EXTRA_CLANG_ARGS_'+args.target]}
             command=['cargo','build','--locked','--release','--target',args.target]
-        output=run(command,environment,capture=True) if not args.target and policy and policy.get("coreTests") in ("policy-runtime-resource-health-v1","policy-runtime-mrs-reader-v1") else run(command,environment)
-        if not args.target and policy and policy.get("coreTests") in ("policy-runtime-resource-health-v1","policy-runtime-mrs-reader-v1"):
+        output=run(command,environment,capture=True) if not args.target and full_native_suite(policy) else run(command,environment)
+        if not args.target and full_native_suite(policy):
             print(output,end="",flush=True)
             (build/"native-tests.stdout.log").write_text(output)
             receipt["addedNativeTests"]=added_native_test_proof(output)

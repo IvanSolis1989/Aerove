@@ -1,6 +1,7 @@
 package dev.aerove.lite.integration
 
 import dev.aerove.lite.data.GlobalRulePayloadRepository
+import dev.aerove.lite.data.MAX_RULE_INPUT_BYTES
 import dev.aerove.lite.data.ProfileRepository
 import dev.aerove.lite.profilebuilder.*
 
@@ -19,9 +20,9 @@ class GlobalResourceWorkspace(
     val rules: GlobalRuleLibraryAccess = object : GlobalRuleLibraryAccess {
         override suspend fun importUrl(expected: BuilderResourceSnapshot, name: String, url: String) = payloads.importUrl(expected, name, url)
         override suspend fun importFile(expected: BuilderResourceSnapshot, name: String, file: GlobalLibraryFile) =
-            file.bytes.inputStream().use { payloads.importFile(expected, name, it) }
+            file.open(MAX_RULE_INPUT_BYTES).use { payloads.importFile(expected, name, it) }
         override suspend fun saveText(expected: BuilderResourceSnapshot, previousId: String?, name: String, text: String) = payloads.saveText(expected, previousId, name, text)
-        override suspend fun preview(expected: BuilderResourceSnapshot, name: String) = payloads.preview(expected, name).let { GlobalRuleLibraryPreview(it.text, it.editable) }
+        override suspend fun preview(expected: BuilderResourceSnapshot, name: String) = payloads.preview(expected, name).let { GlobalRuleLibraryPreview(it.text, it.editable, it.oversize) }
         override suspend fun info(expected: BuilderResourceSnapshot, name: String) = payloads.info(expected, name).let {
             GlobalRuleLibraryInfo(it.behavior, it.format, it.count, it.bytes, it.updatedAt, it.remote)
         }

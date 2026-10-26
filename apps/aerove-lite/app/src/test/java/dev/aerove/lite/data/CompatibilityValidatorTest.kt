@@ -14,18 +14,19 @@ class CompatibilityValidatorTest {
     private var nativeCalls = 0
     private val nativeSources = mutableListOf<String>()
     private val validator = CompatibilityValidator(NativeConfigValidator { nativeCalls++; nativeSources += it; null })
+    private fun CompatibilityValidator.validateBlocking(yaml: String) = runBlocking { validate(yaml) }
 
     private fun ssProfile(plugin: String, options: String): String =
         "proxies:\n - {name: SS, type: ss, server: ss.example, port: 8388, cipher: aes-128-gcm, password: data, plugin: $plugin, plugin-opts: $options}"
 
     private fun rejected(yaml: String, path: String) {
-        val failure = assertThrows(ConfigValidationException::class.java) { validator.validate(yaml) }
+        val failure = assertThrows(ConfigValidationException::class.java) { validator.validateBlocking(yaml) }
         assertTrue(failure.message, failure.issues.any { it.path == path })
     }
 
     @Test fun realSystemAndDhcpDnsReachNativeWithoutLegacyStoreRejection() {
         val source = "dns: {nameserver: [system, 'system://', 'dhcp://auto', 'dhcp://wlan0'], nameserver-policy: {example.com: 'dhcp://wlan0'}}"
-        validator.validate(source)
+        validator.validateBlocking(source)
         assertEquals(listOf(source), nativeSources)
         rejected("dns: {nameserver: ['dhcp://']}", "$.dns.nameserver[0]")
         rejected("dns: {nameserver: ['ftp://dns.example']}", "$.dns.nameserver[0]")
@@ -35,7 +36,7 @@ class CompatibilityValidatorTest {
 
     @Test fun probeDialOptionsAreStrictBooleansAndKeepExplicitFalse() {
         val source = "unified-delay: false\ntcp-concurrent: true"
-        validator.validate(source)
+        validator.validateBlocking(source)
         assertEquals(listOf(source), nativeSources)
         listOf("unified-delay", "tcp-concurrent").forEach { key ->
             listOf("null", "'false'", "1", "[]").forEach { invalid -> rejected("$key: $invalid", "$.$key") }
@@ -45,7 +46,7 @@ class CompatibilityValidatorTest {
 
     @Test fun fixedUnsupportedCapabilitiesReportActualConsumersRatherThanASchemaLabel() {
         listOf("ntp" to "{}", "sniffer" to "{enable: false}", "geodata-loader" to "standard").forEach { (key, value) ->
-            val error = assertThrows(ConfigValidationException::class.java) { validator.validate("$key: $value") }
+            val error = assertThrows(ConfigValidationException::class.java) { validator.validateBlocking("$key: $value") }
             val issue = error.issues.single { it.path == "$.$key" }
             assertTrue(issue.reason, issue.reason.contains("Fixed clash-rs"))
             assertFalse(issue.reason.contains("compatibility schema"))
@@ -61,7 +62,7 @@ class CompatibilityValidatorTest {
             "{type: tailscale, name: TS, ephemeral: false}",
         ).forEach { proxy ->
             val source = "proxies: [$proxy]"
-            validator.validate(source)
+            validator.validateBlocking(source)
             assertEquals(source, nativeSources.last())
         }
         assertEquals(4, nativeCalls)
@@ -72,7 +73,7 @@ class CompatibilityValidatorTest {
         listOf(base, "$base, sni: front.example, udp-over-stream: false, congestion-controller: bbr, disable-mtu-discovery: false",
             base.replace(", username: u, password: p", ""), base.replace("username: u, password: p", "username: '', password: ''")).forEach { proxy ->
             val source = "proxies: [{$proxy}]"
-            validator.validate(source)
+            validator.validateBlocking(source)
             assertEquals(source, nativeSources.last())
         }
         listOf(
@@ -101,7 +102,7 @@ class CompatibilityValidatorTest {
         ).forEach { (proxy, field) -> rejected("proxies: [{$proxy}]", "$.proxies[0].$field") }
         assertEquals(0, nativeCalls)
         val source = "proxies: [{$valid, preshared-key: '$key', allowed-ips: ['::/0', '0.0.0.0/0'], dns: ['::1'], reserved-bits: [0,0,0]}]"
-        validator.validate(source)
+        validator.validateBlocking(source)
         assertEquals(listOf(source), nativeSources)
     }
 
@@ -118,15 +119,15 @@ class CompatibilityValidatorTest {
             "{type: tailscale, name: T, exit-node: remote}" to "exit-node",
         ).forEach { (proxy, field) -> rejected("proxies: [$proxy]", "$.proxies[0].$field") }
         assertEquals(0, nativeCalls)
-        val error = assertThrows(ConfigValidationException::class.java) { validator.validate("proxies: [{type: openvpn, name: O}]") }
+        val error = assertThrows(ConfigValidationException::class.java) { validator.validateBlocking("proxies: [{type: openvpn, name: O}]") }
         assertTrue(error.issues.single().reason.contains("no openvpn outbound variant"))
     }
 
     @Test fun exactProcessNameAndPathRulesReachNativeAndModesStayStrict() {
         val source = "find-process-mode: always\nrules: ['PROCESS-NAME,com.example.app,DIRECT', 'PROCESS-PATH,/data/app/example,DIRECT', 'AND,((PROCESS-NAME,com.example.app),(NETWORK,TCP)),DIRECT']"
-        validator.validate(source)
+        validator.validateBlocking(source)
         assertEquals(listOf(source), nativeSources)
-        listOf("strict", "Always", "off").forEach { validator.validate("find-process-mode: $it") }
+        listOf("strict", "Always", "off").forEach { validator.validateBlocking("find-process-mode: $it") }
         listOf("null", "true", "[]", "unknown").forEach { rejected("find-process-mode: $it", "$.find-process-mode") }
         assertEquals(4, nativeCalls)
     }
@@ -144,7 +145,7 @@ class CompatibilityValidatorTest {
     }
 
     @Test fun supportedProfileAlsoRunsNativeParser() {
-        validator.validate("mode: rule\nproxies:\n - {name: direct, type: direct}\nrules:\n - MATCH,direct")
+        validator.validateBlocking("mode: rule\nproxies:\n - {name: direct, type: direct}\nrules:\n - MATCH,direct")
         assertEquals(1, nativeCalls)
     }
 
@@ -158,7 +159,7 @@ class CompatibilityValidatorTest {
             bind-address: '::'
             rules: ['MATCH,DIRECT']
         """.trimIndent()
-        validator.validate(source)
+        validator.validateBlocking(source)
         assertEquals(listOf(source), nativeSources)
     }
 
@@ -166,14 +167,14 @@ class CompatibilityValidatorTest {
         rejected("redir-port: 7893", "$.redir-port")
         rejected("tproxy-port: 7894", "$.tproxy-port")
         assertEquals(0, nativeCalls)
-        validator.validate("redir-port: 0\ntproxy-port: 0\nmixed-port: 7890")
+        validator.validateBlocking("redir-port: 0\ntproxy-port: 0\nmixed-port: 7890")
         assertEquals(1, nativeCalls)
     }
 
     @Test fun nativeErrorsAreNotConvertedToSuccess() {
         val realFailure = CompatibilityValidator(NativeConfigValidator { "$.proxies[0].uuid: invalid UUID" })
         val failure = assertThrows(ConfigValidationException::class.java) {
-            realFailure.validate("proxies:\n - {name: node, type: vless, server: example.com, port: 443, uuid: broken}")
+            realFailure.validateBlocking("proxies:\n - {name: node, type: vless, server: example.com, port: 443, uuid: broken}")
         }
         assertTrue(failure.message!!.contains("uuid"))
     }
@@ -186,7 +187,7 @@ class CompatibilityValidatorTest {
     @Test fun shadowTlsUsesOnlyThePinnedRustOptionsAndPreservesStrictChoice() {
         listOf(true, false).forEach { strict ->
             val yaml = ssProfile("shadow-tls", "{host: tls.example, password: plugin-secret, strict: $strict}")
-            validator.validate(yaml)
+            validator.validateBlocking(yaml)
             assertEquals(yaml, nativeSources.last())
             val proxy = (ConfigYaml.parse(nativeSources.last())["proxies"] as List<*>).single() as Map<*, *>
             val options = proxy["plugin-opts"] as Map<*, *>
@@ -198,7 +199,7 @@ class CompatibilityValidatorTest {
 
     @Test fun v2rayPluginPortAndCustomHeadersReachNativeWithoutRewriting() {
         val yaml = ssProfile("v2ray-plugin", "{mode: websocket, host: front.example, port: 8443, path: /ws, tls: true, mux: false, skip-cert-verify: false, headers: {Host: alternate.example, X-Test: value}}")
-        validator.validate(yaml)
+        validator.validateBlocking(yaml)
         assertEquals(listOf(yaml), nativeSources)
         val proxy = (ConfigYaml.parse(nativeSources.single())["proxies"] as List<*>).single() as Map<*, *>
         val options = proxy["plugin-opts"] as Map<*, *>
@@ -211,7 +212,7 @@ class CompatibilityValidatorTest {
             ssProfile("obfs", "{mode: http, host: front.example}"),
             ssProfile("obfs", "{mode: tls, host: front.example}"),
             ssProfile("v2ray-plugin", "{mode: websocket, tls: false, mux: false}"),
-        ).forEach(validator::validate)
+        ).forEach { validator.validateBlocking(it) }
         assertEquals(3, nativeCalls)
     }
 
@@ -246,7 +247,7 @@ class CompatibilityValidatorTest {
         val diagnostic = "v2ray plugin does not support mux"
         val check = CompatibilityValidator(NativeConfigValidator { attempts++; diagnostic })
         val failure = assertThrows(ConfigValidationException::class.java) {
-            check.validate(ssProfile("v2ray-plugin", "{mode: websocket, port: 443, mux: true, headers: {X-Test: value}}"))
+            check.validateBlocking(ssProfile("v2ray-plugin", "{mode: websocket, port: 443, mux: true, headers: {X-Test: value}}"))
         }
         assertEquals(1, attempts)
         assertEquals(listOf(ConfigIssue("$", diagnostic)), failure.issues)
@@ -262,7 +263,7 @@ class CompatibilityValidatorTest {
         ))
         assertTrue(batch.errors.toString(), batch.errors.isEmpty())
         val source = batch.entries.filterIsInstance<ProfileLinkEntry.Inline>().single().config
-        validator.validate(source)
+        validator.validateBlocking(source)
         assertEquals(listOf(source), nativeSources)
         val proxies = ConfigYaml.parse(nativeSources.single())["proxies"] as List<*>
         val shadow = (proxies[0] as Map<*, *>)["plugin-opts"] as Map<*, *>
@@ -305,15 +306,15 @@ class CompatibilityValidatorTest {
 
     @Test fun duplicateKeysAndRecursiveAliasesAreRejected() {
         rejected("mode: rule\nmode: global", "$")
-        assertThrows(ConfigValidationException::class.java) { validator.validate("hosts: &self {localhost: *self}") }
+        assertThrows(ConfigValidationException::class.java) { validator.validateBlocking("hosts: &self {localhost: *self}") }
     }
 
     @Test fun privateGeoFileMustExistAndCannotEscape() {
         val check = CompatibilityValidator(NativeConfigValidator { null }, temporary.root)
-        assertThrows(ConfigValidationException::class.java) { check.validate("geosite: ../outside.dat") }
-        assertThrows(ConfigValidationException::class.java) { check.validate("geosite: missing.dat") }
+        assertThrows(ConfigValidationException::class.java) { check.validateBlocking("geosite: ../outside.dat") }
+        assertThrows(ConfigValidationException::class.java) { check.validateBlocking("geosite: missing.dat") }
         File(temporary.root, "resources").mkdirs()
         File(temporary.root, "resources/geo.dat").writeBytes(byteArrayOf(1))
-        check.validate("geosite: geo.dat\nrules:\n - GEOSITE,cn,DIRECT")
+        check.validateBlocking("geosite: geo.dat\nrules:\n - GEOSITE,cn,DIRECT")
     }
 }
