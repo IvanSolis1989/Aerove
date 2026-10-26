@@ -165,6 +165,15 @@ private fun TrafficPaths(curves: State<DashboardTrafficCurves>, lift: State<Floa
 }
 
 internal data class DashboardClearance(val bounds: androidx.compose.ui.geometry.Rect, val outline: Path? = null) {
+    fun bandBounds(top: Float, bottom: Float): androidx.compose.ui.geometry.Rect? {
+        if (top >= bounds.bottom || bottom <= bounds.top) return null
+        val shape = outline ?: return bounds
+        val placed = Path().apply { addPath(shape, bounds.topLeft) }
+        val band = Path().apply { addRect(androidx.compose.ui.geometry.Rect(bounds.left, maxOf(top, bounds.top), bounds.right, minOf(bottom, bounds.bottom))) }
+        val clipped = Path.combine(androidx.compose.ui.graphics.PathOperation.Intersect, placed, band)
+        return if (clipped.isEmpty) null else clipped.getBounds()
+    }
+
     fun overlaps(other: androidx.compose.ui.geometry.Rect): Boolean {
         if (!bounds.overlaps(other)) return false
         val shape = outline ?: return true

@@ -105,6 +105,7 @@ class DashboardLayoutUiTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val state = mutableStateOf(LiteState())
     private val editing = mutableStateOf(false)
+    private val trafficVisible = mutableStateOf(true)
     private val foreground = mutableStateOf(true)
     private val bounds = ConcurrentHashMap<String, Rect>()
     private val actions = UiTestActions { state.value = state.value.copy(settings = it) }
@@ -128,6 +129,7 @@ class DashboardLayoutUiTest {
 
     private fun launch(initial: LiteState, fontScale: Float = 1f, maxWidth: Dp = 592.dp,
         deviceDensity: Float? = null, language: String? = null,
+        layoutDirection: androidx.compose.ui.unit.LayoutDirection? = null,
         lookup: suspend (String) -> IpQuality = { IpQuality(it, IpQualitySource.IdentMe, IpType.Residential, organization = "Example ISP") }) {
         state.value = initial
         compose.replaceAppContent {
@@ -138,6 +140,7 @@ class DashboardLayoutUiTest {
             inputModes = LocalInputModeManager.current
             IpQualityFixture(state.value, lookup) {
             CompositionLocalProvider(LocalContext provides localizedContext, LocalConfiguration provides configuration, LocalLiteMotionOverride provides true, LocalDiagnosticsForeground provides foreground.value,
+                androidx.compose.ui.platform.LocalLayoutDirection provides (layoutDirection ?: androidx.compose.ui.platform.LocalLayoutDirection.current),
                 LocalDensity provides Density(deviceDensity ?: LocalDensity.current.density, fontScale)) {
                 LiteTheme(state.value.settings) {
                     density = LocalDensity.current.density
@@ -147,7 +150,8 @@ class DashboardLayoutUiTest {
                     val content: @Composable (DashboardWidget) -> Unit = { widget ->
                         val mode = if (editing.value) "edit" else "view"
                         Box(Modifier.fillMaxWidth().onGloballyPositioned { bounds["$mode-${widget.wireName}"] = it.boundsInRoot() }) {
-                            DashboardCard(widget, state.value, actions, { profilesOpened++ }, { connectionsOpened++ }, { proxiesOpened++ },
+                            if (widget == DashboardWidget.CurrentOutbound) OutboundStatusCard(state.value, actions, showTraffic = trafficVisible.value)
+                            else DashboardCard(widget, state.value, actions, { profilesOpened++ }, { connectionsOpened++ }, { proxiesOpened++ },
                                 serviceStatusContent = { LiteText("Service content fixture") },
                                 memoryInfoContent = { LiteText("Memory content fixture") },
                                 openRequests = { requestsOpened++ }, openDns = { dnsOpened++ })
@@ -556,16 +560,20 @@ class DashboardLayoutUiTest {
         for (direction in listOf("upload", "download")) for (part in listOf("arrow", "value")) {
             val tag = "dashboard-$direction-$part"
             val line = statusRect(tag)
-            if (part == "arrow") put(tag, line) else {
-                val glyph = metricGlyphBounds(layouts.getValue(tag))
+            if (part == "arrow") {
+                val glyph = if (direction == "upload") FullGlyphs.arrowUp else FullGlyphs.arrowDown
+                val ink = checkNotNull(glyph.paintedBounds(androidx.compose.ui.geometry.Size(line.width, line.height), 0f, androidx.compose.ui.unit.LayoutDirection.Ltr))
+                put(tag, ink.translate(line.topLeft))
+            } else {
+                val text = layouts.getValue(tag)
                 val original = statusRect("$tag-raw")
-                put(tag, Rect(minOf(line.left, original.left + glyph.left), line.top,
-                    maxOf(line.right, original.left + glyph.right), line.bottom))
+                measuredWordInk(text, original.topLeft).forEachIndexed { index, ink -> put("$tag-$index", ink) }
             }
         }
     }
 
-    private fun metricGlyphBounds(layout: TextLayoutResult): android.graphics.Rect {
+    private fun metricGlyphBounds(layout: TextLayoutResult, first: Int = 0,
+        last: Int = layout.layoutInput.text.length): android.graphics.Rect {
         val input = layout.layoutInput
         val style = input.style
         val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
@@ -574,7 +582,36 @@ class DashboardLayoutUiTest {
                 style.fontStyle ?: FontStyle.Normal, style.fontSynthesis ?: FontSynthesis.All).value as android.graphics.Typeface
             style.localeList?.firstOrNull()?.let { textLocale = Locale.forLanguageTag(it.toLanguageTag()) }
         }
-        return android.graphics.Rect().also { paint.getTextBounds(input.text.text, 0, input.text.length, it) }
+        return android.graphics.Rect().also { paint.getTextBounds(input.text.text, first, last, it) }
+    }
+
+    private fun measuredWordInk(text: TextLayoutResult, origin: Offset): List<Rect> = buildList {
+        for (line in 0 until text.lineCount) {
+            val start = text.getLineStart(line)
+            val end = text.getLineEnd(line, visibleEnd = true)
+            for (word in Regex("\\S+").findAll(text.layoutInput.text.text.substring(start, end))) {
+                val first = start + word.range.first
+                val last = start + word.range.last + 1
+                val boxes = (first until last).map(text::getBoundingBox)
+                val left = boxes.minOf { it.left }
+                val right = boxes.maxOf { it.right }
+                val glyph = metricGlyphBounds(text, first, last)
+                val baseline = origin.y + text.getLineBaseline(line)
+                add(Rect(origin.x + minOf(left, left + glyph.left), baseline + glyph.top,
+                    origin.x + maxOf(right, left + glyph.right), baseline + glyph.bottom))
+            }
+        }
+    }
+
+    private fun footerInkRects(): List<Rect> = listOf("dashboard-status-uptime-label", "dashboard-status-uptime-value",
+        "dashboard-status-organization-label", "dashboard-status-organization-value").flatMap { tag ->
+        val node = compose.onNodeWithTag("$tag-raw", useUnmergedTree = true)
+        val results = mutableListOf<TextLayoutResult>()
+        node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        val text = results.single()
+        val origin = node.fetchSemanticsNode().boundsInRoot.topLeft
+        measuredWordInk(text, origin)
+
     }
 
     private fun trafficMeasurements(): String {
@@ -597,14 +634,21 @@ class DashboardLayoutUiTest {
             "widthFits=${heading.width + (8 * density).roundToInt() + traffic.width <= statusRect("dashboard-status-content").width}"
     }
 
-    private fun addTrafficAndAssertOriginalForeground(expectedOverlay: Boolean) {
+    private fun addTrafficAndAssertOriginalForeground(expectedOverlay: Boolean?) {
+        compose.runOnUiThread { trafficVisible.value = false }
+        compose.waitForIdle()
         val card = statusRect("dashboard-status")
         val before = statusForegroundRects()
-        compose.runOnUiThread { state.value = state.value.copy(settings = state.value.settings.copy(
-            dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed))) }
+        compose.runOnUiThread {
+            trafficVisible.value = true
+            state.value = state.value.copy(settings = state.value.settings.copy(
+                dashboardWidgets = listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)))
+        }
         compose.waitForIdle()
         val after = statusForegroundRects()
-        assertEquals(card, statusRect("dashboard-status"))
+        val actualCard = statusRect("dashboard-status")
+        assertEquals(card.left, actualCard.left, 0f)
+        assertEquals(card.right, actualCard.right, 0f)
         before.forEach { (key, rect) -> assertEquals(key, rect, after.getValue(key)) }
         val traffic = statusRect("dashboard-status-traffic")
         val upload = statusRect("dashboard-upload-speed")
@@ -612,8 +656,13 @@ class DashboardLayoutUiTest {
         assertTrue("two vertically ordered readings: $upload $download", upload.bottom <= download.top)
         assertEquals(traffic.right, upload.right, 0.5f)
         assertEquals(traffic.right, download.right, 0.5f)
-        if (expectedOverlay) {
-            assertEquals(card.right - 34f * density, traffic.right, 1f)
+        val overlay = traffic.top < before.getValue("dashboard-status-body").bottom
+        if (expectedOverlay != null) assertEquals(trafficMeasurements(), expectedOverlay, overlay)
+        if (overlay) {
+            assertEquals(card, actualCard)
+            assertTrue(trafficMeasurements(), traffic.right <= card.right - 34f * density + 1f)
+            assertTrue("${trafficMeasurements()} footerInk=${footerInkRects()}",
+                metricElementRects().values.none { rate -> footerInkRects().any(rate::overlaps) })
             fun inkCenter(tag: String): Float {
                 val node = compose.onNodeWithTag("$tag-raw", useUnmergedTree = true)
                 val results = mutableListOf<TextLayoutResult>()
@@ -624,14 +673,16 @@ class DashboardLayoutUiTest {
             }
             assertEquals(inkCenter("dashboard-status-uptime-label"), inkCenter("dashboard-upload-value"), 1f)
             assertEquals(inkCenter("dashboard-status-uptime-value"), inkCenter("dashboard-download-value"), 1f)
-        } else assertTrue("$traffic ${before.getValue("dashboard-status-body")}",
-            traffic.top >= before.getValue("dashboard-status-body").bottom)
+        } else {
+            assertTrue("append requires enlarged accessibility text", effectiveFontScale > 1.3f)
+            assertTrue("$traffic ${before.getValue("dashboard-status-body")}", traffic.top >= before.getValue("dashboard-status-body").bottom)
+        }
         trafficTextLayouts().forEach { (tag, text) ->
             assertTrue("$tag retains full rate/unit", !text.didOverflowWidth && !text.didOverflowHeight)
             assertTrue(!text.isLineEllipsized(0))
             assertEquals(10f, text.layoutInput.style.fontSize.value, 0f)
         }
-        assertStatusReadingOrder(expectedOverlay, traffic = true)
+        assertStatusReadingOrder(overlay, traffic = true)
     }
 
     private fun assertNoValueReadTwice(stops: List<Pair<String?, String>>) = stops.forEach { (tag, said) ->
@@ -907,6 +958,57 @@ class DashboardLayoutUiTest {
     }
 
     @Test
+    fun normal360EnglishKeepsBothFooterInkCentersAndOriginalBody() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun normal360ChineseKeepsBothFooterInkCentersAndOriginalBody() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "zh-CN")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun normal360RtlPreservesFooterAndPhysicalPadding() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en",
+            layoutDirection = androidx.compose.ui.unit.LayoutDirection.Rtl)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+        val card = statusRect("dashboard-status")
+        val content = statusRect("dashboard-status-content")
+        assertEquals(16f * density, content.left - card.left, 1f)
+        assertEquals(20f * density, card.right - content.right, 1f)
+    }
+
+    @Test
+    fun normal360ChineseAtThirteenTenthsUsesActualSpeedParts() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
+            maxWidth = 360.dp, fontScale = 1.3f, deviceDensity = 2.625f, language = "zh-CN")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun normal360JapaneseAtThirteenTenthsUsesActualSpeedParts() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
+            maxWidth = 360.dp, fontScale = 1.3f, deviceDensity = 2.625f, language = "ja")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun normal360WrappedOrganizationRetainsOriginalTextAndIntrinsicBody() {
+        val organization = "Example International Telecommunications Organization"
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en",
+            lookup = { IpQuality(it, IpQualitySource.IdentMe, IpType.Residential, organization = organization) })
+        awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n$organization")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+        compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true).assertTextEquals(organization)
+    }
+
+    @Test
     fun compactTrafficOverlayPreservesOriginalStatusForegroundBounds() {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
         launch(initial, maxWidth = 412.dp)
@@ -967,17 +1069,17 @@ class DashboardLayoutUiTest {
     }
 
     @Test
-    fun narrowLargeChineseTextAppendsOnlyForMeasuredCollision() {
+    fun narrowLargeChineseTextKeepsFooterOrUsesAccessibilityAppend() {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
         launch(initial, fontScale = 2f, maxWidth = 328.dp, deviceDensity = 2.625f, language = "zh-CN")
-        addTrafficAndAssertOriginalForeground(expectedOverlay = false)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = null)
     }
 
     @Test
     fun narrowLargeTextKeepsStatusAndSpeedForegroundsSeparate() {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running)
         launch(initial, fontScale = 2f, maxWidth = 328.dp, deviceDensity = 2.625f)
-        addTrafficAndAssertOriginalForeground(expectedOverlay = false)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = null)
         compose.onNodeWithText(context.getString(R.string.lite_status)).assertIsDisplayed()
         // The figures speak through one cleared description, so their visible labels live in the unmerged tree.
         compose.onNodeWithTag("dashboard-upload-value", useUnmergedTree = true).assertIsDisplayed()

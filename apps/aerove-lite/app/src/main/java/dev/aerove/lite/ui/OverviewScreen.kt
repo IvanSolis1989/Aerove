@@ -120,6 +120,13 @@ import androidx.compose.ui.layout.HorizontalAlignmentLine
 import androidx.compose.ui.layout.VerticalAlignmentLine
 import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.MeasurePolicy
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.IntrinsicMeasureScope
+import androidx.compose.ui.layout.IntrinsicMeasurable
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.LayoutDirection
 
 internal val LocalDashboardFusion = staticCompositionLocalOf { true }
@@ -269,6 +276,11 @@ private class StatusBounds {
     val top = HorizontalAlignmentLine(::minOf)
     val bottom = HorizontalAlignmentLine(::maxOf)
 
+    fun rects(parent: Placeable, lineInk: List<Rect>? = null): List<Rect> {
+        val box = rect(parent) ?: return emptyList()
+        return lineInk?.map { it.translate(box.topLeft) } ?: listOf(box)
+    }
+
     fun rect(parent: Placeable, x: Int = 0, y: Int = 0): Rect? {
         val start = parent[left]
         if (start == AlignmentLine.Unspecified) return null
@@ -282,7 +294,7 @@ private enum class StatusForeground {
 }
 
 private enum class StatusMetricPart {
-    UploadValue, DownloadValue, UploadInk, DownloadInk, TitleInk, FooterLabelInk, FooterValueInk;
+    UploadValue, DownloadValue, UploadInk, DownloadInk, TitleInk, FooterLabelInk, FooterValueInk, OrganizationLabelInk, OrganizationValueInk, UploadArrowInk, DownloadArrowInk;
     val bounds = StatusBounds()
 }
 
@@ -295,6 +307,14 @@ private fun Modifier.statusBounds(bounds: StatusBounds, shape: androidx.compose.
     }
 }
 
+private fun Modifier.statusGlyphBounds(part: StatusMetricPart, glyph: LiteGlyph, fill: Float,
+    ink: MutableMap<StatusMetricPart, List<Rect>>) = layout { measurable, constraints ->
+    val child = measurable.measure(constraints)
+    ink[part] = listOfNotNull(glyph.paintedBounds(androidx.compose.ui.geometry.Size(child.width.toFloat(), child.height.toFloat()), fill, layoutDirection))
+    layout(child.width, child.height, mapOf(part.bounds.left to 0, part.bounds.top to 0,
+        part.bounds.right to child.width, part.bounds.bottom to child.height)) { child.place(0, 0) }
+}
+
 private fun Modifier.statusForeground(part: StatusForeground, shape: androidx.compose.ui.graphics.Shape? = null) = statusBounds(part.bounds, shape)
 
 /** The body's controls, which a screen reader takes after everything else the body reports. */
@@ -304,7 +324,7 @@ private fun Modifier.statusControl(control: StatusControl) = semantics { travers
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraffic: Boolean = true) {
+internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraffic: Boolean = true) {
     val visuals = LocalLiteVisuals.current
     val running = state.phase == VpnPhase.Running
     val suspended = running && state.suspended
@@ -330,6 +350,7 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
         VpnPhase.Stopped -> R.string.lite_not_running
     }
     val trafficRowSpan = remember { androidx.compose.runtime.mutableFloatStateOf(20f) }
+    val statusInk = remember { mutableMapOf<StatusMetricPart, List<Rect>>() }
     DisposableEffect(actions, active) {
         actions.setStatusTrafficActive(active)
         onDispose { actions.setStatusTrafficActive(false) }
@@ -347,7 +368,6 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
             StatusTrafficBackground(state, running && !suspended, active, measured, Modifier.matchParentSize())
         }
         CompositionLocalProvider(LocalLiteBackdrop provides controlsSource) {
-            // Groups keep each part's stops together; geometry alone puts traffic in the heading's row or after the body.
             Layout(modifier = Modifier.padding(start = 20.dp, top = 18.dp, end = 16.dp, bottom = 18.dp).testTag("dashboard-status-content")
                 .semantics { isTraversalGroup = true }, content = {
                 Column(Modifier.fillMaxWidth().testTag("dashboard-status-body").semantics { isTraversalGroup = true }) {
@@ -401,7 +421,7 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
                             val organizationPending = if (identity == null) !failed else qualityState?.loading == true
                             Spacer(Modifier.height(16.dp))
                             StatusCells(state.uptimeMillis, intendsRunning && !suspended, active,
-                                organization, organizationLabel, organizationPending)
+                                organization, organizationLabel, organizationPending, statusInk)
                         }
                         StartBubble(intendsRunning, enabled, stringResource(if (suspended) R.string.integration_suspended else if (intendsRunning) R.string.lite_stop else R.string.lite_start), time,
                             if (intendsRunning) actions::disconnect else actions::connect, suspended)
@@ -409,35 +429,44 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
                     state.listenerError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.ListenerError).testTag("dashboard-status-listener-error"), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                     state.outboundError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.OutboundError).testTag("dashboard-status-outbound-error"), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                 }
-                StatusTrafficReadings(state, active, trafficRowSpan,
+                if (showTraffic) StatusTrafficReadings(state, active, trafficRowSpan, statusInk,
                     Modifier.testTag("dashboard-status-traffic").semantics { isTraversalGroup = true })
             }) { children, constraints ->
                 val loose = constraints.copy(minWidth = 0, minHeight = 0)
                 val body = children[0].measure(loose.copy(minWidth = constraints.maxWidth))
+                if (!showTraffic) {
+                    return@Layout layout(constraints.maxWidth, body.height) { body.placeRelative(0, 0) }
+                }
                 val labelInk = StatusMetricPart.FooterLabelInk.bounds.rect(body)
                 val valueInk = StatusMetricPart.FooterValueInk.bounds.rect(body)
                 trafficRowSpan.floatValue = (valueInk?.center?.y ?: 20.dp.toPx()) - (labelInk?.center?.y ?: 0f)
                 val traffic = children[1].measure(loose)
-                val heading = StatusForeground.Heading.bounds.rect(body) ?: Rect.Zero
-                val gap = 12.dp.roundToPx()
+                val gap = 8.dp.roundToPx()
                 val bodyY = 0
                 val mainHeight = body.height
-                // Both rate centres follow the real footer lines; only the right edge uses the corner centre.
                 val radius = LiteCorner.Dashboard.roundToPx()
-                val anchorX = constraints.maxWidth + 16.dp.roundToPx() - radius
-                val titleInk = labelInk
+                val rightPadding = if (layoutDirection == androidx.compose.ui.unit.LayoutDirection.Ltr) 16.dp else 20.dp
+                val preferredX = dashboardFooterPreferredX(constraints.maxWidth, traffic.width, radius, rightPadding.roundToPx())
                 val speedInk = StatusMetricPart.UploadInk.bounds.rect(traffic)
-                val anchorY = ((titleInk?.center?.y ?: heading.center.y) -
+                val anchorY = ((labelInk?.center?.y ?: 0f) -
                     (speedInk?.center?.y ?: traffic.height / 4f)).roundToInt()
-                val trafficX = anchorX - traffic.width
-                val metricBounds = StatusMetricPart.entries.mapNotNull { it.bounds.rect(traffic, x = trafficX)?.translate(0f, anchorY.toFloat()) }
-                val bodyBounds = StatusForeground.entries.mapNotNull { part -> part.bounds.rect(body, y = bodyY)?.let { DashboardClearance(it, part.bounds.outline) } }
-                val overlay = trafficX >= 0 && bodyBounds.none { occupied -> metricBounds.any { occupied.overlaps(it) } }
-                val trafficY = if (overlay) anchorY else mainHeight + gap
-                val height = maxOf(mainHeight, trafficY + traffic.height)
+                val metricBounds = listOf(StatusMetricPart.UploadArrowInk, StatusMetricPart.UploadInk,
+                    StatusMetricPart.DownloadArrowInk, StatusMetricPart.DownloadInk)
+                    .flatMap { part -> part.bounds.rects(traffic, statusInk[part]).map { it.translate(0f, anchorY.toFloat()) } }
+                val bodyBounds = StatusForeground.entries.filterNot { it == StatusForeground.Uptime || it == StatusForeground.Organization }
+                    .mapNotNull { part -> part.bounds.rect(body)?.let { DashboardClearance(it, part.bounds.outline) } } +
+                    listOf(StatusMetricPart.FooterLabelInk, StatusMetricPart.FooterValueInk,
+                        StatusMetricPart.OrganizationLabelInk, StatusMetricPart.OrganizationValueInk)
+                        .flatMap { part -> part.bounds.rects(body, statusInk[part]).map { DashboardClearance(it) } }
+                val slot = dashboardFooterOffsetX(preferredX, constraints.maxWidth - traffic.width,
+                    metricBounds, bodyBounds)
+                val appended = dashboardFooterAppends(slot, fontScale)
+                val trafficX = slot ?: preferredX.coerceAtLeast(0)
+                val trafficY = if (appended) mainHeight + gap else anchorY
+                val height = if (appended) maxOf(mainHeight, trafficY + traffic.height) else mainHeight
                 layout(constraints.maxWidth, constraints.constrainHeight(height)) {
                     body.placeRelative(0, bodyY)
-                    traffic.place(trafficX.coerceAtLeast(0), trafficY)
+                    traffic.place(trafficX, trafficY)
                 }
             }
         }
@@ -446,37 +475,109 @@ private fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraff
 
 @Composable
 private fun StatusMetricText(text: String, tag: String, part: StatusMetricPart, style: TextStyle,
-    color: Color, modifier: Modifier = Modifier, description: String? = null) {
+    color: Color, modifier: Modifier = Modifier, description: String? = null,
+    painted: MutableMap<StatusMetricPart, List<Rect>>? = null) {
     val density = LocalDensity.current
     val family = style.fontFamily ?: LocalLiteFontFamily.current
     val resolvedTypeface by LocalFontFamilyResolver.current.resolve(family, style.fontWeight ?: FontWeight.Normal,
         style.fontStyle ?: FontStyle.Normal, style.fontSynthesis ?: FontSynthesis.All)
     val locales = style.localeList ?: LocaleList.current
-    val ink = remember(text, style.fontSize, resolvedTypeface, locales, density.density, density.fontScale) {
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    val paint = remember(style.fontSize, resolvedTypeface, locales, density.density, density.fontScale) {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = with(density) { style.fontSize.toPx() }
             this.typeface = resolvedTypeface as android.graphics.Typeface
             textLocales = android.os.LocaleList(*(0 until locales.size).map { Locale.forLanguageTag(locales[it].toLanguageTag()) }.toTypedArray())
         }
-        android.graphics.Rect().also { paint.getTextBounds(text, 0, text.length, it) }
     }
+    val ink = remember(text, paint) { android.graphics.Rect().also { paint.getTextBounds(text, 0, text.length, it) } }
+    val paragraph = remember { arrayOfNulls<androidx.compose.ui.text.TextLayoutResult>(1) }
     val leading = with(density) { ceil(style.lineHeight.toPx()).toInt() }
     // Preserve the natural paragraph; its transparent leading does not belong to the compact line.
     Layout(modifier = modifier.testTag(tag).then(if (description != null) Modifier.clearAndSetSemantics { contentDescription = description }
         else Modifier.semantics {}), content = {
-        LiteText(text, Modifier.testTag("$tag-raw"), style = style, color = color, maxLines = 1)
-    }) { children, constraints ->
-        val glyphs = children.single().measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = androidx.compose.ui.unit.Constraints.Infinity))
+        LiteText(text, Modifier.testTag("$tag-raw"), style = style, color = color, maxLines = 1,
+            onTextLayout = if (painted == null) null else { result -> paragraph[0] = result })
+    }, measurePolicy = object : MeasurePolicy {
+        override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+        val glyphs = measurables.single().measure(constraints.copy(minWidth = 0, minHeight = 0, maxWidth = androidx.compose.ui.unit.Constraints.Infinity))
         val height = maxOf(leading, ink.height())
         val baseline = (height - ink.height()) / 2 - ink.top
         val originalBaseline = glyphs[FirstBaseline]
         check(originalBaseline != AlignmentLine.Unspecified)
-        layout(glyphs.width, height, mapOf(FirstBaseline to baseline, LastBaseline to baseline,
+        paragraph[0]?.takeIf { painted != null }?.let { result ->
+            painted!![part] = statusWordInk(text, result, paint).map {
+                it.translate(-minOf(0, ink.left).toFloat(), (-originalBaseline - ink.top).toFloat())
+            }
+        }
+        return layout(glyphs.width, height, mapOf(FirstBaseline to baseline, LastBaseline to baseline,
             part.bounds.left to minOf(0, ink.left), part.bounds.right to maxOf(glyphs.width, ink.right),
             part.bounds.top to baseline + ink.top, part.bounds.bottom to baseline + ink.bottom)) {
             glyphs.place(0, baseline - originalBaseline)
         }
+        }
+        override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = measurables.single().maxIntrinsicWidth(height)
+        override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = measurables.single().maxIntrinsicWidth(height)
+        override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) = maxOf(leading, ink.height())
+        override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) = maxOf(leading, ink.height())
+    })
+}
+
+private val statusWordPattern = Regex("\\S+")
+
+private fun statusWordInk(text: String, paragraph: androidx.compose.ui.text.TextLayoutResult,
+    paint: android.graphics.Paint): List<Rect> = buildList {
+    for (line in 0 until paragraph.lineCount) {
+        val start = paragraph.getLineStart(line)
+        val end = paragraph.getLineEnd(line, visibleEnd = true)
+        for (word in statusWordPattern.findAll(text.substring(start, end))) {
+            val first = start + word.range.first
+            val last = start + word.range.last + 1
+            var left = Float.POSITIVE_INFINITY
+            var right = Float.NEGATIVE_INFINITY
+            for (index in first until last) {
+                val box = paragraph.getBoundingBox(index)
+                left = minOf(left, box.left)
+                right = maxOf(right, box.right)
+            }
+            val ink = android.graphics.Rect().also { paint.getTextBounds(text, first, last, it) }
+            val baseline = paragraph.getLineBaseline(line)
+            add(Rect(minOf(left, left + ink.left), baseline + ink.top,
+                maxOf(right, left + ink.right), baseline + ink.bottom))
+        }
     }
+}
+
+@Composable
+private fun StatusFooterText(text: String, part: StatusMetricPart, modifier: Modifier = Modifier,
+    style: TextStyle, color: Color = LocalLiteVisuals.current.ink, ink: MutableMap<StatusMetricPart, List<Rect>>) {
+    val density = LocalDensity.current
+    val family = style.fontFamily ?: LocalLiteFontFamily.current
+    val resolved by LocalFontFamilyResolver.current.resolve(family, style.fontWeight ?: FontWeight.Normal,
+        style.fontStyle ?: FontStyle.Normal, style.fontSynthesis ?: FontSynthesis.All)
+    val locales = style.localeList ?: LocaleList.current
+    val paint = remember(style.fontSize, resolved, locales, density.density, density.fontScale) {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = with(density) { style.fontSize.toPx() }
+            typeface = resolved as android.graphics.Typeface
+            textLocales = android.os.LocaleList(*(0 until locales.size).map { Locale.forLanguageTag(locales[it].toLanguageTag()) }.toTypedArray())
+        }
+    }
+    val result = remember { arrayOfNulls<androidx.compose.ui.text.TextLayoutResult>(1) }
+    val tag = if (part == StatusMetricPart.OrganizationLabelInk) "dashboard-status-organization-label" else "dashboard-status-organization-value"
+    Layout(modifier = modifier.testTag(tag), content = { LiteText(text, Modifier.testTag("$tag-raw"), style = style, color = color, onTextLayout = { result[0] = it }) },
+        measurePolicy = object : MeasurePolicy {
+        override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
+            val child = measurables.single().measure(constraints)
+            val paragraph = checkNotNull(result[0])
+            ink[part] = statusWordInk(text, paragraph, paint)
+            return layout(child.width, child.height, mapOf(part.bounds.left to 0, part.bounds.top to 0,
+                part.bounds.right to child.width, part.bounds.bottom to child.height)) { child.place(0, 0) }
+        }
+        override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = measurables.single().minIntrinsicWidth(height)
+        override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = measurables.single().maxIntrinsicWidth(height)
+        override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) = measurables.single().minIntrinsicHeight(width)
+        override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) = measurables.single().maxIntrinsicHeight(width)
+    })
 }
 
 @Composable
@@ -495,7 +596,7 @@ private fun StatusUptime(millis: Long, running: Boolean, active: Boolean) {
 
 @Composable
 private fun StatusCells(millis: Long, running: Boolean, active: Boolean, organization: String?,
-    organizationLabel: String, pending: Boolean) {
+    organizationLabel: String, pending: Boolean, ink: MutableMap<StatusMetricPart, List<Rect>>) {
     val stacked = LocalDensity.current.fontScale > 1.3f
     Layout(content = {
         StatusUptime(millis, running, active)
@@ -503,8 +604,8 @@ private fun StatusCells(millis: Long, running: Boolean, active: Boolean, organiz
             .clearAndSetSemantics {
                 contentDescription = listOfNotNull(organizationLabel, organization ?: "—".takeUnless { pending }).joinToString("\n")
             }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            LiteText(organizationLabel, style = LiteType.Caption, color = LocalLiteVisuals.current.secondaryInk)
-            LiteText(organization ?: "—", Modifier.testTag("dashboard-status-organization-value"), style = LiteType.Label)
+            StatusFooterText(organizationLabel, StatusMetricPart.OrganizationLabelInk, style = LiteType.Caption, color = LocalLiteVisuals.current.secondaryInk, ink = ink)
+            StatusFooterText(organization ?: "—", StatusMetricPart.OrganizationValueInk, Modifier.testTag("dashboard-status-organization-value"), style = LiteType.Label, ink = ink)
         }
     }) { children, constraints ->
         val gap = 24.dp.roundToPx()
@@ -522,20 +623,24 @@ private fun StatusCells(millis: Long, running: Boolean, active: Boolean, organiz
 }
 
 @Composable
-private fun StatusSpeed(upload: Boolean, rate: Long, modifier: Modifier) {
+private fun StatusSpeed(upload: Boolean, rate: Long, modifier: Modifier, ink: MutableMap<StatusMetricPart, List<Rect>>) {
     val visuals = LocalLiteVisuals.current
     val (speed, unit) = dashboardTraffic(rate)
     val prefix = if (upload) "dashboard-upload" else "dashboard-download"
     val label = stringResource(if (upload) R.string.lite_upload else R.string.lite_download)
     val rateUnit = stringResource(R.string.lite_rate, unit)
     val part = if (upload) StatusMetricPart.UploadValue else StatusMetricPart.DownloadValue
+    val glyph = if (upload) FullGlyphs.arrowUp else FullGlyphs.arrowDown
+    val arrow = if (upload) StatusMetricPart.UploadArrowInk else StatusMetricPart.DownloadArrowInk
+    val glyphFill = 0f
     Row(modifier.testTag("$prefix-speed").statusBounds(part.bounds)
         .clearAndSetSemantics { contentDescription = "$label\n$speed $rateUnit" },
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-        LiteIcon(if (upload) FullGlyphs.arrowUp else FullGlyphs.arrowDown,
-            Modifier.testTag("$prefix-arrow").semantics { hideFromAccessibility() }, size = 10.dp, color = visuals.secondaryInk)
+        LiteIcon(glyph,
+            Modifier.testTag("$prefix-arrow").statusGlyphBounds(arrow, glyph, glyphFill, ink).semantics { hideFromAccessibility() },
+            size = 10.dp, color = visuals.secondaryInk, fill = glyphFill)
         StatusMetricText("$speed $rateUnit", "$prefix-value", if (upload) StatusMetricPart.UploadInk else StatusMetricPart.DownloadInk,
-            LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Normal), visuals.secondaryInk)
+            LiteType.Caption.copy(fontSize = 10.sp, lineHeight = 12.sp, fontWeight = FontWeight.Normal), visuals.secondaryInk, painted = ink)
     }
 }
 
@@ -813,11 +918,12 @@ private fun DashboardStat(value: String?, label: Int, modifier: Modifier, open: 
 }
 
 @Composable
-private fun StatusTrafficReadings(state: LiteState, active: Boolean, rowSpan: State<Float>, modifier: Modifier) {
+private fun StatusTrafficReadings(state: LiteState, active: Boolean, rowSpan: State<Float>,
+    ink: MutableMap<StatusMetricPart, List<Rect>>, modifier: Modifier) {
     val traffic = displayValue(LocalLiteDisplayStreams.current?.traffic, state.traffic, active).value
     Layout(modifier = modifier, content = {
-        StatusSpeed(true, traffic.uploadPerSecond, Modifier)
-        StatusSpeed(false, traffic.downloadPerSecond, Modifier)
+        StatusSpeed(true, traffic.uploadPerSecond, Modifier, ink)
+        StatusSpeed(false, traffic.downloadPerSecond, Modifier, ink)
     }) { children, constraints ->
         val loose = constraints.copy(minWidth = 0, minHeight = 0)
         val upload = children[0].measure(loose)

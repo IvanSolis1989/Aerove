@@ -93,6 +93,43 @@ internal fun glyphPolyline(vertices: List<LiteGlyphVertex>, closed: Boolean = fa
     return LiteGlyphPart(path, role)
 }
 
+internal fun glyphStrokeWidth(role: LiteGlyphRole, progress: Float): Float =
+    if (role == LiteGlyphRole.Line) 1.8f + 0.4f * progress else 1.8f
+
+internal fun glyphDetailScale(progress: Float): Float =
+    if (progress > 0.5f) (progress - 0.5f) * 2 else 1 - progress * 2
+
+internal fun glyphPartPaintedBounds(bounds: Rect, role: LiteGlyphRole, solid: Boolean,
+    size: Size, fill: Float, mirror: Boolean): Rect? {
+    if (size.minDimension <= 0f) return null
+    val progress = fill.coerceIn(0f, 1f)
+    val detailScale = glyphDetailScale(progress)
+    val painted = if (role == LiteGlyphRole.Detail) {
+        if (progress > 0.5f || detailScale <= 0f) return null
+        if (solid) Rect(bounds.center.x + (bounds.left - bounds.center.x) * detailScale,
+            bounds.center.y + (bounds.top - bounds.center.y) * detailScale,
+            bounds.center.x + (bounds.right - bounds.center.x) * detailScale,
+            bounds.center.y + (bounds.bottom - bounds.center.y) * detailScale)
+        else bounds.inflate(glyphStrokeWidth(role, progress) * detailScale / 2)
+    } else if (solid) bounds else bounds.inflate(glyphStrokeWidth(role, progress) / 2)
+    val oriented = if (mirror) Rect(24f - painted.right, painted.top, 24f - painted.left, painted.bottom) else painted
+    val scale = size.minDimension / 24f
+    return Rect(oriented.left * scale, oriented.top * scale, oriented.right * scale, oriented.bottom * scale).inflate(1f)
+}
+
+internal fun LiteGlyph.paintedBounds(size: Size, fill: Float, layoutDirection: LayoutDirection): Rect? {
+    var result: Rect? = null
+    for (part in shapes) {
+        if (part.path.isEmpty) continue
+        val bounds = glyphPartPaintedBounds(part.path.getBounds(), part.role, part.solid, size, fill,
+            mirrorInRtl && layoutDirection == LayoutDirection.Rtl) ?: continue
+        val previous = result
+        result = if (previous == null) bounds else Rect(minOf(previous.left, bounds.left), minOf(previous.top, bounds.top),
+            maxOf(previous.right, bounds.right), maxOf(previous.bottom, bounds.bottom))
+    }
+    return result
+}
+
 @Composable
 internal fun GlyphDrawing(glyph: LiteGlyph, modifier: Modifier, color: Color, fill: Float) {
     val rtl = glyph.mirrorInRtl && LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -102,7 +139,7 @@ internal fun GlyphDrawing(glyph: LiteGlyph, modifier: Modifier, color: Color, fi
     Canvas(modifier) {
         val progress = fill.coerceIn(0f, 1f)
         val cut = progress > 0.5f
-        val detailScale = if (cut) (progress - 0.5f) * 2 else 1 - progress * 2
+        val detailScale = glyphDetailScale(progress)
         val opaque = color.copy(alpha = 1f)
         stroke.color = opaque
         area.color = opaque
@@ -128,7 +165,7 @@ internal fun GlyphDrawing(glyph: LiteGlyph, modifier: Modifier, color: Color, fi
             if (detailScale > 0f) for (part in glyph.shapes) if (part.role == LiteGlyphRole.Detail) {
                 val paint = if (part.solid) area else stroke
                 paint.blendMode = if (cut) BlendMode.Clear else BlendMode.SrcOver
-                stroke.strokeWidth = 1.8f * detailScale
+                stroke.strokeWidth = glyphStrokeWidth(part.role, progress) * detailScale
                 if (part.solid) {
                     val center = part.path.getBounds().center
                     canvas.save()
@@ -141,7 +178,7 @@ internal fun GlyphDrawing(glyph: LiteGlyph, modifier: Modifier, color: Color, fi
                 paint.blendMode = BlendMode.SrcOver
             }
             for (part in glyph.shapes) if (part.role != LiteGlyphRole.Detail) {
-                stroke.strokeWidth = if (part.role == LiteGlyphRole.Line) 1.8f + 0.4f * progress else 1.8f
+                stroke.strokeWidth = glyphStrokeWidth(part.role, progress)
                 canvas.drawPath(part.path, if (part.solid) area else stroke)
             }
             canvas.restore()
