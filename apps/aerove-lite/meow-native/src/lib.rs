@@ -6,6 +6,7 @@ pub mod capabilities;
 pub mod config_validation;
 pub mod api;
 pub mod control;
+pub mod routed_probe;
 pub mod providers;
 #[cfg(unix)]
 pub mod packet_fd;

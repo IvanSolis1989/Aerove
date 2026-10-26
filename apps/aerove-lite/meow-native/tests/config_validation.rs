@@ -116,7 +116,22 @@ async fn yaml_domain_resource_uses_core_checked_build_and_preserves_old_json_sha
     assert_eq!(result, serde_json::json!({"format":"yaml","behavior":"domain","count":2}));
     assert_eq!(dump_rule_set(&f.0, "domain", "yml").unwrap(), "example.com\n+.example.org\n");
     assert!(dump_rule_set(&f.0, "ipcidr", "yaml").unwrap_err().contains("behavior_mismatch"));
-    assert!(dump_rule_set(&f.0, "domain", "text").unwrap_err().contains("format_mismatch"));
+    assert!(dump_rule_set(&f.0, "domain", "text").unwrap_err().contains("format_mismatch"),
+        "actual text-format error: {}", dump_rule_set(&f.0, "domain", "text").unwrap_err());
+}
+
+#[tokio::test]
+async fn text_format_mismatch_is_shared_by_dump_validation_and_preflight_without_rewriting_invalid_text() {
+    let yaml = Fixture::new(b"payload: ['example.com', '+.example.org']\n");
+    let mismatch = "rule_set_invalid: $.format: rule_set_format_mismatch";
+    assert_eq!(dump_rule_set(&yaml.0, "domain", "text").unwrap_err(), mismatch);
+    assert_eq!(validate_resource("ruleset", &yaml.0, "domain", "text").await.unwrap_err(), mismatch);
+    assert_eq!(validation::preflight_rule_resource(&yaml.0, "domain", "text").unwrap_err(), mismatch);
+    let invalid = Fixture::new(b".\n");
+    let original = inspect_rule_set(&invalid.0).unwrap_err();
+    assert!(!original.contains("format_mismatch"));
+    assert_eq!(dump_rule_set(&invalid.0, "domain", "text").unwrap_err(), original);
+    assert_eq!(validation::preflight_rule_resource(&invalid.0, "domain", "text").unwrap_err(), original);
 }
 
 #[tokio::test]

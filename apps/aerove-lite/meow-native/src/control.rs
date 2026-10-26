@@ -9,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 pub struct RouteSnapshot {
     #[serde(rename = "core-epoch")]
     pub core_epoch: String,
-    #[serde(rename = "picks-version")]
-    pub picks_version: String,
+    #[serde(rename = "route-version")]
+    pub route_version: String,
     pub picks: BTreeMap<String, String>,
 }
 
@@ -20,12 +20,12 @@ pub enum ControlError { Cancelled, NotFound, InvalidSelection, RevisionExhausted
 
 
 pub struct RouteControl {
-    state: Arc<AppState>,
+    pub(crate) state: Arc<AppState>,
     pub plane: Arc<ControlPlane>,
     groups: parking_lot::Mutex<Option<Arc<meow_config::owned_load::OwnedLoadScope>>>,
     observed_members: parking_lot::Mutex<BTreeMap<usize, std::sync::Weak<dyn Proxy>>>,
     groups_changed: tokio::sync::Notify,
-    groups_events: tokio::sync::broadcast::Sender<u64>,
+    groups_events: tokio::sync::broadcast::Sender<(u64, u64)>,
 }
 
 impl RouteControl {
@@ -70,11 +70,18 @@ impl RouteControl {
     fn snapshot_locked(&self, gate: &PlaneState) -> RouteSnapshot {
         let route = self.state.tunnel.route_snapshot();
         RouteSnapshot {
-            core_epoch: gate.core_epoch.to_string(), picks_version: gate.revision.to_string(),
+            core_epoch: gate.core_epoch.to_string(), route_version: gate.revision.to_string(),
             picks: route.proxies.iter().filter_map(|(name, proxy)| {
                 proxy.current().map(|selected| (name.to_string(), selected))
             }).collect(),
         }
+    }
+
+    pub(crate) fn stamp(&self) -> Result<(u64, u64), ControlError> {
+        let gate = self.plane.gate.lock();
+        self.check_live(&gate)?;
+        self.check_graph_idle(&gate)?;
+        Ok((gate.core_epoch, gate.revision))
     }
 
     pub async fn snapshot(&self) -> Result<RouteSnapshot, ControlError> {
@@ -84,15 +91,21 @@ impl RouteControl {
     }
 
     pub async fn set_mode(&self, mode: TunnelMode) -> Result<RouteSnapshot, ControlError> {
-        let mut gate = self.plane.gate.lock();
-        self.check_live(&gate)?;
-        if self.state.tunnel.mode() != mode {
-            let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
-            self.state.tunnel.set_mode(mode);
-            self.state.raw_config.write().mode = Some(mode.to_string());
-            gate.revision = next;
-        }
-        Ok(self.snapshot_locked(&gate))
+        let (snapshot, changed) = {
+            let mut gate = self.plane.gate.lock();
+            self.check_live(&gate)?;
+            let changed = self.state.tunnel.mode() != mode;
+            if changed {
+                let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+                let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+                self.state.tunnel.set_mode(mode);
+                self.state.raw_config.write().mode = Some(mode.to_string());
+                gate.revision = next; gate.groups_sequence = sequence;
+            }
+            (self.snapshot_locked(&gate), changed)
+        };
+        if changed { self.groups_changed.notify_one(); }
+        Ok(snapshot)
     }
 
     fn validate_prepare_members(proxy: &Arc<dyn Proxy>, name: &str) -> Result<(), ControlError> {
@@ -259,8 +272,8 @@ async fn provider_telemetry(
                         }
                         incoming = socket.recv() => if incoming.is_none() || incoming.is_some_and(|message| message.is_err() || matches!(message, Ok(Message::Close(_)))) { return false; },
                         group = groups.recv() => {
-                            let Ok(revision) = group else { return false; };
-                            let frame = serde_json::json!({"type":"groupsChanged","revision":revision}).to_string();
+                            let Ok((revision, route_version)) = group else { return false; };
+                            let frame = serde_json::json!({"type":"groupsChanged","revision":revision,"routeVersion":route_version}).to_string();
                             if socket.send(Message::Text(frame.into())).await.is_err() { return false; }
                         }
                         event = events.recv() => {
@@ -333,7 +346,7 @@ impl meow_common::adapter::HealthObserver for GroupHealthObserver {
 }
 
 impl RouteControl {
-    pub fn subscribe_groups(&self) -> tokio::sync::broadcast::Receiver<u64> { self.groups_events.subscribe() }
+    pub fn subscribe_groups(&self) -> tokio::sync::broadcast::Receiver<(u64, u64)> { self.groups_events.subscribe() }
     fn collect_members(roots: Vec<Arc<dyn Proxy>>) -> Result<ManagedGraph, ControlError> { Self::collect_graph(roots,true,None) }
     fn collect_graph(roots: Vec<Arc<dyn Proxy>>, published:bool, projection:Option<&meow_config::ProxyProviderProjection>) -> Result<ManagedGraph, ControlError> {
         fn visit(proxy: Arc<dyn Proxy>, depth: usize, visiting: &mut std::collections::BTreeSet<usize>,
@@ -521,12 +534,12 @@ impl RouteControl {
                 if gate.closed || self.plane.cancel.is_cancelled() { return; }
                 if gate.group_events_ready() && gate.groups_sequence > seen {
                     gate.groups_emitting = true;
-                    Some(gate.groups_sequence)
+                    Some((gate.groups_sequence, gate.revision))
                 } else { None }
             };
-            if let Some(sequence) = delivery {
+            if let Some((sequence, revision)) = delivery {
                 let reservation = GroupEmission(self);
-                let _ = self.groups_events.send(sequence);
+                let _ = self.groups_events.send((sequence, revision));
                 seen = sequence;
                 drop(reservation);
             }
@@ -725,7 +738,7 @@ impl RouteControl {
                 (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"message":"An error occurred in the delay test"}))).into_response(),
         };
         response.headers_mut().insert("x-aerove-core-epoch", HeaderValue::from_str(&epoch.to_string()).unwrap());
-        response.headers_mut().insert("x-aerove-picks-version", HeaderValue::from_str(&revision.to_string()).unwrap());
+        response.headers_mut().insert("x-aerove-route-version", HeaderValue::from_str(&revision.to_string()).unwrap());
         response
     }
 }
@@ -912,7 +925,7 @@ impl RouteControl {
             (StatusCode::GATEWAY_TIMEOUT, Json(serde_json::json!({"message":"Timeout"}))).into_response()
         } else { Json(result).into_response() };
         response.headers_mut().insert("x-aerove-core-epoch", HeaderValue::from_str(&epoch.to_string()).unwrap());
-        response.headers_mut().insert("x-aerove-picks-version", HeaderValue::from_str(&revision.to_string()).unwrap());
+        response.headers_mut().insert("x-aerove-route-version", HeaderValue::from_str(&revision.to_string()).unwrap());
         response
     }
 }
@@ -980,7 +993,7 @@ impl RouteControl {
         drop(route);
         let mut response=StatusCode::NO_CONTENT.into_response();
         response.headers_mut().insert("x-aerove-core-epoch",HeaderValue::from_str(&epoch.to_string()).unwrap());
-        response.headers_mut().insert("x-aerove-picks-version",HeaderValue::from_str(&revision.to_string()).unwrap());
+        response.headers_mut().insert("x-aerove-route-version",HeaderValue::from_str(&revision.to_string()).unwrap());
         response
     }
 }
@@ -1118,7 +1131,7 @@ mod provider_event_readiness_tests {
         drop(unrelated);
         receipt(&mut receipts).await; emitting_drained(&api.control).await;
         assert!(tick(&send).await, "last unmodified lease did not wake actual event future");
-        assert_eq!(receiver.try_recv().unwrap(), sequence);
+        assert_eq!(receiver.try_recv().unwrap(), (sequence, api.control.plane.stamp().1));
         assert!(api.control.plane.proxy_snapshot(&api.state, None).is_ok());
         tick(&send).await;
         assert!(matches!(receiver.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
@@ -1142,7 +1155,7 @@ mod provider_event_readiness_tests {
         api.control.notify_provider_groups(); tick(&send).await;
         assert!(matches!(receiver.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
         api.control.plane.finish_emitting(held_emitting); assert!(tick(&send).await, "receipt completion did not wake actual event future");
-        assert_eq!(receiver.try_recv().unwrap(), sequence);
+        assert_eq!(receiver.try_recv().unwrap(), (sequence, api.control.plane.stamp().1));
         tick(&send).await;
         assert!(matches!(receiver.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
         finish(api, scope, root, send, task).await;
@@ -1160,7 +1173,7 @@ mod provider_event_readiness_tests {
             let waker = std::task::Waker::from(flag.clone());
             let baseline = api.control.plane.gate.lock().groups_sequence;
             assert!(matches!(events.as_mut().poll(&mut std::task::Context::from_waker(&waker)), Poll::Pending));
-            if baseline > 0 { assert_eq!(receiver.try_recv().unwrap(), baseline); }
+            if baseline > 0 { assert_eq!(receiver.try_recv().unwrap(), (baseline, api.control.plane.stamp().1)); }
             assert!(matches!(receiver.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
             let operation = api.control.plane.begin(&feed.provider_identity()).unwrap();
             commit_installed_projection(operation.as_ref(), feed.project_members(feed.proxies()));
@@ -1182,7 +1195,7 @@ mod provider_event_readiness_tests {
             assert!(api.control.plane.gate.lock().group_events_ready());
             assert!(flag.0.swap(false, Ordering::AcqRel), "receipt completion must wake blocked group future");
             assert!(matches!(events.as_mut().poll(&mut std::task::Context::from_waker(&waker)), Poll::Pending));
-            assert_eq!(receiver.try_recv().unwrap(), sequence);
+            assert_eq!(receiver.try_recv().unwrap(), (sequence, api.control.plane.stamp().1));
             assert!(matches!(events.as_mut().poll(&mut std::task::Context::from_waker(&waker)), Poll::Pending));
             assert!(matches!(receiver.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
         }
@@ -1215,7 +1228,7 @@ mod provider_event_readiness_tests {
         let mut events=Box::pin(api.control.run_group_events());let flag=Arc::new(WakeFlag(std::sync::atomic::AtomicBool::new(false)));let driver=std::task::Waker::from(flag);
         assert!(events.as_mut().poll(&mut std::task::Context::from_waker(&driver)).is_pending());assert!(wake.woke.load(Ordering::Acquire));
         let expected=api.control.plane.gate.lock().groups_sequence;
-        match receive.as_mut().poll(&mut std::task::Context::from_waker(&waker)) { Poll::Ready(Ok(sequence))=>assert_eq!(sequence,expected), _=>panic!("reserved group event was not delivered") };drop(receive);drop(events);
+        match receive.as_mut().poll(&mut std::task::Context::from_waker(&waker)) { Poll::Ready(Ok(sequence))=>assert_eq!(sequence,(expected,api.control.plane.stamp().1)), _=>panic!("reserved group event was not delivered") };drop(receive);drop(events);
         assert!(!api.control.plane.gate.lock().groups_emitting);let admitted=api.control.plane.begin(provider.provider_identity()).unwrap();drop(admitted);
         api.cancel();scope.close().await.unwrap();api.join().await;std::fs::remove_dir_all(root).unwrap();
     }

@@ -585,7 +585,7 @@ mod tests {
         direct.health().record_delay(0);
         let before = control.snapshot().await.unwrap();
         assert_eq!(before.picks["FALLBACK"], "REJECT");
-        assert_eq!(before.picks_version, "0");
+        assert_eq!(before.route_version, "0");
         let api_address = ready.api_address.unwrap();
         let client_task = tokio::spawn(async move {
             let mut socket = TcpStream::connect(api_address).await.unwrap();
@@ -614,7 +614,7 @@ mod tests {
         assert!(successor.generation() > session.generation());
         tokio::time::timeout(Duration::from_secs(10), successor.ready()).await.unwrap().unwrap();
         let successor_control = successor.control.lock().as_ref().unwrap().clone();
-        assert_eq!(successor_control.snapshot().await.unwrap().picks_version, "0");
+        assert_eq!(successor_control.snapshot().await.unwrap().route_version, "0");
         tokio::time::timeout(Duration::from_secs(5), successor.stop()).await.unwrap().unwrap();
     }
 }

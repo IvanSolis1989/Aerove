@@ -198,12 +198,12 @@ async fn real_timer_receipts_join_stalled_fetch_before_successor() {
     let unchanged = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
     assert_eq!(unchanged.revision, "2"); assert_eq!(unchanged.phase, "update"); assert!(!unchanged.changed);
     let route_after = request(api_address, "GET", "/aerove/route", PRIVATE, "").await;
-    assert_eq!(body(&route_before)["picks-version"], body(&route_after)["picks-version"]);
+    assert_eq!(body(&route_before)["route-version"], body(&route_after)["route-version"]);
     assert_eq!(plane.stamp(), stamp_before, "unchanged success changed the published route stamp");
     let changed = tokio::time::timeout(Duration::from_secs(5), events.recv()).await.unwrap().unwrap();
     assert_eq!(changed.revision, "3"); assert!(changed.changed);
     let structural_stamp = plane.stamp();
-    assert!(structural_stamp.0 > stamp_before.0); assert_eq!(structural_stamp.1, stamp_before.1);
+    assert_eq!(structural_stamp.0, stamp_before.0); assert!(structural_stamp.1 > stamp_before.1);
     let receipt = request(api_address, "GET", "/providers/proxies/feed", PRIVATE, "").await;
     assert_eq!(body(&receipt)["revision"], "3");
     assert_eq!(body(&receipt)["proxies"][0]["name"], "d2");

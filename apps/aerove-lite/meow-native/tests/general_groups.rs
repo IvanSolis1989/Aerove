@@ -82,7 +82,7 @@ async fn real_periodic_fallback_nested_put_route_and_group_event_share_one_stamp
             if snapshot.picks["AUTO"] == "DIRECT" { break snapshot; }
         }
     }).await.unwrap();
-    assert_eq!(changed.core_epoch, "77"); assert!(changed.picks_version.parse::<u64>().unwrap() > initial.picks_version.parse::<u64>().unwrap());
+    assert_eq!(changed.core_epoch, "77"); assert!(changed.route_version.parse::<u64>().unwrap() > initial.route_version.parse::<u64>().unwrap());
     tokio::time::timeout(Duration::from_secs(5), reentry.done.notified()).await.unwrap(); drop(receive);
     forward(tunnel.clone(), true).await;
     assert!(request(user_address, "/proxies/OUTER", "{\"name\":\"REJECT\"}").await.starts_with("HTTP/1.1 204"));
@@ -158,7 +158,7 @@ async fn owned_selection_flushes_real_store_after_memory_commit_and_owner_joins_
     tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
     let events = api.control.activate_groups(&scope).unwrap();
     let result = api.control.select("OUTER", "REJECT").await.unwrap();
-    assert_eq!(result.picks["OUTER"], "REJECT"); assert_eq!(result.picks_version, "1");
+    assert_eq!(result.picks["OUTER"], "REJECT"); assert_eq!(result.route_version, "1");
     let persisted: serde_json::Value = serde_json::from_slice(&std::fs::read(cache.join("selector-cache.json")).unwrap()).unwrap();
     assert_eq!(persisted["OUTER"], "REJECT");
     api.control.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.cancel(); api.join().await;
@@ -241,7 +241,7 @@ async fn slow_complete_nested_measurement_epoch_change_publishes_no_health_or_pi
     let(api,tunnel,scope,_)=fixture(&yaml).await;let groups=api.control.activate_groups(&scope).unwrap();let route=tunnel.route_snapshot();let inner=route.proxies["INNER"].clone();let leaf=route.proxies["NODE"].clone();let own=serde_json::to_value(inner.health().delay_history()).unwrap();let child=serde_json::to_value(leaf.health().delay_history()).unwrap();let before=api.control.snapshot().await.unwrap();
     let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();let serving_cancel=CancellationToken::new();let serving={let api=api.clone();let token=serving_cancel.clone();tokio::spawn(async move{api.serve_private(listener,token).await.unwrap();})};
     let path=pure_servers::delay_path("INNER",target);let pending=tokio::spawn(async move{managed_delay(address,&path).await});tokio::time::timeout(Duration::from_secs(5),proxy.started.notified()).await.unwrap();assert!(!pending.is_finished());assert_eq!(serde_json::to_value(inner.health().delay_history()).unwrap(),own);assert_eq!(serde_json::to_value(leaf.health().delay_history()).unwrap(),child);
-    let stamp=api.control.plane.stamp();let(committed,_)=api.control.plane.commit_policy(stamp.0,true,||()).unwrap();proxy.release.notify_one();let response=pending.await.unwrap();assert!(response.starts_with("HTTP/1.1 409"),"{response}");assert_eq!(api.control.plane.stamp(),committed);let after=api.control.snapshot().await.unwrap();assert_eq!(after.picks,before.picks);assert_eq!(after.picks_version,before.picks_version);assert_eq!(serde_json::to_value(inner.health().delay_history()).unwrap(),own);assert_eq!(serde_json::to_value(leaf.health().delay_history()).unwrap(),child);
+    let stamp=api.control.plane.stamp();let(committed,_)=api.control.plane.commit_policy(stamp.0,true,||()).unwrap();proxy.release.notify_one();let response=pending.await.unwrap();assert!(response.starts_with("HTTP/1.1 409"),"{response}");assert_eq!(api.control.plane.stamp(),committed);let after=api.control.snapshot().await.unwrap();assert_eq!(after.picks,before.picks);assert_eq!(after.route_version,before.route_version);assert_eq!(serde_json::to_value(inner.health().delay_history()).unwrap(),own);assert_eq!(serde_json::to_value(leaf.health().delay_history()).unwrap(),child);
     serving_cancel.cancel();api.cancel();scope.close().await.unwrap();if let Err(error)=groups.await{assert!(error.is_cancelled());}serving.await.unwrap();api.join().await;servers.close().await;
 }
 

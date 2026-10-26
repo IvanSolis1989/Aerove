@@ -67,14 +67,14 @@ async fn public_group_delay_unpins_in_gate_persists_before_probe_and_acks_same_s
     let mut peer=fixture.accept().await;
     assert_eq!(fixture.fixed(),"");assert_eq!(fixture.persisted(),"");
     let unpinned=fixture.api.control.snapshot().await.unwrap();
-    assert_eq!(unpinned.picks_version.parse::<u64>().unwrap(),before.picks_version.parse::<u64>().unwrap()+1);
+    assert_eq!(unpinned.route_version.parse::<u64>().unwrap(),before.route_version.parse::<u64>().unwrap()+1);
     assert_eq!(direct.health().delay_history().len(),history);
     reply(&mut peer).await;
     let response=request.await.unwrap();assert!(response.starts_with("HTTP/1.1 200"),"{response}");
     let body:serde_json::Value=serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap();
     assert_eq!(body.as_object().unwrap().len(),1);assert!(body["DIRECT"].is_u64());
     let after=fixture.api.control.snapshot().await.unwrap();assert_eq!(after,unpinned);
-    assert!(response.contains("x-aerove-core-epoch: 123\r\n"));assert!(response.contains(&format!("x-aerove-picks-version: {}\r\n",after.picks_version)));
+    assert!(response.contains("x-aerove-core-epoch: 123\r\n"));assert!(response.contains(&format!("x-aerove-route-version: {}\r\n",after.route_version)));
     assert_eq!(direct.health().delay_history().len(),history+1);fixture.close().await;
 }
 
@@ -86,7 +86,7 @@ async fn caller_abort_and_session_cancel_keep_committed_unpin_but_publish_no_par
         let histories=(direct.health().delay_history().len(),reject.health().delay_history().len());
         let request={let control=fixture.api.control.clone();let query=fixture.query();tokio::spawn(async move{control.group_delay("AUTO".into(),query).await})};
         let mut peer=fixture.accept().await;assert_eq!(fixture.fixed(),"");assert_eq!(fixture.persisted(),"");
-        let stamp=fixture.api.control.plane.stamp();assert_eq!(stamp.1,before.picks_version.parse::<u64>().unwrap()+1);
+        let stamp=fixture.api.control.plane.stamp();assert_eq!(stamp.1,before.route_version.parse::<u64>().unwrap()+1);
         if session_cancel {fixture.api.control.cancel();let response=request.await.unwrap();assert_eq!(response.status(),410);}
         else {request.abort();assert!(request.await.unwrap_err().is_cancelled());}
         eof(&mut peer).await;
@@ -164,7 +164,7 @@ async fn explicit_delete_unpin_is_cas_guarded_persisted_no_probe_and_noop_has_no
     let direct=fixture.tunnel.route_snapshot().proxies["DIRECT"].clone();let history=direct.health().delay_history().len();
     let response=delete_proxy(fixture.address,"/proxies/AUTO?coreEpoch=123").await;assert!(response.starts_with("HTTP/1.1 204"),"{response}");
     let after=fixture.api.control.plane.stamp();assert_eq!(after,(123,before.1+1));assert_eq!(fixture.fixed(),"");assert_eq!(fixture.persisted(),"");
-    assert!(response.contains(&format!("x-aerove-picks-version: {}\r\n",after.1)));
+    assert!(response.contains(&format!("x-aerove-route-version: {}\r\n",after.1)));
     assert!(delete_proxy(fixture.address,"/proxies/AUTO").await.starts_with("HTTP/1.1 204"));assert_eq!(fixture.api.control.plane.stamp(),after);
     assert_eq!(direct.health().delay_history().len(),history);assert!(tokio::time::timeout(Duration::from_millis(100),fixture.origin.accept()).await.is_err());
     fixture.api.control.cancel();assert!(delete_proxy(fixture.address,"/proxies/AUTO").await.starts_with("HTTP/1.1 410"));assert_eq!(fixture.api.control.plane.stamp(),after);fixture.close().await;
