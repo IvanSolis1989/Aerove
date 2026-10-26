@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
@@ -705,6 +706,8 @@ void main() {
           await action.setRunning(true);
 
           expect(action.transitions, isEmpty);
+          expect(action.parkCalls, 1);
+          expect(container.read(runningVpnOptionsProvider), isNull);
           expect(container.read(isStartProvider), isTrue);
           expect(action.applyProfileDebounceCount, 1);
 
@@ -712,6 +715,60 @@ void main() {
           expect(action.transitions, [false]);
         },
       );
+
+      test(
+        'latest stop wins while suspended startup awaits park receipt',
+        () async {
+          final parkCompleter = Completer<bool>();
+          final container = raceContainer(suspended: true);
+          final action =
+              container.read(setupActionProvider.notifier) as _RaceSetupAction;
+          action.parkCompleter = parkCompleter;
+
+          final start = action.setRunning(true);
+          await Future<void>.delayed(Duration.zero);
+          expect(action.parkCalls, 1);
+          expect(action.transitions, isEmpty);
+          expect(container.read(isStartProvider), isTrue);
+          expect(container.read(runningVpnOptionsProvider), isNull);
+
+          final stop = action.setRunning(false);
+          expect(container.read(runTimeProvider), isNull);
+          parkCompleter.complete(true);
+          await Future.wait([start, stop]);
+
+          expect(action.transitions, [false]);
+          expect(container.read(isStartProvider), isFalse);
+          expect(container.read(runningVpnOptionsProvider), isNull);
+          expect(action.applyProfileDebounceCount, 0);
+          expect(action.resetCoreTrafficCount, 1);
+        },
+      );
+
+      test('suspended startup requires an acknowledged park receipt', () async {
+        final container = raceContainer(suspended: true);
+        final action =
+            container.read(setupActionProvider.notifier) as _RaceSetupAction;
+        action.parkCompleter = Completer<bool>()..complete(false);
+
+        await expectLater(
+          action.setRunning(true),
+          throwsA(
+            isA<CoreMethodException>().having(
+              (error) => error.code,
+              'code',
+              'no_response',
+            ),
+          ),
+        );
+
+        expect(action.parkCalls, 1);
+        expect(action.transitions, isEmpty);
+        expect(container.read(isStartProvider), isFalse);
+        expect(container.read(runTimeProvider), isNull);
+        expect(container.read(runningVpnOptionsProvider), isNull);
+        expect(action.applyProfileDebounceCount, 0);
+      });
     });
 
     test(
@@ -988,13 +1045,21 @@ class _AuthorizationSetupAction extends SetupAction {
 class _RaceSetupAction extends SetupAction {
   int applyProfileDebounceCount = 0;
   int resetCoreTrafficCount = 0;
+  int parkCalls = 0;
   final transitions = <bool>[];
   Completer<bool>? startCompleter;
   Completer<bool>? stopCompleter;
+  Completer<bool>? parkCompleter;
 
   @override
   void applyProfileDebounce({bool silence = false, bool force = false}) {
     applyProfileDebounceCount++;
+  }
+
+  @override
+  Future<bool> setCoreParked() async {
+    parkCalls++;
+    return await parkCompleter?.future ?? true;
   }
 
   @override
