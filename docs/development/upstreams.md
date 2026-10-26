@@ -1033,7 +1033,26 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 
 分片验收另按实际解析依赖 `androidx.test:runner:1.6.2` 固定 `axt_08_14_2024` / `6de0b804ca086a6194a108ef2988fa6104eea96d`：[`TestRequestBuilder.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/internal/runner/TestRequestBuilder.java) 与 Google Maven sources JAR 对应源码逐字节相同。该版使用 `abs(hash) % numShards`，不混用旧参考 revision 的 `floorMod`。只复用公开 `numShards`、`shardIndex` 和无测试执行的 `log=true` 参数；参考 `AndroidLogOnlyBuilder`、`NonExecutingRunner` 和结果协议，保留真实 APK discovery 与执行集合核验，未复制实现或新增依赖。
 
+同固定提交另只读核对 [`GrantPermissionRule.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/rules/java/androidx/test/rule/GrantPermissionRule.java#L37-L45) 中“撤销已授予权限会使 Instrumentation 进程崩溃”的说明；[`AndroidJUnitRunner.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/runner/AndroidJUnitRunner.java#L92-L107) 记录精确 `class#method` 和 `notClass` 选择接口；[`TestRequestBuilder.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/internal/runner/TestRequestBuilder.java#L417-L508) 记录参数化方法名后缀与根方法名的过滤行为。仅作权限与测试选择 API 行为参考，未复制代码或新增依赖；既有主分片算法来源和说明保持不变。
+
 **许可证、署名与证据：** Apache-2.0；固定来源与许可证据见 run83 `SOURCES.json`
+
+#### [AOSP platform/packages/modules/Wifi](https://android.googlesource.com/platform/packages/modules/Wifi)
+
+**固定版本 / revision：** `android13-release` / `0cc694bd8537a85f1dc7fd91852915227b7d673c`；固定 [`WifiShellCommand.java`](https://android.googlesource.com/platform/packages/modules/Wifi/+/0cc694bd8537a85f1dc7fd91852915227b7d673c/service/java/com/android/server/wifi/WifiShellCommand.java#L4-L13) blob `367979f3c07d0b9dd91e06d80f6fe1b95b46d276`
+
+**用途与采用方式：** Lite SSID host setup 的设备端 Wi-Fi shell 命令行为只读参照；仓库实现入口为 [`ssid_device_setup.py`](../../apps/aerove-lite/tool/ssid_device_setup.py)。仅作 API / 命令行为参考，未复制源码或新增依赖。
+
+**许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名。固定源码文件头声明 Apache License 2.0；blob SHA-1 `367979f3c07d0b9dd91e06d80f6fe1b95b46d276`，SHA-256 `ef4ee455bfcec04164d27620e2c495f3ecc1d2db2eeef929fa353d44e1dcb360`。
+
+#### [gradle/gradle](https://github.com/gradle/gradle)
+
+**固定版本 / revision：** `v9.6.0` / `3f750f03d77e42327c5f9fcb9992110088330a32`（tag ref 直接指向该 commit）
+
+**用途与采用方式：** test-only CI graph parser 只读参照 [`DryRunBuildExecutionAction.java`](https://github.com/gradle/gradle/blob/3f750f03d77e42327c5f9fcb9992110088330a32/subprojects/core/src/main/java/org/gradle/execution/DryRunBuildExecutionAction.java#L45-L55) 输出的 plain `:task SKIPPED` 格式；仓库入口为 [test-only diagnostic workflow](../../.github/workflows/aerove-lite125-test-only-diagnostic.yaml) 与 [graph parser](../../.github/scripts/lite125_test_only_preflight.py)。只描述 dry-run 输出协议，不代表 App / APK 验收；未复制源码或新增产品依赖。
+
+**许可证、署名与证据：** Apache-2.0；保留 Gradle 署名；固定 `LICENSE` 声明 Apache License 2.0。固定 `DryRunBuildExecutionAction.java` blob `e4203d3f0f136516f493786497729c0aa2d9128c`，SHA-256 `74a85c1931c554d991f35f36f3f054710b7cbba9780c2c6e82540790a7b5da5f`。
+
 
 #### [junit-team/junit4](https://github.com/junit-team/junit4)
 
