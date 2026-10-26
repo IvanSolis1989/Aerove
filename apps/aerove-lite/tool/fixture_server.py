@@ -8,6 +8,15 @@ from prepare_smart_config_meow_ci_fixture import load_verified_fixture
 from uuid import UUID
 
 
+def load_smart_fixture(root, owner="current"):
+    if owner == "current":
+        return load_verified_fixture(root)
+    if owner == "legacy":
+        from prepare_smart_config_meow_legacy_ci_fixture import load_verified_fixture as load_legacy
+        return load_legacy(root)
+    raise ValueError("Unknown Smart fixture owner")
+
+
 class Handler(BaseHTTPRequestHandler):
     smart_files = {}
 
@@ -41,7 +50,8 @@ class Handler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smart-config-fixture", type=Path)
+    parser.add_argument("--smart-config-fixture-owner", choices=("current", "legacy"), default="current")
     arguments = parser.parse_args()
     if arguments.smart_config_fixture:
-        Handler.smart_files = load_verified_fixture(arguments.smart_config_fixture)
+        Handler.smart_files = load_smart_fixture(arguments.smart_config_fixture, arguments.smart_config_fixture_owner)
     ThreadingHTTPServer(("0.0.0.0", 18080), Handler).serve_forever()

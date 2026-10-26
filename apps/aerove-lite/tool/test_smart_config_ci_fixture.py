@@ -62,6 +62,28 @@ class SmartCiFixtureTest(unittest.TestCase):
                 handler.redirect_request(urllib.request.Request("https://raw.githubusercontent.com/fixed"),
                                          None, 302, "redirect", {}, destination)
 
+    def test_current_and_legacy_fixture_owners_keep_distinct_fixed_identities(self):
+        import prepare_smart_config_meow_ci_fixture as current
+        import prepare_smart_config_meow_legacy_ci_fixture as legacy
+        self.assertEqual(current.COMMIT, "23a2c93b6cba799b83f51e56f95b7f378b425503")
+        self.assertEqual(current.SCRIPT_SHA, "2acc2840a9c1d896672c9933904a4ccf63a61beb8881543b9138c0606e53c88f")
+        self.assertEqual(current.MANIFEST_SHA, "e956168cfab6da7befaf2aa4d442b18a1dd8f7165398b5a9b613caacdd7bc2f4")
+        self.assertEqual(legacy.COMMIT, "89abb221a157acc98d6b52c85583e6b5a5b2742b")
+        self.assertEqual(legacy.SCRIPT_SHA, "217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb")
+        self.assertEqual(legacy.MANIFEST_SHA, "cdf3e8c05f59555b2ef8f711aafa212d963160779e9a1eb1592fd038269fc70b")
+        self.assertEqual(current.PINNED_GEO, legacy.PINNED_GEO)
+        self.assertEqual(current.ASN, legacy.ASN)
+
+    def test_fixture_server_owner_is_explicit_and_never_inferred_from_input(self):
+        from fixture_server import load_smart_fixture
+        with patch("fixture_server.load_verified_fixture", return_value={"current": b"new"}) as current, \
+                patch("prepare_smart_config_meow_legacy_ci_fixture.load_verified_fixture", return_value={"legacy": b"old"}) as legacy:
+            self.assertEqual(load_smart_fixture("fixed-directory"), {"current": b"new"})
+            self.assertEqual(load_smart_fixture("fixed-directory", "legacy"), {"legacy": b"old"})
+            with self.assertRaisesRegex(ValueError, "owner"): load_smart_fixture("fixed-directory", "guess")
+            current.assert_called_once_with("fixed-directory")
+            legacy.assert_called_once_with("fixed-directory")
+
     def test_server_keeps_uuid_protocol_and_serves_only_whitelisted_smart_paths(self):
         class FixtureHandler(Handler):
             smart_files = {"manifest.json": b"unit-manifest"}

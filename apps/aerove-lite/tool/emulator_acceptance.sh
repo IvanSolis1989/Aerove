@@ -110,10 +110,16 @@ fixture_args=()
 smart_fixture_args=()
 if [[ "$phase" != matrix && -n "${SMART_CONFIG_MEOW_FIXTURE_DIR:-}" ]]; then
     smart_fixture_tree=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceTree"])' "$diagnostics/SOURCE.json")
-    python3 apps/aerove-lite/tool/prepare_smart_config_meow_ci_fixture.py verify \
+    smart_fixture_owner=current
+    smart_fixture_verifier=prepare_smart_config_meow_ci_fixture.py
+    if [[ -n "${AEROVE_ORIGINAL84_PROOF:-}${AEROVE_ORIGINAL_RUNTIME_PROOF:-}" ]]; then
+        smart_fixture_owner=legacy
+        smart_fixture_verifier=prepare_smart_config_meow_legacy_ci_fixture.py
+    fi
+    python3 "apps/aerove-lite/tool/$smart_fixture_verifier" verify \
         --receipt "${SMART_CONFIG_MEOW_FIXTURE_RECEIPT:?Smart fixture source receipt required}" \
         --expected-source "$app_source" --expected-tree "$smart_fixture_tree"
-    fixture_args=(--smart-config-fixture "$SMART_CONFIG_MEOW_FIXTURE_DIR")
+    fixture_args=(--smart-config-fixture "$SMART_CONFIG_MEOW_FIXTURE_DIR" --smart-config-fixture-owner "$smart_fixture_owner")
     smart_fixture_args=(-e smartConfigFixtureUrl http://10.0.2.2:18080/smart-config-meow)
 fi
 python3 apps/aerove-lite/tool/fixture_server.py "${fixture_args[@]}" > "$diagnostics/fixture.log" 2>&1 &

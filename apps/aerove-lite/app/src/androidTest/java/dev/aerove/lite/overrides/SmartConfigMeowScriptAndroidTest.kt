@@ -71,7 +71,13 @@ class SmartConfigMeowScriptAndroidTest {
         val script = fetch(spec.getString("file"), 4 * 1024 * 1024)
         assertEquals(spec.getInt("bytes"), script.size)
         assertEquals(SCRIPT_SHA, sha(script))
-        return manifest to script.toString(Charsets.UTF_8)
+        val bundled = context.assets.open(BundledMeowScript.ASSET).use { it.readBytes() }
+        assertEquals(COMMIT, BundledMeowScript.COMMIT)
+        assertEquals(SCRIPT_SHA, BundledMeowScript.SHA256)
+        assertEquals(BundledMeowScript.BYTES, bundled.size)
+        assertEquals(SCRIPT_SHA, sha(bundled))
+        assertArrayEquals("Installed bundled script must equal the current fixed fixture", script, bundled)
+        return manifest to bundled.toString(Charsets.UTF_8)
     }
 
     private fun input(): MutableMap<String, Any?> = linkedMapOf(
@@ -388,9 +394,9 @@ class SmartConfigMeowScriptAndroidTest {
         }
     }
     companion object {
-        private const val COMMIT = "89abb221a157acc98d6b52c85583e6b5a5b2742b"
-        private const val SCRIPT_SHA = "217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb"
-        private const val MANIFEST_SHA = "cdf3e8c05f59555b2ef8f711aafa212d963160779e9a1eb1592fd038269fc70b"
+        private const val COMMIT = "23a2c93b6cba799b83f51e56f95b7f378b425503"
+        private const val SCRIPT_SHA = "2acc2840a9c1d896672c9933904a4ccf63a61beb8881543b9138c0606e53c88f"
+        private const val MANIFEST_SHA = "e956168cfab6da7befaf2aa4d442b18a1dd8f7165398b5a9b613caacdd7bc2f4"
         private const val PRIVATE_SECRET = "0123456789abcdef0123456789abcdef"
     }
 }
