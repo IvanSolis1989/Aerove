@@ -295,7 +295,7 @@ class _RenderListRowSeparator extends RenderProxyBox {
   /// [markNeedsPaint] no longer schedules one.
   bool _realign() {
     final painted = _paintedOverhang;
-    if (painted == null) {
+    if (painted == null || !_inScene()) {
       return false;
     }
     final overhang = _pixelOverhang();
@@ -318,6 +318,17 @@ class _RenderListRowSeparator extends RenderProxyBox {
     _realignRequested = true;
     markNeedsPaint();
     return true;
+  }
+
+  /// A covered route or a page in a keep-alive bucket keeps its rows
+  /// attached but out of the scene: the layer of their nearest repaint
+  /// boundary is then detached, and nothing it holds can be seen to drift.
+  bool _inScene() {
+    RenderObject? node = this;
+    while (node != null && !node.isRepaintBoundary) {
+      node = node.parent;
+    }
+    return node?.layer?.attached ?? false;
   }
 
   @override

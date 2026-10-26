@@ -452,25 +452,104 @@ class _EditableCard extends StatelessWidget {
   }
 }
 
-class _Sway extends AnimatedWidget {
-  const _Sway({
-    required Animation<double> sway,
-    required this.seed,
-    required this.child,
-  }) : super(listenable: sway);
+class _Sway extends SingleChildRenderObjectWidget {
+  const _Sway({required this.sway, required this.seed, required super.child});
 
+  final Animation<double> sway;
   final int seed;
-  final Widget child;
 
   @override
-  Widget build(BuildContext context) {
-    final swings = _swaysPerLoop[seed % _swaysPerLoop.length];
-    final turn =
-        (listenable as Animation<double>).value * 2 * math.pi * swings +
-        seed * _swayPhaseStep;
-    return Transform.translate(
-      offset: Offset(0, math.cos(turn) * _swayBob),
-      child: Transform.rotate(angle: math.sin(turn) * _swayTurn, child: child),
+  _SwayBox createRenderObject(BuildContext context) => _SwayBox(sway, seed);
+
+  @override
+  void updateRenderObject(BuildContext context, _SwayBox renderObject) =>
+      renderObject
+        ..sway = sway
+        ..seed = seed;
+}
+
+/// Bobs and tilts its card about the center in paint alone: a tick neither
+/// rebuilds the card nor reports its semantics again, while hit tests and
+/// paint transforms still follow the card where it is drawn.
+class _SwayBox extends RenderProxyBox {
+  _SwayBox(this._sway, this._seed);
+
+  Animation<double> _sway;
+  int _seed;
+
+  set sway(Animation<double> value) {
+    if (identical(value, _sway)) return;
+    if (attached) {
+      _sway.removeListener(markNeedsPaint);
+      value.addListener(markNeedsPaint);
+    }
+    _sway = value;
+    markNeedsPaint();
+  }
+
+  set seed(int value) {
+    if (value == _seed) return;
+    _seed = value;
+    markNeedsPaint();
+  }
+
+  Matrix4 get _transform {
+    final swings = _swaysPerLoop[_seed % _swaysPerLoop.length];
+    final turn = _sway.value * 2 * math.pi * swings + _seed * _swayPhaseStep;
+    final center = Alignment.center.alongSize(size);
+    return Matrix4.translationValues(0, math.cos(turn) * _swayBob, 0)
+      ..multiply(Matrix4.translationValues(center.dx, center.dy, 0))
+      ..multiply(Matrix4.rotationZ(math.sin(turn) * _swayTurn))
+      ..multiply(Matrix4.translationValues(-center.dx, -center.dy, 0));
+  }
+
+  @override
+  void attach(PipelineOwner owner) {
+    super.attach(owner);
+    _sway.addListener(markNeedsPaint);
+  }
+
+  @override
+  void detach() {
+    _sway.removeListener(markNeedsPaint);
+    super.detach();
+  }
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) =>
+      hitTestChildren(result, position: position);
+
+  @override
+  bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
+    return result.addWithPaintTransform(
+      transform: _transform,
+      position: position,
+      hitTest: (result, position) =>
+          super.hitTestChildren(result, position: position),
+    );
+  }
+
+  @override
+  void applyPaintTransform(RenderBox child, Matrix4 transform) {
+    transform.multiply(_transform);
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    if (child == null) return;
+    final transform = _transform;
+    final translation = MatrixUtils.getAsTranslation(transform);
+    if (translation != null) {
+      super.paint(context, offset + translation);
+      layer = null;
+      return;
+    }
+    layer = context.pushTransform(
+      needsCompositing,
+      offset,
+      transform,
+      super.paint,
+      oldLayer: layer is TransformLayer ? layer as TransformLayer? : null,
     );
   }
 }

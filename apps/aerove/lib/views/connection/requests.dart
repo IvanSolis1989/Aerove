@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/features.dart';
@@ -23,6 +25,7 @@ class _RequestsViewState extends ConsumerState<RequestsView>
   late final _physics = FollowEndScrollPhysics(
     isFollowing: () => _listController.value.autoScrollToEnd,
   );
+  Timer? _feedTimer;
 
   @override
   void initState() {
@@ -41,6 +44,7 @@ class _RequestsViewState extends ConsumerState<RequestsView>
 
   @override
   void dispose() {
+    _feedTimer?.cancel();
     _listController.dispose();
     if (widget.scrollController == null) {
       _scrollController.dispose();
@@ -48,15 +52,21 @@ class _RequestsViewState extends ConsumerState<RequestsView>
     super.dispose();
   }
 
+  void _showLatestRequests() =>
+      _listController.setTrackerInfos(ref.read(requestsProvider).list);
+
   void updateRequestsThrottler() {
-    throttler.call(FunctionTag.requests, () {
+    if (pageHidden) {
+      updateWhenRouteSettled(_showLatestRequests);
+      return;
+    }
+    _feedTimer ??= Timer(renderThrottleDuration, () {
+      _feedTimer = null;
       if (!mounted) {
         return;
       }
-      updateWhenRouteSettled(
-        () => _listController.setTrackerInfos(ref.read(requestsProvider).list),
-      );
-    }, duration: renderThrottleDuration);
+      updateWhenRouteSettled(_showLatestRequests);
+    });
   }
 
   @override

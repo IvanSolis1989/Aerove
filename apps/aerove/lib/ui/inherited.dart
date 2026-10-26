@@ -19,9 +19,38 @@ class PageActivityScope extends InheritedWidget {
         true;
   }
 
+  /// Follows [isActive] without making [context] depend on the scope.
+  static ValueListenable<bool>? activityOf(BuildContext context) {
+    final element = context
+        .getElementForInheritedWidgetOfExactType<PageActivityScope>();
+    return (element as _PageActivityElement?)?._activity;
+  }
+
+  @override
+  InheritedElement createElement() => _PageActivityElement(this);
+
   @override
   bool updateShouldNotify(PageActivityScope oldWidget) {
     return isActive != oldWidget.isActive;
+  }
+}
+
+class _PageActivityElement extends InheritedElement {
+  _PageActivityElement(PageActivityScope super.widget)
+    : _activity = ValueNotifier(widget.isActive);
+
+  final ValueNotifier<bool> _activity;
+
+  @override
+  void updated(PageActivityScope oldWidget) {
+    super.updated(oldWidget);
+    _activity.value = (widget as PageActivityScope).isActive;
+  }
+
+  @override
+  void unmount() {
+    _activity.dispose();
+    super.unmount();
   }
 }
 

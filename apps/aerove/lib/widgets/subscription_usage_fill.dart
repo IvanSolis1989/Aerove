@@ -133,6 +133,7 @@ class _SubscriptionUsageFillState extends State<SubscriptionUsageFill>
         share < 1 &&
         widget.motionTime == null &&
         _foreground &&
+        (ModalRoute.isCurrentOf(context) ?? true) &&
         LiquidGlassScope.of(context) &&
         !MediaQuery.highContrastOf(context) &&
         TickerMode.valuesOf(context).enabled &&

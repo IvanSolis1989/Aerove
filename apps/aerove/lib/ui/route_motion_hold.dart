@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/ui/navigator.dart';
 import 'package:fl_clash/ui/sheet_navigator.dart';
 import 'package:flutter/foundation.dart';
@@ -54,13 +55,19 @@ bool isRouteMoving(BuildContext context) => _RouteMotion(context).isMoving;
 
 /// Holds list refreshes while the page's route is pushed, popped, covered,
 /// uncovered or dragged back, and replays the latest one once it settles.
+/// Hidden pages hold them until shown, and a flip never rebuilds them.
 mixin RouteMotionHoldMixin<T extends StatefulWidget> on State<T> {
   ModalRoute<Object?>? _route;
   _RouteMotion? _motion;
   VoidCallback? _heldUpdate;
+  ValueListenable<TickerModeData>? _tickerMode;
+  ValueListenable<bool>? _pageActivity;
+  var _hidden = false;
+
+  bool get pageHidden => _hidden;
 
   void updateWhenRouteSettled(VoidCallback update) {
-    if (_motion?.isMoving ?? false) {
+    if (_hidden || (_motion?.isMoving ?? false)) {
       _heldUpdate = update;
       return;
     }
@@ -72,17 +79,42 @@ mixin RouteMotionHoldMixin<T extends StatefulWidget> on State<T> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final route = ModalRoute.of(context);
-    if (_motion != null && identical(route, _route)) {
-      return;
+    if (_motion == null || !identical(route, _route)) {
+      _detach();
+      _route = route;
+      _motion = _RouteMotion(context)..addListener(_handleStatus, _releaseHeld);
     }
-    _detach();
-    _route = route;
-    _motion = _RouteMotion(context)..addListener(_handleStatus, _releaseHeld);
+    _followSight();
+  }
+
+  void _followSight() {
+    final tickerMode = TickerMode.getValuesNotifier(context);
+    if (!identical(tickerMode, _tickerMode)) {
+      _tickerMode?.removeListener(_updateSight);
+      _tickerMode = tickerMode..addListener(_updateSight);
+    }
+    final pageActivity = PageActivityScope.activityOf(context);
+    if (!identical(pageActivity, _pageActivity)) {
+      _pageActivity?.removeListener(_updateSight);
+      _pageActivity = pageActivity?..addListener(_updateSight);
+    }
+    _updateSight();
+  }
+
+  void _updateSight() {
+    final hidden =
+        !(_tickerMode?.value.enabled ?? true) ||
+        !(_pageActivity?.value ?? true);
+    if (hidden == _hidden) return;
+    _hidden = hidden;
+    _releaseHeld();
   }
 
   @override
   void dispose() {
     _detach();
+    _tickerMode?.removeListener(_updateSight);
+    _pageActivity?.removeListener(_updateSight);
     _heldUpdate = null;
     super.dispose();
   }
@@ -96,7 +128,7 @@ mixin RouteMotionHoldMixin<T extends StatefulWidget> on State<T> {
 
   void _releaseHeld() {
     final update = _heldUpdate;
-    if (update == null || !mounted || (_motion?.isMoving ?? false)) {
+    if (update == null || !mounted || _hidden || (_motion?.isMoving ?? false)) {
       return;
     }
     _heldUpdate = null;

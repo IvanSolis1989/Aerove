@@ -56,6 +56,7 @@ class _LogsViewState extends ConsumerState<LogsView>
   late final _physics = FollowEndScrollPhysics(
     isFollowing: () => _listController.value.autoScrollToEnd,
   );
+  Timer? _feedTimer;
 
   @override
   void initState() {
@@ -82,6 +83,7 @@ class _LogsViewState extends ConsumerState<LogsView>
 
   @override
   void dispose() {
+    _feedTimer?.cancel();
     _listController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -101,15 +103,22 @@ class _LogsViewState extends ConsumerState<LogsView>
     );
   }
 
+  void _showLatestLogs() =>
+      _listController.setLogs(ref.read(logsProvider).list);
+
+  /// Own window per view: a hidden one only keeps the latest for its return.
   void updateLogsThrottler() {
-    throttler.call(FunctionTag.logs, () {
+    if (pageHidden) {
+      updateWhenRouteSettled(_showLatestLogs);
+      return;
+    }
+    _feedTimer ??= Timer(renderThrottleDuration, () {
+      _feedTimer = null;
       if (!mounted) {
         return;
       }
-      updateWhenRouteSettled(
-        () => _listController.setLogs(ref.read(logsProvider).list),
-      );
-    }, duration: renderThrottleDuration);
+      updateWhenRouteSettled(_showLatestLogs);
+    });
   }
 
   @override
@@ -183,20 +192,35 @@ class _LogsViewState extends ConsumerState<LogsView>
   }
 }
 
-class LogItem extends StatelessWidget {
+class LogItem extends StatefulWidget {
   final Log log;
   final Function(String)? onClick;
 
   const LogItem({super.key, required this.log, this.onClick});
 
   @override
+  State<LogItem> createState() => _LogItemState();
+}
+
+class _LogItemState extends State<LogItem> {
+  late LogPayload _payload = LogPayload.parse(widget.log.payload);
+
+  @override
+  void didUpdateWidget(LogItem oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.log, widget.log)) {
+      _payload = LogPayload.parse(widget.log.payload);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final log = widget.log;
     final tone = switch (log.logLevel) {
       LogLevel.warning => RecordTone.warning,
       LogLevel.error => RecordTone.error,
       LogLevel.info || LogLevel.debug || LogLevel.silent => RecordTone.neutral,
     };
-    final payload = LogPayload.parse(log.payload);
     return RecordListItem(
       onTap: () {},
       header: RecordHeader(
@@ -205,11 +229,11 @@ class LogItem extends StatelessWidget {
           RecordLabel(
             label: log.logLevel.name,
             tone: tone,
-            onPressed: () => onClick?.call(log.logLevel.name),
+            onPressed: () => widget.onClick?.call(log.logLevel.name),
           ),
         ],
       ),
-      body: _LogBody(payload: payload, errorColor: tone.accentColor(context)),
+      body: _LogBody(payload: _payload, errorColor: tone.accentColor(context)),
     );
   }
 }

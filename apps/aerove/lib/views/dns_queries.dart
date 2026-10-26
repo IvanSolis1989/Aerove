@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -61,6 +63,7 @@ class _DnsQueriesViewState extends ConsumerState<DnsQueriesView>
   late final _physics = FollowEndScrollPhysics(
     isFollowing: () => _listController.value.autoScrollToEnd,
   );
+  Timer? _feedTimer;
 
   @override
   void initState() {
@@ -79,6 +82,7 @@ class _DnsQueriesViewState extends ConsumerState<DnsQueriesView>
 
   @override
   void dispose() {
+    _feedTimer?.cancel();
     _listController.dispose();
     if (widget.scrollController == null) {
       _scrollController.dispose();
@@ -86,15 +90,21 @@ class _DnsQueriesViewState extends ConsumerState<DnsQueriesView>
     super.dispose();
   }
 
+  void _showLatestDnsQueries() =>
+      _listController.setDnsQueries(ref.read(dnsQueriesProvider).list);
+
   void _updateDnsQueriesThrottler() {
-    throttler.call(FunctionTag.dnsQueries, () {
+    if (pageHidden) {
+      updateWhenRouteSettled(_showLatestDnsQueries);
+      return;
+    }
+    _feedTimer ??= Timer(renderThrottleDuration, () {
+      _feedTimer = null;
       if (!mounted) {
         return;
       }
-      updateWhenRouteSettled(
-        () => _listController.setDnsQueries(ref.read(dnsQueriesProvider).list),
-      );
-    }, duration: renderThrottleDuration);
+      updateWhenRouteSettled(_showLatestDnsQueries);
+    });
   }
 
   Future<void> _clearDnsCache() async {
