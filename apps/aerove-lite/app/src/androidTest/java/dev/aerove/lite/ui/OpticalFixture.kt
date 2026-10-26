@@ -78,6 +78,7 @@ internal data class FixtureState(
     val inkAlpha: Float = 1f,
     val lensControl: LensControl = LensControl.None,
     val plainInkControl: Boolean = false,
+    val switchForegroundControl: Boolean = false,
 )
 
 internal fun FixtureState.opticalConfiguration(): JSONObject {
@@ -88,6 +89,13 @@ internal fun FixtureState.opticalConfiguration(): JSONObject {
         .put("thumbMarker", thumbMarker).put("regularPane", regularPane).put("pillPane", pillPane)
         .put("inkAlpha", inkAlpha).put("lensControl", lensControl.name).put("plainInkControl", plainInkControl)
         .put("diagnosticOnly", lensControl != LensControl.None || plainInkControl)
+        .put("switchForegroundControl", switchForegroundControl)
+        .put("switchForegroundReference", if (!switchForegroundControl) JSONObject.NULL else JSONObject()
+            .put("stages", "NoLens; non-Solid only; existing FlatThumb foreground unchanged")
+            .put("glyph", "Original check/close selected by RenderCase.checked")
+            .put("paint", "Original visuals.ink; enabled alpha1, disabled alpha0.38; GlyphDrawing without liteInk")
+            .put("requestedSizeDp", 14).put("alignment", "Center in the original 24dp control thumb")
+            .put("actualGlyphBounds", "Not directly observed; original constraints retained"))
         .put("plainInkPaint", "Original ink color/alpha/font/style/position; only liteInk disabled, no black background or white replacement")
         .put("lensParameters", if (lensControl == LensControl.None) JSONObject.NULL else JSONObject()
             .put("base", "AeroveGlassStyle.lensContent").put("dispersion", style.dispersion).put("refraction", style.refraction)
@@ -178,7 +186,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                 }
                 Box(Modifier.offset(24.dp, 244.dp).size(60.dp, 48.dp).onGloballyPositioned { probe.bounds["switch"] = it.boundsInWindow() }) {
                     if (state.stage == FixtureStage.Production) LiteSwitch(case.checked, "rendering-switch", {}, case.enabled)
-                    if (state.stage == FixtureStage.NoLens) NoLensSwitch(case)
+                    if (state.stage == FixtureStage.NoLens) NoLensSwitch(case, foregroundControl = state.switchForegroundControl)
                     if (state.stage == FixtureStage.FlatThumb) NoLensSwitch(case, flatTrack = false)
                 }
                 CompositionLocalProvider(LocalLiteVisuals provides if (state.plainInkControl) visuals.copy(aurora = false, material = MaterialTier.Solid) else visuals) {
@@ -284,7 +292,7 @@ private fun NoLensControl(
 }
 
 @Composable
-private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true) {
+private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foregroundControl: Boolean = false) {
     Box(Modifier.size(60.dp, 48.dp).alpha(if (case.enabled || case.tier != MaterialTier.Solid) 1f else 0.48f), contentAlignment = Alignment.Center) {
         val visuals = LocalLiteVisuals.current
         val inactive = if (case.tier == MaterialTier.Frosted) 0.13f else 0.06f
@@ -295,8 +303,12 @@ private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true) {
             Box(Modifier.offset(if (case.checked) 24.dp else 4.dp, 4.dp)) {
                 NoLensControl(case, Modifier.size(24.dp), LiteCorner.Full, case.checked,
                     solidColor = if (case.checked) Color.White else visuals.secondaryInk, glassStyle = finish, glassTint = thumbTint) {
-                    if (!flatTrack && case.tier != MaterialTier.Solid) LiteIcon(if (case.checked) FullGlyphs.check else FullGlyphs.close,
-                        Modifier.align(Alignment.Center), visuals.ink.copy(alpha = if (case.enabled) 1f else 0.38f), size = 14.dp)
+                    if ((foregroundControl || !flatTrack) && case.tier != MaterialTier.Solid) {
+                        val glyph = if (case.checked) FullGlyphs.check else FullGlyphs.close
+                        val paint = visuals.ink.copy(alpha = if (case.enabled) 1f else 0.38f)
+                        if (foregroundControl) GlyphDrawing(glyph, Modifier.align(Alignment.Center).size(14.dp), paint, fill = 0f)
+                        else LiteIcon(glyph, Modifier.align(Alignment.Center), paint, size = 14.dp)
+                    }
                 }
             }
         }

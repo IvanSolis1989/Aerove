@@ -122,7 +122,7 @@ class LiteSwitchRenderingTest(private val case: RenderCase) {
 
     @Test
     fun restingTrackAndThumbFollowTheMaterialIndependently() {
-        val fixture = FixtureState(switchMarkers = true)
+        val fixture = FixtureState(switchMarkers = true, switchForegroundControl = true)
         withOpticalFixture(compose, case, "switch-optics_$case", fixture) { state, probe, capture ->
             val baseline = fixture.copy(switchMarkers = false)
             val sourceBaseline = compose.frame(state, baseline.copy(stage = FixtureStage.Source), capture, "source-without-marker")
