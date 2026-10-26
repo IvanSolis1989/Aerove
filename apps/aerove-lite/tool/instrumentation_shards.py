@@ -7,6 +7,10 @@ from pathlib import Path
 import re
 
 MATRIX_CLASS = "dev.aerove.lite.ui.LiteDashboardMatrixTest"
+SSID_CLASS = "dev.aerove.lite.backgroundpolicy.OnDemandRuntimeDeviceTest"
+SSID_METHOD = "excludedRealWifiParksAndResumesProxyAndTunWithoutReplacingCore"
+SSID_SELECTOR = SSID_CLASS + "#" + SSID_METHOD
+SSID_DESCRIPTION = SSID_METHOD + "(" + SSID_CLASS + ")"
 STATUSES = {0: "passed", -3: "ignored", -4: "assumptionFailed"}
 IDENTITY = ("sourceRevision", "sourceTree", "workflowRun", "runAttempt", "runNumber")
 
@@ -114,18 +118,54 @@ def discover(log, proof_path, source_path, sums_path):
                 discoveryCount=len(descriptions), excludedClass=MATRIX_CLASS, passedTests=[])
 
 
-def verify(discovery, log):
+def split_plan(discovery):
     require(discovery.get("numShards") == 4 and type(discovery.get("shardIndex")) is int and discovery["shardIndex"] in range(4), "Invalid discovery shard")
     descriptions = discovery["discoveredDescriptions"]
     require(descriptions == sorted(set(descriptions)) and discovery["discoveryFingerprint"] == fingerprint(descriptions), "Invalid discovery fingerprint")
-    expected = sorted(description for description in descriptions if shard_for(description) == discovery["shardIndex"])
+    expected = sorted(value for value in descriptions if shard_for(value) == discovery["shardIndex"])
+    isolated = [value for value in expected if value == SSID_DESCRIPTION]
+    ordinary = [value for value in expected if value != SSID_DESCRIPTION]
+    require(bool(ordinary), "A shard requires an ordinary invocation")
+    return dict(ordinary=ordinary, isolated=isolated, isolatedSelector=SSID_SELECTOR if isolated else None,
+                discoveryFingerprint=discovery["discoveryFingerprint"], discoveryCount=len(descriptions))
+
+
+def verify_ordinary(discovery, log):
+    plan = split_plan(discovery)
     records = parse_log(log)
+    require(sorted(record["description"] for record in records) == plan["ordinary"],
+            "Ordinary invocation differs from its exact discovered selection")
+    require(all(record["status"] == "passed" for record in records),
+            "Ordinary invocation must pass every test before device preparation")
+    require(re.findall(r"OK \((\d+) tests?\)", Path(log).read_text()) == [str(len(records))],
+            "Ordinary invocation requires one exact passing summary")
+    return records
+
+
+def verify(discovery, log, isolated_log=None):
+    plan = split_plan(discovery)
+    records = parse_log(log)
+    require(sorted(record["description"] for record in records) == plan["ordinary"] if isolated_log is not None else
+            sorted(record["description"] for record in records) == sorted(plan["ordinary"] + plan["isolated"]),
+            "Actual shard terminal/start set differs from APK discovery selection")
+    logs = [dict(role="ordinary", sha256=sha(log), descriptions=sorted(record["description"] for record in records),
+                 identity=discovery["identity"], apkSha256=discovery["apkSha256"])]
+    if isolated_log is not None:
+        require(plan["isolated"] == [SSID_DESCRIPTION], "Isolated invocation belongs to another shard")
+        isolated = parse_log(isolated_log)
+        require([record["description"] for record in isolated] == plan["isolated"], "Isolated terminal/start set must be exactly the discovered SSID method")
+        records += isolated
+        logs += [dict(role="ssid-scoped", sha256=sha(isolated_log), descriptions=plan["isolated"],
+                      identity=discovery["identity"], apkSha256=discovery["apkSha256"])]
+    else:
+        require(not plan["isolated"], "The real-Wi-Fi method requires its separate scoped host invocation")
+    expected = sorted(plan["ordinary"] + plan["isolated"])
     actual = sorted(record["description"] for record in records)
-    require(actual == expected, "Actual shard terminal/start set differs from APK discovery selection")
+    require(actual == expected and len(actual) == len(set(actual)), "Split shard union is incomplete or duplicated")
     statuses = {status: sorted(record["description"] for record in records if record["status"] == status) for status in STATUSES.values()}
     return dict(schema=1, discovery=discovery, expectedDescriptions=expected, actualDescriptions=actual,
-                terminalStatuses=statuses, instrumentationLogSha256=sha(log), allExpectedAccounted=True,
-                allExpectedPassed=len(statuses["passed"]) == len(expected), aggregateAcceptance=False)
+                terminalStatuses=statuses, instrumentationLogSha256=sha(log), instrumentationLogs=logs,
+                allExpectedAccounted=True, allExpectedPassed=len(statuses["passed"]) == len(expected), aggregateAcceptance=False)
 
 
 def aggregate(directory, source, run, attempt):
@@ -148,6 +188,12 @@ def aggregate(directory, source, run, attempt):
         expected = sorted(description for description in descriptions if shard_for(description) == index)
         require(receipt["allExpectedAccounted"] is True and receipt["expectedDescriptions"] == expected
                 and receipt["actualDescriptions"] == expected, "Incomplete shard receipt")
+        plan = split_plan(discovery)
+        logs = receipt.get("instrumentationLogs", [])
+        require([entry.get("role") for entry in logs] == (["ordinary", "ssid-scoped"] if plan["isolated"] else ["ordinary"]), "Wrong ordinary/scoped invocation accounting")
+        for entry, selected in zip(logs, [plan["ordinary"], plan["isolated"]]):
+            require(entry.get("identity") == discovery["identity"] and entry.get("apkSha256") == discovery["apkSha256"]
+                    and entry.get("descriptions") == selected and re.fullmatch("[0-9a-f]{64}", entry.get("sha256", "")), "Mixed invocation source/APK/selection")
         statuses = receipt["terminalStatuses"]
         require(set(statuses) == set(STATUSES.values()), "Unknown terminal classification")
         require(Counter(item for items in statuses.values() for item in items) == Counter(expected), "Terminal accounting is incomplete or duplicated")
@@ -172,6 +218,10 @@ def main():
     verification = commands.add_parser("verify")
     for name in ("discovery", "log", "output"):
         verification.add_argument("--" + name, type=Path, required=True)
+    verification.add_argument("--isolated-log", type=Path)
+    plan = commands.add_parser("plan")
+    plan.add_argument("--discovery", type=Path, required=True)
+    plan.add_argument("--output", type=Path, required=True)
     aggregation = commands.add_parser("aggregate")
     for name in ("directory", "output"):
         aggregation.add_argument("--" + name, type=Path, required=True)
@@ -181,7 +231,9 @@ def main():
     if args.command == "discover":
         result = discover(args.log, args.proof, args.source, args.sums)
     elif args.command == "verify":
-        result = verify(json.loads(args.discovery.read_text()), args.log)
+        result = verify(json.loads(args.discovery.read_text()), args.log, args.isolated_log)
+    elif args.command == "plan":
+        result = split_plan(json.loads(args.discovery.read_text()))
     else:
         result = aggregate(args.directory, args.source, args.run, args.attempt)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")

@@ -162,6 +162,57 @@ class ShardSelectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             shards.aggregate(self.root, "a" * 40, "11", "2")
 
+    def test_split_invocations_keep_original_discovery_and_exact_shard_union(self):
+        self.descriptions += [shards.SSID_DESCRIPTION]
+        index = shards.shard_for(shards.SSID_DESCRIPTION)
+        self.assertEqual(1, index)
+        discovery = self.discovery(index)
+        expected = self.expected(index)
+        ordinary = [value for value in expected if value != shards.SSID_DESCRIPTION]
+        normal = self.root / "ordinary.log"
+        isolated = self.root / "ssid.log"
+        normal.write_text(self.log(ordinary))
+        isolated.write_text(self.log([shards.SSID_DESCRIPTION]))
+        receipt = shards.verify(discovery, normal, isolated)
+        self.assertEqual(expected, receipt["actualDescriptions"])
+        self.assertEqual(21, receipt["discovery"]["discoveryCount"])
+        self.assertEqual(discovery["discoveryFingerprint"], receipt["discovery"]["discoveryFingerprint"])
+        with self.assertRaisesRegex(ValueError, "terminal/start set|separate scoped"):
+            shards.verify(discovery, normal)
+        for values in ([shards.SSID_DESCRIPTION] * 2, ordinary[:1], [], [shards.SSID_DESCRIPTION, ordinary[0]]):
+            isolated.write_text(self.log(values))
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                shards.verify(discovery, normal, isolated)
+        isolated.write_text(self.log([shards.SSID_DESCRIPTION]))
+        normal.write_text(self.log(expected))
+        with self.assertRaises(ValueError):
+            shards.verify(discovery, normal, isolated)
+
+    def test_split_aggregate_binds_both_invocations_to_same_source_and_apks(self):
+        self.descriptions += [shards.SSID_DESCRIPTION]
+        for index in range(4):
+            expected = self.expected(index)
+            isolated = self.root / f"ssid-{index}.log"
+            ordinary = self.root / f"ordinary-{index}.log"
+            selected = [value for value in expected if value == shards.SSID_DESCRIPTION]
+            ordinary.write_text(self.log([value for value in expected if value not in selected]))
+            isolated.write_text(self.log(selected))
+            receipt = shards.verify(self.discovery(index), ordinary, isolated if selected else None)
+            path = self.root / f"AEROVE-Lite-shard-selection-{index}-of-4-attempt-2/TEST-SELECTION.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(receipt))
+        result = shards.aggregate(self.root, "a" * 40, "11", "2")
+        self.assertEqual(21, result["discoveredCount"])
+        self.assertEqual(21, result["passedCount"])
+        path = self.root / "AEROVE-Lite-shard-selection-1-of-4-attempt-2/TEST-SELECTION.json"
+        original = json.loads(path.read_text())
+        for field, value in (("apkSha256", {"app": "x" * 64}), ("identity", {}), ("descriptions", [])):
+            changed = copy.deepcopy(original)
+            changed["instrumentationLogs"][1][field] = value
+            path.write_text(json.dumps(changed))
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "Mixed invocation"):
+                shards.aggregate(self.root, "a" * 40, "11", "2")
+
 
 if __name__ == "__main__":
     unittest.main()

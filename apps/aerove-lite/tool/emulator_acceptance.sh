@@ -274,6 +274,15 @@ if [[ "$phase" == original-sample ]]; then
     python3 apps/aerove-lite/tool/original_sample.py --source "$diagnostics/SOURCE.json" \
         --log "$diagnostics/sample-discovery.log" --discovery --output "$diagnostics/SAMPLE-SELECTION.json"
 fi
+ssid_selector=""
+if [[ -n "$shard_count" ]]; then
+    python3 apps/aerove-lite/tool/instrumentation_shards.py plan \
+        --discovery "$diagnostics/TEST-DISCOVERY.json" --output "$diagnostics/EXECUTION-PLAN.json"
+    ssid_selector=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["isolatedSelector"] or "")' "$diagnostics/EXECUTION-PLAN.json")
+    if [[ -n "$ssid_selector" ]]; then
+        selection=(-e notClass "$matrix_class,$ssid_selector" -e numShards "$shard_count" -e shardIndex "$shard_index")
+    fi
+fi
 instrumentation_prefix=()
 if [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]]; then
     instrumentation_prefix=(python3 apps/aerove-lite/tool/clear_frame_trace.py
@@ -286,6 +295,8 @@ if [[ "${AEROVE_BETA14_PROFILE:-0}" == 1 ]]; then
         --serial "$serial" --owner "${AEROVE_BETA14_PROFILE_OWNER:?Verified beta14 owner required}"
         --output "$diagnostics/render-profile" -- "${instrumentation_prefix[@]}")
 fi
+instrumentation_deadline=""
+if [[ -n "$shard_count" ]]; then instrumentation_deadline=$(( $(date +%s) + 1200 )); fi
 set +e
 "${remaining_timeout[@]}" "${instrumentation_prefix[@]}" "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
     -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
@@ -323,9 +334,21 @@ if sys.argv[2] == "remaining" and sys.argv[3] in classes:
     raise SystemExit("The remaining phase unexpectedly executed the excluded dashboard matrix class")
 PY
 if [[ -n "$shard_count" ]]; then
+    isolated_verification=()
+    if [[ -n "$ssid_selector" ]]; then
+        python3 apps/aerove-lite/tool/ssid_device_setup.py \
+            --serial "$serial" --source "$diagnostics/SOURCE.json" --discovery "$diagnostics/TEST-DISCOVERY.json" \
+            --proof "${AEROVE_CURRENT_RENDERER_PROOF:?Owned emulator proof required}" \
+            --output "$diagnostics/ssid-device" --deadline "$instrumentation_deadline" -- \
+            "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" \
+            -e class "$ssid_selector" -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
+            "${smart_fixture_args[@]}" -e isolatedBackgroundPolicy true -e deviceKind CI-emulator \
+            -e rendererBackend "$renderer_backend_remote" dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner
+        isolated_verification=(--isolated-log "$diagnostics/ssid-device/instrumentation.log")
+    fi
     python3 apps/aerove-lite/tool/instrumentation_shards.py verify \
         --discovery "$diagnostics/TEST-DISCOVERY.json" --log "$diagnostics/instrumentation.log" \
-        --output "$diagnostics/TEST-SELECTION.json"
+        "${isolated_verification[@]}" --output "$diagnostics/TEST-SELECTION.json"
 fi
 
 if [[ "${AEROVE_BETA14_PROFILE:-0}" == 1 ]]; then
