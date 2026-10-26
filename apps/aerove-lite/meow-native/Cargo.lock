@@ -53,6 +53,7 @@ dependencies = [
  "meow-transport",
  "meow-tunnel",
  "parking_lot",
+ "regex",
  "rquickjs",
  "serde",
  "serde_json",
@@ -65,6 +66,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unsafe-libyaml",
+ "url",
  "uuid",
  "zstd",
 ]

@@ -22,6 +22,26 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
             target = self.root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / name, target)
+        # This private fixture stages the historical approved pending input.
+        lock = self.root / 'Cargo.lock'
+        seed = ci.HOST_LOCK_RESOLUTION_PROVIDER_INPUTS['expectedLockBeforeSha256']
+        if ci.digest(lock) != seed:
+            sections = lock.read_bytes().split(b'\n[[package]]\n')
+            roots = [index for index, section in enumerate(sections)
+                     if section.startswith(b'name = "aerove-meow-core"\n')]
+            self.assertEqual(1, len(roots))
+            section = sections[roots[0]]
+            for edge in (b' "regex",\n', b' "url",\n'):
+                self.assertEqual(1, section.count(edge))
+                section = section.replace(edge, b'', 1)
+            sections[roots[0]] = section
+            restored = b'\n[[package]]\n'.join(sections)
+            self.assertEqual(seed, ci.hashlib.sha256(restored).hexdigest())
+            lock.write_bytes(restored)
+        self.assertEqual(seed, ci.digest(lock))
+        self.policy['resolveLock'] = True
+        self.policy['expectedLockBeforeSha256'] = seed
+        self.write_policy()
         self.env = dict(REQUEST_EVENT='workflow_dispatch', MEOW_HOST_ONLY='true', DIAGNOSTIC_TARGET='none', NATIVE_TEST_FILTER='')
         for key in ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS'):
             self.env[key] = 'false'

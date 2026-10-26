@@ -34,7 +34,7 @@ async fn resolve(control: &RouteControl, address: &str, proxy: &str) -> io::Resu
     let port = uri.port_u16().ok_or_else(|| io::Error::other("missing route port"))?;
     let mut metadata = Metadata { host: host.into(), dst_port: port, network: meow_common::Network::Tcp,
         conn_type: meow_common::ConnType::Http, process: "meow-rs".into(), internal: true, ..Metadata::default() };
-    if matches!(control.state.tunnel.pre_handle_metadata(&mut metadata), meow_tunnel::PreHandleVerdict::Drop) {
+    if matches!(control.state.tunnel.inner().pre_handle_metadata(&mut metadata), meow_tunnel::PreHandleVerdict::Drop) {
         return Err(io::Error::other("unmapped fake IP"));
     }
     if !proxy.is_empty() {
@@ -42,7 +42,7 @@ async fn resolve(control: &RouteControl, address: &str, proxy: &str) -> io::Resu
         let adapter = route.proxies.get(proxy).cloned().ok_or_else(|| io::Error::other("requested proxy is not in applied config"))?;
         return Ok(Resolved { metadata, adapter: adapter as Arc<dyn ProxyAdapter>, route });
     }
-    let target = control.state.tunnel.resolve_proxy_lazy(&mut metadata).await.ok_or_else(|| io::Error::other("route unavailable"))?;
+    let target = control.state.tunnel.inner().resolve_proxy_lazy(&mut metadata).await.ok_or_else(|| io::Error::other("route unavailable"))?;
     Ok(Resolved { metadata, adapter: target.adapter, route: target.route })
 }
 fn exit_name(proxy: &dyn ProxyAdapter) -> String { format!("{:?} {} {}", proxy.name(), proxy.adapter_type(), proxy.addr()) }
