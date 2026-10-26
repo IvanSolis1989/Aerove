@@ -2,19 +2,27 @@
 
 ## 待发布
 
-当前候选为 **0.1.0-beta.17（安装编号 17）**，仅表示待验证源码候选，不表示已构建、验收或发行。按独立版本规范，安装编号从 beta.16/code 16 递增；包名 `dev.aerove.lite`、签名和更新入口沿用。内核来源及例外仍见[核心记录](core/meow-migration.md)。
+当前候选为 **0.1.0-beta.18（安装编号 18）**。beta.17/code17 已有 arm64-v8a 与 x86_64 应用包构建，但原 run133 整体 CI 失败且未发行；beta.18/code18 按独立版本规范递增。包名 `dev.aerove.lite`、签名和更新入口沿用。内核来源及例外仍见[核心记录](core/meow-migration.md)。
 
-候选源码已整合的范围：
+本候选包含已整合源码：
 
-- Smart-Config-Kit Lite 专版为 `v6.0.20-meow.4`，固定来源 `23a2c93b6cba799b83f51e56f95b7f378b425503`；三片 MRS 保留既有单片预算，native predicate 并集与原始输入一致（411,634 个唯一 predicate、1,260,199 个 label，missing/added 均为 0）。当前 Android fixture `fc1079c2` 已绑定 bundled `.4`；QuickJS/JNI 实际执行仍待新候选验证。来源与源码证据不代表 Android App 已验证完整载入。
-- 整合 native 生命周期 409、TalkBack 遍历语义与输入焦点接线，以及 Lite 只读 UI 采样按真实焦点暂停/恢复的策略。模块或 JVM 结果不等于新 APK 上的 Android 行为验收。
-- DNS/Hosts 提交保存采用精确 token 与终态回执，并按已保存的 readback 证据关闭（整合于 `96582d13`）；9 文件实现经独立审查，10 项状态测试与源码编译结果已记录。原有 Android 红结果仍待新候选复验；这些状态测试和源码编译不代替新 Android 验收。
+- Smart-Config-Kit Lite 专版为 `v6.0.20-meow.4`，固定来源 `23a2c93b6cba799b83f51e56f95b7f378b425503`；三片 MRS 保留既有单片预算，native predicate 并集与原始输入一致（411,634 个唯一 predicate、1,260,199 个 label，missing/added 均为 0）。Android fixture `fc1079c2` 已绑定 bundled `.4`；新候选上的 QuickJS/JNI 实际执行仍待验收。
+- 保留原生生命周期 409、TalkBack 遍历语义与输入焦点接线，以及只读 UI 采样的焦点暂停/恢复策略；模块或 JVM 结果不代替新 APK Android 验收。
+- DNS/Hosts 保存使用精确 token 与终态回执，并按已保存 readback 关闭（`96582d13`）；10 项状态测试和源码编译有记录，原 Android 红结果仍须新候选复验。
+- 完整双行速度源码已实现：无安全同排槽时底部自然追加，有槽时恢复原 footer；保留正文、大按钮和完整数值。新 APK/Android 行为仍待验收。
+- Dock 局部选中镜片解除继承的整 Dock 最小约束，保留外壳与既有镜片几何、按压/RTL 公式、材质和透明背景路径。修复来自 `2f4f4282694301a05813334c4c0390c478a4f01c`，独立窄审未发现 P1/P2；新增 Android 几何/输入用例仅编译，未运行，尚无修后 Android 像素验收。
 
-完整速度源码现已实现：无可用槽位时将完整双行指标追加到底部，有槽位时恢复原布局；该实现于 `61defa14` 整合并通过窄范围审查。仍须在 beta.17 新 APK 和 Android 上验收。
+beta.17 原 run133（`40390763814`）结果为 **155 pass、79 fail、12 assumption、2 active、168 unstarted**；shard2 SDK 模拟器下载失败、shard1/3 超时，原 run 整体失败。Matrix 11 格通过原捕获门，第 06 格仅迟帧诊断；这不等于十二图通过或用户确认。Smart 两个方法实跑通过，固定 payload 到 Native 的方法未执行；DNS 5 项通过、3 项未开始。历史结果不代表 beta.18 验收。
 
-发行前仍须用收敛后的 beta.17 源码完成真实 Android CI 与新 APK 验收，包括功能和取消/恢复门、TalkBack/焦点、DNS/Hosts 与完整速度行为；完成三种材质、两种底图、浅深主题的十二宫格真实 Android 渲染并由用户确认。beta.16 的 125 整体 CI 未通过 Lint、Matrix 与剩余验收门；run130 是另一次原包样本执行：Glyph 单方法、Solid 单参数方法通过，Clear 单参数方法失败。它们不是十二张截图，也不能代替 beta.17 验收。未完成这些门槛前不发行。
+发行前仍须以 beta.18 新源码完成真实 Android CI 与 APK 验收，包括功能、取消/恢复、TalkBack/焦点、DNS/Hosts、速度与 Dock 行为；完成三种材质、两种底图、浅深主题的十二宫格真实 Android 渲染并由用户确认。未完成这些门槛前不发行。
 
 ## 历史未发行候选记录
+
+### 0.1.0-beta.17（安装编号 17）
+
+beta.17 源码 `d703847d0d121e7d20d49493c22ab8305cb638b5` 的 arm64-v8a 与 x86_64 应用包构建成功，版本 `0.1.0-beta.17` / code17；run133（`40390763814`）整体 CI 失败，未接受、未发行。汇总为 155 pass、79 fail、12 assumption、2 active、168 unstarted：shard2 模拟器 SDK 下载失败，shard1/3 超时；Matrix 11 格通过原捕获门，第 06 格仅迟帧诊断。Smart 有两个方法通过、payload 到 Native 的方法未执行；DNS 为 5 pass / 3 未开始。不得将旧包或部分通过结果移作 beta.18 验收。
+
+beta.17 曾记录的 Smart、DNS/Hosts 与完整速度实现范围由上方 beta.18 说明承接；其中当前状态与 Android 验收边界以本页“待发布”为准。
 
 ### 0.1.0-beta.16（安装编号 16）
 
