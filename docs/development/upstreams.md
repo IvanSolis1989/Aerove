@@ -62,7 +62,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** `v0.10.10` / `36eec77463d1243ede287bf6b7197e38237948d5`
 
-**用途与采用方式：** Lite 历史 Rust 核心检查点复制适配（用户已选 Meow，原源码和许可保留）；socket保护、移动端嵌入、日志路由、生命周期、provider校验等适配
+**用途与采用方式：** Lite 历史 Rust 核心检查点复制适配（用户已选 Meow，原源码和许可保留）；socket保护、移动端嵌入、日志路由、生命周期、provider校验等适配；Lite 路由/provider 本轮复用的 `http_probe.rs`、`service_check.rs`、`service_rules.rs` 与 `outbound.rs` 属 Aerove 既有探测算法针对 Meow 的适配，不复用 legacy `clash_lib` 运行时。
 
 **许可证、署名与证据：** 上游固定源码含 Apache-2.0 LICENSE；启用 `tuic` 时按固定源码 NOTICE 为 GPL-3.0；Aerove 整仓 GPL 许可保持不变；`apps/aerove-lite/native/NOTICE.md`、`native/licenses/clash-rs-NOTICE.md`、`native/upstream.patch`、`native/dependency-protect/manifest.json`；保留上游版权与NOTICE
 
@@ -222,7 +222,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** SDK `3.47.6` / framework `5fc346839b5d0eef006ed8404392afb4dfae428d`
 
-**用途与采用方式：** 标准版Flutter框架；Lite optics几何与AGSL shader适配源自Flutter Impeller superellipse；字体测试fixture保留Roboto许可，生产不新增捆绑字体；字体策略只读参考SDK Android默认字体行为。网络控制与启停比例另只读参考同固定 SDK 的 [`RenderPositionedBox`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/shifted_box.dart) 松约束居中行为，采用既有 Center、InkWell、Semantics 和 AppShape，未复制实现或新增依赖。读屏顺序另只读参考同 SDK [`semantics.dart`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/semantics/semantics.dart) 的 `_childrenInTraversalOrder`（只有同类排序键互相排序，无键兄弟保持几何顺序）与 `flutter_test` 的 `simulatedAccessibilityTraversal`，采用既有 `Semantics` 与 `OrdinalSortKey`，未复制实现或新增依赖。读屏顺序开发前检索（2026-10-25）：关键词 `flutter OrdinalSortKey semantics traversal order test`、`jetpack compose isTraversalGroup traversalIndex screen reader order test`；候选为 Flutter 官方 [`traversal_order_test.dart`](https://flutter.googlesource.com/mirrors/flutter.git/+/HEAD/packages/flutter/test/semantics/traversal_order_test.dart) 与 [`OrdinalSortKey`](https://api.flutter.dev/flutter/semantics/OrdinalSortKey-class.html) API、Android 官方[读屏顺序指南](https://developer.android.com/develop/ui/compose/accessibility/traversal)；结论为复用两框架公开 API，未找到需要引入的第三方实现
+**用途与采用方式：** 标准版Flutter框架；Lite optics几何与AGSL shader适配源自Flutter Impeller superellipse；字体测试fixture保留Roboto许可，生产不新增捆绑字体；字体策略只读参考SDK Android默认字体行为。网络控制与启停比例另只读参考同固定 SDK 的 [`RenderPositionedBox`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/shifted_box.dart) 松约束居中行为，采用既有 Center、InkWell、Semantics 和 AppShape，未复制实现或新增依赖。读屏顺序另只读参考同 SDK [`semantics.dart`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/semantics/semantics.dart) 的 `_childrenInTraversalOrder`（只有同类排序键互相排序，无键兄弟保持几何顺序）与 `flutter_test` 的 `simulatedAccessibilityTraversal`，采用既有 `Semantics` 与 `OrdinalSortKey`，未复制实现或新增依赖。读屏顺序开发前检索（2026-10-25）：关键词 `flutter OrdinalSortKey semantics traversal order test`、`jetpack compose isTraversalGroup traversalIndex screen reader order test`；候选为 Flutter 官方 [`traversal_order_test.dart`](https://flutter.googlesource.com/mirrors/flutter.git/+/HEAD/packages/flutter/test/semantics/traversal_order_test.dart) 与 [`OrdinalSortKey`](https://api.flutter.dev/flutter/semantics/OrdinalSortKey-class.html) API、Android 官方[读屏顺序指南](https://developer.android.com/develop/ui/compose/accessibility/traversal)；结论为复用两框架公开 API，未找到需要引入的第三方实现 另为核对极光背景模糊的降采样与sigma缩放，只读参考同一固定 Flutter SDK 的 [`gaussian_blur_filter_contents.cc`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/engine/src/flutter/impeller/entity/contents/filters/gaussian_blur_filter_contents.cc) 中 `CalculateDownsamplePassArgs`、`CalculateScale` 与 `ScaleSigma`；项目复用既有 `ImageFilter.blur` 与截图密度，未复制引擎实现或新增依赖。固定源码本地 Git blob `a2de219377a8b37b2638d68b0f772dc88e776bf7` / SHA-256 `5e67e0784ea12086c64e4917595887a0de2fd3476debf9260027ecc90a9adc14`，BSD-3-Clause 与 Flutter Authors 署名保持。
 
 **许可证、署名与证据：** BSD-3-Clause（Flutter）；字体按原 `roboto_license.txt`；`apps/aerove-lite/app/src/main/assets/optics/NOTICE.md`、`FLUTTER_LICENSE`、`apps/aerove/test/fixtures/fonts/SOURCE.json`
 
@@ -238,7 +238,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** Dart `3.13.5` / `04bcd1036cdc799ac6564988f159ee454d42c822`
 
-**用途与采用方式：** TLS、字体、Socket API及 `Isolate.kill` 生命周期只读核验；kill不保证挂起socket立即EOF/FD清理，因此未以隔离区退出替代逐请求取消。另只读核对 DateTime 相等与 UTC/local 转换语义，用于数据库往返测试夹具，不改变生产时间存储
+**用途与采用方式：** TLS、字体、Socket API及 `Isolate.kill` 生命周期只读核验；kill不保证挂起socket立即EOF/FD清理，因此未以隔离区退出替代逐请求取消。另只读核对 DateTime 相等与 UTC/local 转换语义，用于数据库往返测试夹具，不改变生产时间存储。 I4 固定历史环形缓冲另只读参照同固定 SDK [`sdk/lib/collection/queue.dart`](https://github.com/dart-lang/sdk/blob/04bcd1036cdc799ac6564988f159ee454d42c822/sdk/lib/collection/queue.dart) 的 ListQueue 头偏移与环形索引思路；其 API 不支持按逻辑下标替换，未直接采用或复制实现、未新增依赖。Aerove 保留固定容量、共享代际、按实例缓存的不可变快照及冻结副本契约。
 
 **许可证、署名与证据：** BSD-3-Clause；[Isolate.kill API](https://api.dart.dev/dart-isolate/Isolate/kill.html)、固定Dart SDK版本/source
 
@@ -246,7 +246,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** `2.35.1` / tag `drift-2.35.1` / `f7e4c72bd10d92b9e1a8bfb768730ca1096b1341`；现有 Pub 锁定包 SHA256 `a21a6a7a9e6a0bcabdf47a9af4247c556d38dc9bfe9f05c4fdf72a488bb57eab`
 
-**用途与采用方式：** 标准版已有数据库依赖。内置脚本旧 URL 迁移只读核对 [`connection_user.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/api/connection_user.dart) 事务、[`insert.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/query_builder/statements/insert.dart) 显式冲突目标的 `DoNothing`，以及 [`mapping.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/types/mapping.dart) 的 INTEGER 时间映射；未复制实现或新增依赖。测试保留严格模型、并发编辑、正文与事务回滚断言。
+**用途与采用方式：** 标准版已有数据库依赖。内置脚本旧 URL 迁移只读核对 [`connection_user.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/api/connection_user.dart) 事务、[`insert.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/query_builder/statements/insert.dart) 显式冲突目标的 `DoNothing`，以及 [`mapping.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/types/mapping.dart) 的 INTEGER 时间映射；未复制实现或新增依赖。测试保留严格模型、并发编辑、正文与事务回滚断言。 I5 并发持久化回归只读核对 [`runtime/executor/interceptor.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/executor/interceptor.dart) 的 `QueryInterceptor` 接口，用于真实内存 SQLite 写入的暂停、计数与拒绝测试；未复制实现或引入新依赖。
 
 **许可证、署名与证据：** MIT，Copyright © 2021 Simon Binder；保留安装包原 `LICENSE` 与 Pub 锁。固定映射源码副本 SHA256 `25f2fdcf64585e763f32a07f6c1b6b67be69a902202ed3a9b78ef7db02f174eb`。
 
@@ -410,7 +410,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** Lite 选定 Rust 核心，迁移中；[Run17](https://github.com/IvanSolis1989/Aerove/actions/runs/39994659739) 的历史证据为 56 项宿主测试及双 Android ABI 链接。[Run94](https://github.com/IvanSolis1989/Aerove/actions/runs/40117349063) 后续已产出双 ABI APK 并实际执行 Android 测试，但启动及清透帧验收仍失败，整体尚未接受或首发。保留此前公开基准、DNS 与官方 Android FFI/Cargo 参考记录。
 
-大规则元数据、独立资源验证与准备预检共用该固定 Core 的严格 MRS matcher 工厂；元数据读取不借用文本导出的 25 万条限制，文本导出仍保留原预算。宿主回归另原样复用[固定 MRS 测试编码器](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-rules/src/mrs_parser.rs)的六个 helper 至 `apps/aerove-lite/meow-native/tests/support/upstream_mrs.rs`，只调整模块导入与两个测试入口可见性；保留 Max Lv 的完整 MIT 通知。测试运行时生成受控 `.test` 域名数据，不把第三方聚合规则作为本仓二进制夹具。生产解析仍由真实 Core 完成；新增精确 zstd 依赖仅用于测试，实际锁解析和 Android 资源验收分别记录。
+大规则元数据、独立资源验证与准备预检共用该固定 Core 的严格 MRS matcher 工厂；所有 Lite 官方 MRS 宿主入口仍须按用户决定执行 250,000 条设备保护准入（USER-DECISIONS 4–9；handoff §83、§216）。当前 Core 路径未执行该宿主条目门槛，候选测试读取 411,634 条，属于未闭合实现阻断；Rust owner 正在补同一已打开文件的流式计数/限制，代码及验收读回前不能记为完成。Core 官方 MRS 解压输出上限 256 MiB（`MAX_DECOMPRESSED_BYTES`）是解码字节边界，不替代 250,000 条宿主准入，也不同于历史 `MRS!` 格式的 64 MiB 展开预算。宿主回归另原样复用[固定 MRS 测试编码器](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-rules/src/mrs_parser.rs)的六个 helper 至 `apps/aerove-lite/meow-native/tests/support/upstream_mrs.rs`，只调整模块导入与两个测试入口可见性；保留 Max Lv 的完整 MIT 通知。测试运行时生成受控 `.test` 域名数据，不把第三方聚合规则作为本仓二进制夹具。生产解析仍由真实 Core 完成；新增精确 zstd 依赖仅用于测试，实际锁解析和 Android 资源验收分别记录。 Lite 路由/provider 来源复核另只读核对同一固定 Core 的 Tunnel、NetworkContext、internal HTTP 与 TLS 接口契约（[固定源码树](https://github.com/meow-rs/meow-rs/tree/727ddcd06f592e2f12c5222c4de6cce328df808c)）；Aerove overlay 的 `dial_tcp_observed` 与所有权 hook 属本项目适配，不宣称为上游 API。
 
 **许可证、署名与证据：** MIT；[固定 LICENSE](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/LICENSE) 原始 SHA256 `b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5`；[固定 Cargo.toml](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/Cargo.toml)。
 
@@ -606,6 +606,71 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **许可证、署名与证据：** Apache-2.0（上游）；`docs/research/rendering/library-selection.md`
 
+#### [skeeto/hash-prospector](https://github.com/skeeto/hash-prospector)
+
+**固定版本 / revision：** `396dbe235c94dfc2e9b559fc965bcfda8b6a122c`
+
+**用途与采用方式：** 两版灵动极光运动的旋转变速、块起始航向和块内游走抽取散列采用 README 公布的 `lowbias32`（移位 16/15/16，乘数 `0x7feb352d`、`0x846ca68b`），在 Dart 和 Kotlin 中按 32 位掩码改写；未新增依赖
+
+**许可证、署名与证据：** Unlicense（公有领域）；[固定 README](https://github.com/skeeto/hash-prospector/blob/396dbe235c94dfc2e9b559fc965bcfda8b6a122c/README.md)、[UNLICENSE](https://github.com/skeeto/hash-prospector/blob/396dbe235c94dfc2e9b559fc965bcfda8b6a122c/UNLICENSE)
+
+#### [Cyan4973/xxHash](https://github.com/Cyan4973/xxHash)
+
+**固定版本 / revision：** `v0.8.4` / `c87183a77d67f7d37e3d2d1b7eaac5e7c695e4f0`
+
+**用途与采用方式：** 灵动极光运动散列用 `XXH_PRIME32_1`（`0x9E3779B1`）与 `XXH_PRIME32_2`（`0x85EBCA77`）两个奇数乘数混合块、抽取或节点序号与盐值；只采用常量，未复制算法或新增依赖
+
+**许可证、署名与证据：** BSD-2-Clause，`Copyright (c) 2012-2021 Yann Collet`；[固定 xxhash.h](https://github.com/Cyan4973/xxHash/blob/c87183a77d67f7d37e3d2d1b7eaac5e7c695e4f0/xxhash.h#L2922-L2923)、[LICENSE](https://github.com/Cyan4973/xxHash/blob/c87183a77d67f7d37e3d2d1b7eaac5e7c695e4f0/LICENSE)
+
+#### [Lakr233/ColorfulX](https://github.com/Lakr233/ColorfulX)
+
+**固定版本 / revision：** `025be056e59a62d06c6867ad65a7cb03fc63baf1`
+
+**用途与采用方式：** 灵动极光平移只读参照 `Sources/ColorfulX/SpeckleAnimationRandomDirector.swift` 的随机目标点与方向持续思路；其逐帧 deltaTime 弹簧积分和无种子随机不满足两版同种子、按块确定性求值，未复制实现或新增依赖
+
+**许可证、署名与证据：** MIT，`Copyright (c) 2025 GitHub@Lakr233`；[固定源码](https://github.com/Lakr233/ColorfulX/blob/025be056e59a62d06c6867ad65a7cb03fc63baf1/Sources/ColorfulX/SpeckleAnimationRandomDirector.swift)、[LICENSE](https://github.com/Lakr233/ColorfulX/blob/025be056e59a62d06c6867ad65a7cb03fc63baf1/LICENSE)
+
+#### [Cindori/FluidGradient](https://github.com/Cindori/FluidGradient)
+
+**固定版本 / revision：** `9ddda4cf23671ef0228e88681ec6210cb3e0d7f7`
+
+**用途与采用方式：** 只读对照 `Sources/FluidGradient/BlobLayer.swift` 的随机点加弹簧动画与 `FluidGradientView.swift` 的定时换点节奏，作为随机航点模型参照；未复制实现或新增依赖
+
+**许可证、署名与证据：** MIT，`Copyright (c) 2022 Cindori`；[固定源码](https://github.com/Cindori/FluidGradient/blob/9ddda4cf23671ef0228e88681ec6210cb3e0d7f7/Sources/FluidGradient/BlobLayer.swift)、[LICENSE](https://github.com/Cindori/FluidGradient/blob/9ddda4cf23671ef0228e88681ec6210cb3e0d7f7/LICENSE)
+
+#### [paper-design/shaders](https://github.com/paper-design/shaders)
+
+**固定版本 / revision：** `71be01576e8402c62ac76386bb4a7c59092e24c7`
+
+**用途与采用方式：** 只读对照 `packages/shaders/src/shaders/mesh-gradient.ts` 中 `getPosition` 的大幅正余弦色点轨迹，作为位移幅度参照；其轨迹仍围绕中心往返，未采用，未复制代码
+
+**许可证、署名与证据：** Apache-2.0；[固定源码](https://github.com/paper-design/shaders/blob/71be01576e8402c62ac76386bb4a7c59092e24c7/packages/shaders/src/shaders/mesh-gradient.ts)、[LICENSE](https://github.com/paper-design/shaders/blob/71be01576e8402c62ac76386bb4a7c59092e24c7/LICENSE)
+
+#### [Nevodev/Pear-Wall](https://github.com/Nevodev/Pear-Wall)
+
+**固定版本 / revision：** `b5dfe87ddf1b06dbab511985dc39310311b75963`
+
+**用途与采用方式：** 只读对照 `app/src/main/assets/pearmesh/shaders/rotation.vert` 的 70/90/120 秒旋转周期与 `PearMeshGlRenderer.kt` 的两倍速模式，作为底图转速参照；多图层旋转未采用，未复制代码
+
+**许可证、署名与证据：** Apache-2.0；[固定着色器](https://github.com/Nevodev/Pear-Wall/blob/b5dfe87ddf1b06dbab511985dc39310311b75963/app/src/main/assets/pearmesh/shaders/rotation.vert)、[LICENSE](https://github.com/Nevodev/Pear-Wall/blob/b5dfe87ddf1b06dbab511985dc39310311b75963/LICENSE)
+
+#### [folksable/mesh_gradient](https://github.com/folksable/mesh_gradient)
+
+**固定版本 / revision：** pub `mesh_gradient` `1.1.5` / `f8311efdd399b466356591949a1e70b9544cc181`（标准版注释最初参考时所用 revision 未留证据，不推定）
+
+**用途与采用方式：** 两版极光冻结域扭曲沿用其流体场思路（`apps/aerove/lib/common/aurora.dart` 注释）；未复制着色器或其单独授权的噪声函数，未新增依赖。本条补登既有引用，非本次运动改动引入
+
+**许可证、署名与证据：** MIT，`Copyright 2023 Ben Fornefeld`；着色器内嵌的 Inigo Quilez 噪声片段另标 CC BY-NC-SA 3.0，不得复制；[LICENSE](https://github.com/folksable/mesh_gradient/blob/f8311efdd399b466356591949a1e70b9544cc181/LICENSE)
+
+#### [ben-fornefeld/mesh-gradient](https://github.com/ben-fornefeld/mesh-gradient)
+
+**固定版本 / revision：** pub `mesh_gradient` `1.3.8` / `297b20f20587642516392bd7f08c73b8712e818f`
+
+**用途与采用方式：** 极光运动调研只读核对 `lib/shaders/animated_mesh_gradient.frag` 的噪声驱动旋转与正弦扭曲模型（无平移）；未采用，未复制着色器或噪声函数
+
+**许可证、署名与证据：** MIT，`Copyright 2024 Ben Fornefeld`；内嵌噪声片段另标 CC BY-NC-SA 3.0，不得复制；[固定着色器](https://github.com/ben-fornefeld/mesh-gradient/blob/297b20f20587642516392bd7f08c73b8712e818f/lib/shaders/animated_mesh_gradient.frag)、[LICENSE](https://github.com/ben-fornefeld/mesh-gradient/blob/297b20f20587642516392bd7f08c73b8712e818f/LICENSE)
+
+
 #### [actions/checkout](https://github.com/actions/checkout)
 
 **固定版本 / revision：** `11d5960a326750d5838078e36cf38b85af677262`
@@ -677,6 +742,22 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 **用途与采用方式：** 把已上传的站点产物部署到 GitHub Pages。按固定 SHA 引用。
 
 **许可证、署名与证据：** MIT；[固定提交 LICENSE](https://github.com/actions/deploy-pages/blob/d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e/LICENSE)
+
+#### [actions/runner](https://github.com/actions/runner)
+
+**固定版本 / revision：** `f4a774978d9562d6539be5055c17c0eb970d08df`（2026-10-23）
+
+**用途与采用方式：** 只读核实 GitHub Actions 自定义 shell 命令模板与参数拆分；本工作流直接以 `nice` 作为首命令并传递 bash 参数，未复制或适配 runner 实现。另按 GitHub 官方 [workflow syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax) 核对 `command [options] {0}` 模板。
+
+**许可证、署名与证据：** MIT；固定提交 [`LICENSE`](https://github.com/actions/runner/blob/f4a774978d9562d6539be5055c17c0eb970d08df/LICENSE)、[`ScriptHandler.cs`](https://github.com/actions/runner/blob/f4a774978d9562d6539be5055c17c0eb970d08df/src/Runner.Worker/Handlers/ScriptHandler.cs#L1303-L1317)、[`ScriptHandlerHelpers.cs`](https://github.com/actions/runner/blob/f4a774978d9562d6539be5055c17c0eb970d08df/src/Runner.Worker/Handlers/ScriptHandlerHelpers.cs#L386-L401)。
+
+#### [actions/runner-images](https://github.com/actions/runner-images)
+
+**固定版本 / revision：** `4f94a804ccf6254bfc5c7fd90a213db4b21794cd`（2026-10-25）
+
+**用途与采用方式：** 只读核实 `ubuntu-24.04` 镜像说明及 Coreutils 9.4 包清单，用作 workflow `nice` 命令可用性的镜像依据；未复制、修改或依赖镜像代码。该镜像清单不证明未来某次 workflow 实际选择的镜像状态或 CPU 调度效果。
+
+**许可证、署名与证据：** MIT；固定提交 [`LICENSE`](https://github.com/actions/runner-images/blob/4f94a804ccf6254bfc5c7fd90a213db4b21794cd/LICENSE)、[`Ubuntu2404-Readme.md` 镜像元数据](https://github.com/actions/runner-images/blob/4f94a804ccf6254bfc5c7fd90a213db4b21794cd/images/ubuntu/Ubuntu2404-Readme.md#L198-L204) 与 [Coreutils 清单](https://github.com/actions/runner-images/blob/4f94a804ccf6254bfc5c7fd90a213db4b21794cd/images/ubuntu/Ubuntu2404-Readme.md#L483-L494)。
 
 #### [android-actions/setup-android](https://github.com/android-actions/setup-android)
 
@@ -1004,6 +1085,14 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 
 **许可证、署名与证据：** MIT，保留固定版本 `LICENSE`；[参数互斥检查](https://github.com/cli/cli/blob/4f2cfe92e3499f8581bf39db77e0a1431fa7b55c/pkg/cmd/api/api.go#L2081-L2098)、[分页输出](https://github.com/cli/cli/blob/4f2cfe92e3499f8581bf39db77e0a1431fa7b55c/pkg/cmd/api/api.go#L2249-L2265)、[官方手册](https://cli.github.com/manual/gh_api)。
 
+#### [sindresorhus/github-markdown-css](https://github.com/sindresorhus/github-markdown-css)
+
+**固定版本 / revision：** `v5.9.0` / `265b22aa79815418195f453352456d5784bb7580`
+
+**用途与采用方式：** 仅用于本外部任务目录的临时 GitHub GFM 文档预览；没有加入 Aerove 产品源码、依赖、构建或运行时，不用于产品页面。
+
+**许可证、署名与证据：** MIT；固定提交中的小写 [`license`](https://github.com/sindresorhus/github-markdown-css/blob/265b22aa79815418195f453352456d5784bb7580/license) 文件。
+
 ### 来源登记边界
 
 版本、commit、许可证分别按表中对应证据记录；缺失信息不从仓库名或最新上游状态推定。`Cargo.lock`/Maven/Pub锁定值标识依赖时，若未核实源码commit，版本列仅陈述已固定的发行版本与锁校验值。`russh`、`shadowquic`、`boring-noise`等peer测试读取上游API但未复制其实现；只读调查也与实际运行依赖分开。Cargo、Dart SDK和网络库的只读研究来源不代表被复制进产品。
@@ -1012,6 +1101,7 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 ## 多个来源，独立交付
 
 | 来源 | 职责 | 纳入规则 |
+| --- | --- | --- |
 | FlClash | 历史来源及可选择的客户端实现参考 | 按 Aerove 实际问题选择相关变更，保留来源和许可证，不自动整套合并 |
 | MetaCubeX/mihomo | 标准版代理核心 | 直接核验官方已公开发布的稳定版本，固定源码提交，在本仓库维护可重放适配补丁，不等待 FlClash |
 | meow-rs/meow-rs | Lite 选定代理核心（迁移中） | 固定公开版本、宿主接入与配置/协议/平台契约；真实验收前不冒充已发行 APK |
