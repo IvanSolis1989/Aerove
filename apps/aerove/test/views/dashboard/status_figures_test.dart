@@ -1,4 +1,9 @@
+import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:fl_clash/common/service_probe.dart';
+import 'package:fl_clash/common/traffic_format.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
@@ -25,6 +30,7 @@ import '../../helpers/system_test_font.dart';
 import '../../helpers/test_app.dart';
 
 const _font = 'FiguresRoboto';
+final _capture = GlobalKey();
 
 var _fallback = const <String>[];
 
@@ -109,39 +115,48 @@ Future<ProviderContainer> _pump(
   required double device,
   required TextScaler scaler,
   String organization = 'Example Organization',
+  bool showTraffic = true,
+  TextDirection direction = TextDirection.ltr,
+  ProviderContainer? existingContainer,
 }) async {
   tester.view.physicalSize = const Size(1000, 1400);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
-  final container = ProviderContainer(
-    overrides: [
-      profilesProvider.overrideWithValue(const [
-        Profile(id: 1, autoUpdateDuration: Duration.zero),
-      ]),
-      isStartProvider.overrideWith((ref) => true),
-      suspendProvider.overrideWith((ref) => false),
-      outboundIpProbeProvider.overrideWith(_Ips.new),
-      ipQualityProvider.overrideWith(
-        (_, _) async => IpQuality(
-          ip: '203.0.113.9',
-          source: IpQualitySource.ipLocate,
-          type: IpType.residential,
-          organization: organization,
-        ),
-      ),
-    ],
-  );
+  final container =
+      existingContainer ??
+      ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWithValue(const [
+            Profile(id: 1, autoUpdateDuration: Duration.zero),
+          ]),
+          isStartProvider.overrideWith((ref) => true),
+          suspendProvider.overrideWith((ref) => false),
+          outboundIpProbeProvider.overrideWith(_Ips.new),
+          ipQualityProvider.overrideWith(
+            (_, _) async => IpQuality(
+              ip: '203.0.113.9',
+              source: IpQualitySource.ipLocate,
+              type: IpType.residential,
+              organization: organization,
+            ),
+          ),
+        ],
+      );
   globalState.container = container;
-  addTearDown(() async {
-    await tester.pumpWidget(const SizedBox.shrink());
-    container.dispose();
-    await tester.pump();
-  });
+  if (existingContainer == null) {
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      container.dispose();
+      await tester.pump();
+    });
+  }
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
       child: TestApp(
         locale: locale,
+        homeBuilder: (child) =>
+            Directionality(textDirection: direction, child: child),
         theme: ThemeData(fontFamily: _font, fontFamilyFallback: _fallback),
         child: Builder(
           builder: (context) => MediaQuery(
@@ -154,9 +169,14 @@ Future<ProviderContainer> _pump(
                   child: DashboardDensityScope(
                     density: DashboardDensity.mobile,
                     scale: scaler.scale(1),
-                    child: const Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [CurrentOutboundCard()],
+                    child: RepaintBoundary(
+                      key: _capture,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          CurrentOutboundCard(showTraffic: showTraffic),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -239,14 +259,16 @@ bool _clearsBody(WidgetTester tester, Rect candidate) {
     if (readings.contains(paragraph)) continue;
     final text = paragraph.text.toPlainText();
     if (text.runes.any((rune) => rune >= 0x1F1E6)) continue;
-    for (final box in paragraph.getBoxesForSelection(
-      TextSelection(baseOffset: 0, extentOffset: text.length),
-    )) {
-      final rect = MatrixUtils.transformRect(
-        paragraph.getTransformTo(null),
-        box.toRect(),
-      );
-      if (rect.overlaps(candidate)) return false;
+    for (final word in RegExp(r'\S+').allMatches(text)) {
+      for (final box in paragraph.getBoxesForSelection(
+        TextSelection(baseOffset: word.start, extentOffset: word.end),
+      )) {
+        final rect = MatrixUtils.transformRect(
+          paragraph.getTransformTo(null),
+          box.toRect(),
+        );
+        if (rect.overlaps(candidate)) return false;
+      }
     }
   }
   for (final element
@@ -273,12 +295,489 @@ bool _clearsBody(WidgetTester tester, Rect candidate) {
   return true;
 }
 
+List<Rect> _figureParts(WidgetTester tester) {
+  final result = <Rect>[];
+  final root = tester.renderObject(find.byType(OutboundTrafficFigures));
+  void visit(RenderObject node) {
+    if (node is RenderParagraph) {
+      final text = node.text.toPlainText();
+      for (final word in RegExp(r'\S+').allMatches(text)) {
+        for (final box in node.getBoxesForSelection(
+          TextSelection(baseOffset: word.start, extentOffset: word.end),
+        )) {
+          result.add(
+            MatrixUtils.transformRect(node.getTransformTo(null), box.toRect()),
+          );
+        }
+      }
+    } else if (node is RenderCustomPaint && node.painter is GlyphPainter) {
+      result.add(
+        MatrixUtils.transformRect(
+          node.getTransformTo(null),
+          (node.painter! as GlyphPainter).paintedBounds(
+            node.size,
+            pixelRatio: tester.view.devicePixelRatio,
+          ),
+        ),
+      );
+    }
+    node.visitChildren(visit);
+  }
+
+  visit(root);
+  return result;
+}
+
+List<(String, Rect)> _mainRects(RenderObject root) {
+  final result = <(String, Rect)>[];
+  void visit(RenderObject node) {
+    if (node is RenderParagraph) {
+      result.add((
+        node.text.toPlainText(),
+        node.localToGlobal(Offset.zero) & node.size,
+      ));
+    }
+    node.visitChildren(visit);
+  }
+
+  visit(root);
+  return result;
+}
+
+InlineSpan _whiteSpan(InlineSpan span) {
+  final text = span as TextSpan;
+  return TextSpan(
+    text: text.text,
+    style: text.style?.copyWith(color: Colors.white, shadows: const []),
+    children: text.children?.map(_whiteSpan).toList(),
+  );
+}
+
+Future<int> _overlapPixels(
+  WidgetTester tester,
+  RenderRepaintBoundary boundary,
+  RenderObject body,
+  RenderObject figures,
+) async {
+  ui.Image mask(RenderObject root) {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder)..scale(3);
+    void visit(RenderObject node) {
+      if (node is RenderParagraph) {
+        final painter =
+            TextPainter(
+              text: _whiteSpan(node.text),
+              textAlign: node.textAlign,
+              textDirection: node.textDirection,
+              textScaler: node.textScaler,
+              maxLines: node.maxLines,
+              ellipsis: node.overflow == TextOverflow.ellipsis
+                  ? '\u2026'
+                  : null,
+              locale: node.locale,
+              strutStyle: node.strutStyle,
+              textWidthBasis: node.textWidthBasis,
+              textHeightBehavior: node.textHeightBehavior,
+            )..layout(
+              minWidth: node.constraints.minWidth,
+              maxWidth: node.constraints.maxWidth,
+            );
+        canvas.save();
+        canvas.transform(node.getTransformTo(boundary).storage);
+        painter.paint(canvas, Offset.zero);
+        canvas.restore();
+        painter.dispose();
+      } else if (node is RenderCustomPaint) {
+        final paint = node.painter;
+        if (paint is GlyphPainter || paint is OutboundDropletPainter) {
+          canvas.save();
+          canvas.transform(node.getTransformTo(boundary).storage);
+          if (paint is GlyphPainter) {
+            GlyphPainter(
+              glyph: paint.glyph,
+              fill: paint.fill,
+              color: Colors.white,
+            ).paint(canvas, node.size);
+          } else if (paint is OutboundDropletPainter) {
+            canvas.drawPath(
+              paint.pathOf(node.size),
+              Paint()..color = Colors.white,
+            );
+          }
+          canvas.restore();
+        }
+      }
+      node.visitChildren(visit);
+    }
+
+    visit(root);
+    final picture = recorder.endRecording();
+    final image = picture.toImageSync(
+      (boundary.size.width * 3).ceil(),
+      (boundary.size.height * 3).ceil(),
+    );
+    picture.dispose();
+    return image;
+  }
+
+  final main = mask(body), speed = mask(figures);
+  try {
+    final bytes = (await tester.runAsync(
+      () async => [
+        (await main.toByteData(format: ui.ImageByteFormat.rawRgba))!,
+        (await speed.toByteData(format: ui.ImageByteFormat.rawRgba))!,
+      ],
+    ))!;
+    var overlap = 0;
+    for (var pixel = 3; pixel < bytes[0].lengthInBytes; pixel += 4) {
+      if (bytes[0].getUint8(pixel) >= 180 && bytes[1].getUint8(pixel) >= 180) {
+        overlap++;
+      }
+    }
+    return overlap;
+  } finally {
+    main.dispose();
+    speed.dispose();
+  }
+}
+
+double _rSafeRight(WidgetTester tester) {
+  final layout = tester.renderObject<RenderStatusCardLayout>(
+    find.byType(StatusCardLayout),
+  );
+  final widget = tester.widget<StatusCardLayout>(find.byType(StatusCardLayout));
+  final shape = widget.shape as RoundedSuperellipseBorder;
+  final direction = Directionality.of(
+    tester.element(find.byType(StatusCardLayout)),
+  );
+  final inner = shape.borderRadius
+      .resolve(direction)
+      .toRSuperellipse(Offset.zero & layout.size)
+      .deflate(shape.side.strokeInset)
+      .scaleRadii();
+  return tester.getRect(find.byType(DashboardCard)).left +
+      inner.right -
+      inner.trRadiusX;
+}
+
+void _expectNaturalPlacement(
+  WidgetTester tester, {
+  required Rect baselineBody,
+  required List<(String, Rect)> baselineTexts,
+  required Size baselineCard,
+  required Rect baselineButton,
+  required String why,
+}) {
+  final layout = tester.renderObject<RenderStatusCardLayout>(
+    find.byType(StatusCardLayout),
+  );
+  final body = layout.childAfter(layout.firstChild!)!;
+  final figures = tester.getRect(find.byType(OutboundTrafficFigures));
+  final card = tester.getSize(find.byType(DashboardCard));
+  final stop = AppLocalizations.of(
+    tester.element(find.byType(CurrentOutboundCard)),
+  ).stop;
+  expect(
+    body.localToGlobal(Offset.zero) & body.size,
+    baselineBody,
+    reason: why,
+  );
+  expect(_mainRects(body), baselineTexts, reason: why);
+  expect(tester.getRect(find.byTooltip(stop)), baselineButton, reason: why);
+  expect(card.width, baselineCard.width, reason: why);
+  final right = _rSafeRight(tester);
+  expect(
+    figures.right,
+    lessThanOrEqualTo(right + 0.01),
+    reason: '$why exceeds physical R',
+  );
+  final parts = _figureParts(tester);
+  expect(layout.footerSlotAvailable, isNotNull, reason: why);
+  if (layout.footerSlotAvailable == true) {
+    expect(layout.overlaid, isTrue, reason: why);
+    expect(card, baselineCard, reason: why);
+    final footer = find.byWidgetPredicate(
+      (widget) => widget is StatusCurveEdge && widget.floor,
+    );
+    final cells = _paragraphsIn(tester, footer);
+    final readings = _paragraphsIn(tester, find.byType(OutboundTrafficFigures));
+    for (var line = 0; line < 2; line++) {
+      expect(
+        _rectOf(tester, readings[line]).center.dy,
+        closeTo(_rectOf(tester, cells[line]).center.dy, 0.01),
+        reason: why,
+      );
+    }
+    final delta = Offset(right - figures.right, 0);
+    if (parts.every((part) => _clearsBody(tester, part.shift(delta)))) {
+      expect(
+        figures.right,
+        closeTo(right, 0.01),
+        reason: '$why leaves an available R anchor',
+      );
+    }
+  } else {
+    expect(
+      layout.overlaid,
+      isFalse,
+      reason: '$why must append only after no slot',
+    );
+    expect(figures.top, closeTo(baselineBody.bottom + 8, 0.01), reason: why);
+    expect(
+      card.height,
+      closeTo(baselineCard.height + 8 + figures.height, 0.01),
+      reason: why,
+    );
+    expect(
+      figures.right,
+      closeTo(right, 0.01),
+      reason: '$why append must remain physically right',
+    );
+  }
+  expect(
+    parts.every((part) => _clearsBody(tester, part)),
+    isTrue,
+    reason: '$why painted component collides',
+  );
+}
+
 void main() {
   setUpAll(() async {
     final font = FontLoader(_font)..addFont(loadSdkTestFont());
     await font.load();
     _fallback = await loadCjkTestFonts();
   });
+
+  for (final scale in [1.0, 1.15]) {
+    for (final (reading, speed, total) in _readings) {
+      testWidgets('CI52 $reading painted parts and baseline zh-CN 360 $scale', (
+        tester,
+      ) async {
+        final baselineContainer = await _pump(
+          tester,
+          locale: const Locale('zh', 'CN'),
+          device: 360,
+          scaler: TextScaler.linear(scale),
+          showTraffic: false,
+        );
+        final base = tester.renderObject<RenderStatusCardLayout>(
+          find.byType(StatusCardLayout),
+        );
+        final baseBody = base.childAfter(base.firstChild!)!;
+        final bodyRect = baseBody.localToGlobal(Offset.zero) & baseBody.size;
+        final textRects = _mainRects(baseBody);
+        final cardSize = tester.getSize(find.byType(DashboardCard));
+        final stop = AppLocalizations.of(
+          tester.element(find.byType(CurrentOutboundCard)),
+        ).stop;
+        final buttonRect = tester.getRect(find.byTooltip(stop));
+        final container = await _pump(
+          tester,
+          locale: const Locale('zh', 'CN'),
+          device: 360,
+          scaler: TextScaler.linear(scale),
+          existingContainer: baselineContainer,
+        );
+        await _show(tester, container, speed, total);
+        final layout = tester.renderObject<RenderStatusCardLayout>(
+          find.byType(StatusCardLayout),
+        );
+        final body = layout.childAfter(layout.firstChild!)!;
+        final boundary =
+            _capture.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+        final pixels = await _overlapPixels(
+          tester,
+          boundary,
+          body,
+          tester.renderObject(find.byType(OutboundTrafficFigures)),
+        );
+        final readings = _paragraphsIn(
+          tester,
+          find.byType(OutboundTrafficFigures),
+        );
+        final footer = find.byWidgetPredicate(
+          (widget) => widget is StatusCurveEdge && widget.floor,
+        );
+        final cells = _paragraphsIn(tester, footer);
+        final facts = <String, Object?>{
+          'reading': reading,
+          'scale': scale,
+          'device': 360,
+          'cardWidth': _cardOn(360),
+          'slot': layout.footerSlotAvailable,
+          'overlaid': layout.overlaid,
+          'baselineBody': bodyRect.toString(),
+          'body': (body.localToGlobal(Offset.zero) & body.size).toString(),
+          'baselineCard': cardSize.toString(),
+          'card': tester.getSize(find.byType(DashboardCard)).toString(),
+          'baselineButton': buttonRect.toString(),
+          'button': tester.getRect(find.byTooltip(stop)).toString(),
+          'figures': tester
+              .getRect(find.byType(OutboundTrafficFigures))
+              .toString(),
+          'parts': _figureParts(tester).map((part) => part.toString()).toList(),
+          'footerCenters': [
+            for (var i = 0; i < 2; i++) _rectOf(tester, cells[i]).center.dy,
+          ],
+          'speedCenters': [
+            for (final row in readings) _rectOf(tester, row).center.dy,
+          ],
+          'collisionPixels': pixels,
+        };
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null) {
+          final directory = Directory(output)..createSync(recursive: true);
+          File('${directory.path}/$reading-$scale.json').writeAsStringSync(
+            const JsonEncoder.withIndent('  ').convert(facts),
+          );
+          await tester.runAsync(() async {
+            final image = await boundary.toImage(pixelRatio: 3);
+            final bytes = await image.toByteData(
+              format: ui.ImageByteFormat.png,
+            );
+            File(
+              '${directory.path}/$reading-$scale.png',
+            ).writeAsBytesSync(bytes!.buffer.asUint8List());
+            image.dispose();
+          });
+        }
+        expect(
+          [for (final value in readings) value.text.toPlainText()],
+          [trafficRate(speed.up), trafficRate(speed.down)],
+        );
+        _expectNaturalPlacement(
+          tester,
+          baselineBody: bodyRect,
+          baselineTexts: textRects,
+          baselineCard: cardSize,
+          baselineButton: buttonRect,
+          why: '$facts',
+        );
+        expect(pixels, 0, reason: '$facts');
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  for (final direction in [TextDirection.ltr, TextDirection.rtl]) {
+    testWidgets('natural append recovers its footer slot ${direction.name}', (
+      tester,
+    ) async {
+      final container = await _pump(
+        tester,
+        locale: const Locale('zh', 'CN'),
+        device: 360,
+        scaler: const TextScaler.linear(1.15),
+        showTraffic: false,
+        direction: direction,
+      );
+      final base = tester.renderObject<RenderStatusCardLayout>(
+        find.byType(StatusCardLayout),
+      );
+      final baseBody = base.childAfter(base.firstChild!)!;
+      final baseRect = baseBody.localToGlobal(Offset.zero) & baseBody.size;
+      final baseTexts = _mainRects(baseBody);
+      final baseCard = tester.getSize(find.byType(DashboardCard));
+      final stop = AppLocalizations.of(
+        tester.element(find.byType(CurrentOutboundCard)),
+      ).stop;
+      final baseButton = tester.getRect(find.byTooltip(stop));
+      await _pump(
+        tester,
+        locale: const Locale('zh', 'CN'),
+        device: 360,
+        scaler: const TextScaler.linear(1.15),
+        existingContainer: container,
+        direction: direction,
+      );
+      final high = _readings.firstWhere((item) => item.$1 == 'megabytes');
+      for (final (step, speed) in [
+        ('high', high.$2),
+        ('restored', const Traffic()),
+        ('high-again', high.$2),
+      ]) {
+        await _show(tester, container, speed, const Traffic());
+        final layout = tester.renderObject<RenderStatusCardLayout>(
+          find.byType(StatusCardLayout),
+        );
+        final body = layout.childAfter(layout.firstChild!)!;
+        _expectNaturalPlacement(
+          tester,
+          baselineBody: baseRect,
+          baselineTexts: baseTexts,
+          baselineCard: baseCard,
+          baselineButton: baseButton,
+          why: '$direction $step',
+        );
+        if (direction == TextDirection.ltr) {
+          expect(
+            layout.overlaid,
+            step == 'restored',
+            reason: '$step must follow current real space',
+          );
+        }
+        final readings = _paragraphsIn(
+          tester,
+          find.byType(OutboundTrafficFigures),
+        );
+        expect(
+          [for (final row in readings) row.text.toPlainText()],
+          [trafficRate(speed.up), trafficRate(speed.down)],
+        );
+        final boundary =
+            _capture.currentContext!.findRenderObject()!
+                as RenderRepaintBoundary;
+        final overlap = await _overlapPixels(
+          tester,
+          boundary,
+          body,
+          tester.renderObject(find.byType(OutboundTrafficFigures)),
+        );
+        final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (output != null) {
+          final directory = Directory(output)..createSync(recursive: true);
+          final facts = {
+            'step': step,
+            'direction': direction.name,
+            'slot': layout.footerSlotAvailable,
+            'overlaid': layout.overlaid,
+            'body': (body.localToGlobal(Offset.zero) & body.size).toString(),
+            'baselineBody': baseRect.toString(),
+            'card': tester.getSize(find.byType(DashboardCard)).toString(),
+            'baselineCard': baseCard.toString(),
+            'button': tester.getRect(find.byTooltip(stop)).toString(),
+            'baselineButton': baseButton.toString(),
+            'figure': tester
+                .getRect(find.byType(OutboundTrafficFigures))
+                .toString(),
+            'physicalR': _rSafeRight(tester),
+            'visible': [for (final row in readings) row.text.toPlainText()],
+            'collisionPixels': overlap,
+          };
+          File(
+            '${directory.path}/transition-${direction.name}-$step.json',
+          ).writeAsStringSync(
+            const JsonEncoder.withIndent('  ').convert(facts),
+          );
+          if (step != 'high-again') {
+            await tester.runAsync(() async {
+              final image = await boundary.toImage(pixelRatio: 3);
+              final bytes = await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              );
+              File(
+                '${directory.path}/transition-${direction.name}-$step.png',
+              ).writeAsBytesSync(bytes!.buffer.asUint8List());
+              image.dispose();
+            });
+          }
+        }
+        expect(overlap, 0, reason: '$direction $step');
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   const locales = [
     Locale('zh', 'CN'),
@@ -333,10 +832,7 @@ void main() {
           closeTo(_rectOf(tester, cells[1]).center.dy, 0.01),
         );
         expect(
-          _clearsBody(
-            tester,
-            tester.getRect(find.byType(OutboundTrafficFigures)),
-          ),
+          _figureParts(tester).every((part) => _clearsBody(tester, part)),
           isTrue,
         );
         final layout = tester.renderObject<RenderStatusCardLayout>(
@@ -363,14 +859,31 @@ void main() {
             locale: locale,
             device: device,
             scaler: scaler,
+            showTraffic: false,
+          );
+          final baseLayout = tester.renderObject<RenderStatusCardLayout>(
+            find.byType(StatusCardLayout),
+          );
+          final baseBody = baseLayout.childAfter(baseLayout.firstChild!)!;
+          final baseRect = baseBody.localToGlobal(Offset.zero) & baseBody.size;
+          final baseTexts = _mainRects(baseBody);
+          final baseCard = tester.getSize(find.byType(DashboardCard));
+          final baseStop = AppLocalizations.of(
+            tester.element(find.byType(CurrentOutboundCard)),
+          ).stop;
+          final baseButton = tester.getRect(find.byTooltip(baseStop));
+          await _pump(
+            tester,
+            locale: locale,
+            device: device,
+            scaler: scaler,
+            existingContainer: container,
           );
           final layout = tester.renderObject<RenderStatusCardLayout>(
             find.byType(StatusCardLayout),
           );
           final figures = find.byType(OutboundTrafficFigures);
           final stop = AppLocalizations.of(tester.element(figures)).stop;
-          Rect? firstRect;
-          double? firstHeight;
           for (final (reading, speed, total) in _readings) {
             await _show(tester, container, speed, total);
             final why =
@@ -407,6 +920,17 @@ void main() {
                 scaler.scale(10),
                 reason: why,
               );
+              final arrow = tester.getRect(
+                find.descendant(
+                  of: rows.at(index),
+                  matching: find.byType(GlyphIcon),
+                ),
+              );
+              expect(
+                _rectOf(tester, lines.single).left - arrow.right,
+                closeTo(3, 0.01),
+                reason: '$why separates the arrow from its value',
+              );
               ends.add(_rectOf(tester, lines.single).right);
             }
             expect(ends[0], closeTo(ends[1], 0.01), reason: why);
@@ -415,8 +939,6 @@ void main() {
               greaterThanOrEqualTo(_rectOf(tester, paragraphs[0]).bottom),
               reason: why,
             );
-            final rect = tester.getRect(figures);
-            final card = tester.getRect(find.byType(DashboardCard));
             final overlaid = layout.overlaid == true;
             if (overlaid) {
               final parts = <String, Rect>{
@@ -440,95 +962,39 @@ void main() {
                   final path = bubble
                       .pathOf(paint.size)
                       .transform(paint.getTransformTo(null).storage);
-                  final overlap = Path.combine(
-                    PathOperation.intersect,
-                    path,
-                    Path()..addRect(rect),
-                  ).getBounds();
-                  expect(
-                    overlap.width <= 0.01 || overlap.height <= 0.01,
-                    isTrue,
-                    reason: '$why indicators touch the painted bubble',
-                  );
+                  for (final part in _figureParts(tester)) {
+                    final overlap = Path.combine(
+                      PathOperation.intersect,
+                      path,
+                      Path()..addRect(part),
+                    ).getBounds();
+                    expect(
+                      overlap.width <= 0.01 || overlap.height <= 0.01,
+                      isTrue,
+                      reason: '$why component $part touches the painted bubble',
+                    );
+                  }
                 }
               }
               for (final MapEntry(:key, :value) in parts.entries) {
-                final overlap = rect.intersect(value);
-                expect(
-                  overlap.width <= 0.01 || overlap.height <= 0.01,
-                  isTrue,
-                  reason: '$why figures $rect cover $key $value',
-                );
-              }
-            }
-            firstRect ??= rect;
-            firstHeight ??= card.height;
-            expect(rect, firstRect, reason: '$why moves the figures');
-            expect(card.height, firstHeight, reason: '$why resizes the card');
-            if (scaler == const TextScaler.linear(1) &&
-                device >= 360 &&
-                (locale.languageCode == 'zh' || locale.languageCode == 'en')) {
-              expect(overlaid, isTrue, reason: '$why lays them out under');
-              if (device == 360) {
-                final shape =
-                    tester
-                            .widget<StatusCardLayout>(
-                              find.byType(StatusCardLayout),
-                            )
-                            .shape
-                        as RoundedSuperellipseBorder;
-                final inner = shape.borderRadius
-                    .resolve(TextDirection.ltr)
-                    .toRSuperellipse(Offset.zero & layout.size)
-                    .deflate(shape.side.strokeInset)
-                    .scaleRadii();
-                final anchor = Offset(
-                  inner.right - inner.trRadiusX,
-                  inner.top + inner.trRadiusY,
-                );
-                expect(
-                  rect.right - card.left,
-                  closeTo(anchor.dx, 0.01),
-                  reason: '$why has the wrong R-safe horizontal anchor',
-                );
-                final footer = find.byWidgetPredicate(
-                  (widget) => widget is StatusCurveEdge && widget.floor,
-                );
-                final cells = _paragraphsIn(tester, footer);
-                final ideal = Rect.fromLTRB(
-                  rect.left,
-                  _rectOf(tester, cells[0]).center.dy -
-                      _rectOf(tester, paragraphs[0]).height / 2,
-                  rect.right,
-                  _rectOf(tester, cells[1]).center.dy +
-                      _rectOf(tester, paragraphs[1]).height / 2,
-                );
-                if (_clearsBody(tester, ideal)) {
+                for (final part in _figureParts(tester)) {
+                  final overlap = part.intersect(value);
                   expect(
-                    _rectOf(tester, paragraphs[0]).center.dy,
-                    closeTo(_rectOf(tester, cells[0]).center.dy, 0.01),
-                    reason: '$why upload does not align with the footer label',
-                  );
-                  expect(
-                    _rectOf(tester, paragraphs[1]).center.dy,
-                    closeTo(_rectOf(tester, cells[1]).center.dy, 0.01),
-                    reason:
-                        '$why download does not align with the footer value',
+                    overlap.width <= 0.01 || overlap.height <= 0.01,
+                    isTrue,
+                    reason: '$why component $part covers $key $value',
                   );
                 }
-                expect(
-                  _clearsBody(tester, rect),
-                  isTrue,
-                  reason: '$why collides after choosing a right-side slot',
-                );
               }
-              final body = layout.childAfter(layout.firstChild!)!;
-              expect(
-                card.height,
-                closeTo(body.size.height + 36, 0.01),
-                reason: '$why grows the card',
-              );
             }
+            _expectNaturalPlacement(
+              tester,
+              baselineBody: baseRect,
+              baselineTexts: baseTexts,
+              baselineCard: baseCard,
+              baselineButton: baseButton,
+              why: why,
+            );
           }
           expect(tester.takeException(), isNull);
         });

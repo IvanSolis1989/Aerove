@@ -517,7 +517,6 @@ class _RenderFullHeight extends RenderProxyBox {
 class _FigureMetrics {
   const _FigureMetrics._(
     this.speed,
-    this.column,
     this.rowHeight,
     this.arrow,
     this.pixelRatio,
@@ -543,7 +542,6 @@ class _FigureMetrics {
     );
     return _FigureMetrics._(
       speed,
-      (extent.width + arrow + 3).ceilToDouble(),
       math.max(extent.height, arrow).ceilToDouble(),
       arrow,
       pixelRatio,
@@ -551,25 +549,10 @@ class _FigureMetrics {
     );
   }
   final TextStyle speed;
-  final double column;
   final double rowHeight;
   final double arrow;
   final double pixelRatio;
   final Object _key;
-  double columnFor(BuildContext context, Traffic latest) {
-    var width = column;
-    for (final direction in TrafficDirection.values) {
-      final rate = trafficRate(direction.of(latest));
-      final value = rate.split(' ').first;
-      if (!value.contains('.') && value.length > 3) {
-        width = math.max(
-          width,
-          _extentOf(context, [rate], speed).width + arrow + 3,
-        );
-      }
-    }
-    return width.ceilToDouble();
-  }
 }
 
 /// [templates] written in the widest digit [style] draws: tabular digits
@@ -651,7 +634,6 @@ class _OutboundTrafficFiguresState extends State<OutboundTrafficFigures> {
       reuseUnchanged: true,
       builder: (context) {
         final latest = samples.list.safeLast(const Traffic());
-        final width = metrics.columnFor(context, latest);
         final ink = context.colorScheme.onSurface;
         final rows = TrafficReadings(
           pixelRatio: metrics.pixelRatio,
@@ -669,9 +651,9 @@ class _OutboundTrafficFiguresState extends State<OutboundTrafficFigures> {
                         ),
                   child: ExcludeSemantics(
                     child: SizedBox(
-                      width: width,
                       height: metrics.rowHeight,
                       child: Row(
+                        mainAxisSize: MainAxisSize.min,
                         spacing: 3,
                         children: [
                           GlyphIcon(
@@ -681,13 +663,11 @@ class _OutboundTrafficFiguresState extends State<OutboundTrafficFigures> {
                             size: metrics.arrow,
                             color: ink,
                           ),
-                          Expanded(
-                            child: GlassText(
-                              trafficRate(direction.of(latest)),
-                              textAlign: TextAlign.end,
-                              softWrap: false,
-                              style: metrics.speed.copyWith(color: ink),
-                            ),
+                          GlassText(
+                            trafficRate(direction.of(latest)),
+                            textAlign: TextAlign.end,
+                            softWrap: false,
+                            style: metrics.speed.copyWith(color: ink),
                           ),
                         ],
                       ),
@@ -844,6 +824,10 @@ class RenderTrafficReadings extends RenderBox
       width = math.max(width, child.size.width);
     }
     size = constraints.constrain(Size(width, height));
+    for (var child = firstChild; child != null; child = childAfter(child)) {
+      final data = child.parentData! as _ReadingParentData;
+      data.offset = Offset(size.width - child.size.width, data.offset.dy);
+    }
   }
 
   @override

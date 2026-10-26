@@ -445,10 +445,26 @@ void main() {
     );
   }
 
-  for (final (label, width, scale, density, overlay) in const [
-    ('mobile overlay', 360.0, 1.0, DashboardDensity.mobile, true),
-    ('mobile a11y append', 328.0, 2.0, DashboardDensity.mobile, false),
-    ('desktop overlay', 600.0, 0.9, DashboardDensity.standard, true),
+  for (final (label, width, scale, density, overlay, high) in const [
+    ('mobile overlay', 360.0, 1.0, DashboardDensity.mobile, true, false),
+    ('mobile large overlay', 328.0, 2.0, DashboardDensity.mobile, true, false),
+    (
+      'mobile actual no-slot append',
+      328.0,
+      1.15,
+      DashboardDensity.mobile,
+      false,
+      true,
+    ),
+    (
+      'mobile large no-slot append',
+      328.0,
+      2.0,
+      DashboardDensity.mobile,
+      false,
+      true,
+    ),
+    ('desktop overlay', 600.0, 0.9, DashboardDensity.standard, true, false),
   ]) {
     testWidgets(
       'a screen reader takes the $label status card in reading order',
@@ -467,6 +483,27 @@ void main() {
             densityScale: density.isDesktop ? 1 : null,
             fontFamily: _font,
           );
+          if (high) {
+            container
+                .read(trafficsProvider.notifier)
+                .addTraffic(const Traffic(up: 1048471142, down: 1048471142));
+            await tester.pump();
+            await tester.pump();
+          }
+          final layout = tester.renderObject<RenderStatusCardLayout>(
+            find.byType(StatusCardLayout),
+          );
+          expect(layout.footerSlotAvailable, overlay);
+          if (!overlay) {
+            final body = layout.childAfter(layout.firstChild!)!;
+            expect(
+              tester.getRect(find.byType(OutboundTrafficFigures)).top,
+              closeTo(
+                body.localToGlobal(Offset.zero).dy + body.size.height + 8,
+                0.01,
+              ),
+            );
+          }
           expect(
             tester
                 .renderObject<RenderStatusCardLayout>(

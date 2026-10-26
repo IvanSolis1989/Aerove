@@ -394,7 +394,7 @@ void main() {
               image.dispose();
             });
           }
-          if (!desktop && scale > 1.3 && layout.overlaid == false) {
+          if (!desktop && layout.overlaid == false) {
             expect(layout.footerSlotAvailable, isFalse);
             expect(
               tester.getRect(find.byType(OutboundTrafficFigures)).top,

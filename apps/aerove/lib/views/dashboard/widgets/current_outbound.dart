@@ -229,9 +229,7 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         figures: widget.showTraffic
             ? const OutboundTrafficFigures()
             : const SizedBox.shrink(),
-        allowAppend:
-            !density.isDesktop &&
-            MediaQuery.textScalerOf(context).scale(1) > 1.3,
+        allowAppend: !density.isDesktop,
         overlaidOrder: _CardStop.overlaidTraffic.index,
         appendedOrder: _CardStop.appendedTraffic.index,
       ),
