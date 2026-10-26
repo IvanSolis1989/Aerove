@@ -835,7 +835,33 @@ jobs:
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         set -euo pipefail
-        sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0
+        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/sdk-install"
+        mkdir -p "$sdk_install_dir"
+        for sdk_attempt in 1 2; do
+          sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
+          set +e
+          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
+          sdk_install_status=("${PIPESTATUS[@]}")
+          set -e
+          sdkmanager_rc="${sdk_install_status[0]}"
+          tee_rc="${sdk_install_status[1]}"
+          printf 'sdkmanager_exit=%s\ntee_exit=%s\n' "$sdkmanager_rc" "$tee_rc" > "$sdk_install_dir/attempt-${sdk_attempt}.status.txt"
+          if (( tee_rc != 0 )); then
+            printf 'SDK install log tee failed (exit %s)\n' "$tee_rc" >&2
+            exit "$tee_rc"
+          fi
+          if (( sdkmanager_rc == 0 )); then
+            break
+          fi
+          if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
+            exit "$sdkmanager_rc"
+          fi
+          if (( sdk_attempt == 1 )) && grep -Eiq 'Failed to download package archive for emulator: (closed|.*connection reset|.*read (timed out|timeout))' "$sdk_install_log"; then
+            printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
+            continue
+          fi
+          exit "$sdkmanager_rc"
+        done
         mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
         grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
