@@ -266,10 +266,13 @@ class DashboardLayoutUiTest {
     }
 
     @Test
-    fun editActionMountsTheRealCardContentWithTheSameGeometryAndNoBusinessTaps() {
+    fun editActionMountsTheRealCardContentWithTheSameGeometryAndNoBusinessTaps() = withLayoutFailureScreenshot("edit-real-card") { editRealCardCase() }
+
+    private fun editRealCardCase() {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.IntranetIp))
         launch(initial)
-        compose.onNodeWithText("Example ISP").assertIsDisplayed()
+        awaitOrganization("${context.getString(R.string.lite_organization)}\nExample ISP")
+        compose.onNodeWithText("Example ISP", useUnmergedTree = true).assertIsDisplayed()
         val normal = requireNotNull(bounds["view-currentOutbound"])
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).performClick()
         compose.onNodeWithTag("dashboard-row-currentOutbound").assertIsDisplayed()
@@ -571,7 +574,13 @@ class DashboardLayoutUiTest {
             controls.filter { address || it != "dashboard-status-ip" } + if (traffic) figures else emptyList()
         assertTrue("missing ${required - tags.toSet()}: $stops", tags.containsAll(required))
         val canonical = heading + (if (traffic && overlay) figures else emptyList()) + summary + controls + if (traffic && !overlay) figures else emptyList()
-        assertEquals("$stops", canonical.filter { it in tags }, tags)
+        val expected = canonical.filter { it in tags }
+        val geometry = if (expected == tags) "" else listOf("dashboard-status-body", "dashboard-status-traffic", "dashboard-status-content")
+            .associateWith { tag -> runCatching {
+                val node = compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
+                "bounds=${node.boundsInRoot} config=${node.config}"
+            }.getOrElse { rethrowMatrixCancellation(it); "unavailable:${it.javaClass.simpleName}" } }.toString()
+        assertEquals("$stops layout=$geometry", expected, tags)
     }
 
     private fun statusForegroundRects(): Map<String, Rect> = buildMap {
@@ -737,6 +746,11 @@ class DashboardLayoutUiTest {
     }
 
     /** Stops in reading order with what TalkBack says; the Lite-only quality summary and error captions are left out. */
+    private fun expectedStatusWithOverlaidTraffic(core: List<Pair<String, String>>): List<Pair<String, String>> {
+        val figures = listOf("dashboard-upload-speed", "dashboard-download-speed").zip(trafficSpeech("zh-CN"))
+        return core.take(2) + figures + core.drop(2)
+    }
+
     private fun convergedStatusSpeech(reader: ScreenReader) = reader.stops.map { reader.tags[it] to reader.speech.getValue(it) }
         .filter { it.first !in setOf("ip-quality-summary", "dashboard-status-listener-error", "dashboard-status-outbound-error") }
 
@@ -770,7 +784,9 @@ class DashboardLayoutUiTest {
     fun chineseAtThirteenTenthsReadsFooterTrafficBeforeTheSummary() = assertStatusSpeech(360.dp, 1.3f, overlay = true, language = "zh-CN")
 
     @Test
-    fun stackedStatusCardReadsTitleOnceStateSummaryControlsThenTraffic() = assertStatusSpeech(328.dp, 2f, overlay = false)
+    fun stackedStatusCardReadsTitleOnceStateSummaryControlsThenTraffic() = withLayoutFailureScreenshot("status-stacked-reading-order") {
+        assertStatusSpeech(328.dp, 2f, overlay = false)
+    }
 
     private fun assertStartControl(label: String, enabled: Boolean, measured: String) {
         val button = compose.onNodeWithTag("dashboard-status-button", useUnmergedTree = true).fetchSemanticsNode()
@@ -872,7 +888,7 @@ class DashboardLayoutUiTest {
             readScreen("dashboard-status") { reader ->
                 val read = reader.stops.map { reader.tags[it] to reader.speech.getValue(it) }
                 val measured = "loading=$loading read=$read node=${reader.infos.getValue(flag.id)}"
-                assertEquals(measured, expected, convergedStatusSpeech(reader))
+                assertEquals(measured, expectedStatusWithOverlaidTraffic(expected), convergedStatusSpeech(reader))
                 assertEquals(measured, !loading, read.any { it.first == "ip-quality-summary" })
                 assertEquals(measured, listOf(flag.id), reader.reachableIn(flag.boundsInRoot))
                 assertEquals(measured, !loading, reader.infos.getValue(flag.id).isEnabled)
@@ -966,14 +982,14 @@ class DashboardLayoutUiTest {
             outboundError = "Fixture: outbound probe timed out"), maxWidth = 412.dp, deviceDensity = 2.625f, language = "zh-CN")
         val strings = localized("zh-CN")
         readScreen("dashboard-status") { reader ->
-            assertEquals("${reader.stops}", listOf("dashboard-status-title" to strings.getString(R.string.lite_status),
+            assertEquals("${reader.stops}", expectedStatusWithOverlaidTraffic(listOf("dashboard-status-title" to strings.getString(R.string.lite_status),
                 "dashboard-status-chip" to strings.getString(R.string.lite_running),
                 "dashboard-status-retry-hint" to strings.getString(R.string.lite_tap_icon_to_retry),
                 "dashboard-status-uptime" to "${strings.getString(R.string.lite_uptime)}\n00:00:00",
                 "dashboard-status-organization" to "${strings.getString(R.string.lite_organization)}\n—",
                 "dashboard-status-flag" to button(strings.getString(R.string.lite_outbound_retry)),
                 "dashboard-status-ip" to strings.getString(R.string.diag_service_failed),
-                "dashboard-status-button" to button(strings.getString(R.string.lite_stop))), convergedStatusSpeech(reader))
+                "dashboard-status-button" to button(strings.getString(R.string.lite_stop)))), convergedStatusSpeech(reader))
         }
     }
 
@@ -982,11 +998,11 @@ class DashboardLayoutUiTest {
         launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(outboundIdentity = null), maxWidth = 412.dp, deviceDensity = 2.625f, language = "zh-CN")
         val strings = localized("zh-CN")
         val stops = screenReaderStops("dashboard-status")
-        assertEquals("$stops", listOf("dashboard-status-title" to strings.getString(R.string.lite_status),
+        assertEquals("$stops", expectedStatusWithOverlaidTraffic(listOf("dashboard-status-title" to strings.getString(R.string.lite_status),
             "dashboard-status-chip" to strings.getString(R.string.lite_not_running),
             "dashboard-status-uptime" to "${strings.getString(R.string.lite_uptime)}\n—",
             "dashboard-status-organization" to strings.getString(R.string.lite_organization),
-            "dashboard-status-button" to button(strings.getString(R.string.lite_start))), stops.filter { it.first != "dashboard-status-flag" })
+            "dashboard-status-button" to button(strings.getString(R.string.lite_start)))), stops.filter { it.first != "dashboard-status-flag" })
         // The stopped flag's state stays open: Standard still probes directly while stopped and Lite has no such probe yet.
         assertTrue("$stops", stops.single { it.first == "dashboard-status-flag" }.second.startsWith(button(strings.getString(R.string.lite_outbound_retry))))
     }

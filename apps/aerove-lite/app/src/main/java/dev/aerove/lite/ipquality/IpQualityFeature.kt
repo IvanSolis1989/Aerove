@@ -77,11 +77,11 @@ class IpQualityFeature(
                 val saved = readSaved()
                 if (closed || quiesced || token != maintenanceGeneration) return@launch
                 hidden = saved.hidden
-                last = saved.lastExit
                 successes.clear()
                 val wallNow = wallClockNow()
                 val validCache = saved.cache.filter { validCacheEntry(it, wallNow) }
                 validCache.forEach { successes[it.ip] = it }
+                last = saved.lastExit?.let { it.copy(quality = successes[it.ip]?.quality) }
                 if (saved.cache.any { it.ip == confirmedIp && !validCacheEntry(it, wallNow) }) staleQualityIp = confirmedIp
                 loaded = true
                 rememberConfirmed()
@@ -218,7 +218,7 @@ class IpQualityFeature(
             return
         }
         if (cached == null && ip != null) persistExpiredCacheIfNeeded(ip)
-        val bridge = previous?.quality?.takeUnless { staleQualityIp == ip }
+        val bridge = previous?.quality?.takeUnless { staleQualityIp == it.ip }
         mutableState.value = IpQualityState(ip ?: previous?.ip, cached ?: if (task != null || ip == null) bridge else null,
             task != null, failure?.failures.orEmpty(), ip == null && previous != null, hidden, mutableState.value.persistenceError,
             if (ip != null) confirmedCountry else previous?.countryCode, failure != null)

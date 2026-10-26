@@ -17,6 +17,100 @@ import org.junit.Test
 
 class IpQualityFeatureTest {
     private fun quality(ip: String) = IpQuality(ip, IpQualitySource.IdentMe, IpType.Residential)
+    @Test fun provisionalExitKeepsItsKnownQualityWhenNoIpIsMarkedStale() = runBlocking {
+        val ip = "1.1.1.1"
+        val known = quality(ip).copy(organization = "Example ISP")
+        val owner = IpQualityFeature(this, { known })
+        owner.bind("profile", true, ip, "SG"); owner.setForeground(true); val lease = owner.observe()
+        try {
+            withTimeout(1000) { owner.state.first { it.quality != null } }
+            owner.bind("profile", true, null)
+            assertTrue(owner.state.value.provisional)
+            assertEquals(ip, owner.state.value.ip)
+            assertEquals("SG", owner.state.value.countryCode)
+            assertEquals(known, owner.state.value.quality)
+        } finally { lease.close(); owner.close() }
+    }
+
+    @Test fun provisionalExitDoesNotReviveQualityWhoseActualIpExpired() = runBlocking {
+        val ip = "1.1.1.1"
+        val expire = CompletableDeferred<Unit>()
+        val reloadStarted = CompletableDeferred<Unit>()
+        var wall = 1_000_000L; var calls = 0
+        val owner = IpQualityFeature(this, { current ->
+            if (++calls == 1) quality(current) else { reloadStarted.complete(Unit); awaitCancellation() }
+        }, wallClockNow = { wall }, awaitExpiry = { expire.await() })
+        owner.bind("profile", true, ip, "SG"); owner.setForeground(true); val lease = owner.observe()
+        try {
+            withTimeout(1000) { owner.state.first { it.quality != null } }
+            wall += 3L * 24 * 60 * 60 * 1000
+            expire.complete(Unit)
+            withTimeout(1000) { reloadStarted.await() }
+            withTimeout(1000) { owner.state.first { it.loading && it.quality == null } }
+            assertEquals(2, calls)
+            owner.bind("profile", true, null)
+            assertTrue(owner.state.value.provisional)
+            assertEquals(ip, owner.state.value.ip)
+            assertNull(owner.state.value.quality)
+        } finally { expire.complete(Unit); lease.close(); owner.close() }
+    }
+
+    @Test fun coldProvisionalQualityRequiresAFreshMatchingPersistedCache() = runBlocking {
+        val directory = Files.createTempDirectory("quality-cold-provisional").toFile()
+        try {
+            val ip = "1.1.1.1"; val checkedAt = 1_000_000L; val ttl = 3L * 24 * 60 * 60 * 1000
+            val old = quality(ip).copy(organization = "Old stored payload")
+            val fresh = quality(ip).copy(organization = "Fresh cache payload")
+            for ((name, age, rows) in listOf(
+                Triple("exact-expiry", ttl, listOf(IpQualityCheck(ip, fresh, checkedAt))),
+                Triple("before-expiry", ttl - 1, listOf(IpQualityCheck(ip, fresh, checkedAt))),
+                Triple("after-expiry", ttl + 1, listOf(IpQualityCheck(ip, fresh, checkedAt))),
+                Triple("no-cache", 0L, emptyList()),
+                Triple("other-ip", 0L, listOf(IpQualityCheck("8.8.8.8", quality("8.8.8.8"), checkedAt))))) {
+                val file = directory.resolve("$name.json")
+                IpQualityStore(file).write(SavedIpQuality(lastExit = LastQualityExit("profile", true, ip, old, "SG"), cache = rows), 1, checkedAt)
+                var calls = 0
+                val owner = IpQualityFeature(this, { calls++; quality(it) }, store = IpQualityStore(file), wallClockNow = { checkedAt + age })
+                owner.bind("profile", true, null); owner.setForeground(true); val lease = owner.observe()
+                try {
+                    withTimeout(1000) { owner.state.first { it.provisional } }
+                    assertEquals(name, ip, owner.state.value.ip)
+                    assertEquals(name, "SG", owner.state.value.countryCode)
+                    assertEquals(name, if (name == "before-expiry") fresh else null, owner.state.value.quality)
+                    assertEquals(name, 0, calls)
+                } finally { lease.close(); owner.quiesce(); owner.close() }
+            }
+        } finally { directory.deleteRecursively() }
+    }
+
+    @Test fun rebuiltOwnerKeepsFreshProvisionalQualityButRejectsItAtThePersistedTtlBoundary() = runBlocking {
+        val directory = Files.createTempDirectory("quality-rebuild-provisional").toFile()
+        try {
+            val file = directory.resolve("state.json")
+            val ip = "1.1.1.1"; val checkedAt = 1_000_000L; val ttl = 3L * 24 * 60 * 60 * 1000
+            val known = quality(ip).copy(organization = "Example ISP")
+            val store = IpQualityStore(file)
+            val first = IpQualityFeature(this, { known }, store = store, wallClockNow = { checkedAt })
+            first.bind("profile", true, ip, "SG"); first.setForeground(true); val firstLease = first.observe()
+            try {
+                withTimeout(1000) { first.state.first { it.quality != null } }
+                withTimeout(1000) { while (store.read().cache.singleOrNull() != IpQualityCheck(ip, known, checkedAt)) delay(5) }
+            } finally { firstLease.close(); first.quiesce(); first.close() }
+            for (age in listOf(ttl - 1, ttl)) {
+                var calls = 0
+                val rebuilt = IpQualityFeature(this, { calls++; quality(it) }, store = IpQualityStore(file), wallClockNow = { checkedAt + age })
+                rebuilt.bind("profile", true, null); rebuilt.setForeground(true); val lease = rebuilt.observe()
+                try {
+                    withTimeout(1000) { rebuilt.state.first { it.provisional } }
+                    assertEquals(ip, rebuilt.state.value.ip)
+                    assertEquals("SG", rebuilt.state.value.countryCode)
+                    assertEquals(if (age < ttl) known else null, rebuilt.state.value.quality)
+                    assertEquals(0, calls)
+                } finally { lease.close(); rebuilt.quiesce(); rebuilt.close() }
+            }
+        } finally { directory.deleteRecursively() }
+    }
+
     @Test fun slowSavedPrivacyReadMasksConfirmedIpUntilHiddenChoiceIsKnown() = runBlocking {
         for (savedHidden in listOf(true, false)) {
             val directory = Files.createTempDirectory("quality-privacy-read").toFile()
