@@ -1,0 +1,123 @@
+import groovy.json.JsonOutput
+import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ModuleComponentSelector
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+
+final String uiVersion = '1.12.1'
+final Set<String> uiConstraints = [
+    'ui-geometry', 'ui-graphics', 'ui-graphics-lint', 'ui-lint', 'ui-test',
+    'ui-test-accessibility', 'ui-test-junit4-accessibility', 'ui-test-junit4',
+    'ui-test-manifest', 'ui-test-manifest-lint', 'ui-text', 'ui-text-google-fonts',
+    'ui-text-lint', 'ui-tooling', 'ui-tooling-data', 'ui-tooling-preview',
+    'ui-unit', 'ui-util', 'ui-viewbinding'
+] as Set
+final List<String> configurationNames = ['releaseRuntimeClasspath', 'releaseAndroidTestRuntimeClasspath']
+final Closure<String> safeAtom = { Object value ->
+    String text = value == null ? '' : value.toString()
+    text ==~ /[A-Za-z0-9_.+(),\[\]! -]{0,200}/ ? text : '[redacted]'
+}
+final Closure<Map> requestRecord = { selector ->
+    if (!(selector instanceof ModuleComponentSelector)) return [kind: 'project-or-other']
+    def constraint = selector.versionConstraint
+    [group: safeAtom(selector.group), module: safeAtom(selector.module),
+     required: safeAtom(constraint.requiredVersion), strictly: safeAtom(constraint.strictVersion),
+     preferred: safeAtom(constraint.preferredVersion),
+     rejected: constraint.rejectedVersions.collect { safeAtom(it) }.sort()]
+}
+
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.findProject(':app')
+    if (app == null) throw new GradleException('Compose UI proof requires :app')
+    def reportFile = app.layout.buildDirectory.file('reports/compose-ui-resolution.json').get().asFile
+    def reportTask = app.tasks.register('reportComposeUiResolution') {
+        group = 'verification'
+        description = 'Report and validate selected Compose UI components in both release classpaths.'
+        notCompatibleWithConfigurationCache('Resolution proof reads live configuration graphs')
+        outputs.file(reportFile)
+        outputs.upToDateWhen { false }
+        doLast {
+            def failures = []
+            def graphs = []
+            configurationNames.each { configurationName ->
+                def graph = [configuration: configurationName, status: 'missing', modules: [], unresolved: []]
+                graphs.add(graph)
+                try {
+                    def configuration = app.configurations.findByName(configurationName)
+                    if (configuration == null || !configuration.canBeResolved) {
+                        failures.add(configurationName + ': missing resolvable configuration')
+                    } else {
+                        def result = configuration.incoming.resolutionResult
+                        def components = result.allComponents
+                        def dependencies = result.allDependencies
+                        if (components.size() > 2000 || dependencies.size() > 10000) {
+                            throw new GradleException('Compose UI proof graph exceeds its bounded size')
+                        }
+                        def selected = new TreeMap<String, Map>()
+                        components.each { component ->
+                            if (component.id instanceof ModuleComponentIdentifier) {
+                                def id = component.id
+                                def key = safeAtom(id.group) + ':' + safeAtom(id.module)
+                                selected[key] = [group: safeAtom(id.group), module: safeAtom(id.module),
+                                    version: safeAtom(id.version), requests: []]
+                            }
+                        }
+                        dependencies.each { dependency ->
+                            if (dependency instanceof ResolvedDependencyResult && dependency.selected.id instanceof ModuleComponentIdentifier) {
+                                def id = dependency.selected.id
+                                def key = safeAtom(id.group) + ':' + safeAtom(id.module)
+                                def request = requestRecord(dependency.requested)
+                                def origin = dependency.from.id
+                                request.from = origin instanceof ModuleComponentIdentifier ?
+                                    [group: safeAtom(origin.group), module: safeAtom(origin.module), version: safeAtom(origin.version)] :
+                                    [kind: 'project-or-other']
+                                request.constraint = dependency.constraint
+                                selected[key].requests.add(request)
+                            } else if (dependency instanceof UnresolvedDependencyResult) {
+                                graph.unresolved.add([request: requestRecord(dependency.requested),
+                                    failureType: dependency.failure.class.name])
+                            }
+                        }
+                        selected.values().each { module ->
+                            module.requests = module.requests.unique().sort { JsonOutput.toJson(it) }
+                            if (module.group == 'androidx.compose.ui') {
+                                def canonical = module.module.endsWith('-android') ? module.module.substring(0, module.module.length() - 8) : module.module
+                                module.expectedVersion = (canonical == 'ui' || uiConstraints.contains(canonical)) ? uiVersion : null
+                                if (module.expectedVersion != null && module.version != module.expectedVersion) {
+                                    failures.add(configurationName + ': ' + module.group + ':' + module.module + ' selected ' + module.version + ', expected ' + uiVersion)
+                                }
+                            }
+                        }
+                        ['ui', 'ui-android'].each { module ->
+                            if (!selected.containsKey('androidx.compose.ui:' + module)) {
+                                failures.add(configurationName + ': required androidx.compose.ui:' + module + ' is missing')
+                            }
+                        }
+                        graph.modules = selected.values().toList()
+                        graph.componentCount = components.size()
+                        graph.dependencyCount = dependencies.size()
+                        graph.status = graph.unresolved.isEmpty() ? 'resolved' : 'unresolved'
+                        if (!graph.unresolved.isEmpty()) failures.add(configurationName + ': unresolved dependencies')
+                    }
+                } catch (Exception failure) {
+                    graph.status = 'failed'
+                    graph.failureType = failure.class.name
+                    failures.add(configurationName + ': graph resolution failed')
+                }
+            }
+            def proof = [schemaVersion: 1, gradleVersion: safeAtom(gradle.gradleVersion),
+                scope: 'resolution graph and version policy only; AAR metadata uses a separate Gradle task',
+                policy: [uiVersion: uiVersion, metadataSha256: '6429157dac41f36f6562878c54094b4f565f32b16dea36b2d901517d3695f994', metadataCoordinate: 'androidx.compose.ui:ui-android:1.12.1',
+                    constrainedUiModules: uiConstraints.toList().sort(), androidVariantSuffix: '-android'],
+                status: failures.isEmpty() ? 'validated' : 'failed', configurations: graphs,
+                validationFailures: failures]
+            reportFile.parentFile.mkdirs()
+            reportFile.setText(JsonOutput.prettyPrint(JsonOutput.toJson(proof)) + '\n', 'UTF-8')
+            if (!failures.isEmpty()) throw new GradleException('Compose UI resolution proof failed; inspect reports/compose-ui-resolution.json')
+        }
+    }
+    app.tasks.matching { it.name == 'checkReleaseAarMetadata' }.configureEach {
+        mustRunAfter(reportTask)
+    }
+}

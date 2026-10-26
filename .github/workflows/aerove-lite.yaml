@@ -449,7 +449,7 @@ jobs:
         AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
       run: |-
         export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Daerove.age.fixtures=\"$GITHUB_WORKSPACE/apps/aerove-lite/regexp2/agebridge/testdata\" -Daerove.age.helper=\"$RUNNER_TEMP/lite-client-helper/bin/ageverify\""
-        gradle --no-daemon :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
+        gradle --no-daemon --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:checkReleaseAarMetadata :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
     - name: Inspect Android tasks after verification failure
       if: ${{ failure() && steps.kotlin_checks.outcome == 'failure' }}
       timeout-minutes: 3
