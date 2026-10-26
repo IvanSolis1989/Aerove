@@ -37,9 +37,17 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
+  diagnostic_lite125_test_only:
+    name: Lite125 test-only dry-run task graph (no APK build)
+    needs: diagnostic_guard
+    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-test-only' }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/aerove-lite125-test-only-diagnostic.yaml
   diagnostic_lite94:
     name: Immutable Lite run94 matrix diagnosis
     needs: diagnostic_guard
@@ -902,7 +910,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

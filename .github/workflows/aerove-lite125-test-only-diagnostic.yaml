@@ -1,0 +1,96 @@
+name: AEROVE Lite test-only diagnostic graph
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+permissions:
+  contents: read
+  actions: read
+on:
+  workflow_call:
+jobs:
+  prepare_graph_only:
+    name: Lite125 test-only dry-run task graph (no APK build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      actions: read
+    steps:
+    - name: Checkout immutable Lite125 App source
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: d52726dc24756847b2b268d307a611cc37f994a3
+        persist-credentials: false
+    - name: Checkout caller source as separate test harness identity
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: ${{ github.sha }}
+        path: harness-source
+        persist-credentials: false
+    - name: Set up Java 17 for Gradle
+      uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Install the pinned Android SDK needed to configure the test target
+      run: |
+        sdkmanager 'platforms;android-37.0' 'build-tools;37.0.0'
+        test -f "$ANDROID_SDK_ROOT/platforms/android-37.0/android.jar"
+    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      with:
+        gradle-version: 9.6.0
+        cache-read-only: true
+    - name: Create isolated evidence directory
+      run: mkdir -p "$RUNNER_TEMP/lite125-graph-evidence"
+    - name: Verify preserved run125 App, signer, mapping and test dependency closure
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        python3 harness-source/.github/scripts/lite125_test_only_preflight.py runtime \
+          --out "$RUNNER_TEMP/lite125-runtime" \
+          | tee "$RUNNER_TEMP/lite125-graph-evidence/runtime-identity.json"
+    - name: Overlay only the frozen test source and verify exact source/diff hashes
+      run: |
+        python3 harness-source/.github/scripts/lite125_test_only_preflight.py prepare \
+          --app-root "$GITHUB_WORKSPACE" \
+          --harness-root "$GITHUB_WORKSPACE/harness-source" \
+          --harness-commit "$GITHUB_SHA" \
+          --out "$RUNNER_TEMP/lite125-graph-evidence"
+    - name: Capture only the AndroidTest Gradle task graph
+      id: graph
+      working-directory: apps/aerove-lite
+      run: |
+        : > "$RUNNER_TEMP/lite125-graph-evidence/gradle-task-graph.txt"
+        timeout --signal=TERM --kill-after=10s 120s \
+          gradle --no-daemon --dry-run :app:assembleReleaseAndroidTest \
+            -PliteAbi=x86_64 -PsourceSha=d52726dc24756847b2b268d307a611cc37f994a3 \
+            2>&1 | tee "$RUNNER_TEMP/lite125-graph-evidence/gradle-task-graph.txt"
+    - name: Verify the task graph and always write a diagnostic receipt
+      id: graph_verify
+      if: ${{ always() }}
+      env:
+        GRAPH_OUTCOME: ${{ steps.graph.outcome }}
+      run: |
+        python3 harness-source/.github/scripts/lite125_test_only_preflight.py graph \
+          --log "$RUNNER_TEMP/lite125-graph-evidence/gradle-task-graph.txt" \
+          --out "$RUNNER_TEMP/lite125-graph-evidence/GRAPH-VERIFICATION.json" \
+          --graph-outcome "$GRAPH_OUTCOME"
+    - name: Confirm dry-run created no App or AndroidTest APK
+      if: ${{ always() && steps.graph.outcome == 'success' && steps.graph_verify.outcome == 'success' }}
+      working-directory: apps/aerove-lite
+      run: |
+        test ! -e app/build/outputs/apk/release/app-release.apk
+        test ! -e app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
+        printf 'dry-run only; no App or AndroidTest APK emitted\n' > "$RUNNER_TEMP/lite125-graph-evidence/NO-APK-BUILD.txt"
+    - name: Preserve graph-only evidence (never an accepted App artifact)
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-test-only-diagnostic-graph-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite125-graph-evidence/
+        if-no-files-found: error
