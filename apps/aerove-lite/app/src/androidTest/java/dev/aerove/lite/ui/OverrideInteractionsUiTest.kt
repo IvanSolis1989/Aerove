@@ -103,6 +103,7 @@ class OverrideInteractionsUiTest {
         compose.onNodeWithTag("override-delete-selected").performClick()
         compose.onNodeWithText(context.getString(R.string.override_cancel)).performClick()
         assertEquals(3, snapshot().globalRules.size)
+        compose.onNodeWithTag("override-confirm-delete").assertDoesNotExist()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("override-delete-selected").assertDoesNotExist()
         compose.onNodeWithTag("override-rule-select-0").performClick()
