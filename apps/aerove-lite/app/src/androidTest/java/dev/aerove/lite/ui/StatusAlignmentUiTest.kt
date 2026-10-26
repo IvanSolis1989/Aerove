@@ -18,6 +18,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.aerove.lite.*
+import dev.aerove.lite.R
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
