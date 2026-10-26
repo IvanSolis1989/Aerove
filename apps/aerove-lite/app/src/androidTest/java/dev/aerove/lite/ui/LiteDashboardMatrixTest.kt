@@ -15,6 +15,13 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertContentDescriptionEquals
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsOn
@@ -62,15 +69,29 @@ class LiteDashboardMatrixTest {
         val selected = mutableStateOf<DashboardCaptureCase?>(null)
         val actions = UiTestActions { error("A fixed screenshot must not mutate settings") }
         val probe = RenderProbe()
+        val readiness = MatrixReadiness()
         compose.replaceAppContent {
             val view = LocalView.current
             val density = LocalDensity.current
-            SideEffect { probe.view = view; probe.density = density.density; probe.fontScale = density.fontScale }
+            val windowFocused = LocalWindowInfo.current.isWindowFocused
+            val owner = LocalLifecycleOwner.current
+            SideEffect {
+                probe.view = view; probe.density = density.density; probe.fontScale = density.fontScale
+                readiness.windowFocused = windowFocused; readiness.owner = owner
+            }
             Box(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["app"] = it.boundsInWindow() }) {
                 val case = selected.value
                 if (case != null) key(case.number) {
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                        IpQualityFixture(reference.copy(settings = case.settings)) {
+                        IpQualityFixture(reference.copy(settings = case.settings), lookup = { ip ->
+                            readiness.lookupRequests.add("${case.number}:$ip")
+                            val result = dev.aerove.lite.ipquality.IpQuality(ip,
+                                dev.aerove.lite.ipquality.IpQualitySource.IdentMe,
+                                dev.aerove.lite.ipquality.IpType.Residential, organization = "Example ISP")
+                            readiness.lookupReturns.add("${case.number}:$ip:Example ISP")
+                            result
+                        }) {
+                            SideEffect { readiness.composedCase = case.number }
                             LiteApp(reference.copy(settings = case.settings), actions)
                         }
                     }
@@ -82,6 +103,8 @@ class LiteDashboardMatrixTest {
         val manifest = JSONObject()
             .put("schema", 1).put("startedAtMillis", System.currentTimeMillis())
             .put("sourceRevision", sourceRevision)
+            .put("harnessRevision", InstrumentationRegistry.getArguments().getString("harnessRevision") ?: JSONObject.NULL)
+            .put("identityNote", "sourceRevision identifies the installed App; a new test-only harness requires its separate source/APK receipt")
             .put("columns", JSONArray(listOf("简约纯色", "柔光磨砂", "流光清透")))
             .put("rows", JSONArray(listOf("浅普通", "浅极光", "深普通", "深极光")))
             .put("cases", JSONArray(cells)).put("complete", false).put("completedCount", 0)
@@ -109,11 +132,13 @@ class LiteDashboardMatrixTest {
                     var diagnosticCaptured = false
                     var caseFailure: Throwable? = null
                     var caseExitFailure: Throwable? = null
+                    var preconditionsPassed = false
                     try {
                         assertEquals("Only appearance settings may differ between cells", reference, reference.copy(settings = case.settings).copy(settings = reference.settings))
                         compose.runOnUiThread { selected.value = case }
                         compose.mainClock.advanceTimeBy(400)
                         compose.waitForIdle()
+                        cells[index].put("preconditionSnapshot", matrixSnapshot(case.number, readiness, probe, actions))
                         compose.runOnUiThread {
                             val window = compose.activity.window
                             val bars = WindowCompat.getInsetsController(window, window.decorView)
@@ -129,11 +154,23 @@ class LiteDashboardMatrixTest {
                         val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
                         compose.onNode(tab and hasText(context.getString(R.string.lite_tab_home))).assertIsSelected()
                         compose.onNodeWithText("198.51.100.8").assertIsDisplayed()
-                        compose.onNodeWithText("Example ISP").assertIsDisplayed()
-                        compose.onNodeWithText(context.getString(R.string.lite_upload), useUnmergedTree = true).assertIsDisplayed()
-                        compose.onNodeWithText(context.getString(R.string.lite_download), useUnmergedTree = true).assertIsDisplayed()
+                        val organization = "${context.getString(R.string.lite_organization)}\nExample ISP"
+                        compose.onNodeWithTag("dashboard-status-organization").assertContentDescriptionEquals(organization)
+                        compose.onNodeWithTag("dashboard-status-organization-label-raw", useUnmergedTree = true)
+                            .assertTextEquals(context.getString(R.string.lite_organization)).assertIsDisplayed()
+                        compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true)
+                            .assertTextEquals("Example ISP").assertIsDisplayed()
+                        for ((direction, label) in listOf("upload" to R.string.lite_upload, "download" to R.string.lite_download)) {
+                            val value = "0 ${context.getString(R.string.lite_rate, "B")}"
+                            compose.onNodeWithTag("dashboard-$direction-speed", useUnmergedTree = true)
+                                .assertContentDescriptionEquals("${context.getString(label)}\n$value")
+                            compose.onNodeWithTag("dashboard-$direction-value-raw", useUnmergedTree = true)
+                                .assertTextEquals(value).assertIsDisplayed()
+                            compose.onNodeWithTag("dashboard-$direction-arrow", useUnmergedTree = true).assertIsDisplayed()
+                        }
                         compose.onNodeWithContentDescription(context.getString(R.string.lite_stop)).assertIsEnabled()
                         compose.onNodeWithContentDescription(context.getString(R.string.lite_vpn)).assertIsOn()
+                        preconditionsPassed = true
                         capture.captureMatrix(case.stem, "${case.stem}.png", case.json()).use { result ->
                             result.originalFailure?.let {
                                 caseFailure = it
@@ -179,6 +216,30 @@ class LiteDashboardMatrixTest {
                             caseExitFailure = terminal
                             throw terminal
                         }
+                        if (!preconditionsPassed) {
+                            try {
+                                cells[index].put("failedPreconditionSnapshot", matrixSnapshot(case.number, readiness, probe, actions))
+                                val diagnostic = "precondition-diagnostic-${case.stem}"
+                                capture.capture(diagnostic, "$diagnostic.png", case.json()
+                                    .put("diagnosticOnly", true).put("acceptancePassed", false)
+                                    .put("originalFailure", "${failure.javaClass.name}: ${failure.message}")).use { frame ->
+                                    diagnosticCaptured = true
+                                    cells[index].put("preconditionDiagnosticOnly", true)
+                                        .put("diagnosticWindowImage", frame.evidence.getString("windowImage"))
+                                        .put("diagnosticWindowSha256", frame.evidence.getString("windowSha256"))
+                                        .put("diagnosticMetadata", "$diagnostic.json")
+                                }
+                            } catch (diagnosticFailure: Throwable) {
+                                try {
+                                    rethrowMatrixCancellation(diagnosticFailure, caseFailure)
+                                } catch (terminal: Throwable) {
+                                    caseExitFailure = terminal
+                                    throw terminal
+                                }
+                                caseFailure!!.addSuppressed(diagnosticFailure)
+                                cells[index].put("preconditionDiagnosticFailure", diagnosticFailure.toString())
+                            }
+                        }
                     } finally {
                         if (!accepted && caseFailure == null) caseFailure = AssertionError("Matrix case did not complete original acceptance")
                         cells[index].put("captured", accepted).put("diagnosticCaptured", diagnosticCaptured)
@@ -212,6 +273,43 @@ class LiteDashboardMatrixTest {
             }
         }
     }
+    private fun matrixSnapshot(case: Int, readiness: MatrixReadiness, probe: RenderProbe,
+        actions: UiTestActions): JSONObject {
+        val snapshot = JSONObject().put("case", case).put("wallClockMillis", System.currentTimeMillis())
+            .put("composeClockMillis", compose.mainClock.currentTime)
+        try {
+            compose.runOnUiThread {
+                snapshot.put("composedCase", readiness.composedCase)
+                    .put("composeWindowFocused", readiness.windowFocused)
+                    .put("viewWindowFocused", probe.view.hasWindowFocus()).put("viewShown", probe.view.isShown)
+                    .put("lifecycle", readiness.owner?.lifecycle?.currentState?.name ?: JSONObject.NULL)
+                    .put("uiWindowFocusHistory", JSONArray(actions.windowFocus.toList()))
+                    .put("fixtureLookupRequests", JSONArray(readiness.lookupRequests.toList()))
+                    .put("fixtureLookupReturns", JSONArray(readiness.lookupReturns.toList()))
+            }
+        } catch (failure: Throwable) {
+            rethrowMatrixCancellation(failure)
+            snapshot.put("nativeSnapshotFailure", failure.toString())
+        }
+        for (unmerged in listOf(false, true)) try {
+            snapshot.put(if (unmerged) "unmergedSemantics" else "mergedSemantics",
+                compose.onRoot(useUnmergedTree = unmerged).printToString())
+        } catch (failure: Throwable) {
+            rethrowMatrixCancellation(failure)
+            snapshot.put(if (unmerged) "unmergedSemanticsFailure" else "mergedSemanticsFailure", failure.toString())
+        }
+        return snapshot
+    }
+
+
+}
+
+private class MatrixReadiness {
+    var composedCase = 0
+    var windowFocused = false
+    var owner: androidx.lifecycle.LifecycleOwner? = null
+    val lookupRequests = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    val lookupReturns = java.util.concurrent.ConcurrentLinkedQueue<String>()
 }
 
 private data class DashboardCaptureCase(val number: Int, val row: Int, val column: Int, val tier: MaterialTier, val aurora: Boolean, val dark: Boolean) {
