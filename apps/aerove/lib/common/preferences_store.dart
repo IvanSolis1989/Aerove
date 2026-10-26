@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collection/collection.dart';
 import 'package:fl_clash/common/file.dart';
 import 'package:fl_clash/common/print.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -39,9 +40,13 @@ class AtomicFilePreferencesStore extends SharedPreferencesStorePlatform {
     return data is Map ? Map<String, Object>.from(data) : {};
   }
 
-  Future<bool> _update(void Function(Map<String, Object> values) change) async {
+  Future<bool> _update(bool Function(Map<String, Object> values) change) async {
     final values = await _read();
-    change(values);
+    if (!change(values)) {
+      return _lastWrite = _lastWrite.then(
+        (written) async => written || await _write(json.encode(values)),
+      );
+    }
     final content = json.encode(values);
     return _lastWrite = _lastWrite.then((_) => _write(content));
   }
@@ -81,12 +86,19 @@ class AtomicFilePreferencesStore extends SharedPreferencesStorePlatform {
 
   @override
   Future<bool> setValue(String valueType, String key, Object value) {
-    return _update((values) => values[key] = value);
+    return _update((values) {
+      if (_holds(values[key], value)) {
+        return false;
+      }
+      // SharedPreferences passes the caller's own list, which can change later.
+      values[key] = value is List ? List<Object?>.of(value) : value;
+      return true;
+    });
   }
 
   @override
   Future<bool> remove(String key) {
-    return _update((values) => values.remove(key));
+    return _update((values) => values.remove(key) != null);
   }
 
   @override
@@ -98,10 +110,21 @@ class AtomicFilePreferencesStore extends SharedPreferencesStorePlatform {
 
   @override
   Future<bool> clearWithParameters(ClearParameters parameters) {
-    return _update(
-      (values) =>
-          values.removeWhere((key, _) => _matches(parameters.filter, key)),
-    );
+    return _update((values) {
+      final length = values.length;
+      values.removeWhere((key, _) => _matches(parameters.filter, key));
+      return values.length != length;
+    });
+  }
+
+  bool _holds(Object? stored, Object value) {
+    return switch (value) {
+      List() =>
+        stored is List && const ListEquality<Object?>().equals(stored, value),
+      int() => stored is int && stored == value,
+      double() => stored is double && stored == value,
+      _ => stored == value,
+    };
   }
 
   bool _matches(PreferencesFilter filter, String key) {

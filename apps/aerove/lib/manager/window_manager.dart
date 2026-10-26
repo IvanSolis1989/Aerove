@@ -182,9 +182,8 @@ class _WindowContainerState extends ConsumerState<WindowManager>
   }
 
   @override
-  void onWindowMinimize() async {
+  void onWindowMinimize() {
     _invalidateWindowGeometryCapture();
-    ref.read(storeActionProvider.notifier).savePreferencesDebounce();
     super.onWindowMinimize();
   }
 

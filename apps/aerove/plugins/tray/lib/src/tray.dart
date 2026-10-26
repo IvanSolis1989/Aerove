@@ -34,6 +34,8 @@ final class Tray {
       StreamController<TrayEvent>.broadcast();
 
   Map<int, TrayMenuItem> _itemsById = const {};
+  final Map<(String, bool, int, TrayIconPosition), Map<String, Object?>>
+  _resolvedIcons = {};
   Future<void> _queue = Future<void>.value();
   String? _signature;
   String _title = '';
@@ -67,6 +69,7 @@ final class Tray {
   @visibleForTesting
   void resetForTesting() {
     _itemsById = const {};
+    _resolvedIcons.clear();
     _queue = Future<void>.value();
     _signature = null;
     _title = '';
@@ -194,7 +197,14 @@ final class Tray {
     ]);
   }
 
+  /// Bundled assets do not change at runtime, so a menu-only change reuses
+  /// the payload instead of reloading and re-encoding every scale.
   Future<Map<String, Object?>> _resolveIcon(TrayIcon icon) async {
+    final key = (icon.asset, icon.isTemplate, icon.size, icon.position);
+    final cached = _resolvedIcons[key];
+    if (cached != null) {
+      return cached;
+    }
     final resolved = <String, Object?>{
       'isTemplate': icon.isTemplate,
       'size': icon.size,
@@ -208,7 +218,7 @@ final class Tray {
       default:
         resolved['path'] = _bundledPath(icon.asset);
     }
-    return resolved;
+    return _resolvedIcons[key] = resolved;
   }
 
   Future<List<Map<String, Object?>>> _loadRepresentations(String asset) async {

@@ -1,8 +1,8 @@
 package core
 
 import (
-	"runtime"
 	"runtime/debug"
+	"runtime/metrics"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -134,16 +134,59 @@ func scheduleLoadMemoryRelease() {
 	loadReleaseTimer.Reset(loadReleaseDelay)
 }
 
-// HeapIdle still counts spans the runtime has already handed back to the OS,
-// so the retained-but-unused figure subtracts HeapReleased.
+type memoryClass int
+
+const (
+	heapObjectsClass memoryClass = iota
+	heapUnusedClass
+	heapFreeClass
+	heapStacksClass
+	mspanInuseClass
+	mcacheInuseClass
+	profilingBucketsClass
+	metadataOtherClass
+	otherClass
+	memoryClassCount
+)
+
+var memoryClassMetrics = [memoryClassCount]string{
+	heapObjectsClass:      "/memory/classes/heap/objects:bytes",
+	heapUnusedClass:       "/memory/classes/heap/unused:bytes",
+	heapFreeClass:         "/memory/classes/heap/free:bytes",
+	heapStacksClass:       "/memory/classes/heap/stacks:bytes",
+	mspanInuseClass:       "/memory/classes/metadata/mspan/inuse:bytes",
+	mcacheInuseClass:      "/memory/classes/metadata/mcache/inuse:bytes",
+	profilingBucketsClass: "/memory/classes/profiling/buckets:bytes",
+	metadataOtherClass:    "/memory/classes/metadata/other:bytes",
+	otherClass:            "/memory/classes/other:bytes",
+}
+
+// runtime.ReadMemStats stops the world and flushes every P's cache on each
+// dashboard poll; these classes add up to the same MemStats fields without it.
+func readMemoryClasses() [memoryClassCount]uint64 {
+	var samples [memoryClassCount]metrics.Sample
+	for class, name := range memoryClassMetrics {
+		samples[class].Name = name
+	}
+	metrics.Read(samples[:])
+	var bytes [memoryClassCount]uint64
+	for class, sample := range samples {
+		if sample.Value.Kind() == metrics.KindUint64 {
+			bytes[class] = sample.Value.Uint64()
+		}
+	}
+	return bytes
+}
+
 func handleGetMemoryStats() MemoryStats {
-	var stats runtime.MemStats
-	runtime.ReadMemStats(&stats)
+	bytes := readMemoryClasses()
+	runtimeOther := bytes[mspanInuseClass] + bytes[mcacheInuseClass] + bytes[profilingBucketsClass] +
+		bytes[metadataOtherClass] + bytes[otherClass]
 	return MemoryStats{
 		Rss:          statistic.DefaultManager.Memory(),
-		HeapInuse:    stats.HeapInuse,
-		HeapIdle:     stats.HeapIdle - stats.HeapReleased,
-		StackInuse:   stats.StackInuse,
-		RuntimeOther: stats.MSpanInuse + stats.MCacheInuse + stats.BuckHashSys + stats.GCSys + stats.OtherSys,
+		HeapInuse:    bytes[heapObjectsClass] + bytes[heapUnusedClass],
+		HeapIdle:     bytes[heapFreeClass],
+		StackInuse:   bytes[heapStacksClass],
+		RuntimeOther: runtimeOther,
 	}
 }

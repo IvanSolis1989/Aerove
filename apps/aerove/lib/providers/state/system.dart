@@ -61,8 +61,13 @@ TrayState trayState(Ref ref) {
       ),
     ),
   );
-  final groups = ref.watch(currentGroupsStateProvider).value;
-  final selectedMap = ref.watch(selectedMapProvider);
+  // Only the macOS menu lists groups (AppTray._buildMenu).
+  final groups = system.isMacOS
+      ? ref.watch(currentGroupsStateProvider).value
+      : const <Group>[];
+  final selectedMap = system.isMacOS
+      ? ref.watch(selectedMapProvider)
+      : const <String, String>{};
   final safeMode = ref.watch(safeModeProvider);
   final suspended = ref.watch(suspendProvider);
   final hotKeys = _trayHotKeys(ref);
@@ -136,10 +141,13 @@ TrayTitleState trayTitleState(Ref ref) {
   final showTrayTitle = ref.watch(
     appSettingProvider.select((state) => state.showTrayTitle),
   );
+  if (!showTrayTitle) {
+    return const TrayTitleState(showTrayTitle: false, traffic: Traffic());
+  }
   final traffic = ref.watch(
     trafficsProvider.select((state) => state.list.safeLast(const Traffic())),
   );
-  return TrayTitleState(showTrayTitle: showTrayTitle, traffic: traffic);
+  return TrayTitleState(showTrayTitle: true, traffic: traffic);
 }
 
 @riverpod
