@@ -54,6 +54,74 @@ class ControllerSettingsRestoreTest {
         assertTrue(LiteSettingsStore(root).read().pureBlack)
     }
 
+    @Test fun restoreBeforeAtomicAcceptanceStillCancelsTheOlderSave() = runBlocking<Unit> {
+        val root = temporary.newFolder(); val store = LiteSettingsStore(root)
+        val initial = store.save(LiteSettings(locale = "en"))
+        val reading = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        var shown = initial; var saves = 0
+        val updates = ControllerSettingsUpdates({ reading.complete(Unit); release.await(); store.read() },
+            { saves++; store.save(it) }, store::rotateAuroraForDay, store::shuffleAuroraWallpaper,
+            { shown }, { value, _ -> shown = value })
+        val older = async(start = CoroutineStart.UNDISPATCHED) {
+            runCatching { updates.save(initial, initial.copy(locale = "fr")) }
+        }
+        reading.await()
+        val restored = async(start = CoroutineStart.UNDISPATCHED) {
+            updates.restore({ atomicDomainRestore(root) { store.save(initial) } }) {}
+        }
+        release.complete(Unit)
+        assertTrue(older.await().exceptionOrNull() is CancellationException)
+        restored.await()
+        assertEquals(0, saves)
+        assertEquals("en", LiteSettingsStore(root).read().locale)
+        assertEquals(initial, shown)
+    }
+
+    @Test fun acceptedExplicitModeStillRejectsAnIntentSupersededByRestore() = runBlocking<Unit> {
+        val root = temporary.newFolder(); val store = LiteSettingsStore(root)
+        val initial = store.save(LiteSettings(mode = ProxyMode.Rule))
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val owner = Owner(store, initial) { entered.complete(Unit); release.await() }
+        owner.updates.load()
+        val accepted = async(start = CoroutineStart.UNDISPATCHED) {
+            runCatching { owner.updates.save(initial, initial.copy(mode = ProxyMode.Global), explicitMode = true) }
+        }
+        entered.await()
+        val restored = async(start = CoroutineStart.UNDISPATCHED) {
+            owner.updates.restore({
+                assertEquals(ProxyMode.Global, LiteSettingsStore(root).read().mode)
+                assertEquals(ProxyMode.Rule, owner.shown.mode)
+                atomicDomainRestore(root) { store.save(initial) }
+            }) {}
+        }
+        release.complete(Unit)
+        assertTrue(accepted.await().exceptionOrNull() is CancellationException)
+        restored.await()
+        assertEquals(ProxyMode.Rule, LiteSettingsStore(root).read().mode)
+        assertEquals(ProxyMode.Rule, owner.shown.mode)
+    }
+
+    @Test fun cancellingAcceptedOrdinarySaveKeepsCallerCancellationAndFinishesAtomicWrite() = runBlocking<Unit> {
+        val root = temporary.newFolder(); val store = LiteSettingsStore(root)
+        val initial = store.save(LiteSettings(locale = "en"))
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val owner = Owner(store, initial) { entered.complete(Unit); release.await() }
+        owner.updates.load()
+        val accepted = async(start = CoroutineStart.UNDISPATCHED) {
+            owner.updates.save(initial, initial.copy(locale = "fr"))
+        }
+        entered.await(); accepted.cancel(CancellationException("caller-cancelled")); release.complete(Unit)
+        accepted.join()
+        assertTrue(accepted.isCancelled)
+        val failure = runCatching { accepted.await() }.exceptionOrNull()
+        assertTrue(failure is CancellationException)
+        assertEquals("caller-cancelled", failure?.message)
+        assertEquals("fr", LiteSettingsStore(root).read().locale)
+        owner.updates.restore({ atomicDomainRestore(root) { store.save(initial) } }) {}
+        owner.updates.save(owner.shown, owner.shown.copy(locale = "es"))
+        assertEquals("es", LiteSettingsStore(root).read().locale)
+    }
+
     @Test fun sameValueBackupRestoreWinsOverOlderOsCallbackWhileDomainIsHeld() = runBlocking<Unit> {
         val root = temporary.newFolder()
         val store = LiteSettingsStore(root)

@@ -1612,14 +1612,15 @@ internal class ControllerSettingsUpdates(
             if (closed || !currentIntent(token)) {
                 if (explicitMode) throw CancellationException("Mode settings intent changed") else return@withLock
             }
-            fun checkCurrent() {
-                if (!isCurrent() || closed || !currentIntent(token)) throw CancellationException("Mode settings intent changed")
+            fun checkCurrent(requireRestoreIntent: Boolean = true) {
+                if (!isCurrent() || closed || (requireRestoreIntent && !currentIntent(token)))
+                    throw CancellationException("Mode settings intent changed")
             }
             checkCurrent()
             val merged = mergeSettingsChanges(baseline, requested, loadLatest())
             val settings = if (explicitMode) merged.copy(mode = requested.mode) else merged
             val saved = commit { checkCurrent(); saveSettings(settings) }
-            checkCurrent()
+            checkCurrent(requireRestoreIntent = explicitMode)
             if (baseline.auroraSeed != requested.auroraSeed || baseline.auroraRotationDay != requested.auroraRotationDay) {
                 deferredWallpaper = false
             }
