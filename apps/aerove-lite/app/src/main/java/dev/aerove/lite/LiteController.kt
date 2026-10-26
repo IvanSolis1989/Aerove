@@ -179,13 +179,15 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         }
     }
     override val overrides get() = overrideOwner.value
-    private val resourcesOwner = lazy {
-        val maintenance = dev.aerove.lite.resources.ResourceManagementMaintenance(application.geoResourceCatalog,
+    private val resourceMaintenanceOwner = lazy {
+        dev.aerove.lite.resources.ResourceManagementMaintenance(application.geoResourceCatalog,
             application.resourceLibrary, overrides.scripts, { state.value.settings.geoResources },
             { sourceApplyOwner.value.requestAndAwait(); Unit })
-        dev.aerove.lite.integration.ResourcePageWorkspace(resourceManagement, overrides.scripts, maintenance, resourceRepository,
+    }
+    private val resourcesOwner = lazy {
+        dev.aerove.lite.integration.ResourcePageWorkspace(resourceManagement, overrides.scripts, resourceMaintenanceOwner.value, resourceRepository,
             viewModelScope, { state.value.selectedProfile }, { !application.maintenanceActive },
-            { application.vpn.value.endpoint != null }, ::report)
+            { maintenanceCore() != null }, ::report)
     }
     override val resources get() = resourcesOwner.value
     private var providerTelemetryRequested = false
@@ -201,12 +203,34 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     override val profileDetails get() = profileDetailsOwner.value
 
     private var resourceMaintenanceEndpoint: CoreEndpoint? = null
-    private fun visibleResourceMaintenance() {
-        if (!settingsLoaded || !visible.value.active || application.maintenanceActive) return
-        val generation = visible.value.generation
-        val endpoint = application.vpn.value.endpoint
-        resources.updateIfDue { visible.value.active && visible.value.generation == generation &&
-            !application.maintenanceActive && application.vpn.value.endpoint === endpoint }
+    private fun maintenanceCore(): CoreEndpoint? = application.vpn.value.takeIf { it.phase == VpnPhase.Running }?.endpoint
+    private fun maintenanceRuntime(snapshot: dev.aerove.lite.vpn.VpnSnapshot) = dev.aerove.lite.integration.maintenanceRuntimeIdentity(snapshot)
+    private val initialMaintenanceRuntime = maintenanceRuntime(application.vpn.value)
+    private val initialMaintenanceNetworkRevision = application.physicalNetworks.revision.value
+    private var maintenanceNetworkLease: dev.aerove.lite.platform.PhysicalNetworkLease? = null
+    private val resourceMaintenanceLifecycle: Lazy<dev.aerove.lite.integration.ResourceMaintenanceLifecycle<CoreEndpoint>> = lazy {
+        dev.aerove.lite.integration.ResourceMaintenanceLifecycle(viewModelScope, ::maintenanceCore,
+            { !application.maintenanceActive },
+            { full, current, available ->
+                if (full) resourceMaintenanceOwner.value.updateIfDue(current, available)
+                else resourceMaintenanceOwner.value.updateSkippedIfDue(current, available)
+                Unit
+            }, {
+                profileMaintenance.resetSubscriptionBackoff()
+                if (resourceMaintenanceOwner.isInitialized()) resourceMaintenanceOwner.value.resetAutomaticBackoff()
+            }, initialMaintenanceNetworkRevision, initialMaintenanceRuntime,
+            { error -> viewModelScope.launch { report(error) } })
+    }
+    private fun acquireMaintenanceNetwork() {
+        if (maintenanceNetworkLease == null) {
+            try { maintenanceNetworkLease = application.physicalNetworks.acquire(false) }
+            catch (error: Exception) { report(error) }
+        }
+    }
+    private fun releaseMaintenanceNetwork() {
+        val owned = maintenanceNetworkLease ?: return
+        maintenanceNetworkLease = null
+        try { owned.close() } catch (error: Exception) { report(error) }
     }
 
     @Volatile private var maintenanceRevision: String? = null
@@ -337,6 +361,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                     if (ipQualityOwner.isInitialized()) ipQualityOwner.value.quiesce()
                     if (updateOwner.isInitialized()) updateOwner.value.quiesce()
                     profileMaintenance.quiesce()
+                    resourceMaintenanceLifecycle.value.quiesce()
+                    if (resourceMaintenanceOwner.isInitialized()) resourceMaintenanceOwner.value.quiesce()
                     if (profileImportsOwner.isInitialized()) profileImportsOwner.value.quiesce()
                     if (profileListOwner.isInitialized()) profileListOwner.value.quiesce()
                     workJobs.values.toList().forEach { it.cancelAndJoin() }
@@ -431,7 +457,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                     }
                 }
             }
-        }, onAutomaticError = { _, error -> viewModelScope.launch { report(error) } })
+        }, onAutomaticError = { _, error -> viewModelScope.launch { report(error) } },
+        afterAutomaticSweep = { current -> resourceMaintenanceLifecycle.value.afterAutomaticSweep(current) })
     private val profileListOwner = lazy {
         ProfileListFeature(application.profiles, profileMaintenance, viewModelScope,
             AndroidProfileDocuments(application.contentResolver),
@@ -614,7 +641,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             autoCheckUpdates()
             reloadProfiles()
             publishState { it.copy(initialized = true) }
-            visibleResourceMaintenance()
+            resourceMaintenanceLifecycle.value.ready()
             refreshPlatformPermissions()
             LiteVpnService.consumeStartupFailure(application)?.let(::showMessage)
         }
@@ -623,9 +650,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                 if (resourceMaintenanceEndpoint !== snapshot.endpoint) {
                     resourceMaintenanceEndpoint = snapshot.endpoint
                     if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.endpointChanged()
-                    if (resourcesOwner.isInitialized()) resourcesOwner.value.pauseAutomatic()
-                    if (snapshot.endpoint != null) visibleResourceMaintenance()
                 }
+                resourceMaintenanceLifecycle.value.runtime(maintenanceRuntime(snapshot), maintenanceCore())
                 bindObservability(snapshot.endpoint)
                 currentSession?.takeUnless { it.current }?.close()
                 publishState { it.copy(phase = snapshot.phase, message = snapshot.error ?: it.message,
@@ -641,7 +667,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         }
         viewModelScope.launch {
             uiReadSignals.state.collectLatest { foreground ->
-                if (foreground.active) LocalNetworkMonitor(application).addresses().collect { address ->
+                if (foreground.active) LocalNetworkMonitor(application.physicalNetworks, ::report).addresses().collect { address ->
                     publishState { it.copy(localAddress = address) }
                 }
             }
@@ -660,7 +686,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
             }
         }
         viewModelScope.launch {
-            LiteVpnService.hostNetworkGeneration.drop(1).collectLatest {
+            application.physicalNetworks.revision.collectLatest { revision ->
+                resourceMaintenanceLifecycle.value.network(revision)
                 delay(300)
                 if (application.vpn.value.endpoint != null) {
                     diagnostics.networkChanged(); outbound.networkChanged()
@@ -780,10 +807,12 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         diagnostics.foreground(value)
         if (observabilityOwner.isInitialized()) observabilityOwner.value.setForeground(readDemand.active)
         if (ipQualityOwner.isInitialized()) ipQualityOwner.value.setForeground(value)
+        if (value) acquireMaintenanceNetwork()
         profileMaintenance.setForeground(value)
+        resourceMaintenanceLifecycle.value.foreground(value)
+        if (!value) releaseMaintenanceNetwork()
         autoCheckUpdates()
-        if (value) { localeOwner.value.foreground(); visibleResourceMaintenance() }
-        else if (resourcesOwner.isInitialized()) resourcesOwner.value.pauseAutomatic()
+        if (value) localeOwner.value.foreground()
         if (proxyPresentationOwner.isInitialized()) {
             proxyPresentationOwner.value.foreground(value)
             if (!value) proxyPresentationOwner.value.active(false)
@@ -812,6 +841,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         uiPublication.close()
         backup.close()
         if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.close()
+        resourceMaintenanceLifecycle.value.close()
+        releaseMaintenanceNetwork()
         if (resourcesOwner.isInitialized()) resourcesOwner.value.close()
         if (globalResourcesOwner.isInitialized()) globalResourcesOwner.value.close()
         if (resourceManagementOwner.isInitialized()) resourceManagementOwner.value.close()
@@ -1205,6 +1236,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                     if (ipQualityOwner.isInitialized()) ipQualityOwner.value.quiesce()
                     if (updateOwner.isInitialized()) updateOwner.value.quiesce()
                     profileMaintenance.quiesce()
+                    resourceMaintenanceLifecycle.value.quiesce()
+                    if (resourceMaintenanceOwner.isInitialized()) resourceMaintenanceOwner.value.quiesce()
                     if (profileImportsOwner.isInitialized()) profileImportsOwner.value.quiesce()
                     if (profileListOwner.isInitialized()) profileListOwner.value.quiesce()
                     workJobs.values.toList().forEach { it.cancelAndJoin() }
@@ -1260,12 +1293,14 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
                 if (globalResourcesOwner.isInitialized()) globalResourcesOwner.value.resumeAfterMaintenance()
                 if (resourceManagementOwner.isInitialized()) resourceManagementOwner.value.resumeAfterMaintenance()
                 if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.resumeAfterMaintenance()
-                profileMaintenance.resumeAfterMaintenance(visible.value.active && !application.maintenanceActive)
                 if (profileListOwner.isInitialized()) profileListOwner.value.resumeAfterMaintenance()
                 if (profileImportsOwner.isInitialized()) profileImportsOwner.value.resumeAfterMaintenance()
                 if (overrideOwner.isInitialized()) overrideOwner.value.resumeAfterMaintenance()
                 if (resourcesOwner.isInitialized()) resourcesOwner.value.resumeAfterMaintenance()
                 if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.resumeAfterMaintenance()
+                if (resourceMaintenanceOwner.isInitialized()) resourceMaintenanceOwner.value.resumeAfterMaintenance()
+                resourceMaintenanceLifecycle.value.resumeAfterMaintenance()
+                profileMaintenance.resumeAfterMaintenance(visible.value.active && !application.maintenanceActive)
             }
         }
     }

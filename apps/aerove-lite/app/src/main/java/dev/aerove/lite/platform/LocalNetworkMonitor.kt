@@ -1,88 +1,25 @@
 package dev.aerove.lite.platform
 
-import android.content.Context
-import android.content.BroadcastReceiver
-import android.content.Intent
-import android.content.IntentFilter
-import android.location.LocationManager
-import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
-import android.os.Handler
-import android.os.Looper
-import dev.aerove.lite.backgroundpolicy.AndroidSsidPolicy
-import dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences
 import dev.aerove.lite.data.SystemDnsSnapshot
-import java.net.Inet4Address
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 
-internal class LocalNetworkMonitor(private val context: Context,
-    private val policy: () -> BackgroundPolicyPreferences = { BackgroundPolicyPreferences() },
-    private val onSsid: (String?) -> Unit = {},
-) {
-    private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+internal class LocalNetworkMonitor(private val physical: PhysicalNetworkMonitor,
+    private val failure: (Exception) -> Unit = {}) {
+    fun addresses(): Flow<String?> = leasedNetworkAddresses({ physical.acquire(false) },
+        physical.snapshots.map { it.address }, failure)
+}
 
-    fun addresses() = callbackFlow<String?> {
-        val networks = linkedSetOf<Network>()
-        val capabilitiesByNetwork = mutableMapOf<Network, NetworkCapabilities>()
-        val linksByNetwork = mutableMapOf<Network, LinkProperties>()
-        val trackSsid = policy().excludeSSIDs.isNotEmpty()
-        fun includeLocation() = trackSsid && AndroidSsidPolicy.access(context).granted
-        var includesLocation = includeLocation()
-        fun publish() {
-            val preferred = if (networks.size > 1) connectivity.activeNetwork else null
-            val ordered = orderLocalNetworks(networks, preferred) { network ->
-                capabilitiesByNetwork[network]?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            }
-            if (trackSsid) onSsid(AndroidSsidPolicy.read(ordered.firstOrNull()?.let(capabilitiesByNetwork::get), policy(), AndroidSsidPolicy.access(context)))
-            val address = ordered.firstNotNullOfOrNull { network ->
-                linksByNetwork[network]?.linkAddresses?.asSequence()?.map { it.address }
-                    ?.firstOrNull { it is Inet4Address && !it.isLoopbackAddress && !it.isLinkLocalAddress }?.hostAddress
-            }
-            trySend(address)
-        }
-        fun makeCallback() = object : ConnectivityManager.NetworkCallback(if (includesLocation) FLAG_INCLUDE_LOCATION_INFO else 0) {
-            override fun onAvailable(network: Network) { networks += network; publish() }
-            override fun onLost(network: Network) { networks -= network; capabilitiesByNetwork.remove(network); linksByNetwork.remove(network); publish() }
-            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                capabilitiesByNetwork[network] = capabilities
-                publish()
-            }
-            override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) { linksByNetwork[network] = properties; publish() }
-        }
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
-        var callback = makeCallback()
-        connectivity.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
-        val active = java.util.concurrent.atomic.AtomicBoolean(true)
-        fun refreshAccess() {
-            if (!active.get()) return
-            val next = includeLocation()
-            if (next == includesLocation) return
-            includesLocation = next
-            capabilitiesByNetwork.clear()
-            publish()
-            connectivity.unregisterNetworkCallback(callback)
-            callback = makeCallback()
-            connectivity.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
-        }
-        val location = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) = refreshAccess()
-        }
-        if (trackSsid) context.registerReceiver(location, IntentFilter(LocationManager.MODE_CHANGED_ACTION), Context.RECEIVER_NOT_EXPORTED)
-        trySend(null)
-        awaitClose {
-            active.set(false)
-            if (trackSsid) context.unregisterReceiver(location)
-            connectivity.unregisterNetworkCallback(callback)
-            onSsid(null)
-        }
-    }.distinctUntilChanged()
+internal fun leasedNetworkAddresses(acquire: () -> AutoCloseable, values: Flow<String?>,
+    failure: (Exception) -> Unit = {}): Flow<String?> = flow {
+    val lease = acquire()
+    try { values.distinctUntilChanged().collect { emit(it) } }
+    finally { try { lease.close() } catch (error: Exception) { failure(error) } }
 }
 
 /** The same physical-network callback supplies resolver inputs; it never invents a fallback server. */
