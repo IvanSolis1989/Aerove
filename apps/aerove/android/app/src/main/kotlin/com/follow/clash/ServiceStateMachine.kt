@@ -51,6 +51,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
 
     @Volatile
     private var sharedState = SharedState()
+    @Volatile private var requestedParked = false
 
     @Volatile
     private var pendingVpnPreparation: (() -> Unit)? = null
@@ -72,7 +73,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
     }
 
     suspend fun awaitRunTime(): RunTime? = transitionLock.withLock {
-        host.runtime?.takeIf { isRunRequested }?.let { RunTime(it.startedAtMillis, it.requested) }
+        host.runtime?.takeIf { isRunRequested }?.let { RunTime(it.startedAtMillis, it.requested, it.parked) }
     }
 
     fun captureRequestToken(): RunRequest = arbiter.current()
@@ -95,6 +96,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
 
     suspend fun handleStartAction() {
         if (isRunRequested) {
+            host.settleServiceNotification()
             return
         }
         val tile = host.tile()
@@ -122,10 +124,16 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
     }
 
     fun requestStart(): Deferred<Boolean> {
-        if (isStartedAs(sharedState.vpnOptions)) {
+        if (!requestedParked && isStartedAs(sharedState.vpnOptions)) {
             return CompletableDeferred(true)
         }
         val outcome = launchStart(createRequest(running = true))
+        return host.scope.async { outcome.await() == StartOutcome.STARTED }
+    }
+
+    fun requestPark(): Deferred<Boolean> {
+        if (requestedParked && isStartedAs(sharedState.vpnOptions, parked = true)) return CompletableDeferred(true)
+        val outcome = launchStart(createRequest(running = true, parked = true), parked = true)
         return host.scope.async { outcome.await() == StartOutcome.STARTED }
     }
 
@@ -140,8 +148,8 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
     }
 
     // No new request for a settled run: one refused at a prompt would take the service down.
-    private fun isStartedAs(options: VpnOptions?): Boolean =
-        runState.value == RunState.STARTED && host.runtime?.vpn == options?.enable
+    private fun isStartedAs(options: VpnOptions?, parked: Boolean = false): Boolean =
+        runState.value == RunState.STARTED && host.runtime?.vpn == options?.enable && host.runtime?.parked == parked
 
     // The intent is claimed before the Core is set up, so a second action that lands meanwhile
     // toggles this start off instead of racing a second setup against it.
@@ -160,17 +168,17 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         }
     }
 
-    private fun launchStart(request: RunRequest): Deferred<StartOutcome> {
+    private fun launchStart(request: RunRequest, parked: Boolean = false): Deferred<StartOutcome> {
         val result = CompletableDeferred<StartOutcome>()
         val launch: (Boolean) -> Unit = { permitted ->
             host.scope.launch {
-                result.complete(if (permitted) start(request) else abandon(request))
+                result.complete(if (permitted) start(request, parked) else abandon(request))
             }
         }
         val app = host.app()
         if (app != null) {
             val askLocalNetwork = { app.requestLocalNetworkPermission { launch(true) } }
-            // A VPN posts no notification; only a plain proxy stays in the foreground.
+            // VPN startup and parked keepalive never add a notification permission prompt.
             if (sharedState.vpnOptions?.enable == true) {
                 askLocalNetwork()
             } else {
@@ -216,9 +224,9 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         host.showToast(message?.takeIf { it.isNotBlank() } ?: INVALID_CONFIG_MESSAGE)
     }
 
-    private suspend fun start(request: RunRequest): StartOutcome {
+    private suspend fun start(request: RunRequest, parked: Boolean): StartOutcome {
         val started = try {
-            startPreparationLock.withLock { runStart(request) }
+            startPreparationLock.withLock { runStart(request, parked) }
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -238,7 +246,7 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         return StartOutcome.FAILED
     }
 
-    private suspend fun runStart(request: RunRequest): Boolean {
+    private suspend fun runStart(request: RunRequest, parked: Boolean): Boolean {
         if (!isCurrent(request)) {
             return false
         }
@@ -252,9 +260,10 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         return transitionLock.withLock {
             when {
                 !isCurrent(request) -> false
-                host.runtime?.vpn == options.enable -> true
+                host.runtime?.vpn == options.enable && host.runtime?.parked == parked -> true
                 else -> transitioning(RunState.STARTING) {
-                    host.startService(withLocalNetworkFallback(options), options) &&
+                    (if (parked) host.parkService(withLocalNetworkFallback(options), options)
+                        else host.startService(withLocalNetworkFallback(options), options)) &&
                         isCurrent(request)
                 }
             }
@@ -356,8 +365,11 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
         abandon()
     }
 
-    private fun createRequest(running: Boolean): RunRequest =
-        arbiter.request(running).also { publish() }
+    @Synchronized
+    private fun createRequest(running: Boolean, parked: Boolean = false): RunRequest {
+        requestedParked = running && parked
+        return arbiter.request(running).also { publish() }
+    }
 
     private fun isCurrent(request: RunRequest): Boolean = arbiter.isCurrent(request)
 

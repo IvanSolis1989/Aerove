@@ -32,11 +32,17 @@ internal class NotificationModule(
     private val service: Service,
     private val scope: CoroutineScope,
 ) : ServiceModule {
+    private val gate = Any()
+    private var active = false
+    private var updates: kotlinx.coroutines.Job? = null
+
     override fun start() {
+        if (updates != null) return
+        synchronized(gate) { active = true }
         service.ensureNotificationChannel()
         val initial = ServiceConfig.notificationParams.value
         update(initial)
-        scope.launch {
+        updates = scope.launch {
             ServiceConfig.notificationParams.changesAfter(initial).collect { params -> update(params) }
         }
     }
@@ -54,17 +60,19 @@ internal class NotificationModule(
             setPriority(NotificationCompat.PRIORITY_LOW)
             setCategory(NotificationCompat.CATEGORY_SERVICE)
             setOngoing(true)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && service !is android.net.VpnService) {
                 foregroundServiceBehavior = FOREGROUND_SERVICE_IMMEDIATE
             }
             setShowWhen(true)
             setOnlyAlertOnce(true)
+            setSilent(true)
         }
     }
 
     private val stopIntent by lazy { QuickAction.STOP.quickIntent.toPendingIntent }
 
-    private fun update(params: NotificationParams) {
+    private fun update(params: NotificationParams) = synchronized(gate) {
+        if (!active) return@synchronized
         service.startForeground(
             with(notificationBuilder) {
                 setContentTitle(params.title)
@@ -78,7 +86,9 @@ internal class NotificationModule(
     }
 
     @Suppress("DEPRECATION")
-    override fun stop() {
+    override fun stop() = synchronized(gate) {
+        active = false
+        updates?.cancel(); updates = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             service.stopForeground(STOP_FOREGROUND_REMOVE)
         } else {

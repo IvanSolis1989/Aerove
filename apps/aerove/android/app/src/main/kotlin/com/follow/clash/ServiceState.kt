@@ -31,6 +31,8 @@ object ServiceState {
 
     fun requestStart(): Deferred<Boolean> = machine.requestStart()
 
+    fun requestPark(): Deferred<Boolean> = machine.requestPark()
+
     fun requestStop(): Deferred<Boolean> = machine.requestStop()
 
     fun syncSharedState(state: SharedState) = machine.syncSharedState(state)

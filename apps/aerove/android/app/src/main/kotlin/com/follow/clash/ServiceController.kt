@@ -76,7 +76,11 @@ object ServiceController {
         eventListener.clear(callback)
     }
 
-    suspend fun start(options: VpnOptions, requested: VpnOptions): Boolean = lock.withLock {
+    suspend fun start(options: VpnOptions, requested: VpnOptions): Boolean = startOrPark(options, requested, false)
+
+    suspend fun park(options: VpnOptions, requested: VpnOptions): Boolean = startOrPark(options, requested, true)
+
+    private suspend fun startOrPark(options: VpnOptions, requested: VpnOptions, parked: Boolean): Boolean = lock.withLock {
         ServiceConfig.updateVpnOptions(options)
         val nextIntent = if (options.enable) {
             VpnService::class.intent
@@ -101,7 +105,7 @@ object ServiceController {
         }
 
         val currentBinding = binding ?: return@withLock false
-        val result = currentBinding.useService { service -> service.start() }
+        val result = currentBinding.useService { service -> if (parked) service.park() else service.start() }
         if (result.isFailure) {
             GlobalState.log("Unable to start background service: ${result.exceptionOrNull()}")
             currentBinding.stopIfConnected()
@@ -112,13 +116,22 @@ object ServiceController {
             return@withLock false
         }
 
-        Core.startListener()
+        if (parked) Core.stopListener() else Core.startListener()
         runtime = ServiceRuntime(
             vpn = options.enable,
             startedAtMillis = runtime?.startedAtMillis ?: System.currentTimeMillis(),
             requested = requested,
+            parked = parked,
         )
         true
+    }
+
+    suspend fun settleNotification() = lock.withLock {
+        if (runtime == null) return@withLock
+        binding?.useService { it.settleNotification() }?.onFailure { error ->
+            GlobalState.log("Unable to settle foreground notification: $error")
+        }
+        Unit
     }
 
     suspend fun stop() = lock.withLock {

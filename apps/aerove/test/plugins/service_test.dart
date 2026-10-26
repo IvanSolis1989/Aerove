@@ -274,6 +274,21 @@ void main() {
           }..removeWhere((key, _) => missing.contains(key)),
         });
 
+    test(
+      'reads the actual parked receipt without losing the original time',
+      () async {
+        final stamp = DateTime.utc(2026, 8, 16).millisecondsSinceEpoch;
+        final value = Map<String, Object?>.from(
+          json.decode(report(stamp)) as Map,
+        )..['parked'] = true;
+        mockChannel((_) async => json.encode(value));
+        final runTime = await Service().getRunTime();
+        expect(runTime?.parked, isTrue);
+        expect(runTime?.startedAt, DateTime.fromMillisecondsSinceEpoch(stamp));
+        expect(runTime?.vpnOptions?.enable, isTrue);
+      },
+    );
+
     test('reads the start stamp and the options the service runs', () async {
       final stamp = DateTime.utc(2026, 8, 16).millisecondsSinceEpoch;
       mockChannel((_) async => report(stamp));
@@ -281,6 +296,7 @@ void main() {
       final runTime = await Service().getRunTime();
 
       expect(runTime?.startedAt, DateTime.fromMillisecondsSinceEpoch(stamp));
+      expect(runTime?.parked, isFalse);
       expect(runTime?.vpnOptions?.stack, 'gvisor');
       expect(runTime?.vpnOptions?.dnsHijacking, isTrue);
       expect(

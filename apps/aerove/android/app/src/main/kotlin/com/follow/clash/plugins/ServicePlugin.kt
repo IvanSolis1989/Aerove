@@ -63,6 +63,7 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "setUiTelemetryActive" -> setUiTelemetryActive(call, result)
             "start" -> start(call, result)
             "stop" -> stop(call, result)
+            "park" -> park(call, result)
             else -> result.notImplemented()
         }
     }
@@ -149,6 +150,12 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         commandRevision = call.arguments as? Int ?: commandRevision
         ServiceState.requestStart()
         result.success(true)
+    }
+
+    private fun park(call: MethodCall, result: MethodChannel.Result) {
+        commandRevision = call.arguments as? Int ?: commandRevision
+        val pending = ServiceState.requestPark()
+        scope.launch { result.success(pending.await()) }
     }
 
     private fun stop(call: MethodCall, result: MethodChannel.Result) {

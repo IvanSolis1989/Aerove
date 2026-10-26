@@ -116,6 +116,9 @@ private class FakeHost(override val scope: CoroutineScope) : ServiceStateHost {
     val notificationParams = mutableListOf<NotificationParams>()
     var setupCalls = 0
     var startCalls = 0
+    var foregroundPosted = false
+    var parkCalls = 0
+    var beforePark: (() -> Unit)? = null
     var stopCalls = 0
     var stoppedNotifications = 0
     var lastInitParams: String? = null
@@ -168,6 +171,18 @@ private class FakeHost(override val scope: CoroutineScope) : ServiceStateHost {
             requested = requested,
         )
         return true
+    }
+
+    override suspend fun parkService(options: VpnOptions, requested: VpnOptions): Boolean {
+        parkCalls++
+        beforePark?.invoke()
+        if (!startSucceeds) return false
+        runtime = ServiceRuntime(options.enable, runtime?.startedAtMillis ?: STARTED_AT, requested, parked = true)
+        return true
+    }
+
+    override suspend fun settleServiceNotification() {
+        foregroundPosted = runtime?.let { !it.vpn || it.parked } ?: foregroundPosted
     }
 
     override suspend fun stopService() {
@@ -927,5 +942,105 @@ class ServiceStateMachineTest {
         assertTrue(host.logs.any { it.contains("binder died") })
         assertFalse(machine.captureRequestToken().running)
         assertEquals(RunState.STOPPED, machine.runState.value)
+    }
+
+    @Test fun `park keeps one requested run and resumes with original time`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState())
+        assertTrue(machine.requestStart().await())
+        assertTrue(machine.requestPark().await())
+        assertTrue(machine.isRunRequested)
+        assertEquals(RunState.STARTED, machine.runState.value)
+        assertEquals(true, machine.awaitRunTime()?.parked)
+        val receipt = JsonParser.parseString(Gson().toJson(machine.awaitRunTime())).asJsonObject
+        assertTrue(receipt.get("parked").asBoolean)
+        assertEquals(STARTED_AT, receipt.get("startedAt").asLong)
+        assertEquals(STARTED_AT, machine.awaitRunTime()?.startedAt)
+        assertTrue(machine.requestPark().await())
+        assertEquals(1, host.parkCalls)
+        assertTrue(machine.requestStart().await())
+        assertEquals(false, machine.awaitRunTime()?.parked)
+        assertEquals(STARTED_AT, machine.awaitRunTime()?.startedAt)
+        machine.requestStop().await()
+        assertNull(host.runtime)
+        assertFalse(machine.isRunRequested)
+    }
+    @Test fun `newer stop wins while park is completing`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState())
+        machine.requestStart().await()
+        var stopped: kotlinx.coroutines.Deferred<Boolean>? = null
+        host.beforePark = { stopped = machine.requestStop() }
+        assertFalse(machine.requestPark().await())
+        stopped?.await()
+        assertNull(host.runtime)
+        assertFalse(machine.isRunRequested)
+    }
+    @Test fun `park failure and parked revoke release the original run`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState())
+        machine.requestStart().await()
+        host.startSucceeds = false
+        assertFalse(machine.requestPark().await())
+        assertNull(host.runtime)
+        host.startSucceeds = true
+        machine.requestPark().await()
+        machine.handleVpnRevokeAction()
+        assertNull(host.runtime)
+        assertFalse(machine.isRunRequested)
+    }
+
+    @Test fun `queued resume supersedes an unstarted park`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState())
+        machine.requestStart().await()
+        val park = machine.requestPark()
+        val resume = machine.requestStart()
+        park.await(); assertTrue(resume.await())
+        assertEquals(false, machine.awaitRunTime()?.parked)
+    }
+    @Test fun `queued park supersedes an unstarted resume`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState())
+        machine.requestPark().await()
+        val resume = machine.requestStart()
+        val park = machine.requestPark()
+        resume.await(); assertTrue(park.await())
+        assertEquals(true, machine.awaitRunTime()?.parked)
+    }
+
+    @Test fun `repeated system start withdraws bootstrap only for actual running VPN`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState())
+        machine.requestStart().await()
+        host.foregroundPosted = true
+        val previous = host.runtime
+        machine.handleStartAction()
+        assertFalse(host.foregroundPosted)
+        assertTrue(machine.isRunRequested)
+        assertEquals(previous, host.runtime)
+        assertEquals(1, host.startCalls)
+        machine.requestPark().await()
+        host.foregroundPosted = true
+        machine.handleStartAction()
+        assertTrue(host.foregroundPosted)
+        assertEquals(true, host.runtime?.parked)
+    }
+    @Test fun `repeated proxy start retains the foreground notification`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        machine.syncSharedState(configuredState(enable = false))
+        machine.requestStart().await()
+        host.foregroundPosted = true
+        machine.handleStartAction()
+        assertTrue(host.foregroundPosted)
+        assertEquals(false, host.runtime?.vpn)
+        assertEquals(1, host.startCalls)
     }
 }

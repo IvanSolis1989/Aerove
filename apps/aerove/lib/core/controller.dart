@@ -353,6 +353,15 @@ class CoreController {
     return _interface.stopListener();
   }
 
+  Future<bool> parkListener() async {
+    _invalidateConnections();
+    try {
+      return await _interface.parkListener();
+    } finally {
+      _invalidateConnections();
+    }
+  }
+
   Future<bool> adoptListener() => _interface.adoptListener();
 
   Future<Delay?> getDelay(

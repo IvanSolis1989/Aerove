@@ -10,6 +10,10 @@ import com.follow.clash.core.Core
 interface ManagedService {
     fun start()
 
+    fun settleNotification()
+
+    fun park()
+
     fun stop()
 }
 

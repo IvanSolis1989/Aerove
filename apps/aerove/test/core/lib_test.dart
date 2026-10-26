@@ -51,6 +51,12 @@ class _FakeService implements Service {
   }
 
   @override
+  Future<bool> park() async {
+    calls.add('park');
+    return startResult;
+  }
+
+  @override
   Future<bool> stop() async {
     calls.add('stop');
     return stopResult;
@@ -89,6 +95,14 @@ void main() {
     service = _FakeService();
     lib = CoreLib.scoped(service);
   });
+
+  test(
+    'park is acknowledged by the native owner without ending the service',
+    () async {
+      expect(await lib.parkListener(), isTrue);
+      expect(service.calls, ['park']);
+    },
+  );
 
   tearDown(() {
     container.dispose();
@@ -200,6 +214,7 @@ void main() {
 
       await expectLater(lib.start(), throwsA(isA<StateError>()));
       await expectLater(lib.stop(), throwsA(isA<StateError>()));
+      await expectLater(lib.parkListener(), throwsA(isA<StateError>()));
     });
 
     test('runs the shutdown once no matter how often it is called', () async {

@@ -80,6 +80,8 @@ mixin CoreInterface {
 
   Future<bool> stopListener();
 
+  Future<bool> parkListener();
+
   Future<bool> adoptListener();
 
   Future<List<ExternalProvider>> getExternalProviders();
@@ -636,6 +638,9 @@ abstract class CoreHandlerInterface with CoreInterface {
 
   /// Claims a run the Core already serves. Only Android keeps a service that
   /// holds one without this host, so anywhere else it is a plain start.
+  @override
+  Future<bool> parkListener() => stopListener();
+
   @override
   Future<bool> adoptListener() => startListener();
 

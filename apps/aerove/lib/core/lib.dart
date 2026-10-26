@@ -126,6 +126,12 @@ class CoreLib extends CoreHandlerInterface {
   Future<bool> adoptListener() async => await _service?.start() ?? false;
 
   @override
+  Future<bool> parkListener() async {
+    if (_closed) throw StateError('Core lifecycle is closed');
+    return await _service?.park() ?? false;
+  }
+
+  @override
   Future<bool> stopListener() async {
     final serviceStopped = await _service?.stop() ?? false;
     await super.stopListener();

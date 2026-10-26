@@ -1,25 +1,15 @@
 package com.follow.clash
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.net.VpnService
-import android.os.Build
-import androidx.core.content.ContextCompat
-import com.follow.clash.common.GlobalState
 import com.follow.clash.models.SharedState
-import com.follow.clash.plugins.AppPlugin
-import com.follow.clash.plugins.ServicePlugin
-import com.follow.clash.plugins.TilePlugin
-import com.follow.clash.service.ServiceConfig
 import com.follow.clash.service.models.NotificationParams
 import com.follow.clash.service.models.VpnOptions
-import io.flutter.embedding.engine.FlutterEngine
 import kotlinx.coroutines.CoroutineScope
 
 internal data class ServiceRuntime(
     val vpn: Boolean,
     val startedAtMillis: Long,
     val requested: VpnOptions,
+    val parked: Boolean = false,
 )
 
 /**
@@ -54,6 +44,10 @@ internal interface ServiceStateHost {
 
     suspend fun startService(options: VpnOptions, requested: VpnOptions): Boolean
 
+    suspend fun parkService(options: VpnOptions, requested: VpnOptions): Boolean
+
+    suspend fun settleServiceNotification()
+
     suspend fun stopService()
 }
 
@@ -69,82 +63,4 @@ internal interface AppGateway {
     fun prepareVpn(enable: Boolean, callback: (Boolean) -> Unit)
 
     fun cancelVpnPreparation(callback: (Boolean) -> Unit)
-}
-
-internal object AndroidServiceStateHost : ServiceStateHost {
-    @Volatile
-    private var flutterEngine: FlutterEngine? = null
-
-    override val scope: CoroutineScope
-        get() = GlobalState
-
-    override val runtime: ServiceRuntime?
-        get() = ServiceController.runtime
-
-    override val homeDirPath: String
-        get() = GlobalState.application.filesDir.path
-
-    override val sdkInt: Int
-        get() = android.os.Build.VERSION.SDK_INT
-
-    fun attachFlutterEngine(engine: FlutterEngine) {
-        flutterEngine = engine
-    }
-
-    fun detachFlutterEngine(engine: FlutterEngine) {
-        if (flutterEngine === engine) {
-            flutterEngine = null
-        }
-    }
-
-    override fun log(message: String) = GlobalState.log(message)
-
-    override fun showToast(message: String) = GlobalState.application.showToast(message)
-
-    override fun updateNotificationParams(params: NotificationParams) =
-        ServiceConfig.updateNotificationParams(params)
-
-    override fun loadSharedState(): SharedState = GlobalState.application.sharedState
-
-    override fun isVpnPermissionGranted(): Boolean =
-        VpnService.prepare(GlobalState.application) == null
-
-    override fun isLocalNetworkPermissionGranted(): Boolean =
-        sdkInt < Build.VERSION_CODES.CINNAMON_BUN ||
-            ContextCompat.checkSelfPermission(
-                GlobalState.application,
-                Manifest.permission.ACCESS_LOCAL_NETWORK,
-            ) == PackageManager.PERMISSION_GRANTED
-
-    override fun tile(): TileGateway? = flutterEngine?.plugin<TilePlugin>()?.let { plugin ->
-        TileGateway(plugin::handleStart)
-    }
-
-    override fun app(): AppGateway? = flutterEngine?.plugin<AppPlugin>()?.let { plugin ->
-        object : AppGateway {
-            override fun requestNotificationPermission(callback: (Boolean) -> Unit) =
-                plugin.requestNotificationPermission(callback)
-
-            override fun requestLocalNetworkPermission(callback: (Boolean) -> Unit) =
-                plugin.requestLocalNetworkPermission(callback)
-
-            override fun prepareVpn(enable: Boolean, callback: (Boolean) -> Unit) =
-                plugin.prepareVpn(enable, callback)
-
-            override fun cancelVpnPreparation(callback: (Boolean) -> Unit) =
-                plugin.cancelVpnPreparation(callback)
-        }
-    }
-
-    override fun notifyStopped() {
-        flutterEngine?.plugin<ServicePlugin>()?.notifyStopped()
-    }
-
-    override suspend fun quickSetup(initParams: String, setupParams: String): Result<String> =
-        ServiceController.quickSetup(initParams, setupParams)
-
-    override suspend fun startService(options: VpnOptions, requested: VpnOptions): Boolean =
-        ServiceController.start(options, requested)
-
-    override suspend fun stopService() = ServiceController.stop()
 }

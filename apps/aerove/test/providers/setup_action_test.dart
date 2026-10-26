@@ -67,6 +67,13 @@ class TestCommonAction extends CommonAction {
 }
 
 class TestSetupAction extends SetupAction {
+  int parkCalls = 0;
+  @override
+  Future<bool> setCoreParked() async {
+    parkCalls++;
+    return true;
+  }
+
   final List<bool> coreRunningCalls = [];
   final List<Completer<void>> pendingCoreCalls = [];
   int trafficResets = 0;
@@ -525,6 +532,7 @@ void main() {
       await container.read(setupActionProvider.notifier).setRunning(true);
 
       expect(action.coreRunningCalls, isEmpty);
+      expect(action.parkCalls, 1);
       expect(container.read(runningVpnOptionsProvider), isNull);
     });
 
@@ -549,7 +557,8 @@ void main() {
       setup.syncSuspend();
       await Future<void>.delayed(const Duration(milliseconds: 700));
 
-      expect(action.coreRunningCalls, [false]);
+      expect(action.coreRunningCalls, isEmpty);
+      expect(action.parkCalls, 1);
       expect(container.read(isStartProvider), isTrue);
       expect(container.read(runningVpnOptionsProvider), isNull);
 
@@ -557,7 +566,8 @@ void main() {
       setup.syncSuspend();
       await Future<void>.delayed(const Duration(milliseconds: 700));
 
-      expect(action.coreRunningCalls, [false, true]);
+      expect(action.coreRunningCalls, [true]);
+      expect(action.parkCalls, 1);
       expect(
         container.read(runningVpnOptionsProvider),
         await container.read(vpnOptionsProvider.future),
@@ -723,7 +733,11 @@ void main() {
     test(
       'shows a run the service holds before the launch catches up',
       () async {
-        action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+        action.serviceRunTime = (
+          parked: false,
+          startedAt: hourAgo,
+          vpnOptions: null,
+        );
 
         await action.prefillRunTime();
 
@@ -734,7 +748,11 @@ void main() {
     );
 
     test('initStatus keeps the service start time it prefilled', () async {
-      action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+      action.serviceRunTime = (
+        startedAt: hourAgo,
+        vpnOptions: null,
+        parked: false,
+      );
       await action.prefillRunTime();
 
       await action.initStatus();
@@ -744,7 +762,11 @@ void main() {
     });
 
     test('a stop tapped on the prefilled run keeps autoRun off it', () async {
-      action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+      action.serviceRunTime = (
+        startedAt: hourAgo,
+        vpnOptions: null,
+        parked: false,
+      );
       container.read(appSettingProvider.notifier).value = const AppSettingProps(
         autoRun: true,
       );
@@ -759,7 +781,11 @@ void main() {
     });
 
     test('initStatus clears a prefill whose run ended meanwhile', () async {
-      action.serviceRunTime = (startedAt: hourAgo, vpnOptions: null);
+      action.serviceRunTime = (
+        startedAt: hourAgo,
+        vpnOptions: null,
+        parked: false,
+      );
       await action.prefillRunTime();
       action.serviceRunTime = null;
 
@@ -832,6 +858,7 @@ void main() {
         globalState.lastConfigMd5 = null;
         await mockPreferences({'applied_config_md5': 'running'});
         action.serviceRunTime = (
+          parked: false,
           startedAt: DateTime.now().subtract(const Duration(minutes: 1)),
           vpnOptions: null,
         );
@@ -2163,6 +2190,7 @@ void main() {
     );
     final hour = const Duration(hours: 1).inMilliseconds;
     ServiceRunTime serviceRun() => (
+      parked: false,
       startedAt: DateTime.now().subtract(const Duration(hours: 1)),
       vpnOptions: runningOptions,
     );
@@ -2445,6 +2473,26 @@ void main() {
       expect(action.listenerCalls, ['adopt']);
       expect(scoped.read(isStartProvider), isTrue);
     });
+
+    test(
+      'a parked receipt resumes listeners before claiming a live VPN',
+      () async {
+        applied = const AppliedSetup(init: true, running: true);
+        final previous = serviceRun();
+        final action = _ReattachSetupAction()
+          ..serviceRunTime = (
+            startedAt: previous.startedAt,
+            vpnOptions: previous.vpnOptions,
+            parked: true,
+          );
+        final scoped = launch(action);
+        await action.initStatus(degraded: true);
+        expect(action.listenerCalls, ['start']);
+        expect(scoped.read(runningVpnOptionsProvider), runningOptions);
+        expect(scoped.read(runTimeProvider), greaterThanOrEqualTo(hour));
+        expect(pushed, isEmpty);
+      },
+    );
 
     test('a degraded launch takes over a run it holds no record of', () async {
       applied = const AppliedSetup(init: true, running: true);

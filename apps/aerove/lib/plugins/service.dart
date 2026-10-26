@@ -31,7 +31,11 @@ Future<Map<String, Object?>> _decodeResponse(
 }
 
 /// The run the Android service holds and the options it runs with.
-typedef ServiceRunTime = ({DateTime startedAt, VpnOptions? vpnOptions});
+typedef ServiceRunTime = ({
+  DateTime startedAt,
+  VpnOptions? vpnOptions,
+  bool parked,
+});
 
 abstract mixin class ServiceListener {
   void onServiceEvent(CoreEvent event) {}
@@ -122,6 +126,12 @@ class Service {
         false;
   }
 
+  Future<bool> park() async {
+    _startRequested = true;
+    return await methodChannel.invokeMethod<bool>('park', ++_commandRevision) ??
+        false;
+  }
+
   Future<bool> stop() async {
     _startRequested = false;
     return await methodChannel.invokeMethod<bool>('stop', ++_commandRevision) ??
@@ -162,6 +172,7 @@ class Service {
     return (
       startedAt: DateTime.fromMillisecondsSinceEpoch(startedAt),
       vpnOptions: options is Map ? _runningVpnOptionsOf(options) : null,
+      parked: report['parked'] == true,
     );
   }
 

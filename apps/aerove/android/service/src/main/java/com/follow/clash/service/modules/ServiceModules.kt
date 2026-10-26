@@ -12,13 +12,10 @@ internal interface ServiceModule {
     fun stop()
 }
 
-/**
- * A VPN needs no notification: the system's own binding keeps it running.
- * A plain proxy has no such binding, so it stays a foreground service.
- */
+// Active TUN uses the system binding; parked and proxy runs retain foreground keepalive.
 internal class ServiceModules(
     private val service: Service,
-    private val foreground: Boolean,
+    private var foreground: Boolean,
 ) {
     private var scope: CoroutineScope? = null
     private var modules = emptyList<ServiceModule>()
@@ -46,6 +43,21 @@ internal class ServiceModules(
                 runCatching { module.stop() }
             }
             throw error
+        }
+    }
+
+    @Synchronized
+    fun setForeground(enabled: Boolean) {
+        foreground = enabled
+        val currentScope = scope
+        if (currentScope == null) { start(); return }
+        if (enabled && modules.isEmpty()) {
+            val notification = NotificationModule(service, currentScope)
+            notification.start()
+            modules = listOf(notification)
+        } else if (!enabled && modules.isNotEmpty()) {
+            modules.asReversed().forEach { it.stop() }
+            modules = emptyList()
         }
     }
 

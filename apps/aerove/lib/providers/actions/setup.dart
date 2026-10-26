@@ -426,11 +426,11 @@ class SetupAction extends _$SetupAction {
       if (!_isCurrent(request)) {
         return true;
       }
-      if (request.running && ref.read(suspendProvider)) {
-        return true;
-      }
       if (ref.read(safeModeProvider)) {
         return true;
+      }
+      if (request.running && ref.read(suspendProvider)) {
+        return _parkListening();
       }
       if (adopt != null) {
         return _adoptListening(adopt);
@@ -442,10 +442,18 @@ class SetupAction extends _$SetupAction {
   Future<bool> _adoptListening(ServiceRunTime runTime) async {
     final vpnOptions =
         runTime.vpnOptions ?? await ref.read(vpnOptionsProvider.future);
-    final answered = await adoptCoreRunning();
+    final answered = runTime.parked
+        ? await setCoreRunning(true)
+        : await adoptCoreRunning();
     ref.read(runningVpnOptionsProvider.notifier).value = answered
         ? vpnOptions
         : null;
+    return answered;
+  }
+
+  Future<bool> _parkListening() async {
+    final answered = await setCoreParked();
+    if (answered) ref.read(runningVpnOptionsProvider.notifier).value = null;
     return answered;
   }
 
@@ -470,7 +478,11 @@ class SetupAction extends _$SetupAction {
         if (!ref.read(isStartProvider) || ref.read(safeModeProvider)) {
           return;
         }
-        await _setListening(!ref.read(suspendProvider));
+        if (ref.read(suspendProvider)) {
+          await _parkListening();
+        } else {
+          await _setListening(true);
+        }
       });
     });
   }
@@ -496,6 +508,9 @@ class SetupAction extends _$SetupAction {
   Future<void> updateConfigDebounce() async {
     debouncer.call(FunctionTag.updateConfig, updateConfig);
   }
+
+  @protected
+  Future<bool> setCoreParked() => _core.parkListener();
 
   @protected
   Future<bool> setCoreRunning(bool running) {

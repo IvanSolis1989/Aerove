@@ -113,6 +113,7 @@ class VpnService : SystemVpnService(), ManagedService {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Android starts always-on VPN through this callback instead of FlClash's bound-service
         // path. Notify the app layer so it can restore Core and fully initialize the VPN service.
+        modules.setForeground(true)
         notifyVpnStartRequested()
         return super.onStartCommand(intent, flags, startId)
     }
@@ -257,12 +258,22 @@ class VpnService : SystemVpnService(), ManagedService {
 
     override fun start() {
         try {
-            modules.start()
+            modules.setForeground(true)
             handleStart(requireNotNull(ServiceConfig.vpnOptions) { "VPN options are missing" })
+            modules.setForeground(false)
         } catch (error: Exception) {
             stop()
             throw error
         }
+    }
+
+    override fun settleNotification() = synchronized(tunLock) {
+        modules.setForeground(!tunRunning)
+    }
+
+    override fun park() {
+        modules.setForeground(true)
+        stopTun()
     }
 
     override fun stop() {

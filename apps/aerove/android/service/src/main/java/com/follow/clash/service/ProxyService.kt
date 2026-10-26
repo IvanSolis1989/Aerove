@@ -45,6 +45,10 @@ class ProxyService : Service(), ManagedService {
         }
     }
 
+    override fun settleNotification() = modules.setForeground(true)
+
+    override fun park() = start()
+
     override fun stop() {
         try {
             cleanup()

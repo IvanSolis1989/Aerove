@@ -19,6 +19,7 @@ data class SharedState(
 data class RunTime(
     val startedAt: Long,
     val vpnOptions: VpnOptions,
+    val parked: Boolean = false,
 )
 
 data class SetupParams(
