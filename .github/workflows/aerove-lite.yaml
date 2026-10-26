@@ -603,7 +603,7 @@ jobs:
   standard_original_reference:
     name: Std 原包 Android 取图诊断（不构建）
     continue-on-error: ${{ !inputs.diagnostic_target || inputs.diagnostic_target == 'none' }}
-    if: ${{ ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) || (github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both')) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
