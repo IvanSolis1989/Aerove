@@ -1,7 +1,13 @@
 use std::{fs, path::PathBuf, sync::atomic::{AtomicU64, Ordering}};
-use aerove_meow_core::config_validation::{self as validation, dump_rule_set, inspect_rule_set, validate_resource};
+use aerove_meow_core::config_validation::{self as validation, dump_rule_set, inspect_rule_set, validate_resource as validate_resource_future};
 #[path="support/resource_roots.rs"] mod preflight_roots;
 #[path="support/upstream_mrs.rs"] mod upstream_mrs;
+
+// Keep the offline converter's concrete future out of each Tokio test's layout query.
+fn validate_resource<'a>(kind: &'a str, path: &'a std::path::Path, behavior: &'a str, format: &'a str)
+    -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(),String>>+Send+'a>> {
+    Box::pin(validate_resource_future(kind, path, behavior, format))
+}
 
 struct Fixture(PathBuf);
 impl Fixture {
