@@ -13,6 +13,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
+import 'package:fl_clash/widgets/viewport_visibility.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -101,19 +102,35 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
   final _memoryStateNotifier = ValueNotifier<MemorySnapshot>(
     const MemorySnapshot(),
   );
+
+  /// Out of view until measured, so a card below the fold never reads.
+  final _inViewport = ValueNotifier(false);
   var _detailOpen = false;
 
   @override
   Duration get pollInterval => const Duration(seconds: 2);
 
   @override
+  bool get gatesOnCurrentRoute => true;
+
+  @override
   bool get canPoll => super.canPoll && !_detailOpen;
 
   @override
+  void initState() {
+    super.initState();
+    setViewportVisible(false);
+    _inViewport.addListener(_followViewport);
+  }
+
+  @override
   void dispose() {
+    _inViewport.dispose();
     _memoryStateNotifier.dispose();
     super.dispose();
   }
+
+  void _followViewport() => setViewportVisible(_inViewport.value);
 
   @override
   Future<void> poll(PollGuard isCurrent) async {
@@ -158,7 +175,7 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
         builder: (_) => _MemorySummary(memory: memory, density: density),
       ),
     );
-    return DashboardCard(
+    final card = DashboardCard(
       semanticLabel: appLocalizations.memoryInfo,
       onTap: mobile ? _showDetail : null,
       child: Column(
@@ -194,6 +211,7 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
         ],
       ),
     );
+    return ViewportVisibility(visible: _inViewport, child: card);
   }
 }
 

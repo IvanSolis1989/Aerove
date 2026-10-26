@@ -12,6 +12,8 @@ mixin ActivePollingMixin<T extends StatefulWidget>
   Timer? _pollTimer;
   bool _isForeground = false;
   bool _isPageActive = true;
+  bool _isRouteCurrent = true;
+  bool _isInViewport = true;
   bool _isPolling = false;
   int _pollGeneration = 0;
 
@@ -19,9 +21,17 @@ mixin ActivePollingMixin<T extends StatefulWidget>
 
   bool get pollOnStart => true;
 
+  /// Sheets leave the page below ticking; only the route shows one covers it.
+  bool get gatesOnCurrentRoute => false;
+
   Future<void> poll(PollGuard isCurrent);
 
-  bool get canPoll => mounted && _isForeground && _isPageActive;
+  bool get canPoll =>
+      mounted &&
+      _isForeground &&
+      _isPageActive &&
+      _isRouteCurrent &&
+      _isInViewport;
 
   @override
   void initState() {
@@ -45,11 +55,24 @@ mixin ActivePollingMixin<T extends StatefulWidget>
     final isPageActive =
         PageActivityScope.isActiveOf(context) &&
         TickerMode.valuesOf(context).enabled;
-    if (_isPageActive == isPageActive) {
+    final isRouteCurrent =
+        !gatesOnCurrentRoute || (ModalRoute.isCurrentOf(context) ?? true);
+    if (_isPageActive == isPageActive && _isRouteCurrent == isRouteCurrent) {
       return;
     }
     _isPageActive = isPageActive;
+    _isRouteCurrent = isRouteCurrent;
     _syncPolling();
+  }
+
+  void setViewportVisible(bool visible) {
+    if (_isInViewport == visible) {
+      return;
+    }
+    _isInViewport = visible;
+    if (mounted) {
+      _syncPolling();
+    }
   }
 
   @override

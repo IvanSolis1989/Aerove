@@ -12,8 +12,10 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
+import 'package:fl_clash/widgets/viewport_visibility.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:material_ui/material_ui.dart';
@@ -159,16 +161,46 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
   late final ServiceStatus _services;
   Set<ServiceTarget> _shown = const {};
   Set<ServiceTarget> _watched = const {};
+  final _everCached = <ServiceTarget>{};
   var _syncScheduled = false;
+  var _active = true;
+  final _inView = ValueNotifier(false);
 
   @override
   void initState() {
     super.initState();
     _services = ref.read(serviceStatusProvider.notifier);
+    _inView.addListener(_scheduleSync);
+    ref.listenManual(appVisibleProvider, (_, visible) {
+      if (!visible) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _followPage();
+      });
+    });
+  }
+
+  // No route gate: the service sheet shows the first four through this watch.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _followPage();
+  }
+
+  /// Lost focus stops the shell's tickers too; letting go would retry failures.
+  void _followPage() {
+    final pageActive = PageActivityScope.isActiveOf(context);
+    final ticking = TickerMode.valuesOf(context).enabled;
+    final active = ref.read(appVisibleProvider)
+        ? pageActive && ticking
+        : _active && pageActive;
+    if (active == _active) return;
+    _active = active;
+    _scheduleSync();
   }
 
   @override
   void dispose() {
+    _inView.dispose();
     for (final target in _watched) {
       _services.unwatch(target);
     }
@@ -178,20 +210,32 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
   void _watchShown(Set<ServiceTarget> shown) {
     if (setEquals(shown, _shown)) return;
     _shown = shown;
+    _scheduleSync();
+  }
+
+  void _scheduleSync() {
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.postFrameCallbacks) {
+      _sync();
+      return;
+    }
     if (_syncScheduled) return;
     _syncScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _syncScheduled = false;
-      if (!mounted) return;
-      final shown = _shown;
-      for (final target in shown.difference(_watched)) {
-        _services.watch(target);
-      }
-      for (final target in _watched.difference(shown)) {
-        _services.unwatch(target);
-      }
-      _watched = shown;
+      if (mounted) _sync();
     });
+  }
+
+  void _sync() {
+    final wanted = _active && _inView.value ? _shown : const <ServiceTarget>{};
+    for (final target in wanted.difference(_watched)) {
+      _services.watch(target);
+    }
+    for (final target in _watched.difference(wanted)) {
+      _services.unwatch(target);
+    }
+    _watched = wanted;
   }
 
   Future<void> _openSheet() => showServiceStatusSheet(context);
@@ -204,18 +248,37 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
         .toList();
     _watchShown(shown.toSet());
     final state = ref.watch(serviceStatusProvider);
+    _everCached.retainAll(shown);
+    // Had the card kept watching, a forgotten service would be checking now.
+    bool forgotten(ServiceTarget target) {
+      if (state.entryOf(target).phase != ProbePhase.empty) {
+        _everCached.add(target);
+        return false;
+      }
+      return _everCached.contains(target);
+    }
+
     final services = [
       for (final target in shown)
         _ServiceView(
           target,
           state.entryOf(target),
-          shownPhase(state.entryOf(target)),
+          forgotten(target)
+              ? ProbePhase.probing
+              : shownPhase(state.entryOf(target)),
         ),
     ];
-    final loading = shown.any(state.isLoading);
-    return InteractionPaced(
-      revision: Object.hashAll([for (final service in services) service.check]),
-      builder: (context) => _card(context, shown, services, loading: loading),
+    final loading = shown.any(
+      (target) => state.isLoading(target) || forgotten(target),
+    );
+    return ViewportVisibility(
+      visible: _inView,
+      child: InteractionPaced(
+        revision: Object.hashAll([
+          for (final service in services) service.check,
+        ]),
+        builder: (context) => _card(context, shown, services, loading: loading),
+      ),
     );
   }
 

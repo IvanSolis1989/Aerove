@@ -14,7 +14,11 @@ extension DateTimeExtension on DateTime {
     return true;
   }
 
-  String getLastUpdateTimeDesc(BuildContext context, {bool compact = false}) {
+  String getLastUpdateTimeDesc(
+    BuildContext context, {
+    bool compact = false,
+    DateTime? now,
+  }) {
     final appLocalizations = context.appLocalizations;
     if (year <= 1970) {
       return appLocalizations.unknown;
@@ -34,7 +38,7 @@ extension DateTimeExtension on DateTime {
             appLocalizations.hoursAgo,
             appLocalizations.minutesAgo,
           );
-    final currentDateTime = DateTime.now();
+    final currentDateTime = now ?? DateTime.now();
     final difference = currentDateTime.difference(this);
     final days = difference.inDays;
     if (days >= 365) {
