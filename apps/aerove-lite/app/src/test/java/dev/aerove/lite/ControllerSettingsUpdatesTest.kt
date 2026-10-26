@@ -181,7 +181,7 @@ class ControllerSettingsUpdatesTest {
             assertFalse(requiresCoreReconfiguration(baseline, changed))
         }
 
-        assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(mode = ProxyMode.Direct)))
+        assertFalse(requiresCoreReconfiguration(baseline, baseline.copy(mode = ProxyMode.Direct)))
         assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(ipv6 = !baseline.ipv6)))
         assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(overrideDns = !baseline.overrideDns)))
         assertTrue(requiresCoreReconfiguration(baseline, baseline.copy(dnsServers = listOf("tls://8.8.8.8:853"))))

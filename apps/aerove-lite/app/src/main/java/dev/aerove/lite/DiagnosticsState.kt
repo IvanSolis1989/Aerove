@@ -9,7 +9,7 @@ data class ServiceCheckView(
     val detail: String? = null,
     val checkedAt: Long,
     val coreEpoch: ULong? = null,
-    val picksVersion: ULong? = null,
+    val routeVersion: ULong? = null,
 )
 
 data class DiagnosticsState(

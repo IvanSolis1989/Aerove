@@ -55,4 +55,33 @@ class CoalescedSourceApplyTest {
         } finally { release.complete(Unit); owner.quiesce(); owner.close(); scope.cancel() }
     }
 
+    @Test fun hiddenDemandIsRetainedAndResumeJoinsOldIoBeforeApplyingTheLatestIntent() = runBlocking<Unit> {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default)
+        val entered=CompletableDeferred<Unit>();val release=CompletableDeferred<Unit>();val calls=AtomicInteger()
+        val owner=CoalescedSourceApply(scope,{true},{ current ->
+            val call=calls.incrementAndGet()
+            if(call==1) withContext(NonCancellable){entered.complete(Unit);release.await()}
+            check(current());ResourceApplyReceipt("generation-$call")
+        },{throw AssertionError(it)})
+        try {
+            val receipt=async{owner.requestAndAwait()};withTimeout(3000){entered.await()}
+            owner.foreground(false);owner.request();delay(100);assertFalse(receipt.isCompleted);assertEquals(1,calls.get())
+            owner.foreground(true);delay(100);assertEquals(1,calls.get())
+            release.complete(Unit);assertEquals("generation-2",withTimeout(3000){receipt.await()}.appliedGeneration)
+            assertEquals(2,calls.get());delay(650);assertEquals(2,calls.get())
+        }finally{release.complete(Unit);owner.quiesce();owner.close();scope.cancel()}
+    }
+    @Test fun automaticFailureRetriesOnlyOnRealForegroundResumeAndClosedScopeRejectsAwaiters() = runBlocking<Unit> {
+        val scope=CoroutineScope(SupervisorJob()+Dispatchers.Default);val calls=AtomicInteger();val failed=CompletableDeferred<Unit>()
+        val owner=CoalescedSourceApply(scope,{true},{if(calls.incrementAndGet()==1)error("injected");ResourceApplyReceipt("latest")},{failed.complete(Unit)})
+        try {
+            owner.request();withTimeout(3000){failed.await()};delay(650);assertEquals(1,calls.get())
+            owner.foreground(false);owner.foreground(true)
+            withTimeout(3000){while(calls.get()!=2)delay(5)};delay(100);assertEquals(2,calls.get())
+        }finally{owner.quiesce();owner.close();scope.cancel()}
+        val dead=CoroutineScope(Job().apply{cancel()})
+        val rejected=CoalescedSourceApply(dead,{true},{error("must not run")},{throw AssertionError(it)})
+        try{assertTrue(runCatching{withTimeout(1000){rejected.requestAndAwait()}}.exceptionOrNull() is CancellationException)}finally{rejected.close()}
+    }
+
 }

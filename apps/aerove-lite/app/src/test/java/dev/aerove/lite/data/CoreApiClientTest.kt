@@ -79,7 +79,7 @@ class CoreApiClientTest {
 
     @Test fun outboundProbeDecodesTheWinningActualChainWithoutAnotherRequest() = runBlocking<Unit> {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("""{"ip":"1.1.1.1","countryCode":"AU","organization":null,"kind":"unknown","chains":["Node / HK","Auto","Pick"]}"""))
+            server.enqueue(MockResponse().setBody("""{"ip":"1.1.1.1","countryCode":"AU","organization":null,"kind":"unknown","chains":["Node / HK","Auto","Pick"],"coreEpoch":"7","routeVersion":"12","hits":[{"host":"origin.example:443","exit":"actual-exit"}]}"""))
             client(server).use { api ->
                 val answer = api.outboundProbe()
                 assertEquals("1.1.1.1", answer.identity.address)
@@ -208,7 +208,7 @@ class CoreApiClientTest {
                 override fun dispatch(request: RecordedRequest): MockResponse =
                     MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
                         override fun onOpen(webSocket: WebSocket, response: Response) {
-                            webSocket.send("""{"type":"groupsChanged","revision":0}""")
+                            webSocket.send("""{"type":"groupsChanged","revision":0,"routeVersion":0}""")
                             webSocket.send("""{"type":"traffic","up":7,"down":9,"uploadTotal":123456,"downloadTotal":654321}""")
                         }
                     })
@@ -249,7 +249,7 @@ class CoreApiClientTest {
                         .filterIsInstance<CoreTelemetry.GroupsChanged>().first()
                 }
                 withTimeout(5000) { groupsReady.await() }
-                socket.send("""{"type":"groupsChanged","revision":18446744073709551615}""")
+                socket.send("""{"type":"groupsChanged","revision":18446744073709551615,"routeVersion":18446744073709551615}""")
                 socket.send("""{"type":"traffic","up":5,"down":6,"uploadTotal":7,"downloadTotal":8}""")
                 assertEquals(ULong.MAX_VALUE, withTimeout(5000) { groups.await() }.revision)
                 assertEquals(7L, withTimeout(5000) { traffic.await() }.last().upload)

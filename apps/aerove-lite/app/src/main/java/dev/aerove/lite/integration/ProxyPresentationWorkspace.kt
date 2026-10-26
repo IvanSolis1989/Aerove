@@ -23,9 +23,10 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
     private val preferences: () -> ProxyPresentationPreferences,
     private val saveUi: suspend (String, String?, Set<String>) -> ProfileSummary,
     private val onSavedUi: (ProfileSummary) -> Unit,
-    private val canWork: () -> Boolean) {
+    private val canWork: () -> Boolean,
+    private val onDelayPending: (Boolean) -> Unit = {}) {
     private data class Binding(val key: Any, val profileId: String, val client: CoreApiClient,
-        val read: suspend () -> String, val current: () -> Boolean)
+        val source: Any, val read: suspend () -> String, val current: () -> Boolean)
     private data class UiIntent(val id: String, val group: String?, val unfolded: Set<String>)
     private val mutable = MutableStateFlow(ProxyPresentationState())
     val state = mutable.asStateFlow()
@@ -36,8 +37,11 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
     private var saving: UiIntent? = null
     private var uiJob: Job? = null
     private var binding: Binding? = null
-    private var loadedBinding: Binding? = null
+    private data class SourceCache(val source: Any, val profileId: String,
+        val urls: Map<String, String>, val icons: Map<String, String>)
+    private var sourceCache: SourceCache? = null
     private var owner: ProxyPresentationDelayTests? = null
+    private val retiringDelays = mutableListOf<Job>()
     private var bindJob: Job? = null
     private var observeJob: Job? = null
     private var groups = emptyList<ProxyGroup>()
@@ -63,12 +67,16 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
         if (changed) { owner?.cancel(true); restartBinding() }
     }
     fun groups(value: List<ProxyGroup>) { groups = value }
-    fun bind(key: Any?, profileId: String?, client: CoreApiClient?, read: (suspend () -> String)?, current: () -> Boolean) = synchronized(gate) {
+    fun bind(key: Any?, profileId: String?, client: CoreApiClient?, read: (suspend () -> String)?, current: () -> Boolean) =
+        bind(key, profileId, client, key, read, current)
+    fun bind(key: Any?, profileId: String?, client: CoreApiClient?, source: Any?, read: (suspend () -> String)?, current: () -> Boolean) = synchronized(gate) {
         if (binding?.key === key && binding?.client === client) return@synchronized
-        owner?.close(); owner = null; loadedBinding = null; bindJob?.cancel(); observeJob?.cancel()
+        owner?.let { retiringDelays += it.retire() }; owner = null; onDelayPending(false); bindJob?.cancel(); observeJob?.cancel()
         coreEpoch = null
-        binding = if (key == null || profileId == null || client == null || read == null) null else Binding(key, profileId, client, read, current)
-        mutable.update { it.copy(groupUrls = emptyMap(), groupIcons = emptyMap(), delay = ProxyDelayProgress(), ready = false, failed = false) }
+        binding = if (key == null || profileId == null || client == null || source == null || read == null) null else Binding(key, profileId, client, source, read, current)
+        val cached = sourceCache?.takeIf { it.source === source && it.profileId == profileId }
+        mutable.update { it.copy(groupUrls = cached?.urls.orEmpty(), groupIcons = cached?.icons.orEmpty(),
+            delay = ProxyDelayProgress(), ready = cached != null, failed = false) }
         restartBinding()
     }
     fun routeEpoch(key: Any, epoch: ULong) = synchronized(gate) {
@@ -82,24 +90,28 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
     }
     fun active(value: Boolean) = synchronized(gate) {
         active = value
-        if (!value) { owner?.cancel(); bindJob?.cancel(); mutable.update { it.copy(ready = false) } }
-        else restartBinding()
+        if (!value) bindJob?.cancel()
+        else { owner?.let { queue -> mutable.update { it.copy(delay = queue.state.value) } }; restartBinding() }
     }
+    fun foreground(value: Boolean) = synchronized(gate) { if (!value) owner?.cancel() }
     private fun current(value: Binding): Boolean = !closed && !paused && active && canWork() &&
         binding === value && value.current() && value.profileId == state.value.profileId
     private fun restartBinding() {
         val value = binding ?: return
         if (!current(value) || bindJob?.isActive == true) return
         if (owner == null) {
-            val queue = ProxyPresentationDelayTests(value.client, scope)
+            retiringDelays.removeAll { it.isCompleted }
+            val retiring = retiringDelays.toList()
+            val queue = ProxyPresentationDelayTests(value.client, scope) { retiring.joinAll() }
             owner = queue
             observeJob = start { queue.state.collect { delay -> synchronized(gate) {
-                if (binding === value && !paused && !closed && delay == queue.state.value)
+                if (binding === value && !closed) onDelayPending(delay.pending.isNotEmpty())
+                if (active && binding === value && !paused && !closed && delay == queue.state.value)
                     mutable.update { it.copy(delay = delay) }
             } } }
         }
-        if (loadedBinding === value) {
-            mutable.update { it.copy(ready = true, failed = false) }
+        sourceCache?.takeIf { it.source === value.source && it.profileId == value.profileId }?.let { cached ->
+            mutable.update { it.copy(groupUrls = cached.urls, groupIcons = cached.icons, ready = true, failed = false) }
             return
         }
         bindJob = start {
@@ -114,7 +126,7 @@ class ProxyPresentationWorkspace(private val scope: CoroutineScope,
                     field("url") to field("icon")
                 }
                 synchronized(gate) { if (current(value)) {
-                    loadedBinding = value
+                    sourceCache = SourceCache(value.source, value.profileId, source.first, source.second)
                     mutable.update { it.copy(groupUrls = source.first, groupIcons = source.second, ready = true, failed = false) }
                 } }
             } catch (cancelled: CancellationException) { throw cancelled }

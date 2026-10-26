@@ -149,6 +149,7 @@ internal fun ProxyGroupsPresentation(
     locateRequest: Int = 0,
     pendingTargets: Set<ProxyDelayTarget> = emptySet(), runningTargets: Set<ProxyDelayTarget> = emptySet(),
 ) {
+    val byName = remember(groups) { groups.associateBy { it.name } }
     val projected = remember(groups, preferences, query, delays, groupUrls) {
         projectProxyGroups(groups, preferences, query, delays, groupUrls)
     }
@@ -160,7 +161,7 @@ internal fun ProxyGroupsPresentation(
     }
     BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
         fun phase(group: ProxyGroup, node: ProxyNode): Int {
-            val key = resolveProxyDelayTarget(node.name, groups, groupUrls, groupUrls[group.name] ?: preferences.testUrl)
+            val key = resolveProxyDelayTarget(node.name, byName, groupUrls, groupUrls[group.name] ?: preferences.testUrl)
             return when (key) { in runningTargets -> 2; in pendingTargets -> 1; else -> 0 }
         }
         val columns = proxyPresentationColumns((maxWidth - 32.dp).value, preferences.layout)

@@ -32,7 +32,8 @@ class ServiceProbeTest {
         chains: List<String> = listOf("HK / Tokyo", "Auto", "Pick"),
     ): String = JSONObject().put("name", target.id).put("status", status.id).put("region", "HK")
         .put("delay", 37).put("chains", JSONArray(chains)).put("checked-at", checkedAt)
-        .put("core-epoch", 7).put("picks-version", 12).toString()
+        .put("core-epoch", 7).put("route-version", 12)
+        .put("hits", JSONArray().put(JSONObject().put("host", "service.example:443").put("exit", "actual-exit"))).toString()
 
     private fun body(vararg rows: String): String = rows.joinToString(",", "[", "]")
 
@@ -65,7 +66,7 @@ class ServiceProbeTest {
                     assertEquals("HK / Tokyo", it.node)
                     assertEquals(checkedAt, it.checkedAtMillis)
                     assertEquals(7uL, it.coreEpoch)
-                    assertEquals(12uL, it.picksVersion)
+                    assertEquals(12uL, it.routeVersion)
                 }
                 val request = server.takeRequest(3, TimeUnit.SECONDS)!!
                 assertEquals("POST", request.method)
@@ -187,39 +188,39 @@ class ServiceProbeTest {
         val cases = listOf("9007199254740993", "9223372036854775808", "18446744073709551615")
         cases.forEach { literal ->
             val raw = row().replace("\"core-epoch\":7", "\"core-epoch\":$literal")
-                .replace("\"picks-version\":12", "\"picks-version\":$literal")
+                .replace("\"route-version\":12", "\"route-version\":$literal")
             val result = decodeServiceChecks(body(raw), listOf(ServiceTarget.Google)).single()
             assertEquals(literal.toULong(), result.coreEpoch)
-            assertEquals(literal.toULong(), result.picksVersion)
+            assertEquals(literal.toULong(), result.routeVersion)
         }
-        val raw = row(chains = listOf("node \"core-epoch\":1, \"picks-version\":2", "Pick"))
+        val raw = row(chains = listOf("node \"core-epoch\":1, \"route-version\":2", "Pick"))
         val result = decodeServiceChecks(body(raw), listOf(ServiceTarget.Google)).single()
         assertEquals(7uL, result.coreEpoch)
-        assertEquals(12uL, result.picksVersion)
-        assertEquals("node \"core-epoch\":1, \"picks-version\":2", result.node)
+        assertEquals(12uL, result.routeVersion)
+        assertEquals("node \"core-epoch\":1, \"route-version\":2", result.node)
     }
 
     @Test fun zeroDelayAndEmptyFailureChainAreCoreDataWithoutInventedValues() {
         val raw = JSONObject(row(status = ServiceProbeStatus.Timeout, chains = emptyList()))
-            .put("region", "").put("delay", 0).put("picks-version", 0).toString()
+            .put("region", "").put("delay", 0).put("route-version", 0).toString()
         val result = decodeServiceChecks(body(raw), listOf(ServiceTarget.Google)).single()
         assertEquals(ServiceProbeStatus.Timeout, result.status)
         assertNull(result.region)
         assertNull(result.node)
         assertEquals(0L, result.delayMillis)
-        assertEquals(0uL, result.picksVersion)
+        assertEquals(0uL, result.routeVersion)
         assertEquals(checkedAt, result.checkedAtMillis)
     }
 
     @Test fun malformedCountersSchemasAndServiceRowsFailInsteadOfBecomingResults() = runBlocking<Unit> {
         val base = row()
         val invalid = mutableListOf("", "{}", "[]", "[null]", "[$base,]", "[$base] trailing", body(base, base))
-        listOf("name", "status", "region", "delay", "chains", "checked-at", "core-epoch", "picks-version").forEach { field ->
+        listOf("name", "status", "region", "delay", "chains", "checked-at", "core-epoch", "route-version", "hits").forEach { field ->
             invalid += body(JSONObject(base).also { it.remove(field) }.toString())
         }
         listOf("-1", "1.0", "1e0", "\"1\"", "true", "null", "01", "18446744073709551616").forEach { value ->
             invalid += body(base.replace("\"core-epoch\":7", "\"core-epoch\":$value"))
-            invalid += body(base.replace("\"picks-version\":12", "\"picks-version\":$value"))
+            invalid += body(base.replace("\"route-version\":12", "\"route-version\":$value"))
         }
         invalid += listOf(
             body(base.replace("\"core-epoch\":7", "\"core-epoch\":0")),
@@ -255,7 +256,7 @@ class ServiceProbeTest {
         val targets = listOf(ServiceTarget.Google, ServiceTarget.GitHub)
         val first = row(targets[0])
         val second = row(targets[1])
-        listOf(body(second, first), body(first), body(first, second.replace("\"picks-version\":12", "\"picks-version\":13")),
+        listOf(body(second, first), body(first), body(first, second.replace("\"route-version\":12", "\"route-version\":13")),
             body(first, second.replace("\"core-epoch\":7", "\"core-epoch\":8"))).forEach { response ->
             assertThrows(IOException::class.java) { decodeServiceChecks(response, targets) }
         }

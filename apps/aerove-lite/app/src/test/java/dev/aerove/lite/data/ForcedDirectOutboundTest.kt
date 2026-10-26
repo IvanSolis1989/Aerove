@@ -10,7 +10,7 @@ import org.junit.Test
 
 class ForcedDirectOutboundTest {
     private fun response(direct: String = "true", epoch: String = "\"18446744073709551615\"") =
-        """{"ip":"203.0.113.8","countryCode":"US","organization":null,"kind":"direct","chains":["DIRECT"],"direct":$direct,"coreEpoch":$epoch}"""
+        """{"ip":"203.0.113.8","countryCode":"US","organization":null,"kind":"direct","chains":["DIRECT"],"direct":$direct,"coreEpoch":$epoch,"routeVersion":"18446744073709551615","hits":[{"host":"origin.example:443","proxy":"DIRECT","exit":"direct-origin"}]}"""
 
     @Test fun parkedProbeRequestsNativeDirectAndConsumesActualRouteReceipt() = runBlocking<Unit> {
         MockWebServer().use { server ->
@@ -20,6 +20,9 @@ class ForcedDirectOutboundTest {
                 val actual = client.outboundProbe(forceDirect = true)
                 assertEquals(listOf("DIRECT"), actual.chains)
                 assertEquals("direct", actual.identity.kind)
+                assertEquals(ULong.MAX_VALUE,actual.coreEpoch)
+                assertEquals(ULong.MAX_VALUE,actual.routeVersion)
+                assertEquals(listOf(RouteHit("origin.example:443","DIRECT","direct-origin")),actual.hits)
             }
             val request = server.takeRequest(1, TimeUnit.SECONDS)!!
             assertEquals("/aerove/outbound?forceDirect=true", request.path)

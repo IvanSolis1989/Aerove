@@ -123,7 +123,7 @@ class LiteSettingsStoreTest {
         )
         val saved: LiteSettings = store.save(input)
         assertEquals(listOf(0xFF123456L, 0xFF112233L, 0xFF000000L), saved.auroraColors)
-        assertEquals(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.MemoryInfo), saved.dashboardWidgets)
+        assertEquals(listOf(DashboardWidget.MemoryInfo), saved.dashboardWidgets)
         assertEquals(input.normalized(), saved)
         assertEquals(saved, LiteSettingsStore(temporary.root).read())
         assertEquals(4, input.auroraColors.size)
@@ -131,7 +131,7 @@ class LiteSettingsStoreTest {
         val json = JSONObject(File(temporary.root, "settings/settings.json").readText())
         assertEquals(1, json.getInt("schema"))
         assertEquals("soft", json.getString("colorStyle"))
-        assertEquals("[\"currentOutbound\",\"memoryInfo\"]", json.getJSONArray("dashboardWidgets").toString())
+        assertEquals("[\"memoryInfo\"]", json.getJSONArray("dashboardWidgets").toString())
         assertEquals(0xFF123456L, json.getJSONArray("auroraColors").getLong(0))
     }
 
@@ -218,12 +218,12 @@ class LiteSettingsStoreTest {
     @Test fun dashboardJsonKeepsNonStringEntriesUnknownUntilFullMigrationIsComplete() = runBlocking<Unit> {
         val store = LiteSettingsStore(temporary.root)
         val cases = listOf(
-            "[]" to listOf(DashboardWidget.CurrentOutbound),
+            "[]" to emptyList<DashboardWidget>(),
             "[\"runTime\",null]" to LiteSettings().dashboardWidgets,
-            "[\"networkTakeover\",42]" to listOf(DashboardWidget.CurrentOutbound),
-            "[\"networkSpeed\",null,\"currentOutbound\",false]" to listOf(DashboardWidget.NetworkSpeed, DashboardWidget.CurrentOutbound),
+            "[\"networkTakeover\",42]" to emptyList<DashboardWidget>(),
+            "[\"networkSpeed\",null,\"currentOutbound\",false]" to listOf(DashboardWidget.CurrentOutbound),
             "[\"networkSpeed\",\"systemProxyButton\",\"tunButton\",\"outboundMode\",\"networkDetection\",\"trafficUsage\",\"intranetIp\",42]" to listOf(
-                DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed, DashboardWidget.OutboundMode, DashboardWidget.IntranetIp,
+                DashboardWidget.OutboundMode, DashboardWidget.IntranetIp,
             ),
         )
         cases.forEach { (encoded, expected) ->
@@ -448,4 +448,18 @@ class LiteSettingsStoreTest {
             observation.cancelAndJoin()
         }
     }
+    @Test fun legacySpeedIsRemovedOnReadAndWriteWithoutRestoringHiddenStatusOrChangingOrder() = runBlocking<Unit> {
+        val store=LiteSettingsStore(temporary.root)
+        store.save(LiteSettings())
+        val file=File(temporary.root,"settings/settings.json")
+        file.writeText(JSONObject(file.readText()).put("dashboardWidgets",JSONArray(listOf("memoryInfo","networkSpeed","profiles","intranetIp"))).toString())
+        val restored=store.read()
+        assertEquals(listOf(DashboardWidget.MemoryInfo,DashboardWidget.Profiles,DashboardWidget.IntranetIp),restored.dashboardWidgets)
+        val saved=store.save(restored.copy(dashboardWidgets=restored.dashboardWidgets+DashboardWidget.NetworkSpeed))
+        assertEquals(restored.dashboardWidgets,saved.dashboardWidgets)
+        assertEquals(restored.dashboardWidgets,LiteSettingsStore(temporary.root).read().dashboardWidgets)
+        assertFalse(JSONObject(file.readText()).getJSONArray("dashboardWidgets").toString().contains("networkSpeed"))
+        assertFalse(saved.dashboardWidgets.contains(DashboardWidget.CurrentOutbound))
+    }
+
 }

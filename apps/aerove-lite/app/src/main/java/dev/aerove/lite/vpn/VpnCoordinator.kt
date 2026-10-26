@@ -28,9 +28,14 @@ class CoreEndpoint @JvmOverloads constructor(
     val port: Int,
     val secret: String,
     val configuration: AppliedConfigSnapshot? = null,
-    val profileRevision: String? = null,
-    val resourceGeneration: String? = null,
+    profileRevision: String? = null,
+    resourceGeneration: String? = null,
+    private val resourceLineage: (() -> Pair<String?, String?>)? = null,
 ) {
+    private val initialProfileRevision = profileRevision
+    private val initialResourceGeneration = resourceGeneration
+    val profileRevision: String? get() = resourceLineage?.invoke()?.first ?: initialProfileRevision
+    val resourceGeneration: String? get() = resourceLineage?.invoke()?.second ?: initialResourceGeneration
     override fun toString(): String = "CoreEndpoint(127.0.0.1:$port, secret=<redacted>)"
 }
 data class VpnSnapshot(
@@ -60,6 +65,7 @@ interface TunnelSession {
     suspend fun awaitReady()
     suspend fun awaitExit()
     suspend fun stop()
+    suspend fun reloadRules(next: dev.aerove.lite.data.PreparedProfile, current: () -> Boolean): Boolean = false
     val builderReservedFakeIpRanges: List<String> get() = emptyList()
     val coreReservedFakeIpRanges: List<String> get() = emptyList()
     val builderDnsEnabled: Boolean? get() = null
@@ -88,14 +94,14 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     private val onSessionReady: (VpnSnapshot) -> Unit = {},
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
-    private data class Request(val generation: Long, val plan: VpnPlan?, val internalReconnect: Boolean = false, val startedAtNanos: Long = 0)
+    private data class Request(val generation: Long, val plan: VpnPlan?, val internalReconnect: Boolean = false, val startedAtNanos: Long = 0, val failureReason: String? = null)
     private val generation = AtomicLong()
     private val requests = MutableStateFlow(Request(0, null))
     private val mutableState = MutableStateFlow(VpnSnapshot())
     val state = mutableState.asStateFlow()
     private var unconfirmedStop: Throwable? = null
     private var closed = false
-    private data class OwnedSession(val generation: Long, val session: TunnelSession)
+    private data class OwnedSession(val generation: Long, val session: TunnelSession, val joined: kotlinx.coroutines.CompletableDeferred<Unit> = kotlinx.coroutines.CompletableDeferred())
     private var activeSession: OwnedSession? = null
     private val policyLock = Mutex()
     @Volatile private var desiredListening = true
@@ -103,11 +109,12 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     private val worker = scope.launch {
         requests.collectLatest { request ->
             var session: TunnelSession? = null
+            var ownership: OwnedSession? = null
             try {
                 if (request.generation != generation.get()) return@collectLatest
                 unconfirmedStop?.let { throw IllegalStateException("Previous core termination was not confirmed", it) }
                 if (request.plan == null) {
-                    publish(request, VpnSnapshot())
+                    publish(request, VpnSnapshot(error = request.failureReason))
                     return@collectLatest
                 }
                 publish(request, VpnSnapshot(VpnPhase.Starting, runningSinceNanos = request.startedAtNanos))
@@ -122,8 +129,10 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                 running.awaitReady()
                 if (running is ListenerPolicySession) latestSavedSettings()?.let { running.configurePolicies(it) }
                 if (running is ListenerPolicySession) latestNetworkDns()?.let { running.configureNetworkDns(it) }
+                val record = OwnedSession(request.generation, running)
+                ownership = record
                 synchronized(this@VpnCoordinator) {
-                    if (request.generation == generation.get()) activeSession = OwnedSession(request.generation, running)
+                    if (request.generation == generation.get()) activeSession = record
                 }
                 val builderSettings = openedPlan.builderSettings()
                 val initialListener = (running as? ListenerPolicySession)?.initialListenerReadback
@@ -150,6 +159,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
             } finally {
                 session?.let { owned ->
                     withContext(NonCancellable) {
+                        var stopFailure: Exception? = null
                         try {
                             try {
                                 beforeSessionStop(owned.endpoint)
@@ -157,11 +167,15 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                                 owned.stop()
                             }
                         } catch (failure: Exception) {
+                            stopFailure = failure
                             unconfirmedStop = failure
                             mutableState.value = VpnSnapshot(VpnPhase.Failed, error = failure.message)
                         }
                         synchronized(this@VpnCoordinator) {
                             if (activeSession?.session === owned) activeSession = null
+                        }
+                        ownership?.joined?.let { joined ->
+                            if (stopFailure == null) joined.complete(Unit) else joined.completeExceptionally(stopFailure!!)
                         }
                     }
                 }
@@ -185,6 +199,23 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         val next = generation.incrementAndGet()
         if (mutableState.value.phase != VpnPhase.Stopped) mutableState.value = VpnSnapshot(VpnPhase.Stopping)
         requests.value = Request(next, null)
+    }
+
+    /** Compensation failure may stop only the captured endpoint and its current session generation. */
+    suspend fun stopIfCurrent(endpoint: CoreEndpoint, reason: String): Boolean {
+        val captured = synchronized(this) {
+            val owned = activeSession
+            if (closed || owned == null || owned.session.endpoint !== endpoint ||
+                owned.generation != generation.get() || mutableState.value.phase != VpnPhase.Running) null
+            else {
+                val next = generation.incrementAndGet()
+                mutableState.value = VpnSnapshot(VpnPhase.Stopping, error = reason)
+                requests.value = Request(next, null, failureReason = reason)
+                owned
+            }
+        } ?: return false
+        kotlinx.coroutines.withTimeout(45_000) { captured.joined.await() }
+        return true
     }
 
     /** Stopped is published only after the previous session's stop/join barrier has completed. */
@@ -288,6 +319,18 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         }
     }
 
+    suspend fun reloadRules(endpoint: CoreEndpoint, next: dev.aerove.lite.data.PreparedProfile,
+        current: () -> Boolean): Boolean = policyLock.withLock {
+        val owned = synchronized(this) { activeSession } ?: return@withLock false
+        fun owns() = !closed && owned.generation == generation.get() && mutableState.value.phase == VpnPhase.Running &&
+            mutableState.value.endpoint === endpoint && current()
+        if (!owns()) return@withLock false
+        val reloaded = owned.session.reloadRules(next, ::owns)
+        if (!reloaded || !owns()) return@withLock false
+        check(endpoint.profileRevision == next.revision && endpoint.resourceGeneration == next.generation) { "Rule reload lineage was not published" }
+        true
+    }
+
     suspend fun configurePolicies(settings: LiteSettings) = policyLock.withLock {
         val owned = synchronized(this) { activeSession } ?: return@withLock
         if (closed || owned.generation != generation.get()) return@withLock
@@ -334,6 +377,13 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     fun recordListenerError(message: String) {
         if (!closed && mutableState.value.phase == VpnPhase.Running)
             mutableState.value = mutableState.value.copy(listenerError = message)
+    }
+
+    @Synchronized
+    fun clearListenerError(expected: String) {
+        val current = mutableState.value
+        if (!closed && current.phase == VpnPhase.Running && current.listenerError == expected)
+            mutableState.value = current.copy(listenerError = null)
     }
 
     @Synchronized

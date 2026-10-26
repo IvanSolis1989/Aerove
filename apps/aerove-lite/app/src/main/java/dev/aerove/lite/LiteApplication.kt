@@ -51,6 +51,39 @@ class LiteApplication : Application() {
     @Synchronized
     internal fun clearMaintenanceStop(owner: Long) { if (maintenanceHooks?.owner == owner) maintenanceHooks = null }
 
+    private data class RuleReloadHook(val owner: Long,
+        val reload: suspend (dev.aerove.lite.vpn.CoreEndpoint, dev.aerove.lite.data.PreparedProfile, () -> Boolean) -> Boolean)
+    private var ruleReloadHook: RuleReloadHook? = null
+    @Synchronized internal fun registerRuleReload(owner: Long,
+        reload: suspend (dev.aerove.lite.vpn.CoreEndpoint, dev.aerove.lite.data.PreparedProfile, () -> Boolean) -> Boolean) {
+        if (this.owner == owner) ruleReloadHook = RuleReloadHook(owner, reload)
+    }
+    @Synchronized internal fun clearRuleReload(owner: Long) { if (ruleReloadHook?.owner == owner) ruleReloadHook = null }
+    suspend fun reloadRules(endpoint: dev.aerove.lite.vpn.CoreEndpoint, next: dev.aerove.lite.data.PreparedProfile,
+        current: () -> Boolean): Boolean {
+        val hook = synchronized(this) { ruleReloadHook?.takeIf { it.owner == owner } } ?: return false
+        fun owns() = !maintenanceActive && vpn.value.endpoint === endpoint && current() && synchronized(this) { ruleReloadHook === hook && owner == hook.owner }
+        if (!owns()) return false
+        return hook.reload(endpoint, next, ::owns) && owns()
+    }
+
+    private data class ModeCleanupHook(val owner: Long,
+        val stop: suspend (dev.aerove.lite.vpn.CoreEndpoint, String) -> Boolean)
+    private var modeCleanupHook: ModeCleanupHook? = null
+    @Synchronized internal fun registerModeCleanup(owner: Long,
+        stop: suspend (dev.aerove.lite.vpn.CoreEndpoint, String) -> Boolean) {
+        if (this.owner == owner) modeCleanupHook = ModeCleanupHook(owner, stop)
+    }
+    @Synchronized internal fun clearModeCleanup(owner: Long) { if (modeCleanupHook?.owner == owner) modeCleanupHook = null }
+    suspend fun stopModeRuntime(endpoint: dev.aerove.lite.vpn.CoreEndpoint, reason: String): Boolean {
+        val hook = synchronized(this) { modeCleanupHook?.takeIf { it.owner == owner } }
+        if (hook == null) {
+            check(vpn.value.endpoint !== endpoint) { "Mode cleanup owner is unavailable" }
+            return false
+        }
+        return hook.stop(endpoint, reason)
+    }
+
     suspend fun stopForMaintenance(): dev.aerove.lite.vpn.MaintenanceRuntimeContext {
         val hooks = synchronized(this) { maintenanceHooks?.takeIf { it.owner == owner } }
         if (hooks != null) return hooks.stop()

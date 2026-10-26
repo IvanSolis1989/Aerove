@@ -183,7 +183,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state by controller.state.collectAsStateWithLifecycle()
             val features: () -> LiteFeatureHost = remember(controller) { { controller } }
-            CompositionLocalProvider(LocalLiteFeatures provides features, LocalClientNotices provides controller.notices) { LiteApp(state, actions) }
+            CompositionLocalProvider(LocalLiteFeatures provides features, LocalClientNotices provides controller.notices) { LiteApp(state, actions, display = controller.display) }
         }
     }
 
@@ -271,7 +271,7 @@ class MainActivity : ComponentActivity() {
         } else if (result.request.settings != null) controller.applyAuthorizedSettings(result.request)
         else {
             pendingStartToken = result.request.token
-            requestNotificationsAndConnect()
+            completeConnect()
         }
     }
 

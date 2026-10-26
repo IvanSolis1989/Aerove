@@ -16,7 +16,8 @@ class ResourceRuntimeApply(private val snapshots: StateFlow<VpnSnapshot>, privat
     private val readPrepared: suspend (String) -> PreparedProfile,
     private val requestReconfigure: suspend () -> Unit,
     private val verifyRoute: suspend (CoreEndpoint) -> Unit,
-    private val isCurrent: () -> Boolean) {
+    private val isCurrent: () -> Boolean,
+    private val reloadRules: suspend (CoreEndpoint, PreparedProfile, () -> Boolean) -> Boolean = { _, _, _ -> false }) {
     suspend fun verifyReceipt(requested: PreparedProfile, receipt: ResourceApplyReceipt): ResourceApplyReceipt {
         currentCoroutineContext().ensureActive()
         check(isCurrent() && selected() == requested.profileId) { "Resource application was superseded" }
@@ -46,6 +47,18 @@ class ResourceRuntimeApply(private val snapshots: StateFlow<VpnSnapshot>, privat
         check(before.phase == VpnPhase.Running && before.endpoint?.configuration?.profileId == requested.profileId) {
             "The selected configuration has no current runtime"
         }
+        val reloaded = try { reloadRules(checkNotNull(before.endpoint), requested) { isCurrent() && selected() == requested.profileId } }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { false } // The session retains failed cleanup; full apply must stop/join it.
+        if (reloaded) {
+            current()
+            verifyRoute(before.endpoint)
+            current()
+            check(snapshots.value.endpoint === before.endpoint && before.endpoint.profileRevision == requested.revision &&
+                before.endpoint.resourceGeneration == requested.generation) { "Rule reload receipt changed before readback" }
+            return@withTimeout ResourceApplyReceipt(requested.generation)
+        }
+        current()
         requestReconfigure()
         val ready = snapshots.first { it.phase == VpnPhase.Failed || it.phase == VpnPhase.Stopped ||
             (it.phase == VpnPhase.Running && it.endpoint !== before.endpoint) }

@@ -52,6 +52,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         suspend fun parkedTun()
         fun isCurrent(): Boolean
         suspend fun verifyControl(endpoint: CoreEndpoint)
+        suspend fun reloadRules(next: PreparedProfile, endpoint: CoreEndpoint, current: () -> Boolean): Boolean = false
         // Must be idempotent. Release FD/file/profile/lifecycle only after confirmed Native join.
         suspend fun release()
     }
@@ -145,7 +146,8 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         private val identityEvents = Channel<Unit>(Channel.CONFLATED)
         private val config get() = lease.configuration
         override val endpoint = CoreEndpoint(config.privateControl.port, config.privateControl.secret,
-            lease.appliedConfiguration, lease.prepared.revision, lease.prepared.generation)
+            lease.appliedConfiguration, lease.prepared.revision, lease.prepared.generation,
+            resourceLineage = { val prepared = lease.prepared; prepared.revision to prepared.generation })
         override val builderDnsEnabled get() = lease.builderDnsEnabled
         override val coreDnsEnabled get() = lease.coreDnsEnabled
         override val builderReservedFakeIpRanges get() = lease.builderReservedFakeIpRanges.toList()
@@ -303,6 +305,12 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                 throw failure
             } finally { identityWorker.cancelAndJoin() }
         }
+        override suspend fun reloadRules(next: PreparedProfile, current: () -> Boolean): Boolean = listenerChanges.withLock {
+            fun owns() = !stopping && lease.isCurrent() && current()
+            if (!owns()) return@withLock false
+            lease.reloadRules(next, endpoint, ::owns)
+        }
+
         override suspend fun stop() = withContext(NonCancellable + Dispatchers.IO) {
             synchronized(gate) { stopping = true }
             listenerIntent.incrementAndGet()

@@ -38,7 +38,6 @@ private val defaultThemeColors = listOf(
 private val defaultAuroraColors = listOf(0xFF65BDD2L, 0xFFC589CAL, 0xFF75CCA8L)
 private val defaultDashboardWidgets = listOf(
     DashboardWidget.CurrentOutbound,
-    DashboardWidget.NetworkSpeed,
     DashboardWidget.OutboundMode,
     DashboardWidget.VpnButton,
     DashboardWidget.IntranetIp,
@@ -57,10 +56,6 @@ private val legacyDashboardWidgets = mapOf(
     "requests" to "connectionStats",
     "dnsQueries" to "connectionStats",
     "trafficUsage" to "networkSpeed",
-)
-private val legacyDefaultDashboardWidgets = setOf(
-    "networkSpeed", "systemProxyButton", "tunButton", "outboundMode",
-    "networkDetection", "trafficUsage", "intranetIp",
 )
 private val retiredDashboardWidgets = setOf("runTime", "overrideDnsButton", "overrideNtpButton")
 
@@ -134,14 +129,12 @@ internal fun normalizeDashboardWidgetValues(names: List<*>?): List<DashboardWidg
     }
     val migrated = when {
         "currentOutbound" in names -> kept
-        names.map { if (it == "outboundModeV2") "outboundMode" else it }.toSet() == legacyDefaultDashboardWidgets ->
-            return defaultDashboardWidgets.toList()
         kept.isEmpty() && !names.all { it is String && it in retiredDashboardWidgets } ->
             return defaultDashboardWidgets.toList()
-        else -> listOf("currentOutbound") + kept
+        else -> kept
     }
     // Desktop entries participate in Full's migration before Android filtering.
-    return migrated.distinct().mapNotNull { dashboardWidgetsByName[it] }
+    return migrated.distinct().mapNotNull { dashboardWidgetsByName[it] }.filterNot { it == DashboardWidget.NetworkSpeed }
 }
 
 internal fun normalizeAuroraColors(colors: List<*>?): List<Long> {
@@ -301,6 +294,7 @@ interface LiteActions {
     fun setMemoryTelemetryActive(active: Boolean)
     fun setConnectionTelemetryActive(active: Boolean)
     fun setDashboardTelemetryActive(active: Boolean)
+    fun setStatusTrafficActive(active: Boolean) {}
     fun closeConnection(id: String)
     fun closeAllConnections()
     fun shuffleAurora()

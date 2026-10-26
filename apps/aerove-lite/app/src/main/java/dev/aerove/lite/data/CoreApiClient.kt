@@ -218,7 +218,34 @@ class CoreApiClient(
         } catch (error: JSONException) {
             throw IOException("Core outbound response is missing its actual route chain", error)
         }
-        return OutboundAnswer(identity, chains)
+        val parsed = ProbeJson(value.toString()).fields()
+        val hits = decodeRouteHits(parsed["hits"])
+        if (hits.isEmpty()) throw IOException("Core returned no outbound route hits")
+        fun counter(key: String): ULong = (parsed[key] as? String)?.let { text ->
+            text.toULongOrNull()?.takeIf { it.toString() == text }
+        } ?: throw IOException("Core returned invalid outbound $key")
+        return OutboundAnswer(identity, chains, hits, counter("coreEpoch"), counter("routeVersion"))
+    }
+
+    suspend fun reloadRuleProvider(name: String) {
+        require(name.isNotBlank())
+        request(listOf("providers", "rules", name), "PUT", emptyBody = true, budgetMillis = 10_000, maxBytes = 4096)
+    }
+
+    suspend fun checkRoutes(hits: List<List<RouteHit>>): RouteCheck {
+        val body = JSONObject().put("hits", JSONArray(hits.map { rows -> JSONArray(rows.map { hit ->
+            JSONObject().put("host", hit.host).put("proxy", hit.proxy).put("exit", hit.exit)
+        }) }))
+        return decodeRouteCheck(request(listOf("aerove", "check-routes"), "POST", body, budgetMillis = 5000, maxBytes = 4096), hits.size)
+    }
+
+    suspend fun ipQualityBody(source: String, ip: String, direct: Boolean): JSONObject {
+        val body = JSONObject().put("source", source).put("ip", ip).put("direct", direct)
+        val raw = request(listOf("aerove", "ip-quality"), "POST", body, budgetMillis = 10_000, maxBytes = 2 * 1024 * 1024)
+        val row = JSONObject(raw)
+        val parsed = ProbeJson(raw).fields()
+        decodeRouteHits(parsed["hits"])
+        return row
     }
 
     private fun decodeOutbound(value: JSONObject): OutboundIdentity {
@@ -448,15 +475,9 @@ class CoreApiClient(
                     download = unsigned(json, "downloadTotal"),
                 ))
                 "groupsChanged" -> {
-                    val value = json.get("revision")
-                    // Android JSONObject otherwise rounds uint64 values above Long.MAX_VALUE through Double.
-                    val revision = if (value is Number && json.keys().asSequence().toSet() == setOf("type", "revision")) {
-                        revisionField.findAll(frame).singleOrNull()?.groupValues?.get(1)?.toULongOrNull()
-                    } else null
-                    if (revision == null || value !is Number || value.toDouble() != revision.toDouble()) {
-                        throw IOException("Core returned an invalid groups revision")
-                    }
-                    CoreTelemetry.GroupsChanged(revision)
+                    val parsed = ProbeJson(frame).fields()
+                    if (parsed.keys != setOf("type", "revision", "routeVersion")) throw IOException("Core returned an invalid groups schema")
+                    CoreTelemetry.GroupsChanged(parsed.unsigned("revision"), parsed.unsigned("routeVersion"))
                 }
                 "providersLoaded" -> {
                     if (json.keys().asSequence().toSet() != setOf("type", "providers")) throw IOException("Invalid provider loaded frame")

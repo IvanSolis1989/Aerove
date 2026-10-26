@@ -9,7 +9,7 @@ data class ProviderLoaded(val kind: dev.aerove.lite.providers.ProviderKind, val 
 
 sealed interface CoreTelemetry {
     data class TrafficSample(val value: Traffic) : CoreTelemetry
-    data class GroupsChanged(val revision: ULong) : CoreTelemetry
+    data class GroupsChanged(val revision: ULong, val routeVersion: ULong = revision) : CoreTelemetry
     data class ProvidersLoaded(val providers: List<ProviderLoaded>) : CoreTelemetry
     data class Observations(val value: ObservationWindow) : CoreTelemetry
 }

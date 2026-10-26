@@ -29,7 +29,7 @@ class NetworkApiClientTest {
     private val settings = NetworkSettings(ports = UserProxyPorts(14000, 14001, 0), allowLan = true,
         authentication = ProxyAuthentication(true, "fixture-user", password))
     private val high = 18_446_744_073_709_551_614uL
-    private fun route(epoch: ULong) = MockResponse().setBody("""{"core-epoch":"$epoch","picks-version":"0","picks":{}}""")
+    private fun route(epoch: ULong) = MockResponse().setBody("""{"core-epoch":"$epoch","route-version":"0","picks":{}}""")
     private fun receipt(id: String, epoch: ULong) = JSONObject().put("requestId", id).put("coreEpoch", epoch.toString())
     private fun readback(epoch: ULong): JSONObject = JSONObject().put("coreEpoch", epoch.toString())
         .put("network", JSONObject().put("mixed-port", 14000).put("port", 14001).put("socks-port", 0)

@@ -7,7 +7,6 @@ import org.junit.Test
 class LiteSettingsContractTest {
     private val androidDefaults = listOf(
         DashboardWidget.CurrentOutbound,
-        DashboardWidget.NetworkSpeed,
         DashboardWidget.OutboundMode,
         DashboardWidget.VpnButton,
         DashboardWidget.IntranetIp,
@@ -38,13 +37,13 @@ class LiteSettingsContractTest {
     @Test fun dashboardMissingEmptyRetiredUnknownAndDesktopListsFollowFullMigrationOrder() {
         val cases = listOf(
             null to androidDefaults,
-            emptyList<String>() to listOf(DashboardWidget.CurrentOutbound),
-            listOf("runTime", "overrideDnsButton", "overrideNtpButton") to listOf(DashboardWidget.CurrentOutbound),
+            emptyList<String>() to emptyList<DashboardWidget>(),
+            listOf("runTime", "overrideDnsButton", "overrideNtpButton") to emptyList<DashboardWidget>(),
             listOf("futureWidget") to androidDefaults,
             listOf("runTime", "futureWidget") to androidDefaults,
-            listOf("networkTakeover") to listOf(DashboardWidget.CurrentOutbound),
-            listOf("networkTakeover", "futureWidget") to listOf(DashboardWidget.CurrentOutbound),
-            listOf("systemProxyButton", "futureWidget") to listOf(DashboardWidget.CurrentOutbound),
+            listOf("networkTakeover") to emptyList<DashboardWidget>(),
+            listOf("networkTakeover", "futureWidget") to emptyList<DashboardWidget>(),
+            listOf("systemProxyButton", "futureWidget") to emptyList<DashboardWidget>(),
             listOf("currentOutbound", "futureWidget", "networkTakeover") to listOf(DashboardWidget.CurrentOutbound),
         )
         cases.forEach { (input, expected) ->
@@ -54,7 +53,7 @@ class LiteSettingsContractTest {
 
     @Test fun existingOutboundPositionAndFirstOccurrenceOrderArePreserved() {
         assertEquals(
-            listOf(DashboardWidget.NetworkSpeed, DashboardWidget.CurrentOutbound, DashboardWidget.Profiles),
+            listOf(DashboardWidget.CurrentOutbound, DashboardWidget.Profiles),
             normalizeDashboardWidgets(listOf("networkSpeed", "currentOutbound", "networkSpeed", "profiles", "currentOutbound")),
         )
     }
@@ -62,12 +61,10 @@ class LiteSettingsContractTest {
     @Test fun legacyDashboardNamesMapBeforeDeduplicationAndAndroidFiltering() {
         assertEquals(
             listOf(
-                DashboardWidget.CurrentOutbound,
                 DashboardWidget.IntranetIp,
                 DashboardWidget.OutboundMode,
                 DashboardWidget.ConnectionStats,
-                DashboardWidget.NetworkSpeed,
-            ),
+                    ),
             normalizeDashboardWidgets(listOf(
                 "networkDetection", "outboundModeV2", "systemProxyButton", "tunButton",
                 "connections", "requests", "dnsQueries", "trafficUsage", "networkSpeed",
@@ -75,15 +72,15 @@ class LiteSettingsContractTest {
         )
     }
 
-    @Test fun legacyDefaultSetResetsOnlyWhenItHasNoCurrentOutbound() {
+    @Test fun legacyOrderAndHiddenStatusSurviveSpeedRemoval() {
         val legacy = listOf(
             "networkSpeed", "systemProxyButton", "tunButton", "outboundModeV2",
             "networkDetection", "trafficUsage", "intranetIp",
         )
-        assertEquals(androidDefaults, normalizeDashboardWidgets(legacy.reversed() + "networkSpeed"))
+        assertEquals(listOf(DashboardWidget.IntranetIp, DashboardWidget.OutboundMode), normalizeDashboardWidgets(legacy.reversed() + "networkSpeed"))
         assertEquals(
             listOf(
-                DashboardWidget.NetworkSpeed, DashboardWidget.OutboundMode,
+                DashboardWidget.OutboundMode,
                 DashboardWidget.IntranetIp, DashboardWidget.CurrentOutbound,
             ),
             normalizeDashboardWidgets(legacy + "currentOutbound"),
@@ -93,7 +90,7 @@ class LiteSettingsContractTest {
     @Test fun everyAndroidWidgetIncludingOptionalMemoryCanBeSavedInUserOrder() {
         val widgets = DashboardWidget.entries.reversed()
         assertEquals(10, widgets.size)
-        assertEquals(widgets, normalizeDashboardWidgets(widgets.map { it.wireName }))
+        assertEquals(widgets.filterNot { it == DashboardWidget.NetworkSpeed }, normalizeDashboardWidgets(widgets.map { it.wireName }))
         assertFalse(DashboardWidget.entries.any { it.wireName == "networkTakeover" })
     }
 
@@ -128,7 +125,7 @@ class LiteSettingsContractTest {
         dns.clear()
         packages.clear()
         assertEquals(listOf(0xFF123456L, 0xFF654321L), normalized.auroraColors)
-        assertEquals(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.MemoryInfo), normalized.dashboardWidgets)
+        assertEquals(listOf(DashboardWidget.MemoryInfo), normalized.dashboardWidgets)
         assertEquals(listOf("tls://8.8.8.8:853"), normalized.dnsServers)
         assertEquals(setOf("com.example.one"), normalized.packages)
         assertEquals(normalized, normalized.normalized())

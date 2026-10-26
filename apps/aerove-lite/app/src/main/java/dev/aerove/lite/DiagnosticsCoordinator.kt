@@ -8,6 +8,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
+import dev.aerove.lite.data.RouteHit
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -24,11 +26,40 @@ internal class DiagnosticsCoordinator<K : Any>(
     private val readServices: suspend (K, List<ServiceTarget>) -> List<ServiceCheck>,
     private val readMemory: suspend (K) -> MemorySnapshot,
     private val isCurrent: (K) -> Boolean,
+    private val sameSession: (K, K) -> Boolean = { a, b -> a == b },
 ) : Closeable {
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private val mutableState = MutableStateFlow(DiagnosticsState())
     val state = mutableState.asStateFlow()
     private var key: K? = null
+    private var retainedKey: K? = null
+    private var backgrounded = false
+    private val notBefore = mutableMapOf<String, Long>()
+    private val lastStarted = mutableMapOf<String, Long>()
+    private val bypass = mutableSetOf<String>()
+    private val retiring = mutableMapOf<String, MutableList<Job>>()
+    fun routeHits(): Map<String, List<RouteHit>> = answers.mapValues { it.value.hits }
+    fun runtimeChanged() {
+        generation++; tasks.keys.toList().forEach(::cancelService)
+        retainedKey = null; synced = false; epoch = null; version = null
+        answers.clear(); failed.clear(); forced.clear(); explicit.clear()
+        stopMemory(); mutableState.value = DiagnosticsState(); publishServices()
+    }
+    fun foreground(active: Boolean) {
+        if (!active) { backgrounded = true; tasks.keys.toList().forEach(::cancelService) }
+        else if (backgrounded) {
+            backgrounded = false
+            failed.toList().forEach { answers.remove(it) }; failed.clear()
+            publishServices(); launchDue()
+        }
+    }
+    fun networkChanged() {
+        tasks.keys.toList().forEach(::cancelService)
+        answers.clear(); failed.clear()
+        settings.enabledServiceIds().forEach { notBefore[it] = now() + 300; bypass += it }
+        publishServices(); launchDue()
+    }
+    private fun now(): Long = System.nanoTime() / 1_000_000
     private var settings = LiteSettings()
     private var watched = emptySet<String>()
     private var epoch: ULong? = null
@@ -42,6 +73,7 @@ internal class DiagnosticsCoordinator<K : Any>(
     private val forced = mutableSetOf<String>()
     private val explicit = mutableSetOf<String>()
     private val tasks = mutableMapOf<String, Job>()
+    private val waiting = mutableSetOf<String>()
     private val requests = mutableMapOf<String, Long>()
     private var sequence = 0L
     private var memoryWanted = false
@@ -63,15 +95,15 @@ internal class DiagnosticsCoordinator<K : Any>(
         tasks.keys.toList().forEach(::cancelService)
         key = value
         synced = false
-        epoch = null
-        version = null
-        picks = emptyMap()
-        answers.clear()
-        failed.clear()
-        forced.clear()
-        explicit.clear()
+        val reset = value != null && retainedKey?.let { !sameSession(it, value) } != false
+        if (reset) {
+            epoch = null; version = null; picks = emptyMap()
+            answers.clear(); failed.clear(); forced.clear(); explicit.clear(); lastStarted.clear()
+            settings.enabledServiceIds().forEach { notBefore[it] = now() + 300; bypass += it }
+            mutableState.value = DiagnosticsState()
+        }
+        if (value != null) retainedKey = value
         stopMemory()
-        mutableState.value = DiagnosticsState()
         publishServices()
         startMemory()
     }
@@ -82,17 +114,18 @@ internal class DiagnosticsCoordinator<K : Any>(
         publishServices()
     }
 
-    fun needsRouteSync(coreEpoch: ULong, picksVersion: ULong): Boolean = !synced ||
-        epoch == null || coreEpoch > epoch!! || (coreEpoch == epoch && picksVersion > (version ?: 0uL))
+    fun needsRouteSync(coreEpoch: ULong, routeVersion: ULong): Boolean = !synced ||
+        epoch == null || coreEpoch != epoch!! || (coreEpoch == epoch && routeVersion != (version ?: 0uL))
 
-    fun route(coreEpoch: ULong, picksVersion: ULong, selections: Map<String, String>) {
+    fun route(coreEpoch: ULong, routeVersion: ULong, selections: Map<String, String>, held: Map<String, Boolean> = emptyMap()) {
         // Independent HTTP completions must not move the host back behind a newer snapshot.
         val previousEpoch = epoch
         if (previousEpoch != null && (coreEpoch < previousEpoch ||
-            (coreEpoch == previousEpoch && version?.let { picksVersion < it } == true))) return
-        val changed = epoch != coreEpoch || version != picksVersion || picks != selections
+            (coreEpoch == previousEpoch && version?.let { routeVersion < it } == true))) return
+        val reset = epoch != coreEpoch
+        val changed = reset || version != routeVersion || picks != selections
         epoch = coreEpoch
-        version = picksVersion
+        version = routeVersion
         picks = selections.toMap()
         synced = true
         routeSignals.value++
@@ -100,8 +133,16 @@ internal class DiagnosticsCoordinator<K : Any>(
             // Pending calls carry the old launch route, even when a changed group was unrelated.
             forced += tasks.keys.filter { it in explicit }
             tasks.keys.toList().forEach(::cancelService)
-            answers.keys.toList().filter { !fresh(answers.getValue(it)) }.forEach { answers.remove(it); failed.remove(it) }
-            failed.clear()
+            answers.keys.toList().forEach { id ->
+                val answer = answers.getValue(id)
+                if (!reset && held[id] == true) answers[id] = answer.copy(coreEpoch = coreEpoch, routeVersion = routeVersion)
+                else if (reset || held[id] == false || !fresh(answer)) { answers.remove(id); failed.remove(id) }
+            }
+            settings.enabledServiceIds().forEach { id ->
+                notBefore[id] = now() + if (reset) 300 else 1500
+                if (reset) bypass += id
+            }
+            if (reset) failed.clear()
         }
         publishServices()
         launchDue()
@@ -124,18 +165,19 @@ internal class DiagnosticsCoordinator<K : Any>(
             forced.clear()
             explicit.clear()
         }
-        // A new visible watch retries a previous failure, as Standard's watch does.
-        (watched - previous).filter { it in failed }.forEach { failed.remove(it); answers.remove(it) }
         publishServices()
         launchDue()
     }
 
     fun refresh(ids: Set<String>) {
         ids.filter { it in settings.enabledServiceIds() }.forEach { id ->
+            if (id in waiting) cancelService(id)
             if (id !in tasks) {
                 failed.remove(id)
                 forced += id
                 explicit += id
+                bypass += id
+                notBefore[id] = 0
             }
         }
         launchDue()
@@ -158,7 +200,7 @@ internal class DiagnosticsCoordinator<K : Any>(
     }
 
     private fun fresh(answer: ServiceCheck): Boolean = answer.coreEpoch == epoch &&
-        if (answer.chains.isEmpty()) answer.picksVersion == version else answer.chains.indices.drop(1).all { index ->
+        if (answer.hits.isNotEmpty() || answer.chains.isEmpty()) answer.routeVersion == version else answer.chains.indices.drop(1).all { index ->
             picks[answer.chains[index]]?.let { it == answer.chains[index - 1] } != false
         }
 
@@ -166,9 +208,19 @@ internal class DiagnosticsCoordinator<K : Any>(
         val target = ServiceTarget.byId(id) ?: return
         val request = ++sequence
         val session = generation
+        val skipThrottle = bypass.remove(id)
+        val due = maxOf(notBefore[id] ?: 0, if (skipThrottle) 0 else lastStarted[id]?.plus(5000) ?: 0)
+        retiring[id]?.removeAll { it.isCompleted }
+        val predecessors = retiring[id].orEmpty().toList()
         requests[id] = request
+        waiting += id
         val task = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                predecessors.joinAll()
+                delay((due - now()).coerceAtLeast(0))
+                if (!owns(current, session, id, request)) return@launch
+                waiting -= id
+                lastStarted[id] = now()
                 val answer = readServices(current, listOf(target)).single()
                 routeSignals.first { !owns(current, session, id, request) || synced }
                 if (!owns(current, session, id, request)) return@launch
@@ -207,14 +259,15 @@ internal class DiagnosticsCoordinator<K : Any>(
 
     private fun cancelService(id: String) {
         requests.remove(id)
-        tasks.remove(id)?.cancel()
+        waiting -= id
+        tasks.remove(id)?.let { it.cancel(); retiring.getOrPut(id) { mutableListOf() } += it }
     }
 
     private fun publishServices() {
         val services = settings.enabledServiceIds().map { id ->
             answers[id]?.let { answer -> ServiceCheckView(id, answer.status.id, answer.region, answer.delayMillis,
                 answer.chains.toList(), checkedAt = answer.checkedAtMillis,
-                coreEpoch = answer.coreEpoch, picksVersion = answer.picksVersion)
+                coreEpoch = answer.coreEpoch, routeVersion = answer.routeVersion)
             } ?: ServiceCheckView(id, if (id in failed) "failed" else "pending", checkedAt = 0)
         }
         mutableState.update { it.copy(services = services, serviceLoading = tasks.isNotEmpty(),

@@ -12,6 +12,7 @@ import dev.aerove.lite.LiteActions
 import dev.aerove.lite.LiteState
 import dev.aerove.lite.integration.ProxyPresentationWorkspace
 import dev.aerove.lite.proxies.proxyDelayTargets
+import dev.aerove.lite.proxies.proxySearch
 
 @Composable
 internal fun ProxiesScreen(state: LiteState, actions: LiteActions, padding: PaddingValues,
@@ -19,9 +20,11 @@ internal fun ProxiesScreen(state: LiteState, actions: LiteActions, padding: Padd
     val presentation by workspace.state.collectAsState()
     val active = LocalLitePageActive.current && LocalDiagnosticsForeground.current
     DisposableEffect(workspace, active) { workspace.active(active); onDispose { workspace.active(false) } }
+    val byName = remember(state.groups) { state.groups.associateBy { it.name } }
     val testing = remember(state.groups, state.settings.proxyPresentation, query, presentation.groupUrls, presentation.delay.pending) {
-        state.groups.filter { group -> proxyDelayTargets(state.groups, state.settings.proxyPresentation, group.name,
-            query, presentation.groupUrls).any { it in presentation.delay.pending } }.map { it.name }.toSet()
+        val matches = proxySearch(query)
+        state.groups.filter { group -> proxyDelayTargets(group, byName, state.settings.proxyPresentation,
+            presentation.groupUrls, matches).any { it in presentation.delay.pending } }.map { it.name }.toSet()
     }
     val iconLoader = if (presentation.groupIcons.isNotEmpty()) LocalLiteFeatures.current().groupIcons else null
     ProxyGroupsPresentation(state.groups, state.settings.proxyPresentation, query, presentation.delay.results,

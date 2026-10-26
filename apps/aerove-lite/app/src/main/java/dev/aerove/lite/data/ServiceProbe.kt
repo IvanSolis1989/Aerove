@@ -44,7 +44,8 @@ data class ServiceCheck(
     val chains: List<String>,
     val checkedAtMillis: Long,
     val coreEpoch: ULong,
-    val picksVersion: ULong,
+    val routeVersion: ULong,
+    val hits: List<RouteHit> = emptyList(),
 ) {
     val node: String? get() = chains.firstOrNull()
 }
@@ -102,20 +103,20 @@ internal fun decodeServiceChecks(source: String, targets: List<ServiceTarget>): 
                 target, status, region.ifEmpty { null }, row.long("delay"), chains,
                 row.long("checked-at").also { if (it == 0L) throw IOException("Core returned an unstamped service check") },
                 row.unsigned("core-epoch").also { if (it == 0uL) throw IOException("Core returned an invalid route epoch") },
-                row.unsigned("picks-version"),
+                row.unsigned("route-version"), decodeRouteHits(row["hits"]),
             )
         } while (input.take(','))
         input.expect(']')
     }
     input.end()
     if (results.size != targets.size) throw IOException("Core returned missing service checks")
-    if (results.any { it.coreEpoch != results[0].coreEpoch || it.picksVersion != results[0].picksVersion }) {
+    if (results.any { it.coreEpoch != results[0].coreEpoch || it.routeVersion != results[0].routeVersion }) {
         throw IOException("Core returned inconsistent service route stamps")
     }
     return results
 }
 
-private val serviceFields = setOf("name", "status", "region", "delay", "chains", "checked-at", "core-epoch", "picks-version")
+private val serviceFields = setOf("name", "status", "region", "delay", "chains", "checked-at", "core-epoch", "route-version", "hits")
 
 internal fun Map<String, Any>.unsigned(key: String): ULong =
     this[key] as? ULong ?: throw IOException("Core returned an invalid $key counter")
@@ -139,7 +140,7 @@ internal class ProbeJson(private val source: String) {
     fun end() { peek(); if (offset != source.length) invalid() }
 
     fun fields(depth: Int = 0): Map<String, Any> {
-        if (depth > 1) invalid()
+        if (depth > 4) invalid()
         expect('{')
         val fields = linkedMapOf<String, Any>()
         if (take('}')) return fields
@@ -147,22 +148,32 @@ internal class ProbeJson(private val source: String) {
             val name = string()
             if (fields.containsKey(name)) invalid()
             expect(':')
-            fields[name] = when (peek()) {
-                '"' -> string()
-                '[' -> strings()
-                '{' -> fields(depth + 1)
-                else -> number()
-            }
+            fields[name] = value(depth + 1)
         } while (take(','))
         expect('}')
         return fields
     }
 
-    private fun strings(): List<String> {
+    private fun value(depth: Int): Any = when (peek()) {
+        '"' -> string()
+        '[' -> values(depth)
+        '{' -> fields(depth)
+        't' -> literal("true", true)
+        'f' -> literal("false", false)
+        'n' -> literal("null", JSONObject.NULL)
+        else -> number()
+    }
+    private fun <T> literal(token: String, value: T): T {
+        if (!source.startsWith(token, offset)) invalid()
+        offset += token.length
+        return value
+    }
+    private fun values(depth: Int): List<Any> {
+        if (depth > 4) invalid()
         expect('[')
         if (take(']')) return emptyList()
-        val values = mutableListOf<String>()
-        do { values += string() } while (take(','))
+        val values = mutableListOf<Any>()
+        do { values += value(depth + 1) } while (take(','))
         expect(']')
         return values
     }

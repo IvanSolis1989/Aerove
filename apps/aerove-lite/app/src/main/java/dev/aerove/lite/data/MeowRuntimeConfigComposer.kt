@@ -21,6 +21,10 @@ class MeowRuntimeConfig internal constructor(
     val resourceReadRoot: File?,
     val cacheRoot: File?,
 ) {
+    internal fun withResources(yaml: String, readRoot: File, revision: String?, generation: String?): MeowRuntimeConfig =
+        MeowRuntimeConfig(yaml, privateControl, tun, userInboundYaml, hostPolicyYaml, initiallyParked,
+            profileId, revision, generation, runtimeMode, physicalNetwork, readRoot, cacheRoot)
+
     fun planJson(): String = JSONObject().put("schemaVersion", 1).put("runtimeMode", runtimeMode.wireValue)
         .put("initiallyParked", initiallyParked).put("engineYaml", engineYaml)
         .put("privateControl", JSONObject().put("address", "127.0.0.1:${privateControl.port}").put("secret", privateControl.secret))

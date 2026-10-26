@@ -27,7 +27,7 @@ class ResourceRuntimeApplyTest {
     }
     @Test fun readyRuntimeUsesCurrentSavedDynamicGenerationAndAuthenticatedRouteReadback() = runBlocking<Unit> {
         MockWebServer().use { server ->
-            server.enqueue(MockResponse().setBody("""{"core-epoch":"2","picks-version":"1","picks":{}}""")); server.start()
+            server.enqueue(MockResponse().setBody("""{"core-epoch":"2","route-version":"1","picks":{}}""")); server.start()
             val before = endpoint()
             val actual = endpoint(server.port, generation = "dynamic-script-generation")
             val snapshots = MutableStateFlow(VpnSnapshot(VpnPhase.Running, before))
@@ -52,5 +52,32 @@ class ResourceRuntimeApplyTest {
             try { applier.apply(prepared()); fail("Changed lineage/runtime cannot be acknowledged") }
             catch (_: IllegalStateException) { }
         }
+    }
+    @Test fun successfulRuleReloadKeepsEndpointAndRequiresItsRealGenerationReceiptWithoutReconfigure() = runBlocking<Unit> {
+        var generation="old";var requests=0;var reads=0
+        val endpoint=CoreEndpoint(9091,secret,AppliedConfigSnapshot("profile",File("unused")),"revision","old",
+            resourceLineage={"revision" to generation})
+        val snapshots=MutableStateFlow(VpnSnapshot(VpnPhase.Running,endpoint))
+        val apply=ResourceRuntimeApply(snapshots,{"profile"},{prepared(generation=generation)},{requests++},{reads++},{true},
+            reloadRules={ actual,next,current->assertSame(endpoint,actual);assertTrue(current());generation=checkNotNull(next.generation);true})
+        assertEquals("requested",apply.apply(prepared()).appliedGeneration)
+        assertSame(endpoint,snapshots.value.endpoint);assertEquals(0,requests);assertEquals(1,reads)
+    }
+    @Test fun supersededHotReloadFailureCannotDispatchAReplacementRuntime() = runBlocking<Unit> {
+        var current=true;var requests=0
+        val snapshots=MutableStateFlow(VpnSnapshot(VpnPhase.Running,endpoint()))
+        val apply=ResourceRuntimeApply(snapshots,{"profile"},{prepared()},{requests++},{},{current},
+            reloadRules={_,_,_->current=false;false})
+        assertThrows(IllegalStateException::class.java){runBlocking{apply.apply(prepared())}}
+        assertEquals(0,requests)
+    }
+
+
+    @Test fun retainedReloadCleanupFailureStillUsesFullApplyAndActualLineageReadback() = runBlocking<Unit> {
+        val before=endpoint();val ready=endpoint(generation="requested");var starts=0;var reads=0
+        val snapshots=MutableStateFlow(VpnSnapshot(VpnPhase.Running,before))
+        val apply=ResourceRuntimeApply(snapshots,{"profile"},{prepared()},{starts++;snapshots.value=VpnSnapshot(VpnPhase.Running,ready)},
+            {assertSame(ready,it);reads++},{true},reloadRules={_,_,_->throw java.io.IOException("Retained cleanup requires Native join")})
+        assertEquals("requested",apply.apply(prepared()).appliedGeneration);assertEquals(1,starts);assertEquals(1,reads)
     }
 }

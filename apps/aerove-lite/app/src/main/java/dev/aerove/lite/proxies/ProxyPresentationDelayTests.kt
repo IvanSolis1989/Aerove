@@ -6,6 +6,8 @@ import java.io.IOException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -21,22 +23,31 @@ data class ProxyDelayProgress(val pending: Set<ProxyDelayTarget> = emptySet(), v
     val results: Map<ProxyDelayTarget, Int> = emptyMap())
 
 /** Owned by the visible proxy session; core/route/background changes call cancel(). */
-class ProxyPresentationDelayTests(private val core: CoreApiClient, private val scope: CoroutineScope) : Closeable {
+class ProxyPresentationDelayTests(private val core: CoreApiClient, private val scope: CoroutineScope,
+    private val beforeStart: suspend () -> Unit = {}) : Closeable {
     private val pool = Semaphore(32)
     private val mutable = MutableStateFlow(ProxyDelayProgress())
     val state: StateFlow<ProxyDelayProgress> = mutable.asStateFlow()
     private val jobs = mutableSetOf<Job>()
+    private val retiring = mutableListOf<Job>()
     @Volatile private var epoch = 0L
     private var closed = false
+    private var buffered = ProxyDelayProgress()
+    private var flushJob: Job? = null
 
     @Synchronized fun start(targets: List<ProxyDelayTarget>, timeoutMillis: Int = 8000): Job {
         check(!closed)
         require(timeoutMillis in 1..60000)
-        val acquired = targets.distinct().filterNot { it in mutable.value.pending }.toSet()
+        val acquired = targets.distinct().filterNot { it in buffered.pending }.toSet()
         val revision = epoch
-        mutable.update { it.copy(pending = it.pending + acquired) }
+        retiring.removeAll { it.isCompleted }
+        val predecessors = retiring.toList()
+        buffered = buffered.copy(pending = buffered.pending + acquired)
+        flush()
         val job = scope.launch {
             try {
+                beforeStart()
+                predecessors.forEach { it.join() }
                 coroutineScope {
                     acquired.map { target -> async {
                         pool.withPermit {
@@ -51,7 +62,7 @@ class ProxyPresentationDelayTests(private val core: CoreApiClient, private val s
                         }
                     } }.awaitAll()
                 }
-            } finally { publish(revision) { it.copy(pending = it.pending - acquired, running = it.running - acquired) } }
+            } finally { finish(revision, acquired) }
         }
         jobs += job
         job.invokeOnCompletion { synchronized(this) { jobs -= job } }
@@ -59,14 +70,45 @@ class ProxyPresentationDelayTests(private val core: CoreApiClient, private val s
     }
 
     @Synchronized private fun publish(revision: Long, change: (ProxyDelayProgress) -> ProxyDelayProgress) {
-        if (revision == epoch) mutable.update(change)
+        if (revision != epoch || closed) return
+        buffered = change(buffered)
+        if (flushJob == null) {
+            val pending = scope.launch(start = CoroutineStart.LAZY) {
+                delay(300)
+                synchronized(this@ProxyPresentationDelayTests) {
+                    if (revision == epoch && !closed) { flushJob = null; mutable.value = buffered }
+                }
+            }
+            flushJob = pending
+            pending.start()
+        }
+    }
+
+    @Synchronized private fun finish(revision: Long, acquired: Set<ProxyDelayTarget>) {
+        if (revision != epoch || closed) return
+        buffered = buffered.copy(pending = buffered.pending - acquired, running = buffered.running - acquired)
+        flush()
+    }
+
+    private fun flush() {
+        flushJob?.cancel()
+        flushJob = null
+        mutable.value = buffered
     }
 
     @Synchronized fun cancel(clearResults: Boolean = false) {
         epoch++
+        retiring += jobs.toList()
         jobs.toList().forEach(Job::cancel)
         jobs.clear()
-        mutable.value = ProxyDelayProgress(results = if (clearResults) emptyMap() else mutable.value.results)
+        flushJob?.cancel(); flushJob = null
+        buffered = ProxyDelayProgress(results = if (clearResults) emptyMap() else mutable.value.results)
+        mutable.value = buffered
     }
-    @Synchronized override fun close() { closed = true; cancel(true) }
+    @Synchronized internal fun retire(): List<Job> {
+        val pending = (retiring + jobs + listOfNotNull(flushJob)).distinct()
+        closed = true; cancel(true)
+        return pending
+    }
+    override fun close() { retire() }
 }
