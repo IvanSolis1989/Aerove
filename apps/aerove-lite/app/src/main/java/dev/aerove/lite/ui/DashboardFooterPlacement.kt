@@ -21,4 +21,4 @@ internal fun dashboardFooterOffsetX(preferredX: Int, maxX: Int, metrics: List<Re
     return null
 }
 
-internal fun dashboardFooterAppends(slot: Int?, fontScale: Float): Boolean = slot == null && fontScale > 1.3f
+internal fun dashboardFooterAppends(slot: Int?): Boolean = slot == null

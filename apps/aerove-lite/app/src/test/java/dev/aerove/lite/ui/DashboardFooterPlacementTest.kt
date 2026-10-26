@@ -58,10 +58,9 @@ class DashboardFooterPlacementTest {
     @Test fun noHorizontalSlotCannotBecomeAnUnrelatedVerticalSlot() {
         assertNull(dashboardFooterOffsetX(174, 192, readings,
             listOf(DashboardClearance(Rect(0f, 130f, 292f, 166f)))))
-        assertFalse(dashboardFooterAppends(null, 1f))
-        assertFalse(dashboardFooterAppends(null, 1.3f))
-        assertTrue(dashboardFooterAppends(null, 2f))
-        assertFalse(dashboardFooterAppends(174, 2f))
+        assertTrue(dashboardFooterAppends(null))
+        assertFalse(dashboardFooterAppends(174))
+        assertFalse(dashboardFooterAppends(0))
     }
 
     @Test fun otherRowsDoNotBlockTheFooter() {

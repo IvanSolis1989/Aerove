@@ -691,8 +691,10 @@ class DashboardLayoutUiTest {
             assertEquals(inkCenter("dashboard-status-uptime-label"), inkCenter("dashboard-upload-value"), 1f)
             assertEquals(inkCenter("dashboard-status-uptime-value"), inkCenter("dashboard-download-value"), 1f)
         } else {
-            assertTrue("append requires enlarged accessibility text", effectiveFontScale > 1.3f)
-            assertTrue("$traffic ${before.getValue("dashboard-status-body")}", traffic.top >= before.getValue("dashboard-status-body").bottom)
+            assertEquals("append keeps its existing footer gap", 8f * density,
+                traffic.top - before.getValue("dashboard-status-body").bottom, 1f)
+            assertEquals("only the appended readings grow the card", card.height + 8f * density + traffic.height,
+                actualCard.height, 1f)
         }
         trafficTextLayouts().forEach { (tag, text) ->
             assertTrue("$tag retains full rate/unit", !text.didOverflowWidth && !text.didOverflowHeight)
@@ -1019,6 +1021,35 @@ class DashboardLayoutUiTest {
             maxWidth = 360.dp, fontScale = 1.3f, deviceDensity = 2.625f, language = "ja")
         addTrafficAndAssertOriginalForeground(expectedOverlay = true)
     }
+
+    private fun assertFullHighRateAtFifteenPercentAndFooterRecovery(language: String) {
+        val organization = "Example Organization"
+        val initial = fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running,
+            traffic = Traffic(1_048_471_142L, 1_048_471_142L, 4096, 8192))
+        launch(initial, maxWidth = 360.dp, fontScale = 1.15f, deviceDensity = 2.625f, language = language,
+            lookup = { IpQuality(it, IpQualitySource.IdentMe, IpType.Residential, organization = organization) })
+        awaitOrganization("${localized(language).getString(R.string.lite_organization)}\n$organization")
+        addTrafficAndAssertOriginalForeground(expectedOverlay = null)
+        val rate = "999.9 ${localized(language).getString(R.string.lite_rate, "MB")}"
+        for (direction in listOf("upload", "download")) {
+            compose.onNodeWithTag("dashboard-$direction-value-raw", useUnmergedTree = true).assertTextEquals(rate)
+        }
+        val traffic = statusRect("dashboard-status-traffic")
+        val body = statusRect("dashboard-status-body")
+        android.util.Log.i("DashboardNaturalAppend", "language=$language scale=1.15 rate=$rate organization=$organization " +
+            "overlay=${traffic.top < body.bottom} card=${statusRect("dashboard-status")} body=$body " +
+            "button=${statusRect("dashboard-status-button")} traffic=$traffic")
+        compose.runOnUiThread { state.value = state.value.copy(traffic = Traffic(1024, 2048, 4096, 8192)) }
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    @Test
+    fun normal360EnglishRetainsFullHighRateAtFifteenPercentAndRecoversFooter() =
+        assertFullHighRateAtFifteenPercentAndFooterRecovery("en")
+
+    @Test
+    fun normal360ChineseRetainsFullHighRateAtFifteenPercentAndRecoversFooter() =
+        assertFullHighRateAtFifteenPercentAndFooterRecovery("zh-CN")
 
     @Test
     fun normal360WrappedOrganizationRetainsOriginalTextAndIntrinsicBody() {

@@ -477,7 +477,7 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
                         .flatMap { part -> part.bounds.rects(body, statusInk[part]).map { DashboardClearance(it) } }
                 val slot = dashboardFooterOffsetX(preferredX, constraints.maxWidth - traffic.width,
                     metricBounds, bodyBounds)
-                val appended = dashboardFooterAppends(slot, fontScale)
+                val appended = dashboardFooterAppends(slot)
                 trafficReading.value = if (appended) StatusReading.AppendedTraffic else StatusReading.OverlaidTraffic
                 val trafficX = slot ?: preferredX.coerceAtLeast(0)
                 val trafficY = if (appended) mainHeight + gap else anchorY
