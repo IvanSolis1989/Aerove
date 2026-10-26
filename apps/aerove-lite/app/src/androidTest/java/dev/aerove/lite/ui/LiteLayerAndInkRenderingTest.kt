@@ -1,10 +1,12 @@
 package dev.aerove.lite.ui
 
 import android.graphics.Color
+import androidx.compose.runtime.MutableState
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import dev.aerove.lite.MainActivity
 import dev.aerove.lite.MaterialTier
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -32,7 +34,9 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
             val selected = compose.frame(state, FixtureState(FixtureStage.Production, parentSelected = true), capture, "parent-selected")
             val front = compose.frame(state, FixtureState(FixtureStage.Production, parentSelected = true, frontHue = true), capture, "foreground-changed")
             val report = JSONObject().put("case", case.toString())
-            try {
+            val controlFailure = capturePlainInkControls(state, FixtureState(), probe, capture, report,
+                "plain-ink", "source-phase-zero", "source-phase-half")
+            runInkAssertionsAndMetrics(controlFailure, metrics = { capture.metrics(report) }) {
                 for (name in listOf("ink", "inkIcon")) {
                     report.put(name, assertInk(mask, source, halfSource, actual, halfActual, probe, name))
                 }
@@ -62,7 +66,7 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
                 val selfSample = comparePixels(selected, front, childRegion, foreground.inflate(2 * d))
                 report.put("noSelfSampling", selfSample.json())
                 assertTrue("Changing foreground glyphs must not leak their colors into the child's sampled surface", selfSample.maximum <= 2)
-            } finally { capture.metrics(report) }
+            }
         }
     }
 
@@ -79,11 +83,62 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
             val halfActual = compose.frame(state, fixture.copy(stage = FixtureStage.Production, auroraTime = 45_000_000L), capture, "ink-half-alpha-08")
             val mask = compose.frame(state, fixture.copy(stage = FixtureStage.InkMask), capture, "coverage-alpha-08")
             val report = JSONObject().put("sourceAlpha", Color.alpha(probe.ink))
-            try {
+            val controlFailure = capturePlainInkControls(state, fixture, probe, capture, report,
+                "plain-ink-alpha-08", "source-alpha-08", "source-half-alpha-08")
+            runInkAssertionsAndMetrics(controlFailure, metrics = { capture.metrics(report) }) {
                 assertTrue("The fixture must actually draw a translucent source", Color.alpha(probe.ink) == 204)
                 for (name in listOf("ink", "inkIcon")) report.put(name, assertInk(mask, source, halfSource, actual, halfActual, probe, name))
-            } finally { capture.metrics(report) }
+            }
         }
+    }
+
+    private fun capturePlainInkControls(
+        state: MutableState<FixtureState>,
+        fixture: FixtureState,
+        probe: RenderProbe,
+        capture: HardwareCapture,
+        report: JSONObject,
+        prefix: String,
+        zeroSource: String,
+        halfSource: String,
+    ): Throwable? {
+        if (case != RenderCase(MaterialTier.Solid, aurora = true, dark = false, checked = false, enabled = true)) return null
+        val previous = state.value
+        val originalPaint = probe.ink
+        val observations = JSONArray()
+        val controls = JSONObject().put("diagnosticOnly", true).put("productAcceptance", false)
+            .put("coverageOracleChanged", false).put("observations", observations)
+        report.put("plainInkControls", controls)
+        val failure = collectInkControls(capture = {
+            for ((phase, time, background) in listOf(Triple("zero", 0L, zeroSource), Triple("half", 45_000_000L, halfSource))) {
+                val next = fixture.copy(stage = FixtureStage.Production, auroraTime = time, plainInkControl = true)
+                val label = "$prefix-$phase"
+                val frame = compose.frame(state, next, capture, label)
+                val style = LiteType.Headline
+                observations.put(JSONObject().put("label", label).put("frameMetadata", frame.evidence)
+                    .put("plainInkControl", next.plainInkControl).put("backgroundReference", "$background-window.png")
+                    .put("backgroundIdentity", JSONObject().put("case", case.toString()).put("aurora", case.aurora)
+                        .put("revision", next.revision).put("auroraTime", next.auroraTime))
+                    .put("rawPaintArgb", Integer.toHexString(probe.ink).padStart(8, '0'))
+                    .put("rawPaintAlpha", Color.alpha(probe.ink)).put("fixtureInkAlpha", next.inkAlpha)
+                    .put("matchesOriginalRawPaint", probe.ink == originalPaint)
+                    .put("text", "MMMMMM").put("textStyle", JSONObject().put("name", "LiteType.Headline")
+                        .put("fontSizeSp", style.fontSize.value).put("lineHeightSp", style.lineHeight.value)
+                        .put("fontWeight", style.fontWeight?.weight ?: JSONObject.NULL)
+                        .put("letterSpacingSp", style.letterSpacing.value)
+                        .put("requestedFontFamily", case.settings.fontFamily ?: JSONObject.NULL)
+                        .put("familyRoute", "LiteText style.fontFamily ?: LocalLiteFontFamily")
+                        .put("resolvedPlatformTypeface", "not directly observed"))
+                    .put("icon", "FullGlyphs.logs").put("windowCoordinates", frame.evidence.getJSONObject("windowCoordinates")))
+            }
+        }, restore = {
+            compose.runOnUiThread { state.value = previous }
+            compose.mainClock.advanceTimeBy(400)
+            compose.waitForIdle()
+        })
+        if (failure != null) controls.put("controlFailure", "${failure.javaClass.name}: ${failure.message}")
+        controls.put("captureComplete", failure == null).put("restoredOriginalRawPaint", probe.ink == originalPaint)
+        return failure
     }
 
     private fun assertInk(
@@ -167,4 +222,37 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
         @JvmStatic @Parameterized.Parameters(name = "{0}")
         fun cases(): List<Array<Any>> = renderCases(switchStates = false)
     }
+}
+
+internal fun collectInkControls(capture: () -> Unit, restore: () -> Unit): Throwable? {
+    var failure: Throwable? = null
+    try { capture() } catch (caught: Throwable) {
+        rethrowMatrixCancellation(caught)
+        failure = caught
+    }
+    // Fatal capture errors leave the function before any restore or ordinary error collection.
+    try { restore() } catch (caught: Throwable) {
+        rethrowMatrixCancellation(caught, failure)
+        val original = failure
+        if (original == null) failure = caught else if (original !== caught) original.addSuppressed(caught)
+    }
+    return failure
+}
+
+internal fun runInkAssertionsAndMetrics(controlFailure: Throwable?, metrics: () -> Unit, assertions: () -> Unit) {
+    var original: Throwable? = null
+    try {
+        assertions()
+        controlFailure?.let { throw it }
+    } catch (failure: Throwable) {
+        rethrowMatrixCancellation(failure, controlFailure)
+        original = failure
+        if (controlFailure != null && controlFailure !== failure) failure.addSuppressed(controlFailure)
+    }
+    try { metrics() } catch (failure: Throwable) {
+        rethrowMatrixCancellation(failure, original)
+        val formal = original
+        if (formal == null) throw failure else if (formal !== failure) formal.addSuppressed(failure)
+    }
+    original?.let { throw it }
 }

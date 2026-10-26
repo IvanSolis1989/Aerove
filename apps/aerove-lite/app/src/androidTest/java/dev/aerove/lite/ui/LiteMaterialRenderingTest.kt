@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import dev.aerove.lite.MaterialTier
 import dev.aerove.lite.MainActivity
 import org.json.JSONObject
+import org.json.JSONArray
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -25,7 +26,7 @@ class LiteMaterialRenderingTest(private val case: RenderCase) {
     @Test
     fun threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels() {
         withOpticalFixture(compose, case, "materials_$case") { state, probe, capture ->
-            val source = capture.capture("source-dark-patch")
+            val source = capture.capture("source-dark-patch", configuration = state.value.opticalConfiguration())
             val actual = compose.frame(state, FixtureState(FixtureStage.Production), capture, "production-dark-patch")
             val control = compose.frame(state, FixtureState(FixtureStage.NoLens), capture, "no-lens-dark-patch")
             val lightSource = compose.frame(state, FixtureState(FixtureStage.Source, revision = 1), capture, "source-light-patch")
@@ -33,7 +34,31 @@ class LiteMaterialRenderingTest(private val case: RenderCase) {
             val lightControl = compose.frame(state, FixtureState(FixtureStage.NoLens, revision = 1), capture, "no-lens-light-patch")
             val mask = compose.frame(state, FixtureState(FixtureStage.OutlineMask), capture, "opaque-superellipse-outline")
             val metrics = JSONObject().put("case", case.toString()).put("oracle", "Hardware source, production and independently rendered no-lens control")
-            try {
+            val diagnosticFailures = mutableListOf<Throwable>()
+            val diagnostics = JSONArray()
+            if (case.tier == MaterialTier.Clear && !case.aurora && case.dark && !case.checked && case.enabled) {
+                for (lens in listOf(LensControl.DispersionOff, LensControl.DispersionOffRedEdge, LensControl.DispersionOffBlueEdge)) {
+                    for (revision in listOf(0, 1)) {
+                        val next = FixtureState(FixtureStage.Production, revision = revision, lensControl = lens)
+                        val label = "diagnostic-${lens.name}-${if (revision == 0) "dark" else "light"}-patch"
+                        val result = JSONObject().put("label", label).put("configuration", next.opticalConfiguration())
+                            .put("diagnosticOnly", true).put("acceptancePassed", false)
+                        try {
+                            compose.frame(state, next, capture, label).use { frame ->
+                                result.put("captured", true).put("windowImage", frame.evidence.getString("windowImage"))
+                                    .put("windowSha256", frame.evidence.getString("windowSha256"))
+                            }
+                        } catch (failure: Throwable) {
+                            rethrowMatrixCancellation(failure)
+                            diagnosticFailures += failure
+                            result.put("captured", false).put("failure", failure.stackTraceToString())
+                        }
+                        diagnostics.put(result)
+                    }
+                }
+            }
+            metrics.put("diagnosticControls", diagnostics)
+            runOpticalAcceptanceWithEvidence(diagnosticFailures, formal = {
                 metrics.put("card", cardOptics(source, actual, control, probe, case))
                 metrics.put("switchDarkPatch", switchCompositing(source, actual, control, probe, case))
                 metrics.put("switchLightPatch", switchCompositing(lightSource, changed, lightControl, probe, case))
@@ -57,13 +82,37 @@ class LiteMaterialRenderingTest(private val case: RenderCase) {
                     assertTrue("The actual default regular card must keep sampling the live backdrop", liveRegular.mean > 8)
                     assertTrue("A clear default card cannot add the old generic opaque/tinted center", clearCenter.maximum <= 2)
                 }
-            } finally { capture.metrics(metrics) }
+            }, evidence = { originalFailure ->
+                originalFailure?.let { metrics.put("originalAcceptanceFailure", it.stackTraceToString()) }
+                capture.metrics(metrics)
+            })
         }
     }
 
     companion object {
         @JvmStatic @Parameterized.Parameters(name = "{0}")
         fun cases(): List<Array<Any>> = renderCases()
+    }
+}
+
+internal fun runOpticalAcceptanceWithEvidence(
+    diagnosticFailures: MutableList<Throwable>,
+    formal: () -> Unit,
+    evidence: (Throwable?) -> Unit,
+) {
+    var originalFailure: Throwable? = null
+    try { formal() } catch (failure: Throwable) {
+        rethrowMatrixCancellation(failure)
+        originalFailure = failure
+    }
+    try { evidence(originalFailure) } catch (failure: Throwable) {
+        rethrowMatrixCancellation(failure, originalFailure)
+        diagnosticFailures += failure
+    }
+    val failure = originalFailure ?: diagnosticFailures.firstOrNull()
+    if (failure != null) {
+        diagnosticFailures.filter { it !== failure }.forEach(failure::addSuppressed)
+        throw failure
     }
 }
 
@@ -160,7 +209,7 @@ internal fun ComposeContentTestRule.frame(
     runOnUiThread { state.value = next }
     mainClock.advanceTimeBy(400)
     waitForIdle()
-    return capture.capture(label)
+    return capture.capture(label, configuration = next.opticalConfiguration())
 }
 
 internal fun withOpticalFixture(

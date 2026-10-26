@@ -20,6 +20,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInWindow
@@ -42,6 +46,8 @@ import dev.aerove.lite.optics.configureAeroveGlass
 import dev.aerove.lite.ColorMode
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.MaterialTier
+import org.json.JSONArray
+import org.json.JSONObject
 
 data class RenderCase(val tier: MaterialTier, val aurora: Boolean, val dark: Boolean, val checked: Boolean, val enabled: Boolean) {
     val settings get() = LiteSettings(material = tier, aurora = aurora, colorMode = if (dark) ColorMode.Dark else ColorMode.Light)
@@ -51,6 +57,14 @@ data class RenderCase(val tier: MaterialTier, val aurora: Boolean, val dark: Boo
 internal val OpticalPaneShape = dev.aerove.lite.optics.AeroveSuperellipseShape(LiteCorner.Card)
 
 internal enum class FixtureStage { Source, Production, NoLens, InkMask, OutlineMask, FlatThumb }
+internal enum class LensControl { None, DispersionOff, DispersionOffRedEdge, DispersionOffBlueEdge }
+private const val LensControlEdgeWidthDp = 0.67f
+private fun dispersionOffStyle() = AeroveGlassStyle.lensContent().copy(dispersion = 0f)
+private fun LensControl.edgeColor(): Color? = when (this) {
+    LensControl.DispersionOffRedEdge -> Color(180f / 255f, 0f, 0f, 1f)
+    LensControl.DispersionOffBlueEdge -> Color(0f, 0f, 180f / 255f, 1f)
+    else -> null
+}
 internal data class FixtureState(
     val stage: FixtureStage = FixtureStage.Source,
     val revision: Int = 0,
@@ -62,10 +76,40 @@ internal data class FixtureState(
     val regularPane: Boolean = false,
     val pillPane: Boolean = false,
     val inkAlpha: Float = 1f,
+    val lensControl: LensControl = LensControl.None,
+    val plainInkControl: Boolean = false,
 )
+
+internal fun FixtureState.opticalConfiguration(): JSONObject {
+    val color = lensControl.edgeColor()
+    val style = dispersionOffStyle()
+    return JSONObject().put("stage", stage.name).put("revision", revision).put("auroraTime", auroraTime)
+        .put("parentSelected", parentSelected).put("frontHue", frontHue).put("switchMarkers", switchMarkers)
+        .put("thumbMarker", thumbMarker).put("regularPane", regularPane).put("pillPane", pillPane)
+        .put("inkAlpha", inkAlpha).put("lensControl", lensControl.name).put("plainInkControl", plainInkControl)
+        .put("diagnosticOnly", lensControl != LensControl.None || plainInkControl)
+        .put("plainInkPaint", "Original ink color/alpha/font/style/position; only liteInk disabled, no black background or white replacement")
+        .put("lensParameters", if (lensControl == LensControl.None) JSONObject.NULL else JSONObject()
+            .put("base", "AeroveGlassStyle.lensContent").put("dispersion", style.dispersion).put("refraction", style.refraction)
+            .put("bevel", style.bevel).put("blur", style.blur).put("rimBlur", style.rimBlur).put("rim", style.rim)
+            .put("haze", style.haze).put("hazeBlur", style.hazeBlur).put("contrast", style.contrast)
+            .put("rimWidth", style.rimWidth).put("rimTail", style.rimTail).put("rimFocus", style.rimFocus)
+            .put("rimAdded", style.rimAdded).put("endShade", style.endShade).put("hairline", style.hairline)
+            .put("hairlineSide", style.hairlineSide ?: JSONObject.NULL)
+            .put("tintRgba", JSONArray(listOf(style.tint.red, style.tint.green, style.tint.blue, style.tint.alpha)))
+            .put("saturation", style.saturation).put("brightness", style.brightness))
+        .put("additiveEdge", if (color == null) JSONObject.NULL else JSONObject()
+            .put("innerWidthDp", LensControlEdgeWidthDp).put("centerStrokeWidthDp", 2 * LensControlEdgeWidthDp)
+            .put("sourceRgba8", JSONArray(listOf(android.graphics.Color.red(color.toArgb()), android.graphics.Color.green(color.toArgb()),
+                android.graphics.Color.blue(color.toArgb()), android.graphics.Color.alpha(color.toArgb()))))
+            .put("blendMode", "Plus").put("drawAlpha", 1).put("clip", "Original OpticalPaneShape path; centered stroke clipped to its interior")
+            .put("rgba8Equivalence", "Not assumed: verify actual backend compositing with the original captured pixels"))
+}
 
 @Composable
 internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: RenderProbe) {
+    require(!state.plainInkControl || state.stage != FixtureStage.InkMask) { "Plain ink must retain the original backdrop and paint" }
+    require(state.lensControl == LensControl.None || (case.tier == MaterialTier.Clear && state.stage == FixtureStage.Production && !state.regularPane && !state.pillPane))
     LiteTheme(case.settings) {
         val visuals = LocalLiteVisuals.current
         val ink = visuals.ink.copy(alpha = state.inkAlpha)
@@ -110,6 +154,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                     when (state.stage) {
                         FixtureStage.Production -> LitePane(Modifier.fillMaxSize(), corner = OpticalPaneShape.corner,
                             glassStyle = when {
+                                state.lensControl != LensControl.None -> dispersionOffStyle()
                                 state.pillPane -> AeroveGlassStyle.pill(case.dark)
                                 case.tier == MaterialTier.Clear && !state.regularPane -> AeroveGlassStyle.lensContent()
                                 else -> null
@@ -121,12 +166,22 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                         }
                         else -> Unit
                     }
+                    if (state.lensControl == LensControl.DispersionOffRedEdge || state.lensControl == LensControl.DispersionOffBlueEdge) {
+                        Canvas(Modifier.fillMaxSize()) {
+                            val outline = OpticalPaneShape.createOutline(size, layoutDirection, this) as Outline.Generic
+                            val color = requireNotNull(state.lensControl.edgeColor())
+                            clipPath(outline.path) {
+                                drawPath(outline.path, color, style = Stroke(2 * LensControlEdgeWidthDp.dp.toPx()), blendMode = BlendMode.Plus)
+                            }
+                        }
+                    }
                 }
                 Box(Modifier.offset(24.dp, 244.dp).size(60.dp, 48.dp).onGloballyPositioned { probe.bounds["switch"] = it.boundsInWindow() }) {
                     if (state.stage == FixtureStage.Production) LiteSwitch(case.checked, "rendering-switch", {}, case.enabled)
                     if (state.stage == FixtureStage.NoLens) NoLensSwitch(case)
                     if (state.stage == FixtureStage.FlatThumb) NoLensSwitch(case, flatTrack = false)
                 }
+                CompositionLocalProvider(LocalLiteVisuals provides if (state.plainInkControl) visuals.copy(aurora = false, material = MaterialTier.Solid) else visuals) {
                 val inkModifier = Modifier.offset(24.dp, 312.dp).onGloballyPositioned { probe.bounds["ink"] = it.boundsInWindow() }
                 if (state.stage == FixtureStage.InkMask) {
                     CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(aurora = false, material = MaterialTier.Solid)) {
@@ -140,6 +195,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                             LiteIcon(FullGlyphs.logs, iconModifier, color = Color.White)
                         }
                     } else LiteIcon(FullGlyphs.logs, iconModifier, color = ink)
+                }
                 }
                 if (state.stage != FixtureStage.Source && state.stage != FixtureStage.InkMask) LitePane(
                     Modifier.offset(24.dp, 366.dp).size(paneWidth, 128.dp).onGloballyPositioned { probe.bounds["parent"] = it.boundsInWindow() },
