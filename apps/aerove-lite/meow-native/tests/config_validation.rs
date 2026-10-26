@@ -551,15 +551,48 @@ fn official_mrs_text_between_8m_and_64m_stays_previewable() {
     assert!(dump.len() > validation::MAX_TEXT_BYTES && dump.len() <= validation::MAX_DUMP_TEXT_BYTES, "{}", dump.len());
     assert_eq!(dump.lines().count(), 100_000);
 }
-#[test]
-fn official_mrs_text_over_budget_is_an_error_but_binary_inspection_still_succeeds() {
+#[tokio::test]
+async fn official_mrs_old_text_overflow_fixture_is_core_readable_but_exceeds_host_count() {
     let label = "a".repeat(60);
     let entries: Vec<String> = (0..345_000).map(|index| format!("rule{index:06}.{label}.{label}.{label}.test")).collect();
     assert!(entries.iter().map(|entry| entry.len() + 1).sum::<usize>() > validation::MAX_DUMP_TEXT_BYTES);
     let file = official_domain_mrs(&entries);
-    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&file.0).unwrap()).unwrap();
-    assert_eq!(summary["count"], 345_000);
-    assert_eq!(dump_rule_set(&file.0, "domain", "mrs").unwrap_err(), "rule_set_invalid: $.payload: rule-set text exceeds 67108864 bytes");
+    let reader = meow_config::offline_rules::mrs_parser::UpstreamRuleSetReader::open_from_reader(
+        fs::File::open(&file.0).unwrap(), Default::default()).unwrap();
+    assert_eq!(reader.count(), 345_000);
+    let mut actual = 0; reader.for_each_domain(|_| actual += 1).unwrap(); assert_eq!(actual, 345_000);
+    let cap = "rule_set_invalid: $.payload.mrs.count: official MRS header declares 345000 entries, over 250000";
+    assert_eq!(inspect_rule_set(&file.0).unwrap_err(), cap);
+    assert_eq!(dump_rule_set(&file.0, "domain", "mrs").unwrap_err(), cap);
+    assert_eq!(validation::preflight_rule_resource(&file.0, "domain", "mrs").unwrap_err(), cap);
+    assert_eq!(validate_resource("ruleset", &file.0, "domain", "mrs").await.unwrap_err(), cap);
+}
+#[tokio::test]
+async fn official_mrs_text_over_budget_is_rejected_independently_of_other_host_budgets() {
+    // The fixed Core accepts long plain patterns; this is not a claim of DNS name validity.
+    let label = "a".repeat(660);
+    let entries: Vec<String> = (0..100_000).map(|index| format!("rule{index:06}.{label}.test")).collect();
+    assert!(entries.len() <= validation::MAX_ENTRIES);
+    assert!(entries.iter().all(|entry| entry.len() <= validation::MAX_ENTRY_BYTES
+        && entry.split('.').count() <= validation::MAX_TRIE_DEPTH));
+    assert_eq!(entries.iter().map(|entry| entry.split('.').count()).sum::<usize>(), 300_000);
+    assert!(300_000 <= validation::MAX_TRIE_NODES);
+    let text_bytes = entries.iter().map(|entry| entry.len() + 1).sum::<usize>();
+    assert_eq!(text_bytes, 67_700_000);
+    assert!(text_bytes > validation::MAX_DUMP_TEXT_BYTES);
+    let file = official_domain_mrs(&entries);
+    assert!(fs::metadata(&file.0).unwrap().len() <= validation::MAX_INPUT_BYTES as u64);
+    let reader = meow_config::offline_rules::mrs_parser::UpstreamRuleSetReader::open_from_reader(
+        fs::File::open(&file.0).unwrap(), Default::default()).unwrap();
+    let matcher = meow_config::offline_rules::rule_set::build_rule_set_from_upstream_reader(
+        reader, Some(meow_config::offline_rules::RuleSetBehavior::Domain), true, None).unwrap();
+    assert_eq!(matcher.len(), entries.len());
+    drop(matcher);
+    let cap = "rule_set_invalid: $.payload.mrs: rule-set text exceeds 67108864 bytes";
+    assert_eq!(inspect_rule_set(&file.0).unwrap_err(), cap);
+    assert_eq!(dump_rule_set(&file.0, "domain", "mrs").unwrap_err(), cap);
+    assert_eq!(validation::preflight_rule_resource(&file.0, "domain", "mrs").unwrap_err(), cap);
+    assert_eq!(validate_resource("ruleset", &file.0, "domain", "mrs").await.unwrap_err(), cap);
 }
 
 #[tokio::test]
