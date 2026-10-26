@@ -10,14 +10,9 @@ import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.location.LocationManager
-import android.net.ConnectivityManager
-import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.VpnService
-import android.os.Handler
-import android.os.Looper
 import dev.aerove.lite.LiteApplication
 import dev.aerove.lite.MainActivity
 import dev.aerove.lite.R
@@ -28,14 +23,22 @@ import dev.aerove.lite.backgroundpolicy.BackgroundPolicyPreferences
 import dev.aerove.lite.backgroundpolicy.AndroidSsidPolicy
 import dev.aerove.lite.data.ControlEndpoint
 import dev.aerove.lite.data.CoreApiClient
+import dev.aerove.lite.data.PreparedProfile
+import dev.aerove.lite.data.ProfileRepository
 import dev.aerove.lite.data.SystemDnsSnapshot
+import dev.aerove.lite.platform.PhysicalNetworkLease
 import dev.aerove.lite.networksettings.NetworkRuntimeCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -43,6 +46,7 @@ import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.withContext
 
 class LiteVpnService : VpnService() {
@@ -50,13 +54,15 @@ class LiteVpnService : VpnService() {
     private val coreScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var coordinator: VpnCoordinator
     private lateinit var networkRuntime: NetworkRuntimeCoordinator
-    private lateinit var connectivity: ConnectivityManager
+    private var networkLease: PhysicalNetworkLease? = null
+    private var physicalObservation: Job? = null
+    private var physicalSwitching: Job? = null
     private lateinit var listenerPolicy: BackgroundPolicyActor
     private val graph get() = application as LiteApplication
     @Volatile private var intentGeneration = 0L
     @Volatile private var ownerAdmissionAllowed = false
     private var owner = 0L
-    private var lastPlan: VpnPlan? = null
+    @Volatile private var lastPlan: VpnPlan? = null
     private var maintenanceHold = false
     private var heldMaintenance: MaintenanceRuntimeContext? = null
     private var policyPreferences = BackgroundPolicyPreferences()
@@ -64,13 +70,8 @@ class LiteVpnService : VpnService() {
     private val physical = kotlinx.coroutines.flow.MutableStateFlow(CapturedMeowPhysical(null, SystemDnsSnapshot(), null))
     private val network: Network? get() = physical.value.network
     private var networkKey: String? = null
-    private val physicalNetworks = linkedSetOf<Network>()
-    private val capabilitiesByNetwork = mutableMapOf<Network, NetworkCapabilities>()
     @Volatile private var builderDns: List<String> = emptyList()
-    private var callbackIncludesLocation = false
     private var networkListenerError: String? = null
-    private var callbackRegistered = false
-    private val networkObservations = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private val startupIntentChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
     private var notificationStopPreference = true
     private var foregroundPosted = false
@@ -80,34 +81,11 @@ class LiteVpnService : VpnService() {
     private val notificationUpdates = VpnNotificationUpdates({ phase ->
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(phase))
     }, ::createChannel)
-    private lateinit var callback: ConnectivityManager.NetworkCallback
-    private fun makeNetworkCallback(includeLocation: Boolean) = object : ConnectivityManager.NetworkCallback(
-        if (includeLocation) FLAG_INCLUDE_LOCATION_INFO else 0) {
-        override fun onAvailable(network: Network) {
-            physicalNetworks += network
-            updateUnderlying()
-        }
-        override fun onLost(network: Network) {
-            physicalNetworks -= network
-            capabilitiesByNetwork.remove(network)
-            networkObservations.value++
-            updateUnderlying()
-        }
-        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-            capabilitiesByNetwork[network] = capabilities
-            networkObservations.value++
-            updateUnderlying()
-        }
-        override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
-            updateUnderlying()
-        }
-    }
 
     override fun onCreate() {
         super.onCreate()
         owner = graph.registerVpnOwner()
         showForeground(VpnPhase.Starting)
-        connectivity = getSystemService(ConnectivityManager::class.java)
         networkRuntime = NetworkRuntimeCoordinator(coreScope, { endpoint, settings, ipv6 ->
             CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client -> client.applyNetwork(settings, ipv6) }
         }, { status -> coordinator.recordNetworkStatus(status) })
@@ -124,15 +102,11 @@ class LiteVpnService : VpnService() {
         graph.registerMaintenanceStop(owner, ::stopForMaintenance, ::resumeAfterMaintenance)
         graph.registerRuleReload(owner, coordinator::reloadRules)
         graph.registerModeCleanup(owner, ::stopForModeFailure)
-        val request = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
         policyPreferences = graph.settings.changes.value?.backgroundPolicy ?: BackgroundPolicyPreferences()
-        callbackIncludesLocation = needsSsid()
-        callback = makeNetworkCallback(callbackIncludesLocation)
-        connectivity.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
-        callbackRegistered = true
+        networkLease = graph.physicalNetworks.acquire(needsSsid())
+        physicalObservation = scope.launch { graph.physicalNetworks.snapshots.collect { updateUnderlying() } }
         registerReceiver(locationReceiver, IntentFilter(LocationManager.MODE_CHANGED_ACTION), RECEIVER_NOT_EXPORTED)
-        scope.launch {
+        physicalSwitching = scope.launch {
             var previous: CapturedMeowPhysical? = null
             physical.distinctUntilChanged { before, after -> before.networkHandle == after.networkHandle && before.dns == after.dns }
                 .collectLatest { captured ->
@@ -212,10 +186,10 @@ class LiteVpnService : VpnService() {
             }
         }
         scope.launch {
-            coordinator.state.map { snapshot -> snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running } }
-                .distinctUntilChanged().collectLatest { endpoint ->
-                    if (endpoint != null) lastPlan?.let { refreshResources(it, endpoint) }
-                }
+            collectResourceRefreshes(
+                coordinator.state.map { snapshot -> snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running } },
+                graph.profiles,
+            ) { endpoint -> lastPlan?.let { refreshResources(it, endpoint) } }
         }
     }
 
@@ -303,18 +277,10 @@ class LiteVpnService : VpnService() {
     }
 
     private fun updateUnderlying() {
-        val activeNetwork = connectivity.activeNetwork
-        fun capabilities(candidate: Network) = capabilitiesByNetwork[candidate] ?: connectivity.getNetworkCapabilities(candidate)
-        val available = physicalNetworks.filter { candidate ->
-            capabilities(candidate)?.let {
-                it.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) && it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            } == true
-        }
-        val preferred = available.firstOrNull { it == activeNetwork }
-            ?: available.firstOrNull { capabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
-            ?: available.firstOrNull()
+        val observed = graph.physicalNetworks.snapshots.value
+        val preferred = observed.preferred
         val captured = if (preferred == null) CapturedMeowPhysical(null, SystemDnsSnapshot(), null) else {
-            val links = connectivity.getLinkProperties(preferred) ?: return
+            val links = observed.links[preferred] ?: return
             if (links.dnsServers.isEmpty() || links.interfaceName.isNullOrBlank()) return
             try {
                 CapturedMeowPhysical(preferred, capturedMeowDns(links.interfaceName, links.dnsServers.mapNotNull { it.hostAddress }),
@@ -349,33 +315,26 @@ class LiteVpnService : VpnService() {
             }
             if (needsSsid()) {
                 val observed = kotlinx.coroutines.withTimeoutOrNull(10_000) {
-                    kotlinx.coroutines.flow.combine(networkObservations, startupIntentChanges) { _, _ -> Unit }.first {
+                    kotlinx.coroutines.flow.combine(graph.physicalNetworks.snapshots, startupIntentChanges) { _, _ -> Unit }.first {
                         requireCurrent()
-                        val wifi = connectivity.allNetworks.filter { candidate ->
-                            connectivity.getNetworkCapabilities(candidate)?.let { caps ->
-                                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
+                        val snapshot = graph.physicalNetworks.snapshots.value
+                        val wifi = snapshot.networks.filter { candidate ->
+                            snapshot.capabilities[candidate]?.let { caps ->
+                                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
                                     caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                                    caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                             } == true
                         }
-                        wifi.all { capabilitiesByNetwork.containsKey(it) }
+                        wifi.all { it in snapshot.observedCapabilities }
                     }
                     true
                 }
                 check(observed == true) { "Android did not deliver Wi-Fi capabilities for the on-demand policy" }
             }
-            connectivity.allNetworks.forEach { candidate ->
-                connectivity.getNetworkCapabilities(candidate)?.takeIf { caps ->
-                    caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
-                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                }?.let {
-                    physicalNetworks += candidate
-                    capabilitiesByNetwork[candidate] = it
-                }
-            }
+            graph.physicalNetworks.refresh()
             updateUnderlying()
-            if (needsSsid() && network?.let(capabilitiesByNetwork::get)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
-                check(AndroidSsidPolicy.read(network?.let(capabilitiesByNetwork::get), policyPreferences,
+            if (needsSsid() && network?.let(graph.physicalNetworks.snapshots.value.capabilities::get)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+                check(AndroidSsidPolicy.read(network?.let(graph.physicalNetworks.snapshots.value.capabilities::get), policyPreferences,
                     AndroidSsidPolicy.access(this@LiteVpnService)) != null) { "Android did not provide the current Wi-Fi SSID despite location authorization" }
             }
             syncListenerPolicy()
@@ -395,24 +354,16 @@ class LiteVpnService : VpnService() {
     private fun syncListenerPolicy() {
         if (!::listenerPolicy.isInitialized) return
         val ssid = if (policyPreferences.excludeSSIDs.isEmpty()) null else
-            AndroidSsidPolicy.read(network?.let(capabilitiesByNetwork::get), policyPreferences, AndroidSsidPolicy.access(this))
+            AndroidSsidPolicy.read(network?.let(graph.physicalNetworks.snapshots.value.capabilities::get), policyPreferences, AndroidSsidPolicy.access(this))
         listenerPolicy.update(policyPreferences, lastPlan != null && wasRequested(this) && !maintenanceHold, false, ssid)
     }
 
     private fun needsSsid(): Boolean = policyPreferences.excludeSSIDs.isNotEmpty() && AndroidSsidPolicy.access(this).granted
 
     private fun refreshNetworkPermissions() {
-        if (!callbackRegistered) return
-        val includeLocation = needsSsid()
-        if (includeLocation == callbackIncludesLocation) { updateUnderlying(); return }
-        callbackIncludesLocation = includeLocation
-        capabilitiesByNetwork.clear()
-        // Re-register the same observer so a newly granted location permission receives unredacted capabilities.
-        connectivity.unregisterNetworkCallback(callback)
-        callback = makeNetworkCallback(includeLocation)
-        val request = NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build()
-        connectivity.registerNetworkCallback(request, callback, Handler(Looper.getMainLooper()))
+        val lease = networkLease ?: return
+        lease.updateLocation(needsSsid())
+        graph.physicalNetworks.refresh()
         updateUnderlying()
     }
 
@@ -484,29 +435,12 @@ class LiteVpnService : VpnService() {
     }
 
     private suspend fun refreshResources(plan: VpnPlan, endpoint: CoreEndpoint) {
-        var retry = 60_000L
-        fun current() = lastPlan == plan && coordinator.state.value.endpoint === endpoint
-        while (current()) {
-            try {
-                val prepared = graph.profiles.prepare(plan.profileId)
-                val due = prepared.nextRefreshAt ?: return
-                delay((due - System.currentTimeMillis()).coerceAtLeast(1000))
-                if (!current()) return
-                val updated = graph.profiles.refreshIfDue(plan.profileId)
-                if (updated != null && current()) {
-                    coordinator.reconnect()
-                    return
-                }
-                retry = 60_000L
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                if (!current()) return
-                coordinator.recordResourceError(endpoint, failure.message ?: failure.javaClass.simpleName)
-                delay(retry)
-                retry = (retry * 2).coerceAtMost(900_000)
-            }
-        }
+        fun current() = lastPlan == plan && intentGeneration == plan.ownerIntentToken &&
+            coordinator.state.value.endpoint === endpoint
+        refreshRuntimeResources(graph.profiles, plan.profileId, endpoint, ::current,
+            reload = { next, owns -> graph.reloadRules(endpoint, next, owns) },
+            reconnect = coordinator::reconnect,
+            failed = { failure -> coordinator.recordResourceError(endpoint, failure.message ?: failure.javaClass.simpleName) })
     }
 
     override fun onRevoke() {
@@ -534,6 +468,8 @@ class LiteVpnService : VpnService() {
         startupIntentChanges.value++
         maintenanceHold = false
         heldMaintenance = null
+        physicalObservation?.cancel()
+        physicalSwitching?.cancel()
         graph.clearMaintenanceStop(owner)
         graph.clearRuleReload(owner)
         graph.clearModeCleanup(owner)
@@ -541,13 +477,14 @@ class LiteVpnService : VpnService() {
         removeNotification()
         notificationUpdates.close()
         unregisterReceiver(locationReceiver)
-        if (callbackRegistered) {
-            callbackRegistered = false
-            connectivity.unregisterNetworkCallback(callback)
-        }
+        try { networkLease?.close() } catch (failure: Exception) {
+            coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName)
+        } finally { networkLease = null }
         scope.launch {
             try {
                 try {
+                    physicalObservation?.join()
+                    physicalSwitching?.join()
                     coordinator.close()
                 } finally {
                     networkRuntime.close()
@@ -733,4 +670,89 @@ internal suspend fun stopModeSessionForService(endpoint: CoreEndpoint, reason: S
             (latest.endpoint == null || latest.endpoint === endpoint)) clear()
     }
     return stopped
+}
+
+// The Service collectLatest coroutine remains the sole automatic resource loop owner.
+internal suspend fun refreshRuntimeResources(
+    profiles: ProfileRepository,
+    profileId: String,
+    endpoint: CoreEndpoint,
+    current: () -> Boolean,
+    reload: suspend (PreparedProfile, () -> Boolean) -> Boolean,
+    reconnect: () -> Unit,
+    failed: (Exception) -> Unit,
+    clock: () -> Long = System::currentTimeMillis,
+    wait: suspend (Long) -> Unit = { delay(it) },
+) {
+    var retrySchedule: PreparedProfile? = null
+    var previousAttempt: Triple<String, String?, Long?>? = null
+    fun stamp(prepared: PreparedProfile) = Triple(prepared.revision, prepared.generation, prepared.nextRefreshAt)
+    while (current()) {
+        var cycleSchedule: Triple<String, String?, Long?>? = null
+        var refreshAttempted = false
+        try {
+            val scheduled = retrySchedule ?: withContext(Dispatchers.IO) { profiles.refreshSchedule(profileId) }
+            retrySchedule = null
+            val prepared = if (scheduled.generation == endpoint.resourceGeneration) scheduled else
+                withContext(Dispatchers.IO) { profiles.prepare(profileId) }
+            val due = prepared.nextRefreshAt ?: return
+            cycleSchedule = stamp(prepared)
+            if (due <= clock() && cycleSchedule == previousAttempt) {
+                failed(IllegalStateException("Automatic resource refresh did not advance its schedule"))
+                return
+            }
+            wait((due - clock()).coerceAtLeast(0))
+            currentCoroutineContext().ensureActive()
+            if (!current()) return
+            previousAttempt = cycleSchedule
+            refreshAttempted = true
+            val updated = withContext(Dispatchers.IO) { profiles.refreshIfDue(profileId) }
+            if (updated != null && current()) {
+                val installed = try {
+                    reload(updated, current)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    if (current()) failed(failure)
+                    false
+                }
+                currentCoroutineContext().ensureActive()
+                if (!current()) return
+                if (!installed) {
+                    reconnect()
+                    return
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            if (!current()) return
+            failed(failure)
+            if (!refreshAttempted) return
+            // Another key may already be due after a slow provider failure.
+            retrySchedule = try {
+                withContext(Dispatchers.IO) { profiles.refreshSchedule(profileId) }
+                    .takeIf { next -> next.nextRefreshAt?.let { due ->
+                        due > clock() || stamp(next) != cycleSchedule
+                    } == true }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (retrySchedule == null) return
+            if (checkNotNull(retrySchedule.nextRefreshAt) <= clock()) yield()
+        }
+    }
+}
+
+internal suspend fun collectResourceRefreshes(
+    endpoints: Flow<CoreEndpoint?>,
+    profiles: ProfileRepository,
+    refresh: suspend (CoreEndpoint) -> Unit,
+) {
+    combine(endpoints, profiles.resourceScheduleRevision) { endpoint, revision -> endpoint to revision }
+        .distinctUntilChanged().collectLatest { (endpoint, _) ->
+            if (endpoint != null) refresh(endpoint)
+        }
 }

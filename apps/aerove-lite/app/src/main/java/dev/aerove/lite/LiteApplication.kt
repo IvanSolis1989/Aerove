@@ -24,6 +24,8 @@ class LiteApplication : Application() {
         dev.aerove.lite.regexp2.Regexp2Filters.install(applicationContext)
     }
 
+    internal val physicalNetworks by lazy { dev.aerove.lite.platform.PhysicalNetworkMonitor(applicationContext, providerResetOwner::network) }
+
     internal val nativeLifecycle = Mutex()
     private val pendingStarts = java.util.concurrent.atomic.AtomicLong()
     fun startIntentEpoch(): Long = pendingStarts.get()
@@ -176,10 +178,12 @@ class LiteApplication : Application() {
             dev.aerove.lite.regexp2.IsolatedClientHelper.decryptAge(ciphertext, identities)
         })
     }
-    val profiles: ProfileRepository by lazy {
+    private val profilesDelegate = lazy {
         ProfileRepository(filesDir, profileValidator, downloader = subscriptionDownloader, resources = resourceBundles,
             sourcePolicy = profileSourcePolicy, sourceDecoder = profileSourceDecoder, globalResources = builderResourceLibrary)
     }
+    val profiles: ProfileRepository get() = profilesDelegate.value
+    private val providerResetOwner = ProviderResourceResetOwner(profilesDelegate)
     val settings by lazy { LiteSettingsStore(filesDir) }
     private val mutableVpn = MutableStateFlow(VpnSnapshot())
     private var owner = 0L
@@ -190,6 +194,29 @@ class LiteApplication : Application() {
 
     @Synchronized
     internal fun publishVpn(owner: Long, snapshot: VpnSnapshot) {
-        if (this.owner == owner) mutableVpn.value = snapshot
+        if (this.owner == owner) {
+            providerResetOwner.runtime(owner, snapshot)
+            mutableVpn.value = snapshot
+        }
     }
+}
+
+internal class ProviderResourceResetOwner(private val profiles: Lazy<ProfileRepository>) {
+    private var networkRevision = 0L
+    private data class SessionReceipt(val owner: Long, val generation: Long, val endpoint: dev.aerove.lite.vpn.CoreEndpoint)
+    private var session: SessionReceipt? = null
+    @Synchronized fun network(revision: Long) {
+        if (networkRevision == revision) return
+        networkRevision = revision
+        if (profiles.isInitialized()) profiles.value.resetResourceBackoff()
+    }
+    @Synchronized fun runtime(owner: Long, snapshot: VpnSnapshot) {
+        val endpoint = snapshot.endpoint ?: return
+        if (snapshot.phase != VpnPhase.Running || snapshot.sessionGeneration <= 0L) return
+        val next = SessionReceipt(owner, snapshot.sessionGeneration, endpoint)
+        if (session == next) return
+        session = next
+        if (profiles.isInitialized()) profiles.value.resetResourceBackoff()
+    }
+
 }

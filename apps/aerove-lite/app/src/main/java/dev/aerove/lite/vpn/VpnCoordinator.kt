@@ -58,6 +58,7 @@ data class VpnSnapshot(
     val initialDnsEnabled: Boolean? = null,
     val appliedDnsEnabled: Boolean? = null,
     val plannedBuilderSettings: LiteSettings? = null,
+    val sessionGeneration: Long = 0L,
 )
 
 interface TunnelSession {
@@ -140,6 +141,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                 val actualBuilder = builderSettings.takeUnless { initiallyParked }
                 val startupNetwork = actualBuilder?.network?.snapshot()
                 val ready = VpnSnapshot(VpnPhase.Running, running.endpoint, runningSinceNanos = request.startedAtNanos,
+                    sessionGeneration = request.generation,
                     initialNetwork = startupNetwork, initialIpv6 = actualBuilder?.ipv6, initialSettings = actualBuilder,
                     plannedBuilderSettings = builderSettings,
                     appliedNetwork = openedPlan.settings.network.snapshot(), appliedIpv6 = openedPlan.settings.ipv6,
