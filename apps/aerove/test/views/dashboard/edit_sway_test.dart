@@ -45,7 +45,7 @@ void main() {
           (state) => state.copyWith(
             dashboardWidgets: const [
               DashboardWidget.currentOutbound,
-              DashboardWidget.networkSpeed,
+              DashboardWidget.outboundMode,
               DashboardWidget.profiles,
             ],
           ),

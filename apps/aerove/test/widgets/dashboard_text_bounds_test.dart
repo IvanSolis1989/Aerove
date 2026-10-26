@@ -638,12 +638,12 @@ void main() {
       'DashboardBounds',
       if (_androidFontPath != null) _androidFont,
     ]) {
-      testWidgets('ellipsized organization keeps descenders at DPR3 '
+      testWidgets('wrapped organization keeps descenders at DPR3 '
           '${brightness.name} $family', (tester) async {
         const organization = 'Telekomunikasi gjpqy Indonesia long organization';
         Map<String, Object?>? nativeLayout;
         final samples = <Map<String, Object?>>[];
-        final firstBaselines = <LiquidGlassMode, double>{};
+        final firstBaselines = <LiquidGlassMode, List<double>>{};
         for (final phase in [0.0, 1 / 3, 2 / 3]) {
           for (final mode in LiquidGlassMode.values) {
             final capture = await _mountDashboard(
@@ -693,12 +693,17 @@ void main() {
               '$family-phase${phase.toStringAsFixed(3)}-dpr3',
               pixelRatio: 3,
             );
-            final baseline =
-                (rows.single['baselinesPhysical']! as List<double>).single;
+            final baselines = rows.single['baselinesPhysical']! as List<double>;
+            expect(paragraph.maxLines, isNull);
+            expect(baselines.length, greaterThan(1));
             if (phase == 0) {
-              firstBaselines[mode] = baseline;
+              firstBaselines[mode] = baselines;
             } else {
-              expect(baseline, closeTo(firstBaselines[mode]! + phase, 1e-6));
+              final first = firstBaselines[mode]!;
+              expect(baselines, hasLength(first.length));
+              for (var line = 0; line < baselines.length; line++) {
+                expect(baselines[line], closeTo(first[line] + phase, 1e-6));
+              }
             }
             samples.add({'mode': mode.name, ...rows.single});
             expect(tester.takeException(), isNull);
@@ -707,7 +712,7 @@ void main() {
           }
         }
         for (final sample in samples) {
-          expect(sample['ellipsis'], isTrue);
+          expect(sample['ellipsis'], isFalse);
           expect(sample['inkRows'], isNotEmpty);
           expect(sample['missingRows'], isEmpty, reason: '$sample');
           expect(sample['missingPoints'], isEmpty, reason: '$sample');
