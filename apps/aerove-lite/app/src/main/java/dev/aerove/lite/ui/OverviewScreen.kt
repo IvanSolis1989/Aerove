@@ -320,7 +320,19 @@ private fun Modifier.statusForeground(part: StatusForeground, shape: androidx.co
 /** The body's controls, which a screen reader takes after everything else the body reports. */
 private enum class StatusControl { Flag, Address, Button }
 
-private fun Modifier.statusControl(control: StatusControl) = semantics { traversalIndex = control.ordinal + 1f }
+private enum class StatusReading {
+    Heading, OverlaidTraffic, Quality, RetryHint, Uptime, Organization, ListenerError, OutboundError,
+    Flag, Address, Button, AppendedTraffic;
+}
+
+private fun Modifier.statusReading(order: StatusReading, group: Boolean = false) = semantics {
+    traversalIndex = order.ordinal.toFloat()
+    if (group) isTraversalGroup = true
+}
+
+private fun Modifier.statusControl(control: StatusControl) = semantics {
+    traversalIndex = (StatusReading.Flag.ordinal + control.ordinal).toFloat()
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -350,6 +362,7 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
         VpnPhase.Stopped -> R.string.lite_not_running
     }
     val trafficRowSpan = remember { androidx.compose.runtime.mutableFloatStateOf(20f) }
+    val trafficReading = remember { mutableStateOf(StatusReading.OverlaidTraffic) }
     val statusInk = remember { mutableMapOf<StatusMetricPart, List<Rect>>() }
     DisposableEffect(actions, active) {
         actions.setStatusTrafficActive(active)
@@ -370,11 +383,12 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
         CompositionLocalProvider(LocalLiteBackdrop provides controlsSource) {
             Layout(modifier = Modifier.padding(start = 20.dp, top = 18.dp, end = 16.dp, bottom = 18.dp).testTag("dashboard-status-content")
                 .semantics { isTraversalGroup = true }, content = {
-                Column(Modifier.fillMaxWidth().testTag("dashboard-status-body").semantics { isTraversalGroup = true }) {
+                Column(Modifier.fillMaxWidth().testTag("dashboard-status-body").semantics { isTraversalGroup = false }) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.Top) {
-                            FlowRow(Modifier.statusForeground(StatusForeground.Heading).testTag("dashboard-status-heading"),
+                            FlowRow(Modifier.statusForeground(StatusForeground.Heading).testTag("dashboard-status-heading")
+                                .statusReading(StatusReading.Heading, group = true),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(Modifier.alignBy(FirstBaseline), verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -403,7 +417,7 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
                                             .statusControl(StatusControl.Address).semantics { hideFromAccessibility() }, style = LiteType.Footnote, color = visuals.secondaryInk, maxLines = 2)
                                         else MissingExit(failed)
                                         val pending = if (identity == null) state.outboundLoading else quality.loading
-                                        Box(Modifier.statusForeground(StatusForeground.Quality)) { IpQualityChips(quality, open, placeholder = quality.quality == null && pending) }
+                                        Box(Modifier.statusForeground(StatusForeground.Quality).statusReading(StatusReading.Quality, group = true)) { IpQualityChips(quality, open, placeholder = quality.quality == null && pending) }
                                         if (quality.provisional) LiteText(stringResource(R.string.quality_provisional), Modifier.statusForeground(StatusForeground.Provisional).testTag("dashboard-status-provisional")
                                             .semantics { hideFromAccessibility() }, style = LiteType.Caption, color = visuals.secondaryInk)
                                     }
@@ -412,7 +426,7 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
                                 CountryBubble(identity?.countryCode, state.outboundLoading, running, time, actions::refreshOutbound)
                                 if (failed) Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     MissingExit(true)
-                                    LiteText(stringResource(R.string.lite_tap_icon_to_retry), Modifier.statusForeground(StatusForeground.Quality).testTag("dashboard-status-retry-hint"),
+                                    LiteText(stringResource(R.string.lite_tap_icon_to_retry), Modifier.statusForeground(StatusForeground.Quality).testTag("dashboard-status-retry-hint").statusReading(StatusReading.RetryHint),
                                         style = LiteType.Caption, color = visuals.secondaryInk, maxLines = 1)
                                 } else MissingExit(false)
                             }
@@ -426,11 +440,14 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
                         StartBubble(intendsRunning, enabled, stringResource(if (suspended) R.string.integration_suspended else if (intendsRunning) R.string.lite_stop else R.string.lite_start), time,
                             if (intendsRunning) actions::disconnect else actions::connect, suspended)
                     }
-                    state.listenerError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.ListenerError).testTag("dashboard-status-listener-error"), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
-                    state.outboundError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.OutboundError).testTag("dashboard-status-outbound-error"), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
+                    state.listenerError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.ListenerError).testTag("dashboard-status-listener-error").statusReading(StatusReading.ListenerError), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
+                    state.outboundError?.takeIf { it.isNotBlank() }?.let { LiteText(it, Modifier.statusForeground(StatusForeground.OutboundError).testTag("dashboard-status-outbound-error").statusReading(StatusReading.OutboundError), style = LiteType.Caption, color = MaterialTheme.colorScheme.error, maxLines = 2) }
                 }
                 if (showTraffic) StatusTrafficReadings(state, active, trafficRowSpan, statusInk,
-                    Modifier.testTag("dashboard-status-traffic").semantics { isTraversalGroup = true })
+                    Modifier.testTag("dashboard-status-traffic").semantics {
+                        isTraversalGroup = true
+                        traversalIndex = trafficReading.value.ordinal.toFloat()
+                    })
             }) { children, constraints ->
                 val loose = constraints.copy(minWidth = 0, minHeight = 0)
                 val body = children[0].measure(loose.copy(minWidth = constraints.maxWidth))
@@ -461,6 +478,7 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
                 val slot = dashboardFooterOffsetX(preferredX, constraints.maxWidth - traffic.width,
                     metricBounds, bodyBounds)
                 val appended = dashboardFooterAppends(slot, fontScale)
+                trafficReading.value = if (appended) StatusReading.AppendedTraffic else StatusReading.OverlaidTraffic
                 val trafficX = slot ?: preferredX.coerceAtLeast(0)
                 val trafficY = if (appended) mainHeight + gap else anchorY
                 val height = if (appended) maxOf(mainHeight, trafficY + traffic.height) else mainHeight
@@ -586,7 +604,10 @@ private fun StatusUptime(millis: Long, running: Boolean, active: Boolean) {
     val elapsed = displayValue(LocalLiteDisplayStreams.current?.uptimeMillis, millis, active).value
     val uptime = if (running) formatUptime(elapsed) else "—"
     Column(Modifier.graphicsLayer().statusForeground(StatusForeground.Uptime).testTag("dashboard-status-uptime")
-        .clearAndSetSemantics { contentDescription = "$label\n$uptime" }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        .clearAndSetSemantics {
+            contentDescription = "$label\n$uptime"
+            traversalIndex = StatusReading.Uptime.ordinal.toFloat()
+        }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         StatusMetricText(label, "dashboard-status-uptime-label", StatusMetricPart.FooterLabelInk,
             LiteType.Caption, LocalLiteVisuals.current.secondaryInk)
         StatusMetricText(uptime, "dashboard-status-uptime-value", StatusMetricPart.FooterValueInk,
@@ -603,6 +624,7 @@ private fun StatusCells(millis: Long, running: Boolean, active: Boolean, organiz
         Column(Modifier.statusForeground(StatusForeground.Organization).testTag("dashboard-status-organization")
             .clearAndSetSemantics {
                 contentDescription = listOfNotNull(organizationLabel, organization ?: "—".takeUnless { pending }).joinToString("\n")
+                traversalIndex = StatusReading.Organization.ordinal.toFloat()
             }, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             StatusFooterText(organizationLabel, StatusMetricPart.OrganizationLabelInk, style = LiteType.Caption, color = LocalLiteVisuals.current.secondaryInk, ink = ink)
             StatusFooterText(organization ?: "—", StatusMetricPart.OrganizationValueInk, Modifier.testTag("dashboard-status-organization-value"), style = LiteType.Label, ink = ink)

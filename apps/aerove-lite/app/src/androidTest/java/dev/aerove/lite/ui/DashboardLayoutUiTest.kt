@@ -698,10 +698,10 @@ class DashboardLayoutUiTest {
     private fun convergedStatusSpeech(reader: ScreenReader) = reader.stops.map { reader.tags[it] to reader.speech.getValue(it) }
         .filter { it.first !in setOf("ip-quality-summary", "dashboard-status-listener-error", "dashboard-status-outbound-error") }
 
-    private fun assertStatusSpeech(maxWidth: Dp, fontScale: Float, overlay: Boolean) {
+    private fun assertStatusSpeech(maxWidth: Dp, fontScale: Float, overlay: Boolean, language: String = "zh-CN") {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)).copy(phase = VpnPhase.Running)
-        launch(initial, fontScale = fontScale, maxWidth = maxWidth, deviceDensity = 2.625f, language = "zh-CN")
-        val strings = localized("zh-CN")
+        launch(initial, fontScale = fontScale, maxWidth = maxWidth, deviceDensity = 2.625f, language = language)
+        val strings = localized(language)
         awaitOrganization("${strings.getString(R.string.lite_organization)}\nExample ISP")
         assertStatusReadingOrder(overlay, traffic = true)
         val stops = screenReaderStops("dashboard-status")
@@ -709,7 +709,7 @@ class DashboardLayoutUiTest {
         assertEquals("$stops", listOf(title, strings.getString(R.string.lite_running)), stops.take(2).map { it.second })
         assertEquals("$stops", 1, stops.count { it.second.startsWith(title) })
         val figures = stops.filter { it.first?.let { tag -> tag.startsWith("dashboard-upload") || tag.startsWith("dashboard-download") } == true }
-        assertEquals("$stops", trafficSpeech("zh-CN"), figures.map { it.second })
+        assertEquals("$stops", trafficSpeech(language), figures.map { it.second })
         val detail = strings.getString(R.string.lite_details, strings.getString(R.string.lite_outbound_ip))
         assertEquals("$stops", listOf("${strings.getString(R.string.lite_uptime)}\n00:00:00", "${strings.getString(R.string.lite_organization)}\nExample ISP",
             button("${strings.getString(R.string.lite_outbound_retry)}\nSG"), "198.51.100.8, $detail", button(strings.getString(R.string.lite_stop))),
@@ -720,6 +720,12 @@ class DashboardLayoutUiTest {
 
     @Test
     fun overlaidStatusCardReadsTitleOnceStateTrafficSummaryThenControls() = assertStatusSpeech(412.dp, 1f, overlay = true)
+
+    @Test
+    fun englishAtThirteenTenthsReadsFooterTrafficBeforeTheSummary() = assertStatusSpeech(360.dp, 1.3f, overlay = true, language = "en")
+
+    @Test
+    fun chineseAtThirteenTenthsReadsFooterTrafficBeforeTheSummary() = assertStatusSpeech(360.dp, 1.3f, overlay = true, language = "zh-CN")
 
     @Test
     fun stackedStatusCardReadsTitleOnceStateSummaryControlsThenTraffic() = assertStatusSpeech(328.dp, 2f, overlay = false)
