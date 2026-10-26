@@ -74,6 +74,7 @@ CASES_MRS_READER=CASES_PROVIDER_GENERAL+[
 CASES_PROVIDER_READER=CASES_MRS_READER+[
     dict(package='meow-config',filter='rule_provider::reader::tests::reader15_',expectedPass=15,target='lib',requiredFeatures=[],exact=False),
     dict(package='meow-config',filter='rule_provider::tests::',expectedPass=41,target='lib',requiredFeatures=[],exact=False),
+    dict(package='meow-rules',filter='mrs_parser::host_admission_index_tests::',expectedPass=2,target='lib',requiredFeatures=[],exact=False),
 ]
 MRS_FORMAT_COMMAND=['rustfmt','--check','--edition','2021',
     '.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs',

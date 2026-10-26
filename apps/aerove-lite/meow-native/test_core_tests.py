@@ -99,7 +99,12 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 if mode=='nonzero':return subprocess.CompletedProcess(args,101,b'',b'actual command failure')
                 if mode=='raise':raise KeyboardInterrupt()
                 if mode=='mutate':(up/'Cargo.lock').write_bytes(b'mutated')
+                host_admission=spec['filter']=='mrs_parser::host_admission_index_tests::'
+                if host_admission and mode=='duplicate-host-admission':
+                    return subprocess.CompletedProcess(args,0,b'test result: ok. 2 passed; 0 failed;\ntest result: ok. 2 passed; 0 failed;\n',b'')
                 count=0 if mode=='empty' else spec['expectedPass']
+                if host_admission and mode=='empty-host-admission':count=0
+                if host_admission and mode=='extra-host-admission':count=3
                 return subprocess.CompletedProcess(args,0,f'test result: ok. {count} passed; 0 failed;\n'.encode(),b'')
             error=None
             with patch.object(core_tests.subprocess,'run',fake):
@@ -151,6 +156,14 @@ class CoreTestAdmissionTests(unittest.TestCase):
                     self.assertEqual(0,receipt['coreTests']['compileCheck']['exit']);self.assertEqual(2,len(formats))
                     self.assertEqual((1 if mode=='format-fail' else 0,1),(receipt['coreTests']['formatCheck']['exit'],receipt['coreTests']['providerFormatCheck']['exit']))
                     self.assertEqual(error.cmd,core_tests.MRS_FORMAT_COMMAND if mode=='format-fail' else core_tests.PROVIDER_READER_FORMAT_COMMAND)
+                elif provider and mode in ['empty-host-admission','extra-host-admission','duplicate-host-admission']:
+                    self.assertIsInstance(error,ValueError)
+                    self.assertIn('exact authored test count',str(error))
+                    self.assertEqual(32,len(receipt['coreTests']['commands']))
+                    self.assertEqual(177,sum(row['passed'] for row in receipt['coreTests']['commands'][:31]))
+                    final=receipt['coreTests']['commands'][-1]
+                    self.assertEqual(('mrs_parser::host_admission_index_tests::',2),(final['filter'],final['expectedPass']))
+                    self.assertNotIn('passed',final)
                 else:
                     self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)) if mode in ['compile-fail','compile-mutate','format-fail','format-mutate'] else 1)
 
@@ -239,14 +252,19 @@ class CoreTestAdmissionTests(unittest.TestCase):
     def test_provider_reader_keeps_all_mrs_commands_adds56_and_both_format_gates(self):
         specs=core_tests.entries(core_tests.MODE_PROVIDER_READER)
         self.assertEqual(core_tests.CASES_MRS_READER,specs[:29])
-        self.assertEqual((31,177),(len(specs),sum(e['expectedPass'] for e in specs)))
+        self.assertEqual((31,177),(len(specs[:31]),sum(e['expectedPass'] for e in specs[:31])))
+        self.assertEqual((32,179),(len(specs),sum(e['expectedPass'] for e in specs)))
+        self.assertEqual(dict(package='meow-rules',filter='mrs_parser::host_admission_index_tests::',expectedPass=2,target='lib',requiredFeatures=[],exact=False),specs[31])
+        self.assertEqual(['cargo','test','--manifest-path',core_tests.MANIFEST,'--locked','--package','meow-rules','--lib','--no-default-features','mrs_parser::host_admission_index_tests::','--','--test-threads=1','--nocapture'],core_tests.entry_command(specs[31],[]))
+        for historical in [core_tests.MODE_MRS_READER,core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_PROVIDER_GENERAL,core_tests.MODE_OBSERVABILITY,core_tests.MODE_V2,core_tests.MODE_TRAFFIC,core_tests.MODE]:
+            self.assertNotIn(specs[31],core_tests.entries(historical))
         self.assertEqual([('meow-config','rule_provider::reader::tests::reader15_',15,'lib',[],False),('meow-config','rule_provider::tests::',41,'lib',[],False)],
-            [(e['package'],e['filter'],e['expectedPass'],e['target'],e['requiredFeatures'],e['exact']) for e in specs[29:]])
+            [(e['package'],e['filter'],e['expectedPass'],e['target'],e['requiredFeatures'],e['exact']) for e in specs[29:31]])
         self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_MRS_READER),core_tests.packages_for_mode(core_tests.MODE_PROVIDER_READER))
         self.assertEqual(['rustfmt','--check','--edition','2021','.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs','.upstream/meow-rs/crates/meow-rules/src/rule_set.rs'],core_tests.MRS_FORMAT_COMMAND)
         self.assertEqual(['rustfmt','--check','--edition','2021']+['.upstream/meow-rs/crates/meow-config/src/'+name for name in ['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs']],core_tests.PROVIDER_READER_FORMAT_COMMAND)
         self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER),core_tests.FULL_NATIVE_SUITE_MODES)
-        for mode in ['success','locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','raise']:
+        for mode in ['success','locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','raise','empty-host-admission','extra-host-admission','duplicate-host-admission']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_PROVIDER_READER)
 
     def test_format_gate_files_are_exactly_what_rustfmt_follows_or_fail_closed(self):

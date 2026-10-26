@@ -9,6 +9,12 @@ fn validate_resource<'a>(kind: &'a str, path: &'a std::path::Path, behavior: &'a
     Box::pin(validate_resource_future(kind, path, behavior, format))
 }
 
+fn prepared<'a>(source: &'a str, roots: &'a preflight_roots::Roots)
+    -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(),String>>+Send+'a>> {
+    Box::pin(aerove_meow_core::resource_fetch::validate_prepared(source,
+        roots.read.to_str().unwrap(), roots.cache.to_str().unwrap()))
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new(bytes: &[u8]) -> Self {
@@ -32,23 +38,59 @@ async fn large_controlled_upstream_mrs_preflight_uses_checked_core_and_still_req
     assert!(bytes.starts_with(&meow_config::offline_rules::mrs_parser::ZSTD_MAGIC));
     let roots = preflight_roots::Roots::new();
     let path = roots.read.join("ad-domain.mrs"); fs::write(&path, &bytes).unwrap();
-    let receipt: serde_json::Value = serde_json::from_str(&validation::preflight_rule_resource(&path, "domain", "mrs").unwrap()).unwrap();
-    assert_eq!(receipt, serde_json::json!({"state":"validated","format":"mrs","behavior":"domain","count":411_634,
-        "requires":{"geoip":false,"asn":false,"geosite":false}}));
+    // Core parsing capability is independent of Lite's user-selected device admission.
+    let reader = meow_config::offline_rules::mrs_parser::UpstreamRuleSetReader::open_from_reader(
+        std::io::Cursor::new(&bytes), Default::default()).unwrap();
+    assert_eq!(reader.count(), 411_634);
+    let mut actual = 0; reader.for_each_domain(|_| actual += 1).unwrap(); assert_eq!(actual, 411_634);
+    let cap = "rule_set_invalid: $.payload.mrs.count: official MRS header declares 411634 entries, over 250000";
+    assert_eq!(validation::preflight_rule_resource(&path, "domain", "mrs").unwrap_err(), cap);
     let yaml = format!("dns: {{enable: false}}\nrule-providers:\n ad: {{type: file,behavior: domain,format: mrs,path: {:?}}}\nrules: ['RULE-SET,ad,REJECT','MATCH,DIRECT']\n", path.to_str().unwrap());
     let work: std::pin::Pin<Box<dyn std::future::Future<Output=Result<(),String>>+Send+'_>> = Box::pin(
         aerove_meow_core::resource_fetch::validate_prepared(&yaml, roots.read.to_str().unwrap(), roots.cache.to_str().unwrap()));
-    work.await.unwrap();
+    let error = work.await.unwrap_err(); assert!(error.contains(cap), "{error}");
     assert_eq!(fs::read(&path).unwrap(), bytes.as_slice());
-    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&path).unwrap()).unwrap();
-    assert_eq!(summary, serde_json::json!({"format":"mrs","behavior":"domain","count":411_634}));
-    validate_resource("ruleset", &path, "domain", "mrs").await.unwrap();
-    validate_resource("rule-provider", &path, "DOMAIN", "MRS").await.unwrap();
-    // Official MRS dumps add no host entry cap, as Standard's handleDumpRuleSet; beyond the Core decode bounds only the 64 MiB text budget applies.
-    let dump = dump_rule_set(&path, "domain", "mrs").unwrap();
-    assert_eq!(dump.lines().count(), 411_634);
-    assert_eq!(dump.lines().collect::<std::collections::BTreeSet<_>>().len(), 411_634);
-    assert!(dump.len() <= validation::MAX_DUMP_TEXT_BYTES);
+    assert_eq!(inspect_rule_set(&path).unwrap_err(), cap);
+    assert_eq!(validate_resource("ruleset", &path, "domain", "mrs").await.unwrap_err(), cap);
+    assert_eq!(validate_resource("rule-provider", &path, "DOMAIN", "MRS").await.unwrap_err(), cap);
+    assert_eq!(dump_rule_set(&path, "domain", "mrs").unwrap_err(), cap);
+}
+
+#[tokio::test]
+async fn official_mrs_admits_max_and_stops_actual_max_plus_one_even_with_a_small_header() {
+    let entries: Vec<String> = (0..=validation::MAX_ENTRIES).map(|index| format!("r{index:06}.test")).collect();
+    let borrowed: Vec<&str> = entries.iter().map(String::as_str).collect();
+    let fits = Fixture::new(&upstream_mrs::encode_upstream_mrs(0, validation::MAX_ENTRIES,
+        &upstream_mrs::encode_domain_set(&borrowed[..validation::MAX_ENTRIES])));
+    let summary: serde_json::Value = serde_json::from_str(&inspect_rule_set(&fits.0).unwrap()).unwrap();
+    assert_eq!(summary["count"], validation::MAX_ENTRIES);
+    assert_eq!(dump_rule_set(&fits.0, "domain", "mrs").unwrap().lines().count(), validation::MAX_ENTRIES);
+    validate_resource("ruleset", &fits.0, "domain", "mrs").await.unwrap();
+    let over = Fixture::new(&upstream_mrs::encode_upstream_mrs(0, 1, &upstream_mrs::encode_domain_set(&borrowed)));
+    let cap = "rule_set_invalid: $.payload.mrs: rule-provider payload exceeds 250000 entries";
+    assert_eq!(inspect_rule_set(&over.0).unwrap_err(), cap);
+    assert_eq!(dump_rule_set(&over.0, "domain", "mrs").unwrap_err(), cap);
+    assert_eq!(validation::preflight_rule_resource(&over.0, "domain", "mrs").unwrap_err(), cap);
+    assert_eq!(validate_resource("ruleset", &over.0, "domain", "mrs").await.unwrap_err(), cap);
+    let roots = preflight_roots::Roots::new(); let path = roots.read.join("bounded.mrs");
+    let yaml = format!("dns: {{enable: false}}\nrule-providers:\n ad: {{type: file,behavior: domain,format: mrs,path: {:?}}}\nrules: ['RULE-SET,ad,REJECT','MATCH,DIRECT']\n", path.to_str().unwrap());
+    fs::copy(&fits.0, &path).unwrap(); prepared(&yaml, &roots).await.unwrap();
+    fs::copy(&over.0, &path).unwrap();
+    let error = prepared(&yaml, &roots).await.unwrap_err(); assert!(error.contains(cap), "{error}");
+    // Repeated IPv6 prefixes still count as decoded work, even if a matcher would deduplicate them.
+    let mut ranges = vec![1]; ranges.extend_from_slice(&((validation::MAX_ENTRIES + 1) as i64).to_be_bytes());
+    for _ in 0..=validation::MAX_ENTRIES {
+        ranges.extend_from_slice(&std::net::Ipv6Addr::LOCALHOST.octets());
+        ranges.extend_from_slice(&std::net::Ipv6Addr::LOCALHOST.octets());
+    }
+    let ip_over = Fixture::new(&upstream_mrs::encode_upstream_mrs(1, 1, &ranges));
+    assert_eq!(inspect_rule_set(&ip_over.0).unwrap_err(), cap);
+    for (payload, reason) in [("x".repeat(validation::MAX_ENTRY_BYTES + 1), "exceeds 2048 bytes"),
+        (vec!["a"; validation::MAX_TRIE_DEPTH + 1].join("."), "exceeds 128 labels")] {
+        let wide = Fixture::new(&upstream_mrs::encode_upstream_mrs(0, 1, &upstream_mrs::encode_domain_set(&[&payload])));
+        assert!(inspect_rule_set(&wide.0).unwrap_err().contains(reason));
+        assert!(dump_rule_set(&wide.0, "domain", "mrs").unwrap_err().contains(reason));
+    }
 }
 
 #[tokio::test]
