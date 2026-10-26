@@ -20,9 +20,9 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 #### [chen08209/FlClash](https://github.com/chen08209/FlClash)
 
-**固定版本 / revision：** 历史整合 `v0.9.2-pre.1` / `7220961f7c5e494df831ca196ab53ef08a17e926`；本轮只读参照 `8d4f9744948751f1273fe871e1d05276fac09b0e`
+**固定版本 / revision：** 历史整合 `v0.9.2-pre.1` / `7220961f7c5e494df831ca196ab53ef08a17e926`；2026-10-25 按用户授权选择性整合 `v0.9.2` / `7fd417fb9a9a277c6a9339a8ac87f907df7c25f7`（以第二父提交保留血缘，合并树不整套采用）；只读参照 `8d4f9744948751f1273fe871e1d05276fac09b0e`
 
-**用途与采用方式：** 标准版历史源码选择性整合；另只读核对 `lib/common/request.dart` 的 `latestRelease` / `checkForUpdate` 现有检查路径，未复制新算法或新增依赖
+**用途与采用方式：** 标准版历史源码选择性整合；另只读核对 `lib/common/request.dart` 的 `latestRelease` / `checkForUpdate` 现有检查路径，未复制新算法或新增依赖。v0.9.2 实际采用：路由命中复核（`8176ccef`，仅核心与数据层）、规则集原地重载与新配置排序插入（`eaaf3e3b`）、全局规则变化后重新应用与规则页闭包（`5d6552dc`）、拖动返回门槛与焦点恢复（`0d98a9da`，保留 `pageResult`）、编辑器与动画释放修复（`7035edda`、`ae902edd`）。未采用：iOS 27 视觉、仪表盘简化、通用覆写可选化、测试地址强制应用、自适应防抖、编辑页保存语义、添加配置菜单、玻璃截取改动、上游图标、文案增删与版本号
 
 **许可证、署名与证据：** 保留历史版权与对应文件许可；`apps/aerove/core/mihomo-upstream.json` 中保留的双父与补丁来源记录；[固定源码 `lib/common/request.dart`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/lib/common/request.dart)、[GitHub Releases List API 文档](https://docs.github.com/en/rest/releases/releases#list-releases)
 
@@ -340,9 +340,9 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 #### [chen08209/Clash.Meta](https://github.com/chen08209/Clash.Meta)
 
-**固定版本 / revision：** `8380d0e7462f061a964323e9bf3129a236fcc5d5`
+**固定版本 / revision：** `8380d0e7462f061a964323e9bf3129a236fcc5d5`；`c5062921054902b25215a6a933e72ccd714c9bfa`
 
-**用途与采用方式：** FlClash历史来源体系中的适配源码参照；审计 mihomo DNS配置行为及保留的API适配来源，不作为当前核心主线
+**用途与采用方式：** FlClash历史来源体系中的适配源码参照；审计 mihomo DNS配置行为及保留的API适配来源，不作为当前核心主线。`c5062921` 的 `tunnel/patch.go` `ResolveRoute` 经 `apps/aerove/core/patches/flclash-v0.9.2-route-api.patch` 在官方 Mihomo v1.19.33 上重放，补丁后文件与该提交逐字节一致（blob `d3ae861a61c780ffd1cec71d0fc536b6c514bf9f`），LICENSE blob `f288702d2fa16d3cdf0035b15a9fcbc552cd88e7`
 
 **许可证、署名与证据：** GPL-3.0；`docs/aerove-lite/core/clash-rs-audit.md`、`apps/aerove/core/mihomo-upstream.json`
 
@@ -1024,6 +1024,17 @@ GitHub 的 fork 网络关系单独处理，不是上述开发治理的前提。�
 2026-10-22 用户已明确授权参考 FlClash `v0.9.2-pre.1`：官方频道实际分发安装包并指向
 [成功构建 39748575294](https://github.com/chen08209/FlClash/actions/runs/39748575294)，对应固定源码 `7220961f7c5e494df831ca196ab53ef08a17e926`。
 本次独立分支基于该真实来源审查；旧 `43d6bd78` 冻结工作不能冒充新目标。此专项授权不恢复自动合并，也不要求 Aerove 采用上游版本号。
+
+2026-10-25 用户明确要求并入 FlClash 上游的可取更新（以 0.9.2-pre.2 为例）。核验：`v0.9.2-pre.2`（`8baf8548a383be522114189a8e095d1e76fda116`）只有轻量标签，没有 GitHub Release；[`v0.9.2`](https://github.com/chen08209/FlClash/releases/tag/v0.9.2) 于 2026-10-24T06:18:34Z 公开发布（非预发布，16 个资产含 `SHA256SUMS`，资产摘要 `sha256:a3083cb0bb826e78f0ac84d39c6eda7a8c2dfc62e80021d8f30fdfe801cee04b`），由标签推送的[成功构建 40068002287](https://github.com/chen08209/FlClash/actions/runs/40068002287) 产出，指向 `7fd417fb9a9a277c6a9339a8ac87f907df7c25f7`，与上游 `main` 一致，并包含 pre.2 的全部内容。
+上游重写了 pre.1、pre.2 与正式版的历史，三者互不为祖先，因此按正式版整合：先逐项移植已采用的改动，再以 `7fd417fb` 为第二父提交记录血缘，合并树只保留第一父内容和来源元数据。此专项授权不恢复自动合并，产品版本不采用上游编号；标准版采纳的共同功能已列入 Lite 对等计划。
+
+本轮按裁定编号逐项采纳 U01–U10 与 U24，编号与上游提交的对照见血缘合并提交说明。U24 的 `.agents/architecture.md` 路由一致性一节是改编，其中数句沿用上游 `7fd417fb` 同名文件的原文表述（由 `8176ccef` 引入），按 GPL-3.0 保留来源。三个待定项结论如下：
+
+- U12（`5d6552dc` 通用覆写可选化）不采纳，保持现有强制通用默认值。
+- U26（Mihomo Alpha `6780eeeb`、`91e85eeb`）不提前回补，等下一个官方稳定版。
+- U27（meow-rs `main` 上 `33ec533f` 等提交）不提前回补，等下一个正式 tag。
+
+Lite 的对等计划与不适用依据见 [Meow 迁移记录](../aerove-lite/core/meow-migration.md)。
 
 确需借鉴代码时，先说明解决的 Aerove 问题与来源提交，选择最小相关改动，保留许可证与署名，进入独立功能分支审查和验证。整套合并上游不是默认更新方式。库与代理核心的更新同样要固定来源，经过本产品功能、配置和平台契约验证。
 
