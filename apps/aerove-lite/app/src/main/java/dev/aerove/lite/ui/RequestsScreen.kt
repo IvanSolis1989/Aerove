@@ -125,11 +125,13 @@ internal fun RequestsScreen(feature: ObservabilityFeature, padding: PaddingValue
 internal fun rememberHistoryState(feature: ObservabilityFeature): State<ObservabilityState> {
     val active = LocalLitePageActive.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    return produceState(feature.state.value, feature, active, lifecycle) {
+    val state = remember(feature) { mutableStateOf(feature.state.value) }
+    LaunchedEffect(feature, active, lifecycle) {
         if (active) lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            feature.state.collect { value = it }
+            feature.state.collect { state.value = it }
         }
     }
+    return state
 }
 
 @Composable

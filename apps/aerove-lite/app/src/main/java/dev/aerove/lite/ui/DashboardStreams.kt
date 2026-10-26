@@ -12,7 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
@@ -55,7 +55,9 @@ internal fun <T> displayValue(flow: StateFlow<T>?, fallback: T, visible: Boolean
     val active = LocalLiteWindowFocused.current && visible && (ownedOverlay || (LocalLitePageActive.current && LocalDiagnosticsForeground.current &&
         LocalLiteOverlay.current.content == null))
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    return produceState(flow.value, flow, active, lifecycle) {
-        if (active) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { flow.collect { value = it } }
+    val state = remember(flow) { mutableStateOf(flow.value) }
+    LaunchedEffect(flow, active, lifecycle) {
+        if (active) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) { flow.collect { state.value = it } }
     }
+    return state
 }
