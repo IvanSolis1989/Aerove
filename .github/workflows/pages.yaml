@@ -1,5 +1,9 @@
 name: pages
 
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+
 on:
   push:
     branches:
@@ -8,6 +12,7 @@ on:
       - 'website/**'
       - 'tooling/website/build_site.sh'
       - 'tooling/website/render_site.mjs'
+      - 'tooling/website/flatten_releases.mjs'
       - '.github/workflows/pages.yaml'
   workflow_run:
     workflows:

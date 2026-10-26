@@ -37,9 +37,16 @@ cp "$source_root/apps/aerove/assets_source/images/icon/glyph.svg" "$work/favicon
 # Optional fixed metadata makes the same assembly reproducible offline; never download application packages.
 if [[ -n "${SITE_RELEASES_FILE:-}" ]]; then
   cp "$SITE_RELEASES_FILE" "$work/releases.json"
-elif ! gh api --paginate --slurp "repos/$repo/releases?per_page=100" --jq 'add' >"$work/releases.json"; then
-  echo 'warning: release metadata unavailable; only GitHub release navigation will be shown' >&2
-  printf '[]\n' >"$work/releases.json"
+else
+  release_pages="$work/.release-pages.json"
+  if gh api --paginate --slurp "repos/$repo/releases?per_page=100" >"$release_pages" &&
+    node "$root/tooling/website/flatten_releases.mjs" "$release_pages" "$work/releases.json"; then
+    rm -f "$release_pages"
+  else
+    rm -f "$release_pages"
+    echo "warning: release metadata unavailable or invalid for $repo; only GitHub release navigation will be shown" >&2
+    printf '[]\n' >"$work/releases.json"
+  fi
 fi
 node "$root/tooling/website/render_site.mjs" "$work" "${SITE_URL:-https://ivansolis1989.github.io/Aerove}" "$repo"
 # Refuse a destination created during assembly as well; never replace an existing artifact.

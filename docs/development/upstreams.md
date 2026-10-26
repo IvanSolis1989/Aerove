@@ -996,6 +996,14 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
 
+#### [cli/cli](https://github.com/cli/cli)
+
+**固定版本 / revision：** `4f2cfe92e3499f8581bf39db77e0a1431fa7b55c`（2026-10-23）。
+
+**用途与采用方式：** 只读核实 GitHub CLI 的分页输出与参数互斥规则；`gh api --paginate --slurp` 返回按页包装的数组，不能同时使用 `--jq` 或 `--template`。本仓库的站点脚本改为先收集原始分页数据，再用自有 Node helper 严格校验并有界合并；未复制或适配 CLI 实现。
+
+**许可证、署名与证据：** MIT，保留固定版本 `LICENSE`；[参数互斥检查](https://github.com/cli/cli/blob/4f2cfe92e3499f8581bf39db77e0a1431fa7b55c/pkg/cmd/api/api.go#L2081-L2098)、[分页输出](https://github.com/cli/cli/blob/4f2cfe92e3499f8581bf39db77e0a1431fa7b55c/pkg/cmd/api/api.go#L2249-L2265)、[官方手册](https://cli.github.com/manual/gh_api)。
+
 ### 来源登记边界
 
 版本、commit、许可证分别按表中对应证据记录；缺失信息不从仓库名或最新上游状态推定。`Cargo.lock`/Maven/Pub锁定值标识依赖时，若未核实源码commit，版本列仅陈述已固定的发行版本与锁校验值。`russh`、`shadowquic`、`boring-noise`等peer测试读取上游API但未复制其实现；只读调查也与实际运行依赖分开。Cargo、Dart SDK和网络库的只读研究来源不代表被复制进产品。
