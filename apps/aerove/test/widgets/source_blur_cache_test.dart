@@ -18,9 +18,9 @@ const _rects = [
   Rect.fromLTWH(240, 160, 100, 140),
 ];
 const _colors = [Color(0xFFB8DCF2), Color(0xFFF0BFD8), Color(0xFFD5E9D3)];
-// Of the gradient source, 1024 physical pixels wide, blurs 12 and 16 keep a quarter, 24 an eighth.
-const _quarterEntry = 256 * 256;
-const _eighthEntry = 128 * 128;
+// The 1024 source at 1.05 scale uses capture divisors 6 and 8.
+const _sixthEntry = 179 * 179;
+const _eighthEntry = 134 * 134;
 
 class _SourcePainter extends CustomPainter {
   const _SourcePainter(this.seed);
@@ -64,6 +64,7 @@ Widget _app({
   bool wallpaperOnly = true,
   bool enabled = true,
   List<double> blurs = const [12, 24],
+  List<Rect> panelRects = _rects,
   LiquidGlassStyle? style,
 }) {
   Widget source;
@@ -125,7 +126,7 @@ Widget _app({
                   rect: edge
                       ? const Rect.fromLTWH(0, 10, 100, 100)
                       : blurs.length == 2
-                      ? _rects[index]
+                      ? panelRects[index]
                       : const Rect.fromLTWH(100, 160, 260, 140),
                   child: flatUI
                       ? LiquidGlassOcclusion(
@@ -334,6 +335,43 @@ void main() {
     LiquidGlassHost.debugSourceBlurBudgetOverride = null;
   });
 
+  for (final (size, dpr) in [
+    (const Size(390, 844), 1.0),
+    (const Size(412, 915), 2.0),
+    (const Size(1280, 720), 1.0),
+  ]) {
+    for (final quality in LiquidGlassQuality.values) {
+      testWidgets(
+        'capture density preserves 48 poses at $size / $dpr / $quality',
+        (tester) async {
+          tester.view.physicalSize = size * dpr;
+          tester.view.devicePixelRatio = dpr;
+          addTearDown(tester.view.reset);
+          const panels = [
+            Rect.fromLTWH(100, 160, 90, 140),
+            Rect.fromLTWH(190, 340, 100, 140),
+          ];
+          for (var pose = 0; pose < 48; pose++) {
+            final app = _app(quality: quality, pose: pose, panelRects: panels);
+            await _pump(tester, app, false);
+            final baseline = await _shot(tester);
+            await _pump(tester, app, true);
+            final cached = await _shot(tester);
+            _oracle(baseline, cached, [
+              for (final rect in panels) rect.inflate(2),
+            ], dpr);
+          }
+          if (ui.ImageFilter.isShaderFilterSupported) {
+            final stats = LiquidGlassHost.debugLastSourceBlurCapture!;
+            expect(stats.sourceBlurBuilds, 2);
+            expect(stats.sourceBlurHits, greaterThan(48));
+            expect(stats.sourceBlurPixels, lessThanOrEqualTo(2 * 1024 * 1024));
+          }
+          await _unmount(tester);
+        },
+      );
+    }
+  }
   testWidgets('idle readback reuses cache without advancing source stability', (
     tester,
   ) async {
@@ -444,7 +482,8 @@ void main() {
       tester.view.physicalSize = _size;
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      LiquidGlassHost.debugSourceBlurBudgetOverride = 2 * _quarterEntry;
+      LiquidGlassHost.debugSourceBlurBudgetOverride =
+          _sixthEntry + _eighthEntry;
       for (var frame = 0; frame < 8; frame++) {
         await _pump(
           tester,
@@ -463,7 +502,9 @@ void main() {
         );
         expect(
           stats.sourceBlurPixels,
-          ui.ImageFilter.isShaderFilterSupported ? 2 * _quarterEntry : 0,
+          ui.ImageFilter.isShaderFilterSupported
+              ? _sixthEntry + _eighthEntry
+              : 0,
         );
         expect(stats.evictions, 0);
         expect(stats.pinned, ui.ImageFilter.isShaderFilterSupported ? 3 : 0);
@@ -493,7 +534,7 @@ void main() {
       );
       expect(
         changed.sourceBlurPixels,
-        ui.ImageFilter.isShaderFilterSupported ? 2 * _quarterEntry : 0,
+        ui.ImageFilter.isShaderFilterSupported ? _sixthEntry + _eighthEntry : 0,
       );
       LiquidGlassHost.debugSourceBlurBudgetOverride = 0;
       await _pump(
@@ -644,7 +685,7 @@ void main() {
     _oracle(before, after, [for (final rect in _rects) rect.inflate(2)], 1);
     final stats = LiquidGlassHost.debugLastSourceBlurCapture!;
     expect(stats.entries, 2);
-    expect(stats.sourceBlurPixels, _quarterEntry + _eighthEntry);
+    expect(stats.sourceBlurPixels, _sixthEntry + _eighthEntry);
     await _unmount(tester);
   }, skip: !ui.ImageFilter.isShaderFilterSupported);
 
@@ -681,7 +722,7 @@ void main() {
       stats = await frame(const Duration(milliseconds: 200));
       expect(stats.entries, 1);
       expect(stats.evictions, 1);
-      expect(stats.sourceBlurPixels, _quarterEntry);
+      expect(stats.sourceBlurPixels, _sixthEntry);
       final builds = stats.sourceBlurBuilds;
       stats = await frame(const Duration(seconds: 5));
       expect(stats.entries, 1);

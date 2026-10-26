@@ -584,17 +584,24 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
   }
 
   void _syncMotion() {
+    final reduced = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final running =
         widget.motion &&
         widget.motionTime == null &&
         _foreground &&
         TickerMode.valuesOf(context).enabled &&
-        !(MediaQuery.maybeOf(context)?.disableAnimations ?? false);
+        !reduced;
     if (running && !_pacer.isActive) {
       _runBase = _frame.value.elapsed;
       _pacer.start();
     } else if (!running && _pacer.isActive) {
       _pacer.stop();
+    }
+    // Reduced motion rests at the t = 0 pose and later resumes from there.
+    if (reduced &&
+        widget.motionTime == null &&
+        _frame.value.elapsed != Duration.zero) {
+      _frame.value = (square: _square, elapsed: Duration.zero);
     }
   }
 

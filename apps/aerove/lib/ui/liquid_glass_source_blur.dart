@@ -4,22 +4,13 @@ const _sourceBlurBudget = 2 * 1024 * 1024;
 const _sourceBlurIdle = Duration(seconds: 2);
 const _sourceBlurredBand = Object();
 int _liveSourceBlurPixels = 0;
-typedef _SourceSigma = ({double x, double y});
+typedef _SourceSigma = ({double x, double y, int width, int height});
 typedef _SourceBlurImage = ({
   ui.Image image,
   int pixels,
   int used,
   Duration read,
 });
-
-/// Shrinks as a capture does: while [sigma] still spans [_captureFrost] pixels.
-double _sourceBlurShrink(double sigma) {
-  var shrink = 1.0;
-  while (sigma * shrink >= 2 * _captureFrost) {
-    shrink /= 2;
-  }
-  return shrink;
-}
 
 typedef SourceBlurCapture = ({
   int sourceBlurBuilds,
@@ -178,9 +169,8 @@ class _SourceBlurCache {
       return null;
     }
     final source = _source!;
-    final shrink = _sourceBlurShrink(math.min(sigma.x, sigma.y));
-    final width = math.max(1, (source.width * shrink).round());
-    final height = math.max(1, (source.height * shrink).round());
+    final width = sigma.width;
+    final height = sigma.height;
     final needed = width * height;
     if (needed > budget) {
       fallback('budget');
@@ -346,9 +336,27 @@ extension _SourceBlurCapture on _LiquidGlassHostLayer {
     final scale = cache.canonicalScale(math.sqrt(xx));
     final x = source.size.width / source.image.width;
     final y = source.size.height / source.image.height;
+    final captureX = entry.texelsPerDp * scale * x;
+    final captureY = entry.texelsPerDp * scale * y;
+    if (!captureX.isFinite ||
+        !captureY.isFinite ||
+        captureX <= 0 ||
+        captureY <= 0) {
+      cache.fallback('transform');
+      return null;
+    }
+    // Match the capture density instead of minifying once more at an unrelated sigma-based size.
+    final width = source.image.width * captureX;
+    final height = source.image.height * captureY;
+    if (width > cache.budget || height > cache.budget) {
+      cache.fallback('budget');
+      return null;
+    }
     final sigma = (
-      x: entry.blurSigma / (entry.texelsPerDp * scale * x),
-      y: entry.blurSigma / (entry.texelsPerDp * scale * y),
+      width: math.max(1, width.round()),
+      height: math.max(1, height.round()),
+      x: entry.blurSigma / captureX,
+      y: entry.blurSigma / captureY,
     );
     if (!sigma.x.isFinite ||
         !sigma.y.isFinite ||
