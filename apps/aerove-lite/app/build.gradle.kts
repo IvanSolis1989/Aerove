@@ -265,6 +265,7 @@ dependencies {
     implementation(compose.material3)
     implementation(compose.materialIconsExtended)
     implementation(compose.ui)
+    implementation("androidx.compose.ui:ui") { version { strictly("1.12.1") } }
     implementation("io.github.kyant0:backdrop:2.0.1")
     implementation("io.github.kyant0:shapes:1.2.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
