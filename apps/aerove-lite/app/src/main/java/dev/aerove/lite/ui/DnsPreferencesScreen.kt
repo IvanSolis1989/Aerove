@@ -13,10 +13,10 @@ import dev.aerove.lite.dnssettings.*
 
 @Composable
 internal fun DnsPreferencesScreen(preferences: DnsPreferences, busy: Boolean, padding: PaddingValues,
-    onChanged: (DnsPreferences) -> Unit, customProfile: Boolean = false, error: String? = null) {
+    onChanged: (DnsPreferences) -> Long, receipt: DnsSaveReceipt?, customProfile: Boolean = false, error: String? = null) {
     var editing by rememberSaveable { mutableStateOf<DnsField?>(null) }
     DnsEditorOverlay(editing != null) { close ->
-        editing?.let { field -> DnsFieldForm(field, preferences, busy, error, onChanged, customProfile) { editing = null; close() } }
+        editing?.let { field -> DnsFieldForm(field, preferences, busy, error, onChanged, receipt, customProfile) { editing = null; close() } }
     }
     LazyColumn(state = LocalLiteListState.current, contentPadding = padding,
         verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("dns-preferences")) {
@@ -53,7 +53,7 @@ internal fun DnsEditorOverlay(open: Boolean, content: @Composable (() -> Unit) -
 
 @Composable
 private fun DnsFieldForm(field: DnsField, preferences: DnsPreferences, busy: Boolean, error: String?,
-    onChanged: (DnsPreferences) -> Unit, customProfile: Boolean, close: () -> Unit) {
+    onChanged: (DnsPreferences) -> Long, receipt: DnsSaveReceipt?, customProfile: Boolean, close: () -> Unit) {
     val original = remember(field) { preferences.value(field) }
     var selected by rememberSaveable(field) { mutableStateOf(field in preferences.overridden) }
     var bool by rememberSaveable(field) { mutableStateOf((original as? DnsValue.Bool)?.value ?: false) }
@@ -61,10 +61,10 @@ private fun DnsFieldForm(field: DnsField, preferences: DnsPreferences, busy: Boo
     var entries by remember(field) { mutableStateOf((original as? DnsValue.Entries)?.value ?: emptyList()) }
     var policy by remember(field) { mutableStateOf((original as? DnsValue.Policy)?.value?.map { it.key to it.value.joinToString(", ") } ?: emptyList()) }
     var issue by remember { mutableStateOf<DnsPreferencesException?>(null) }
-    var pending by remember { mutableStateOf<DnsPreferences?>(null) }
+    var pending by remember { mutableStateOf<PendingDnsSave?>(null) }
     var saveFailed by remember { mutableStateOf(false) }
     val enabled = !busy && pending == null
-    DnsSaveReadback(preferences, busy, error, pending, { pending = null; saveFailed = true }, close)
+    DnsSaveReadback(preferences, busy, pending, receipt, { failed -> pending = null; saveFailed = failed }, close)
     LiteModal(stringResource(field.label()), close) {
         if (error != null) LiteText(error, style = LiteType.Caption, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
         SettingsRow(stringResource(R.string.dns_preferences_override)) {
@@ -95,7 +95,7 @@ private fun DnsFieldForm(field: DnsField, preferences: DnsPreferences, busy: Boo
                 if (selected && !customProfile && field == DnsField.DefaultNameserver &&
                     (value as DnsValue.Entries).value.isEmpty()) throw DnsPreferencesException("dns.default-nameserver", DnsIssueCode.InvalidValue)
                 val draft = if (selected) preferences.withValue(field, value) else preferences.inherit(field)
-                if (draft == preferences) close() else { pending = draft; onChanged(draft) }
+                if (draft == preferences) close() else { pending = PendingDnsSave(draft, onChanged(draft)) }
             } catch (failure: DnsPreferencesException) { issue = failure; pending = null }
             catch (_: Exception) { pending = null; saveFailed = true }
         }
@@ -103,15 +103,14 @@ private fun DnsFieldForm(field: DnsField, preferences: DnsPreferences, busy: Boo
 }
 
 @Composable
-internal fun DnsSaveReadback(current: DnsPreferences, busy: Boolean, error: String?, pending: DnsPreferences?,
-    clearPending: () -> Unit, close: () -> Unit) {
-    var observedBusy by remember { mutableStateOf(false) }
-    val submittedError = remember(pending) { error }
-    LaunchedEffect(current, busy, error, pending) {
-        if (pending == null) { observedBusy = false; return@LaunchedEffect }
-        if (busy) observedBusy = true
-        if (!busy && current == pending) { clearPending(); close() }
-        else if (!busy && (observedBusy || error != submittedError)) { observedBusy = false; clearPending() }
+internal fun DnsSaveReadback(current: DnsPreferences, busy: Boolean, pending: PendingDnsSave?, receipt: DnsSaveReceipt?,
+    clearPending: (Boolean) -> Unit, close: () -> Unit) {
+    LaunchedEffect(current, busy, pending, receipt) {
+        when (dnsSaveDecision(current, busy, pending, receipt)) {
+            DnsSaveDecision.Wait -> Unit
+            DnsSaveDecision.Saved -> { clearPending(false); close() }
+            DnsSaveDecision.Failed -> clearPending(true)
+        }
     }
 }
 

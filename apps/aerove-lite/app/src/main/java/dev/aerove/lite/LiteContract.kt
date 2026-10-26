@@ -253,6 +253,7 @@ data class LiteState(
     val installedApps: List<InstalledApp> = emptyList(),
     val busy: Set<String> = emptySet(),
     val settingsError: Boolean = false,
+    val dnsSaveReceipt: dev.aerove.lite.dnssettings.DnsSaveReceipt? = null,
     val message: String? = null,
     val diagnostics: DiagnosticsState = DiagnosticsState(),
     val updatingProfileIds: Set<String> = emptySet(),
@@ -301,6 +302,7 @@ interface LiteActions {
     fun closeAllConnections()
     fun shuffleAurora()
     fun changeSettings(settings: LiteSettings)
+    fun saveDnsPreferences(preferences: dev.aerove.lite.dnssettings.DnsPreferences): Long
     fun changeHistoryTable(change: dev.aerove.lite.observability.HistoryTableChange)
     fun loadInstalledApps()
     fun clearLogs()

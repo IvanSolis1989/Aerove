@@ -1134,6 +1134,20 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         queueSettings { settingsUpdates.historyTable(change) }
 
     private val modeIntents = dev.aerove.lite.integration.RouteModeIntent()
+    private val dnsSaveAttempts = dev.aerove.lite.dnssettings.DnsSaveAttempts { receipt ->
+        publishState { it.copy(dnsSaveReceipt = receipt) }
+    }
+
+    override fun saveDnsPreferences(preferences: dev.aerove.lite.dnssettings.DnsPreferences): Long {
+        val draft = preferences.snapshot().requireValid()
+        cancelSettingsAuthorization()
+        val token = dnsSaveAttempts.begin()
+        queueSettings(onRejected = { dnsSaveAttempts.complete(token, failed = true) }) {
+            dnsSaveAttempts.persist(token) { settingsUpdates.update { it.copy(dnsPreferences = draft) } }
+        }
+        return token
+    }
+
     override fun changeSettings(settings: LiteSettings) {
         val baseline = state.value.settings
         val requested = settings.normalized()
@@ -1181,8 +1195,8 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (old.aurora != saved.aurora) checkAuroraTime()
     }
 
-    private fun queueSettings(action: suspend () -> Unit) {
-        if (!viewModelScope.isActive || application.maintenanceActive) return
+    private fun queueSettings(onRejected: (() -> Unit)? = null, action: suspend () -> Unit) {
+        if (!viewModelScope.isActive || application.maintenanceActive) { onRejected?.invoke(); return }
         settingsRequests++
         publishState { it.copy(busy = it.busy + "settings", settingsError = false) }
         viewModelScope.launch {

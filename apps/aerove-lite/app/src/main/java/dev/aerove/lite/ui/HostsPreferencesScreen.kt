@@ -13,10 +13,10 @@ import dev.aerove.lite.dnssettings.*
 
 @Composable
 internal fun HostsPreferencesScreen(preferences: DnsPreferences, busy: Boolean, padding: PaddingValues,
-    onChanged: (DnsPreferences) -> Unit, error: String? = null) {
+    onChanged: (DnsPreferences) -> Long, receipt: DnsSaveReceipt?, error: String? = null) {
     var editing by rememberSaveable { mutableStateOf(false) }
     DnsEditorOverlay(editing) { close ->
-        HostsPreferenceForm(preferences, busy, error, onChanged) { editing = false; close() }
+        HostsPreferenceForm(preferences, busy, error, onChanged, receipt) { editing = false; close() }
     }
     LazyColumn(state = LocalLiteListState.current, contentPadding = padding,
         verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.testTag("hosts-preferences")) {
@@ -36,15 +36,15 @@ internal fun HostsPreferencesScreen(preferences: DnsPreferences, busy: Boolean, 
 
 @Composable
 private fun HostsPreferenceForm(preferences: DnsPreferences, busy: Boolean, error: String?,
-    onChanged: (DnsPreferences) -> Unit, close: () -> Unit) {
+    onChanged: (DnsPreferences) -> Long, receipt: DnsSaveReceipt?, close: () -> Unit) {
     var entries by remember { mutableStateOf(preferences.hosts.map { it.key to it.value.joinToString(", ") }) }
-    var pending by remember { mutableStateOf<DnsPreferences?>(null) }
+    var pending by remember { mutableStateOf<PendingDnsSave?>(null) }
     var issue by remember { mutableStateOf<DnsPreferencesException?>(null) }
     var saveFailed by remember { mutableStateOf(false) }
     val enabled = !busy && pending == null
     LiteModal(stringResource(R.string.dns_preferences_hosts), close) {
         if (error != null) LiteText(error, style = LiteType.Caption, color = androidx.compose.material3.MaterialTheme.colorScheme.error)
-        DnsSaveReadback(preferences, busy, error, pending, { pending = null; saveFailed = true }, close)
+        DnsSaveReadback(preferences, busy, pending, receipt, { failed -> pending = null; saveFailed = failed }, close)
         DnsMapFields(entries, { entries = it }, enabled)
         DnsIssueText(issue)
         if (saveFailed) LiteText(stringResource(R.string.dns_preferences_save_failed), style = LiteType.Caption,
@@ -53,7 +53,7 @@ private fun HostsPreferenceForm(preferences: DnsPreferences, busy: Boolean, erro
             issue = null; saveFailed = false
             try {
                 val draft = preferences.copy(hosts = dnsMapDraft(entries)).requireValid().snapshot()
-                if (draft == preferences) close() else { pending = draft; onChanged(draft) }
+                if (draft == preferences) close() else { pending = PendingDnsSave(draft, onChanged(draft)) }
             } catch (failure: DnsPreferencesException) { issue = failure; pending = null }
             catch (_: Exception) { pending = null; saveFailed = true }
         }

@@ -418,7 +418,7 @@ fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.int
                                             state.locationGranted, state.batteryIgnored, actions::requestOnDemandLocation, actions::requestBatteryExemption,
                                             padding, state.busy.isEmpty())
                                         DetailPage.Hosts -> HostsPreferencesScreen(state.settings.dnsPreferences, "settings" in state.busy, padding,
-                                            { actions.changeSettings(state.settings.copy(dnsPreferences = it)) })
+                                            actions::saveDnsPreferences, state.dnsSaveReceipt)
                                         DetailPage.Advanced -> AdvancedConfigScreen(padding) { destination ->
                                             if (destination == DetailPage.Scripts) scriptsParent = DetailPage.Advanced.name
                                             detail = destination
@@ -452,7 +452,7 @@ fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.int
                                         DetailPage.ProxyPreferences -> ProxyPreferencesScreen(state.settings.proxyPresentation, padding, "settings" in state.busy, { actions.changeSettings(state.settings.copy(proxyPresentation = it)) })
                                         DetailPage.Connections -> ConnectionsLeaf(state) { ConnectionsScreen(it, actions, padding) }
                                         DetailPage.Dns -> DnsPreferencesScreen(state.settings.dnsPreferences, "settings" in state.busy, padding,
-                                            { actions.changeSettings(state.settings.copy(dnsPreferences = it)) })
+                                            actions::saveDnsPreferences, state.dnsSaveReceipt)
                                         DetailPage.Apps -> {
                                             val owner = remember(features) { features().appAccess }
                                             val accessState by owner.state.collectAsState()

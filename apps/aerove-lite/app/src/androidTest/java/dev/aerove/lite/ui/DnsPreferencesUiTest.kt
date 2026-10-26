@@ -26,6 +26,9 @@ class DnsPreferencesUiTest {
     private val preferences = mutableStateOf(DnsPreferences())
     private val busy = mutableStateOf(false)
     private val error = mutableStateOf<String?>(null)
+    private val receipt = mutableStateOf<DnsSaveReceipt?>(null)
+    private val attempts = DnsSaveAttempts { receipt.value = it }
+    private var submittedToken = 0L
     private val requests = mutableListOf<DnsPreferences>()
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
@@ -43,8 +46,12 @@ class DnsPreferencesUiTest {
                         LocalLiteBackdrop provides backdrop,
                         LocalLiteInkBackdrop provides backdrop,
                     ) {
-                        if (hosts) HostsPreferencesScreen(preferences.value, busy.value, PaddingValues(16.dp), { requests += it }, error.value)
-                        else DnsPreferencesScreen(preferences.value, busy.value, PaddingValues(16.dp), { requests += it }, custom, error.value)
+                        val submit: (DnsPreferences) -> Long = { draft ->
+                            requests += draft
+                            attempts.begin().also { submittedToken = it }
+                        }
+                        if (hosts) HostsPreferencesScreen(preferences.value, busy.value, PaddingValues(16.dp), submit, receipt.value, error.value)
+                        else DnsPreferencesScreen(preferences.value, busy.value, PaddingValues(16.dp), submit, receipt.value, custom, error.value)
                         overlay.content?.invoke()
                     }
                 }
@@ -63,7 +70,7 @@ class DnsPreferencesUiTest {
         val requestedServers = (requests.single().value(DnsField.Nameserver) as DnsValue.Entries).value
         assertEquals(listOf("https://1.1.1.1/dns-query", "https://doh.pub/dns-query"), requestedServers)
         assertEquals(requestedServers, (transformDnsPreferences(emptyMap(), requests.single())["dns"] as Map<*, *>)["nameserver"])
-        compose.runOnUiThread { preferences.value = requests.single() }
+        compose.runOnUiThread { preferences.value = requests.single(); attempts.complete(submittedToken, failed = false) }
         compose.onNodeWithTag("dns-save").assertDoesNotExist()
     }
 
@@ -87,7 +94,7 @@ class DnsPreferencesUiTest {
         compose.onNodeWithContentDescription(context.getString(R.string.dns_preferences_entry, 1)).performTextReplacement("1.1.1.1")
         compose.onNodeWithTag("dns-save").performScrollTo().performClick()
         compose.runOnUiThread { busy.value = true }
-        compose.runOnUiThread { busy.value = false; error.value = "fixture disk failure" }
+        compose.runOnUiThread { busy.value = false; error.value = "fixture disk failure"; attempts.complete(submittedToken, failed = true) }
         compose.onNodeWithContentDescription(context.getString(R.string.dns_preferences_entry, 1)).assertTextEquals("1.1.1.1")
         compose.onNodeWithTag("dns-save").assertIsEnabled()
         assertEquals(1, requests.size)
@@ -117,7 +124,53 @@ class DnsPreferencesUiTest {
         target.performTextReplacement("192.0.2.10")
         compose.onNodeWithTag("dns-save").performScrollTo().performClick()
         assertEquals(mapOf("+.example.org" to "192.0.2.10"), transformDnsPreferences(emptyMap(), requests.single())["hosts"])
-        compose.runOnUiThread { preferences.value = requests.single() }
+        compose.runOnUiThread { preferences.value = requests.single(); attempts.complete(submittedToken, failed = false) }
         compose.onNodeWithTag("dns-save").assertDoesNotExist()
+    }
+
+    @Test fun fastRepeatedFailuresWithTheSameErrorKeepTheDraftEditable() {
+        open()
+        compose.onNodeWithTag("dns-field-nameserver").performScrollTo().performClick()
+        val field = compose.onNodeWithContentDescription(context.getString(R.string.dns_preferences_entry, 1))
+        field.performTextReplacement("1.1.1.1")
+        repeat(2) {
+            compose.onNodeWithTag("dns-save").performScrollTo().performClick()
+            compose.runOnUiThread { error.value = "same disk failure"; attempts.complete(submittedToken, failed = true) }
+            field.assertTextEquals("1.1.1.1")
+            compose.onNodeWithTag("dns-save").assertIsEnabled()
+        }
+        assertEquals(2, requests.size)
+    }
+
+    @Test fun successReceiptWaitsForSavedReadbackAndOldFailureCannotEnableNewPending() {
+        open()
+        compose.onNodeWithTag("dns-field-nameserver").performScrollTo().performClick()
+        compose.onNodeWithContentDescription(context.getString(R.string.dns_preferences_entry, 1)).performTextReplacement("1.1.1.1")
+        compose.onNodeWithTag("dns-save").performScrollTo().performClick()
+        val old = submittedToken
+        compose.runOnUiThread { attempts.complete(old, failed = true) }
+        compose.onNodeWithTag("dns-save").assertIsEnabled()
+        compose.onNodeWithTag("dns-save").performClick()
+        compose.runOnUiThread { attempts.complete(old, failed = true) }
+        compose.onNodeWithTag("dns-save").assertIsNotEnabled()
+        compose.runOnUiThread { attempts.complete(submittedToken, failed = false) }
+        compose.onNodeWithTag("dns-save").assertIsNotEnabled()
+        compose.runOnUiThread { preferences.value = requests.last() }
+        compose.onNodeWithTag("dns-save").assertDoesNotExist()
+    }
+
+    @Test fun failedHostsReceiptKeepsTheOriginalIpDraftAvailableForRetry() {
+        open(hosts = true)
+        compose.onNodeWithText(context.getString(R.string.dns_preferences_hosts)).performClick()
+        compose.onNodeWithTag("dns-add-entry").performClick()
+        compose.onNodeWithContentDescription(context.getString(R.string.dns_preferences_domain, 1)).performTextReplacement("example.org")
+        val target = compose.onNodeWithContentDescription(context.getString(R.string.dns_preferences_target, 1))
+        target.performTextReplacement("192.0.2.10")
+        compose.onNodeWithTag("dns-save").performScrollTo().performClick()
+        compose.runOnUiThread { attempts.complete(submittedToken, failed = true) }
+        target.assertTextEquals("192.0.2.10")
+        compose.onNodeWithTag("dns-save").assertIsEnabled()
+        compose.onNodeWithTag("dns-save").performClick()
+        assertEquals(2, requests.size)
     }
 }

@@ -40,6 +40,8 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit,
         events += "changeSettings"
         onSettings(settings)
     }
+    override fun saveDnsPreferences(preferences: dev.aerove.lite.dnssettings.DnsPreferences): Long =
+        error("Unused UI fixture DNS preferences save; provide an explicit receipt owner")
     override fun changeHistoryTable(change: HistoryTableChange) {
         val updated = currentSettings.copy(historyTables = currentSettings.historyTables.apply(change))
         currentSettings = updated
