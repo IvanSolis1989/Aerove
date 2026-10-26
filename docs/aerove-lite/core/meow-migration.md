@@ -30,7 +30,7 @@
 
 ## 当前状态
 
-当前文档目标候选为 **0.1.0-beta.16 / code 16**；beta.15/code 15 未发行，已被当前候选取代。Lite host119 的固定 Rust 核心真实编译已通过，但 provider 结构 epoch 回归仍未闭合；Native 运行验证、Android、十二宫格与 APK 均未验收。内置分流脚本原样采用 AEROVE Lite / meow 专版，来源和许可统一见[开源来源与鸣谢](../../development/upstreams.md#开源来源与鸣谢)。生产入口为 `LiteApplication` 的 asset loader，经 `OverrideRepository` 一次初始化进入原脚本库，再沿既有配置 Script 模式和 `ScriptLibrarySession` 更新/CAS 链路执行。
+当前文档目标候选为 **0.1.0-beta.16 / code 16**；beta.15/code 15 未发行，已被当前候选取代。host123（source `bd83a3f5d9ad44be8ac3c87460279133af34ca17`）Native 42 个 targets 全部通过，Core 32 条命令/179 个命中、compileCheck 与 featureBoundary 均通过且锁恢复；整次 run 仅因两道 rustfmt 检查失败。Root 已机械回放真实 formatter 输出并将三文件修正整合到 pref9；host124原run/job仍因旧consumer表31/32不匹配失败；独立修复已在 `d1c0c47d` 整合，保留原31批准项并追加明确批准项。44项Python测试通过；原sealed receipt（SHA-256 `391719e99f0bd00632139990dc6d9d8779a984d834c8c938cecd28134000323c`）已在修复后consumer下只读重放并接受，receipt/source/run/attempt未修改，Core 32/179、format/compile/feature/source/lock证明与原receipt匹配。该原run回放不改写host124 job失败，也不是新source验收；新source完整App CI仍待运行。Android、十二宫格与 APK 均未验收。内置分流脚本原样采用 AEROVE Lite / meow 专版，来源和许可统一见[开源来源与鸣谢](../../development/upstreams.md#开源来源与鸣谢)。生产入口为 `LiteApplication` 的 asset loader，经 `OverrideRepository` 一次初始化进入原脚本库，再沿既有配置 Script 模式和 `ScriptLibrarySession` 更新/CAS 链路执行。
 
 标准版对照为 `common/xclash_defaults.dart` 的一次初始化，Lite 没有新增独有菜单。首次及旧安装保留已有脚本、编辑与配置选择；用户删除后不自动回填。接近既有容量上限的合法旧库暂缓加入，仍可读取、编辑和删除；释放空间或原子恢复后重试，不扩大容量上限，也不把暂缓标成初始化成功。
 
@@ -146,16 +146,16 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
   Lite 指出具体字段与原因，不静默丢弃条目。官方 MRS 的规模另受[官方 MRS 解码上限](#mrs-decode-limits)约束，宿主准入边界见[规则资源准入边界](#rule-preview-budget)。
 - **验证边界**：`rule_provider::reader::tests::reader15_` 共 15 项（FIFO 用例仅限 Unix），覆盖文件与 HTTP 字节的类型化错误和实际计数、
   倒置区间、读取期间变更、HTTP 缓存年龄与重新验证、geo 扫描、严格错误文本只出现一次、租约被拒时的获取失败分类；
-  原 `rule_provider::tests::` 41 项不变。准入模式 `policy-runtime-provider-reader-v1` 共 31 条命令、177 项，
-  并要求 42 个 Native 目标和两道列出全部受检文件的 rustfmt 门。上述 Lite host119 已有固定 Rust 核心真实编译通过记录，但不据此宣称本段各项测试运行通过；
-  Android 存储上的描述符行为、取消时序、64 MiB 以上有效输入和 RSS 仍待验收。
+  原 `rule_provider::tests::` 41 项不变。准入模式 `policy-runtime-provider-reader-v1` 保留原 31 条命令/177 个命中，并新增 1 条命令及 2 个命中，现为 32 条命令、179 个命中；
+  host123 的真实 run 已执行该 Core recipe：32/179 均 exit 0、compileCheck=0、featureBoundary=0、锁恢复成功；42 个 Native targets 全部通过。整次 run 仅两道覆盖六源的 rustfmt 门失败，真实 formatter 输出已机械回放并进入 pref9，host124原job仍因旧consumer 31/32清单不匹配而失败；独立修复后consumer已只读接受原sealed receipt，新source完整App CI仍待运行。
+  Android 存储上的描述符行为、取消时序、真实设备 RSS 与 APK 验收仍待完成。
 
 <a name="rule-preview-budget"></a>
 
 ### 规则集预览、导出与规则资源准入边界
 
 本节记录 `candidate-v3` 的规则读取改动与准入状态。宿主规则输入、只读预览、本地编辑/粘贴/保存均保持 64 MiB 预算。Ruleset YAML、普通配置 YAML、官方 MRS 宿主条目准入及固定核心字节解码上限分别见下列边界与当前实现状态。
-- **保留的条目门槛：** 用户决定官方 MRS、文本及 `MRS!` 宿主入口最多 250,000 条，文本单条最多 2,048 字节。Lite 当前官方 MRS 路径尚未执行此上限，候选测试中的 411,634 条结果不是通过证据，须由 Rust owner 的同一已打开文件流式计数/限额修复闭合。Ruleset YAML 的上限为 250,002 个解析值（250,000 条 payload 加容器值），普通配置 YAML 仍是独立的 100,000 值限制。
+- **保留的条目门槛：** 用户决定官方 MRS、文本及 `MRS!` 宿主入口最多 250,000 条，文本单条最多 2,048 字节。当前官方 MRS 三个宿主上下文均已接线同一 250,000 准入并由 host123 实际运行验证；411,634 和 345,000 条旧样本仅证明 Core reader 能读到该上游数据，随后 App 四入口精确拒绝。每条逻辑规则最多 128 个标签、总逻辑标签最多 500,000；普通配置 YAML 为独立 100,000 解析值限制，ruleset YAML 的 250,002 对应 250,000 条 payload 加容器值。
 - **保留的解压边界：** 官方 MRS 压缩输入最多 64 MiB；固定核心解压输出最多 256 MiB（`MAX_DECOMPRESSED_BYTES`）；该 Core 上限独立于宿主 250,000 条准入，也不同于历史 `MRS!` 的 64 MiB 展开预算。展开 64–256 MiB 的读取仅在宿主压缩输入及其他准入门槛全部满足时才可接受。不得将解压上限误写成规则编辑/输入预算，也不得删除核心上限。设备内存/RSS 未验。
 - **规格变更三：Kotlin 规则资源上限收敛到 Native 准入边界，Native 文本规则输入同步到 64 MiB 文本预算。** 常量集中在
   `apps/aerove-lite/app/src/main/java/dev/aerove/lite/data/RuleResourceText.kt`：`MAX_RULE_INPUT_BYTES`（第 27 行，64 MiB，等于 Native `MAX_INPUT_BYTES`）、
@@ -179,10 +179,10 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
      现在为 `MAX_RULE_TEXT_BYTES`（:26，即 64 MiB 文本预算；检查在 :239）。经文件入口时，64 MiB+1 字节先由 `read_open_file_until`（:803）报
      `resource input limit exceeded`。`MAX_TEXT_BYTES` 8 MiB 现只用于配置与 proxy-provider 文本（:22）。
 
-  候选 source 曾提出扩大 text/YAML、MRS 输入容量及 YAML 条目数；当前宿主规则输入仍为 64 MiB；官方 MRS/text 条目门槛为 250,000，ruleset YAML 解析值门槛为 250,002（对应 250,000 条 payload 与容器值），普通配置 YAML 独立保持 100,000 值。Lite 当前官方 MRS 实际路径未执行条目限制，候选读取 411,634 条，仍属阻断；不得将此行为当作准入。候选错误文案如下，只描述 source 候选：`Resource exceeds 67108864 bytes`（`data/ResourceDownloader.kt:59`、:90；配置资源外加
+  候选 source 曾提出扩大 text/YAML、MRS 输入容量及 YAML 条目数；当前宿主规则输入仍为 64 MiB；官方 MRS/text 条目门槛为 250,000，ruleset YAML 解析值门槛为 250,002（对应 250,000 条 payload 与容器值），普通配置 YAML 独立保持 100,000 值。现有三个官方 MRS 宿主上下文均接线统一准入；host123 验证 411,634 / 345,000 条旧样本仅 Core 可读、App 四入口拒绝，另验证 100,000 条、300,000 个逻辑标签、67,700,000 字节文本先由 Core strict matcher 接受，再由 App 四入口按 64 MiB 拒绝。候选错误文案如下，只描述 source 候选：`Resource exceeds 67108864 bytes`（`data/ResourceDownloader.kt:59`、:90；配置资源外加
   `Resource download/copy failed: ` 前缀）、`Rule resource exceeds 64 MiB`、`Input exceeds 67108864 bytes`、`Rule payload exceeds text limit`、
   `Rule preview exceeds text limit`、`Materialized rule payload exceeds limit`、`Expanded configuration exceeds 250002 values`、`resource input limit exceeded`
-  和 `rule-provider text input limit exceeded`。只读规则预览和本地规则编辑均可打开到 64 MiB 文本预算；宿主条目准入为 MRS/text 250,000 条，ruleset YAML 250,002 个解析值（含容器），普通配置 YAML 独立保持 100,000 值。Lite 官方 MRS 路径未执行其 250,000 条门槛仍是待修阻断。
+  和 `rule-provider text input limit exceeded`。只读规则预览和本地规则编辑均可打开到 64 MiB 文本预算；官方 MRS/text 宿主条目准入 250,000、单条 2,048 字节、每条 128 标签及总逻辑标签 500,000 已有 host123 实际验证；ruleset YAML 250,002（含容器）与普通配置 YAML 100,000 值是独立限制。
 - **规格变更四：边界在流式读取中执行（本候选）。** native-v5 把上述上限放宽到 64 MiB 后，仍先物化再检查：64 MiB 的短行文本或 YAML 在 `-Xmx256m` 下
   OutOfMemoryError，原本在 8 MiB 处得到的干净拒绝因此变成崩溃。现在各读取点如下，行号相对上述目录：
   1. **text 规则**（准备 `data/ResourceBundleManager.kt:360–368`、规则缓存 `resources/ResourceManagementRuleCache.kt:219`、仅配置恢复 `data/ResourceBundleManager.kt:725`）：
@@ -227,7 +227,7 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
   Native 文字由 Kotlin 前缀为对应的 provider 字段。
   1. 64 MiB 输入与文本预算：Native `MAX_INPUT_BYTES`、`MAX_DUMP_TEXT_BYTES`、`MAX_RULE_TEXT_BYTES`（`config_validation.rs:20`、:24、:26），provider 下载
      `maxBytes` 1..64 MiB（`meow-native/src/resource_fetch.rs:10`、:186），以及 Kotlin 的 `MAX_RULE_INPUT_BYTES` 与 `MAX_RULE_TEXT_BYTES`。报错见本节当前接受的 64 MiB 宿主预算。
-  2. 250,000 条：Native `MAX_ENTRIES`（:27），text 与 `MRS!` 使用该条目门槛；官方 MRS 的 250,000 条宿主门槛尚未在当前 Lite 路径执行，属待修阻断。`MAX_YAML_RULE_VALUES` :31 是 ruleset YAML 的 250,002 个解析值门槛，含最多 250,000 条 payload 和容器值；普通配置 YAML 的 100,000 值门槛独立保留。
+  2. 250,000 条：Native `MAX_ENTRIES`（:27），text、`MRS!` 与三个官方 MRS 宿主上下文均执行该准入。host123 实际边界用例通过；旧 411,634 / 345,000 记录是 Core reader 阳性后 App 四入口拒绝。`MAX_YAML_RULE_VALUES` :31 是 ruleset YAML 的 250,002 个解析值门槛，含最多 250,000 条 payload 和容器值；普通配置 YAML 的 100,000 值门槛独立保留。
   3. 单条 2,048 字节：Native `MAX_ENTRY_BYTES`（:29），Kotlin `MAX_RULE_ENTRY_BYTES`，报错见上。
   4. trie 500,000 节点或 128 层（`MAX_TRIE_NODES`、`MAX_TRIE_DEPTH`）：`rule-provider trie exceeds 500000 nodes`、`rule-provider entry <序号> exceeds 128 labels`；
      单条超宽报 `rule-provider entry <序号> exceeds 2048 bytes`，输入超限报 `resource input exceeds 67108864 bytes` 或 `rule-provider text input exceeds 67108864 bytes`，
@@ -241,7 +241,7 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
   （`data/BackupRepository.kt:35–37`），单配置本地资源最多 128 项、合计 256 MiB（:132、:253、:318）；配置归档 zip 128 MiB、展开 256 MiB、单项 64 MiB
   （`data/ProfileArchive.kt:15–17`，导入含本地规则文件的配置时经 `data/ResourceBundleManager.kt:590` 使用）；图标集 32 MiB（见上）。代理 provider 的 4 MiB
   （`MAX_PROFILE_BYTES`）与资源页代理计数的 8 MiB 读取不属规则资源，未改。
-- **Lite 入口与数据流**：宿主规则输入、预览、编辑/粘贴/保存保持 64 MiB 预算，并保留官方 MRS/text 的 250,000 条准入要求及单条文本长度门槛；当前官方 MRS 路径仍绕过该门槛，是待修阻断。固定核心的 256 MiB 解压上限不授权放宽宿主准入。资源页预览（`ResourcePageWorkspace.preview` → `ResourceManagementRepository.preview`）、配置详情的 provider 预览与编辑
+- **Lite 入口与数据流**：宿主规则输入、预览、编辑/粘贴/保存保持 64 MiB 预算，并在三个官方 MRS 上下文执行 250,000 条准入、单条文本长度及标签上限；host123 实际验证边界和超限拒绝。固定核心的 256 MiB 解压上限是独立字节边界，不放宽宿主准入。资源页预览（`ResourcePageWorkspace.preview` → `ResourceManagementRepository.preview`）、配置详情的 provider 预览与编辑
   （`ProfileDetailWorkspace.open` → `ProfileRepository.resourceEditSnapshot`）、全局规则库预览（`GlobalResourceLibraryScreen.ruleEditor` →
   `GlobalRulePayloadRepository.preview`）和规则缓存规范化中的官方 MRS 都经 `NativeRulePayloadInspector.dump` → `JniResourceFetch.offlineRead` → JNI
   `dumpRuleSet(handle, …)` → `dump_rule_set_controlled`；text/YAML 原文经 `readEditorRuleText`。资源校验、规则检查和准备预检分别经 `validateResource`、
@@ -250,35 +250,35 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
 - **标准版对照**：设置与代理页的 provider 预览（`apps/aerove/lib/views/config/providers.dart` 的 `_handlePreview`，:227–243；
   `apps/aerove/lib/views/proxies/providers.dart` 的 `_handlePreviewProvider`）→ `core.dumpRuleSet(path)` → `apps/aerove/core/provider.go` 的 `handleDumpRuleSet`：
   `os.ReadFile` 读取整文件后经 Mihomo `ConvertToMrs` 输出文本，不设条目或文本上限；text/YAML provider 由 `openEditorFile` 直接打开。规则 provider 加载经官方
-  Mihomo 的 MRS 读取不设展开或条目上限，见[官方 MRS 解码上限](#mrs-decode-limits)；Lite 仍须由宿主另行执行用户决定的 250,000 条限制，当前漏项是待修阻断；规则资源的下载与导入也不设大小上限。规则文件导入
+  Mihomo 的 MRS 读取不设展开或条目上限，见[官方 MRS 解码上限](#mrs-decode-limits)；Lite 宿主在三个上下文执行用户决定的 250,000 条限制，host123 已运行相应边界用例；规则资源的下载与导入也不设大小上限。规则文件导入
   （同文件 `_handleImportFromFile`，:122–135）在加载状态之外 `file.readBytes()`，读取失败的异常没有交给页面错误展示。
-- **状态与交互**：宿主输入/只读预览/编辑器预算保持 64 MiB；用户决定的 250,000 条规则准入和单条文本长度门槛仍有效，但 Lite 官方 MRS 当前路径尚未执行条数上限，属于待修阻断；两版预览都是只读编辑器页，失败时显示错误文字，没有占位或灰置入口；只读规则预览可打开到 64 MiB；本地规则在同一 64 MiB 会话预算内均可预览与编辑，超出预算报明上限。Lite 另在以下情况指出字段与原因后
+- **状态与交互**：宿主输入/只读预览/编辑器预算保持 64 MiB；用户决定的 250,000 条准入、单条文本长度和标签门槛均已接线，host123 实际验证；两版预览都是只读编辑器页，失败时显示错误文字，没有占位或灰置入口；只读规则预览可打开到 64 MiB；本地规则在同一 64 MiB 会话预算内均可预览与编辑，超出预算报明上限。Lite 另在以下情况指出字段与原因后
   拒绝：上一条列出的各项上限，以及命中固定核心解码上限。全局资源库选定文件后在 `session.perform` 内读取：读取期间显示忙碌状态，超限或无法打开时错误显示在库页错误行；
   标准版的规则文件导入没有对应的读取中状态与错误展示。这是标准版的缺口，不能按“两版一致”把 Lite 改回无提示；标准版需由其负责人同步，本候选没有标准版代码改动。
 - **内存与设备验收**：64 MiB 只读预览需要一份文件字节（读后释放）和一个字符串，非 Latin-1 文本按 UTF-16 存放最多约 128 MB，另加编辑器自身的文档结构，
   须以设备帧率与 RSS 验收后才能发行。JVM 证据（HotSpot 17，见下方验证）显示，在每个规则读取边界上下的最坏输入都能在 256 MiB 堆内完成或干净拒绝。Android ART 的字符串与
-  `StringBuilder` 布局不同，只能以设备验证。仍有的峰值来源：边界内 YAML 规则的节点图与条目列表，ruleset YAML 最多 250,000 条 payload（250,002 个解析值）、普通配置 YAML 最多 100,000 值或文本/MRS 项的设备保护准入目标为 250,000 条，均受各自 64 MiB 预算；当前官方 MRS 路径仍绕过条数门槛，待修。官方 MRS 导出另有原生字符串与 JNI 转出的
+  `StringBuilder` 布局不同，只能以设备验证。仍有的峰值来源：边界内 YAML 规则的节点图与条目列表，ruleset YAML 最多 250,000 条 payload（250,002 个解析值）、普通配置 YAML 最多 100,000 值或文本/MRS 项的设备保护准入最多 250,000 条，均受各自 64 MiB 预算；标签上限为每条 128、总计 500,000。官方 MRS 导出另有原生字符串与 JNI 转出的
   Java 字符串各一份；Native 对边界内 YAML 仍由 serde_yaml 两次加载（固定核心 `parse_raw_yaml` 一次、条目提取一次），每次持有整份事件表与 `Value`；固定核心允许的
   256 MiB 展开。待设备验收：64 MiB text/YAML 与官方 MRS 的导入、刷新、启动、资源页计数与预览、规则库同步，配置详情打开 64 MiB provider，以及 256 MiB 展开校验的
   RSS 与 OOM，均在默认 heapgrowthlimit 下进行。
-- **验证**：Native 集成测试 `tests/config_validation.rs` 中覆盖 411,634 条全量读取/导出的候选测试违反用户确认的官方 MRS 25 万条宿主准入门槛，不作为成功验收证据；其余列举用例仅表示源中存在，`official_mrs_text_between_8m_and_64m_stays_previewable`、
+- **验证：** host123（run 40320087571，source `bd83a3f5d9ad44be8ac3c87460279133af34ca17`）实际运行 Native 全部 42 个 targets；Core 准入 32 条命令、179 个命中全部 exit 0，compileCheck=0、featureBoundary=0、锁恢复成功。官方 MRS 250,000 边界、实际计数与声明头检查、单条 2,048 字节、每条 128 标签、总标签 500,000 均经真实 Core/App 路径验证；411,634/345,000 旧样本为 Core reader 可读但 App 四入口精确拒绝。独立 100,000 条、每条约 676 字节、300,000 个标签、文本 67,700,000 字节夹具先通过 Core strict matcher，再由 App 四入口按 64 MiB 拒绝。
   `official_mrs_text_over_budget_is_an_error_but_binary_inspection_still_succeeds`、`official_mrs_above_64m_expanded_reaches_the_actual_strict_matcher`、
   `upstream_mrs_preflight_rejects_identity_corruption_and_256m_expansion_without_relaxing_other_caps`、
   `official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds` 与 `text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds`；
   单元测试 `text_rule_entries_stop_at_either_entry_bound_before_they_are_collected` 与 `yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it` 覆盖本候选的两侧边界、
-  别名展开和交给 serde_yaml 的错误。其中 64 MiB 文本、8–64 MiB 导出与 32–64 MiB 压缩输入三项集成用例和两项新单元测试列入 `RESOURCE_HEALTH_CASES`（本轮新增流式准入回归后共 32 项），是否有各自的实际通过行须以 CI 日志核实；`test_build.py` 另要求 `build.py` 与 `verify_apk.py`
-  两张表逐项相等（改名一项即被拒绝），并要求 Kotlin 与 Native 常量相等。Lite host119 的固定 Rust 核心真实编译已通过；本段所列用例是否实际运行须逐条以该 run 日志核实。provider 结构 epoch 回归仍未闭合。Kotlin `RuleResourceBoundsTest` 经生产路径覆盖每个读取点的两侧：
+  单元测试 `text_rule_entries_stop_at_either_entry_bound_before_they_are_collected` 与 `yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it` 覆盖本候选的两侧边界、别名展开和交给 serde_yaml 的错误。host123 上述 Core 与 Native 用例实际通过；全 run 失败仅为六个 Rust 源文件的两道 rustfmt 检查，Root 已将 formatter 原始输出机械回放至三文件 overlay，见 `pref9fb2580833bca00f0b68cfddcdf786404516112c`。
+  `test_build.py` 另要求 `build.py` 与 `verify_apk.py` 两张表逐项相等（改名一项即被拒绝），并要求 Kotlin 与 Native 常量相等；host124原job仍因旧consumer 31/32清单不匹配而失败；独立修复后consumer已只读接受原sealed receipt，新source完整App CI仍待运行。Kotlin `RuleResourceBoundsTest` 经生产路径覆盖每个读取点的两侧：
   配置准备的 text、YAML 与条目上限，规则缓存，资源页计数与预览，全局规则库导入、预览与规范化，仅配置恢复，geo 判定与校验先于条目上限；流式读行与原整份读取在
   300 个随机样本上逐行一致，1,500 份随机 YAML 的结果和报错与原整份加载一致，令牌与间隔上限、编码优先级也各有两侧用例。`RuleResourceHeapTest` 在 `-Xmx256m`
   子进程中用生产函数读取最坏输入：1,677 万条短行、25 万条 64 MiB YAML（含 UTF-16 字符串）、超限 YAML、64 MiB 单行与注释、64 MiB 预览，64 MiB 行尾空白另在
   `-Xmx48m` 下完成；`ProfileDetailWorkspaceTest`
-  原有测试覆盖配置详情在 4 MiB 两侧的打开；本轮增加本地规则 5 MiB 打开及会话 64 MiB 两侧的打开/保存、插入/替换预算回归。旧 native-v6 的读取点变异证据继续保留，本轮新增 Rust 回归仍待 CI，不把源代码用例当作已运行。
+  原有测试覆盖配置详情在 4 MiB 两侧的打开；本轮增加本地规则 5 MiB 打开及会话 64 MiB 两侧的打开/保存、插入/替换预算回归。旧 native-v6 的读取点变异证据继续保留；host123 已实际运行 Native/Core 回归，host124原job仍因旧consumer 31/32清单不匹配而失败；独立修复后consumer已只读接受原sealed receipt，新source完整App CI仍待运行。
 
 <a name="mrs-decode-limits"></a>
 
-本轮原生读取补充：规则 dump、检查/计数/校验与准备预检共用 `read_rule_input`。text 在字节块解码时计行，YAML 用 unsafe-libyaml 0.2.11 的 `yaml_parser_set_input` 回调驱动同一文件流，并在事件到达时执行既有值预算；64 MiB 字节预算在每次读取时生效。有效输入只捕获这一遍的相同字节，再交既有严格解码与规则构造，不 rewind、不重新打开路径。拒绝后使用小块 drain 继续判定编码、大小和取消错误，并停止保留无用尾部；并非先读完整份再检查条目或 YAML 值。解析器、文件与同步扫描仍在现有 OfflineResourceOwner 的同一个实际 worker 中，返回前由原 owner join；未增加独立任务或 FD。新增三个原生回归已列入构建及 APK 准入表，provider 结构 epoch 回归仍未闭合；Native 测试运行与真实 ART RSS 尚无验收结论，不能将源码检查称为通过。
+本轮原生读取补充：规则 dump、检查/计数/校验与准备预检共用 `read_rule_input`。text 在字节块解码时计行，YAML 用 unsafe-libyaml 0.2.11 的 `yaml_parser_set_input` 回调驱动同一文件流，并在事件到达时执行既有值预算；64 MiB 字节预算在每次读取时生效。有效输入只捕获这一遍的相同字节，再交既有严格解码与规则构造，不 rewind、不重新打开路径。拒绝后使用小块 drain 继续判定编码、大小和取消错误，并停止保留无用尾部；并非先读完整份再检查条目或 YAML 值。解析器、文件与同步扫描仍在现有 OfflineResourceOwner 的同一个实际 worker 中，返回前由原 owner join；未增加独立任务或 FD。host123 Native 全部 42 targets 通过、Core 32/179 全部成功，整体仅两道 rustfmt 检查失败；Root 已机械回放真实 formatter 输出并整合到 pref9，host124原job仍因旧consumer 31/32清单不匹配而失败；独立修复后consumer已只读接受原sealed receipt，新source完整App CI仍待运行。Android ART RSS 尚无验收结论，不能将源码或主机测试称为设备验收。
 
-本轮复核增量：unsafe-libyaml 回调在构造 `&mut [u8]` 前先初始化上游 malloc 缓冲区。YAML 预算帧不再复制完整父路径，只保存索引与有界诊断组件，超限时才生成一次路径；超长键以精确源码字节偏移和原键字节数定位，诊断路径限制在约 4 KiB，输入和实际解析键不截断。reader 与直接字节入口均在事件处理前执行固定核心的相同轻量深度准入：未闭合 flow `[`/`{` 为 128 层（含引号内字符），行首空格最多 256；不增加一个会误拒核心合法 block 输入的 event-depth128 规则。边界 128/129、256/257、长键诊断和原回调初始化已补入既有 Rust 准入用例，仍待 CI 编译运行；内存放大结论是源码推导，尚无 RSS 实测。
+本轮复核增量：unsafe-libyaml 回调在构造 `&mut [u8]` 前先初始化上游 malloc 缓冲区。YAML 预算帧不再复制完整父路径，只保存索引与有界诊断组件，超限时才生成一次路径；超长键以精确源码字节偏移和原键字节数定位，诊断路径限制在约 4 KiB，输入和实际解析键不截断。reader 与直接字节入口均在事件处理前执行固定核心的相同轻量深度准入：未闭合 flow `[`/`{` 为 128 层（含引号内字符），行首空格最多 256；不增加一个会误拒核心合法 block 输入的 event-depth128 规则。边界 128/129、256/257、长键诊断和原回调初始化均已由 host123 Core 准入用例实际运行通过；内存放大结论是源码推导，尚无 RSS 实测。
 
 ### 官方 MRS 解码上限（固定核心字节边界）
 
@@ -299,7 +299,7 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
 - **Lite overlay**：Core03（`apps/aerove-lite/meow-native/patches/full-runtime.patch`，该文件 after SHA256
   `c6e1c5d5e68e3d0fb1a4e635aa51bbc4e88ff6c19b7e25decaecb77e1ef97c54`）的 `MrsReadControl::new` 把调用方给出的压缩与展开上限都截到
   `MAX_DECOMPRESSED_BYTES`；受控读取 `DomainSetTraversal::traverse_controlled`（经 `traverse_bounded_controlled`）与 `UpstreamRuleSetReader::for_each_net`
-  沿用同一组常量，只增加取消检查和严格错误。
+  Native 不能通过参数放宽这些上限。Core 二进制表保持借用；两个采样索引合计最多 1,000,001 个 `usize`。这是解析器分配边界，不证明完整已打开描述符逐条流式处理，也不证明 RSS 或 Android 设备内存行为。
   Native 无法经参数放宽这些上限。
 - **为什么保留而不调高**：overlay 已改写同一文件的受控读取（`MrsReadControl`、`traverse_bounded_controlled`），技术上可以改大这些常量。
   但它们是上游为阻止有界输入被放大到耗尽内存而设的安全边界（第 131–135、587–591 行注释，issue #513），改大等于在同一进程内移除这道防护。
@@ -317,7 +317,7 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
 - **状态与交互**：APP 不出现占位或灰置入口；超限规则集按上文指出字段与核心原因后拒绝。
 - **验证**：Native 集成测试 `upstream_mrs_preflight_rejects_identity_corruption_and_256m_expansion_without_relaxing_other_caps` 覆盖展开 256 MiB+1 字节
   时检查、校验与准备预检都报 `decompressed_payload`。4,194,304 条、256 MiB 域名字节和深度上限以固定源码自带测试为证据，宿主未另造 4 Mi 条以上的夹具。
-  Lite host119 的固定 Rust 核心真实编译已通过；本段所列用例是否实际运行须逐条以该 run 日志核实。provider 结构 epoch 回归仍未闭合。
+  host123 Core compileCheck=0、featureBoundary=0，Native 42 targets 通过；本段所列 Core 用例均由 32 命令/179 命中实际覆盖。整次 run 仅因两道 rustfmt 门失败，host124原job仍因旧consumer 31/32清单不匹配而失败；独立修复后consumer已只读接受原sealed receipt，新source完整App CI仍待运行。
 
 <a name="offline-cancel-join"></a>
 
@@ -340,7 +340,7 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
   令牌被替换即失败；另有 `a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children`、zstd 分块取消、`EINTR` 重试，
   以及集成测试 `zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder`。Kotlin `PreparedResourceValidatorTest` 与
   `MeowProviderPreparationTest` 直接执行生产 `preparedResourceValidator`。JNI 描述符由 `build.py` 调用 `meow-native/jni_abi.py`，
-  逐项对照 Rust 导出、Kotlin 声明和 `verify_apk.py`。host119 固定 Rust 核心真实编译已通过；此处列举用例的运行结果须以对应 CI 日志逐项核对。provider 结构 epoch 回归仍未闭合，Android 取消时序仍待设备验收。
+  逐项对照 Rust 导出、Kotlin 声明和 `verify_apk.py`。host123 compileCheck 与 Native targets 通过，Core 32/179 实际执行成功；整次 run 的两道失败均为 rustfmt。host124原job仍因旧consumer 31/32清单不匹配而失败；独立修复后consumer已只读接受原sealed receipt，新source完整App CI仍待运行；Android 取消时序仍待设备验收。
 - **固定核心内的取消粒度（只进开发记录，不是核心例外）**：以下调用在固定 meow-rs `727ddcd` 源码中没有可中断点，Native 在调用前后检查取消并等待其完成。
   两版取消能力相同：标准版的 Go 调用同样不能中途中断，取消后两版都不保存半成品，因此这不构成 APP 能力差异。
   1. 转换器阻塞阶段：原始 [`crates/meow-config/src/lib.rs` 第 2718–2851 行](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-config/src/lib.rs#L2718-L2851)
