@@ -71,6 +71,21 @@ async fn actual_api_views_share_tunnel_and_user_cannot_reach_private_or_mutators
         assert!(http(user_address, endpoint, USER, "GET").await.starts_with("HTTP/1.1 404"));
     }
     assert!(http(user_address, "/configs", USER, "PUT").await.starts_with("HTTP/1.1 404"));
+    let before_configs = serde_json::to_value(&*api.state.raw_config.read()).unwrap();
+    for (method, path) in [("POST", "/restart"), ("POST", "/configs"), ("PUT", "/configs")] {
+        let request = |secret: &str| format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {secret}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}");
+        let denied = raw_http(private_address, &request(PRIVATE)).await;
+        assert!(denied.starts_with("HTTP/1.1 409"), "{method} {path}: {denied}");
+        assert!(denied.ends_with("config mutation requires an owned endpoint"));
+        for secret in ["", "incorrect-session-secret"] {
+            let unauthorized = raw_http(private_address, &request(secret)).await;
+            assert!(unauthorized.starts_with("HTTP/1.1 401"), "{method} {path}: {unauthorized}");
+        }
+        let hidden = raw_http(user_address, &request(USER)).await;
+        assert!(hidden.starts_with("HTTP/1.1 404"), "{method} {path}: {hidden}");
+    }
+    assert_eq!(serde_json::to_value(&*api.state.raw_config.read()).unwrap(), before_configs);
+
     assert!(http(user_address, "/configs", PRIVATE, "GET").await.starts_with("HTTP/1.1 401"));
     let cors = preflight(user_address, "/configs", "GET", "Authorization, Content-Type").await.to_ascii_lowercase();
     assert!(cors.starts_with("http/1.1 204"), "{cors}");

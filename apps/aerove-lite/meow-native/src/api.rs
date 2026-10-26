@@ -353,7 +353,11 @@ async fn boundary(State(policy): State<Boundary>, mut request: Request, next: Ne
         return if policy.user { user_preflight(&request) }
             else { StatusCode::NOT_FOUND.into_response() };
     }
-    if !aerove && !allowed(request.method(), path) {
+    let owned_lifecycle = !policy.user && (
+        (path == "/restart" && request.method() == Method::POST)
+        || (path == "/configs" && (request.method() == Method::POST || request.method() == Method::PUT))
+    );
+    if !aerove && !owned_lifecycle && !allowed(request.method(), path) {
         return StatusCode::NOT_FOUND.into_response();
     }
     let websocket = request.headers().get(header::UPGRADE)
@@ -369,6 +373,9 @@ async fn boundary(State(policy): State<Boundary>, mut request: Request, next: Ne
     let authorized = provided.is_some_and(|p| p.len() == policy.secret.len()
         && bool::from(p.ct_eq(policy.secret.as_bytes())));
     if !authorized { return StatusCode::UNAUTHORIZED.into_response(); }
+    if owned_lifecycle {
+        return (StatusCode::CONFLICT, "config mutation requires an owned endpoint").into_response();
+    }
     // Authentication has completed at the outer boundary; only this internal hop uses its token.
     request.headers_mut().insert(header::AUTHORIZATION, policy.authorization.clone());
     let origin = request.headers().contains_key(header::ORIGIN);
