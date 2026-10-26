@@ -272,8 +272,12 @@ class ProductionNetworkFlowTest {
     }
 
     private fun openNetwork() {
-        compose.onNodeWithText(context.getString(R.string.lite_tab_tools)).performClick()
-        compose.onNodeWithText(context.getString(R.string.network_title)).performScrollTo().performClick()
+        compose.onNode(hasText(context.getString(R.string.lite_tab_tools)) and hasClickAction())
+            .assertIsDisplayed().performClick()
+        compose.onNode(hasText(context.getString(R.string.integration_advanced_configuration)) and hasClickAction())
+            .performScrollTo().assertIsDisplayed().performClick()
+        compose.onNode(hasText(context.getString(R.string.network_title)) and hasClickAction())
+            .performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithTag("network-settings").assertExists()
     }
     private fun editPorts(mixed: Int, http: Int) {
