@@ -96,6 +96,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **用途与采用方式：** Lite资源库 Compose 状态订阅只读参考 `StateFlow.collectAsStateWithLifecycle` 默认 STARTED 和 `repeatOnLifecycle` 行为；仪表盘状态卡另参考 `AlignmentLine` 的父级继承与子项位置偏移，在同次测量中判断紧凑指标与真实前景是否碰撞。复用既有 Compose / lifecycle-runtime-compose 依赖，未复制实现、未新增依赖；实际 Android 布局仍须验收
 
+Lite DashboardStreams / RequestsScreen 的生命周期采样另只读参考同提交 [`FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt) 与 [`ProduceState.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/runtime/runtime/src/commonMain/kotlin/androidx/compose/runtime/ProduceState.kt) 的记忆状态和 keyed effect 组合，并核对 [`ComposableStateFlowValueDetector.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/runtime/runtime-lint/src/main/java/androidx/compose/runtime/lint/ComposableStateFlowValueDetector.kt) 的 StateFlow 检测边界；仅调用既有 Compose / lifecycle API，无新增依赖或源码复制。实际发布依赖仍为 Compose 1.12.0 / lifecycle-runtime-compose 2.10.0；上述 Git 提交是只读参考身份，不代表发布依赖版本。窗口、页面及前后台需求门禁沿用项目既有所有者。
+
 同一固定提交另只读核对 `GraphicsLayer.kt`、`LayoutNodeDrawScope.kt` 与 `AndroidRenderEffect.android.kt` 的离屏记录、`DstIn` 隔离及 RenderEffect 输入桥接，用于 Lite 极光前景蒙版修正；未复制上游实现或增加依赖。
 
 网络控制与启停图标另只读参照同提交 [`Box.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/foundation/foundation-layout/src/commonMain/kotlin/androidx/compose/foundation/layout/Box.kt) 默认不传播最小约束的测量行为，局部复用既有居中布局 API；未复制实现或新增依赖。参考 Git 身份与实际 Compose 发布依赖分别保留。
