@@ -1,4 +1,4 @@
-"""Bind eight Runner 1.6.2 shards to actual APK log-only discovery and terminal statuses."""
+"""Bind eight verified Runner 1.6.2/1.7.0 shards to actual APK log-only discovery and terminal statuses."""
 import argparse
 from collections import Counter
 import hashlib
@@ -96,9 +96,11 @@ def discover(log, proof_path, source_path, sums_path):
     require(len(entries) == 1 and entries[0]["sha256"] == sha(report), "Dependency report is not source-bound")
     require((runtime / "dependencies/releaseAndroidTestRuntimeClasspath.exit.txt").read_text().strip() == "0", "Dependency graph did not resolve")
     graph = report.read_text()
-    for coordinate, version in (("androidx.test:runner", "1.6.2"), ("junit:junit", "4.13.2")):
+    resolved_versions = {}
+    for coordinate, supported in (("androidx.test:runner", ("1.6.2", "1.7.0")), ("junit:junit", ("4.13.2",))):
         resolved = {target or requested for requested, target in re.findall(re.escape(coordinate) + r":([^\s]+)(?: -> ([^\s]+))?", graph)}
-        require(resolved == {version}, f"Unsupported resolved {coordinate}: {resolved}")
+        require(len(resolved) == 1 and resolved.issubset(supported), f"Unsupported resolved {coordinate}: {resolved}")
+        resolved_versions[coordinate] = resolved.pop()
     records = parse_log(log)
     # Log-only reports synthetic success: these identities are discovered, never passed tests.
     descriptions = sorted(record["description"] for record in records)
@@ -112,7 +114,8 @@ def discover(log, proof_path, source_path, sums_path):
         apk_hashes[name] = digest
     require(apk_hashes == proof.get("apks"), "Discovery APKs differ from renderer proof")
     return dict(schema=1, phase="remaining", numShards=SHARD_COUNT, shardIndex=shard["shardIndex"], identity=identity,
-                runner="androidx.test:runner:1.6.2", junit="junit:junit:4.13.2", algorithm=f"abs(Description.hashCode()) % {SHARD_COUNT}",
+                runner=f"androidx.test:runner:{resolved_versions['androidx.test:runner']}",
+                junit=f"junit:junit:{resolved_versions['junit:junit']}", algorithm=f"abs(Description.hashCode()) % {SHARD_COUNT}",
                 apkSha256=apk_hashes, runtimeManifestSha256=sha(manifest_path), dependencyReportSha256=sha(report),
                 discoveryLogSha256=sha(log), discoveryMode="logOnly-no-test-method-execution",
                 discoveredDescriptions=descriptions, discoveryFingerprint=fingerprint(descriptions),

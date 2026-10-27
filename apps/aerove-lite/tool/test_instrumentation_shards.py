@@ -82,6 +82,7 @@ class ShardSelectionTests(unittest.TestCase):
         sums.write_text("".join(f"{value}  apks/{name}\n" for name, value in apks.items()))
         log = self.write_log(self.descriptions)
         receipt = shards.discover(log, proof, source, sums)
+        self.assertEqual("androidx.test:runner:1.6.2", receipt["runner"])
         self.assertEqual([], receipt["passedTests"])
         self.assertEqual(len(self.descriptions), receipt["discoveryCount"])
         graph.write_text(graph.read_text().replace("1.6.2", "1.7.0"))
@@ -89,7 +90,34 @@ class ShardSelectionTests(unittest.TestCase):
             shards.discover(log, proof, source, sums)
         manifest["files"][0]["sha256"] = shards.sha(graph)
         manifest_path.write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(ValueError, "Unsupported resolved"):
+        receipt = shards.discover(log, proof, source, sums)
+        self.assertEqual("androidx.test:runner:1.7.0", receipt["runner"])
+        self.assertEqual("logOnly-no-test-method-execution", receipt["discoveryMode"])
+        self.assertEqual([], receipt["passedTests"])
+        self.assertEqual(sorted(self.descriptions), receipt["discoveredDescriptions"])
+        supported_graph = graph.read_text()
+        for invalid in (supported_graph.replace("1.7.0", "1.8.0"),
+                        supported_graph + "+--- androidx.test:runner:1.6.2\n",
+                        supported_graph.replace("4.13.2", "4.13.1"),
+                        supported_graph + "+--- junit:junit:4.13.1\n",
+                        supported_graph.replace("+--- junit:junit:4.13.2\n", "")):
+            graph.write_text(invalid)
+            manifest["files"][0]["sha256"] = shards.sha(graph)
+            manifest_path.write_text(json.dumps(manifest))
+            with self.subTest(graph=invalid), self.assertRaisesRegex(ValueError, "Unsupported resolved"):
+                shards.discover(log, proof, source, sums)
+        graph.write_text(supported_graph)
+        manifest["files"][0]["sha256"] = shards.sha(graph)
+        manifest_path.write_text(json.dumps(manifest))
+        original_source = source.read_text()
+        changed_source = json.loads(original_source)
+        changed_source["sourceRevision"] = "f" * 40
+        source.write_text(json.dumps(changed_source))
+        with self.assertRaisesRegex(ValueError, "source differs"):
+            shards.discover(log, proof, source, sums)
+        source.write_text(original_source)
+        sums.write_text(sums.read_text().replace("c" * 64, "f" * 64))
+        with self.assertRaisesRegex(ValueError, "APKs differ"):
             shards.discover(log, proof, source, sums)
 
     def test_parse_rejects_partial_duplicate_failure_unknown_and_excluded_class(self):
@@ -136,7 +164,8 @@ class ShardSelectionTests(unittest.TestCase):
         path = self.root / "AEROVE-Lite-shard-selection-2-of-8-attempt-2/TEST-SELECTION.json"
         original = json.loads(path.read_text())
         for key, invalid in (("shardIndex", 1), ("numShards", 3), ("discoveryFingerprint", "x"),
-                             ("apkSha256", {"app": "f" * 64}), ("identity", dict(self.identity, runAttempt="1"))):
+                             ("apkSha256", {"app": "f" * 64}), ("identity", dict(self.identity, runAttempt="1")),
+                             ("runner", "androidx.test:runner:1.7.0")):
             changed = copy.deepcopy(original)
             changed["discovery"][key] = invalid
             path.write_text(json.dumps(changed))
