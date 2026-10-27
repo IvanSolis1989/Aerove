@@ -42,6 +42,19 @@ diagnostic_started_at=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 app_apk=apps/aerove-lite/app/build/outputs/apk/release/app-release.apk
 test_apk=apps/aerove-lite/app/build/outputs/apk/androidTest/release/app-release-androidTest.apk
 mkdir -p "$diagnostics"
+
+write_result_index() {
+    [[ "$phase" == remaining && -n "$shard_count" ]] || return 0
+    timeout 15s python3 apps/aerove-lite/tool/instrumentation_results.py \
+        --source "$diagnostics/SOURCE.json" --discovery "$diagnostics/TEST-DISCOVERY.json" \
+        --discovery-log "$diagnostics/discovery.log" --sums "$diagnostics/APK_SHA256SUMS" \
+        --ordinary-log "$diagnostics/instrumentation.log" \
+        --isolated-log "$diagnostics/ssid-device/instrumentation.log" --host-exit-code "$1" \
+        --output "$diagnostics/TEST-RESULT-INDEX.json" --markdown "$diagnostics/TEST-RESULT-INDEX.md" \
+        > "$diagnostics/result-index.log" 2>&1 || true
+    cat "$diagnostics/result-index.log" || true
+}
+trap 'early_result=$?; trap - EXIT; write_result_index "$early_result"; exit "$early_result"' EXIT
 test -f "$app_apk"
 test -f "$test_apk"
 sha256sum "$app_apk" "$test_apk" > "$diagnostics/APK_SHA256SUMS"
@@ -277,6 +290,7 @@ finish() {
             --output "$diagnostics/aerove-lite-appearance-12.html" > "$diagnostics/gallery.log" 2>&1 || gallery_status=$?
         if [[ "$result" == 0 && "$gallery_status" != 0 ]]; then result=1; fi
     fi
+    write_result_index "$result"
     stop_owned_child "$fixture_pid"
     exit "$result"
 }
