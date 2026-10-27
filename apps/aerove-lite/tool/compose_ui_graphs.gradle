@@ -1,9 +1,11 @@
 import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
 import org.gradle.api.GradleException
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ModuleComponentSelector
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+import java.security.MessageDigest
 
 final String uiVersion = '1.13.0-beta01'
 final Set<String> uiConstraints = [
@@ -40,6 +42,32 @@ gradle.projectsEvaluated {
         doLast {
             def failures = []
             def graphs = []
+            def instrumentationContract = [:]
+            String instrumentationContractSha256 = null
+            try {
+                def contractFile = app.rootProject.file('tool/instrumentation-version-contract.json')
+                if (!contractFile.isFile()) throw new GradleException('Instrumentation version contract is missing')
+                def contract = new JsonSlurper().parse(contractFile)
+                def expectedCoordinates = ['androidx.test:runner', 'junit:junit'] as Set
+                if (!(contract instanceof Map) || contract.keySet() != (['schemaVersion', 'coordinates'] as Set) ||
+                    contract.schemaVersion != 1 || !(contract.coordinates instanceof Map) ||
+                    contract.coordinates.keySet() != expectedCoordinates) {
+                    throw new GradleException('Instrumentation version contract schema is invalid')
+                }
+                contract.coordinates.each { coordinate, policy ->
+                    def versions = policy instanceof Map ? policy.supportedResolvedVersions : null
+                    if (!(policy instanceof Map) || policy.keySet() != (['supportedResolvedVersions'] as Set) ||
+                        !(versions instanceof List) || versions.isEmpty() ||
+                        versions.any { !(it instanceof String) || it.isEmpty() } || versions.toSet().size() != versions.size()) {
+                        throw new GradleException('Instrumentation version contract entries are invalid')
+                    }
+                    instrumentationContract[coordinate.toString()] = versions.toSet()
+                }
+                instrumentationContractSha256 = MessageDigest.getInstance('SHA-256').digest(contractFile.bytes)
+                    .collect { String.format('%02x', it & 0xff) }.join()
+            } catch (Exception failure) {
+                failures.add('instrumentation version contract is invalid')
+            }
             configurationNames.each { configurationName ->
                 def graph = [configuration: configurationName, status: 'missing', modules: [], unresolved: []]
                 graphs.add(graph)
@@ -94,6 +122,21 @@ gradle.projectsEvaluated {
                                 failures.add(configurationName + ': required androidx.compose.ui:' + module + ' is missing')
                             }
                         }
+                        if (configurationName == 'releaseAndroidTestRuntimeClasspath' && !instrumentationContract.isEmpty()) {
+                            def resolvedVersions = [:]
+                            instrumentationContract.each { coordinate, supported ->
+                                def parts = coordinate.split(':', -1)
+                                def versions = parts.length == 2 ? components.findAll { component ->
+                                    component.id instanceof ModuleComponentIdentifier &&
+                                        component.id.group == parts[0] && component.id.module == parts[1]
+                                }.collect { it.id.version }.unique().sort() : []
+                                resolvedVersions[coordinate] = versions
+                                if (versions.size() != 1 || !supported.contains(versions[0])) {
+                                    failures.add(configurationName + ': unsupported resolved ' + coordinate + ': ' + versions)
+                                }
+                            }
+                            graph.instrumentationResolvedVersions = resolvedVersions
+                        }
                         graph.modules = selected.values().toList()
                         graph.componentCount = components.size()
                         graph.dependencyCount = dependencies.size()
@@ -107,17 +150,26 @@ gradle.projectsEvaluated {
                 }
             }
             def proof = [schemaVersion: 1, gradleVersion: safeAtom(gradle.gradleVersion),
-                scope: 'resolution graph and version policy only; AAR metadata uses a separate Gradle task',
+                scope: 'release and instrumentation resolution graphs plus existing Compose UI policy; no compilation',
                 policy: [uiVersion: uiVersion, metadataSha256: 'f4fbb6cb90dce33b76f05e0ae1e8271c43fd7f8682b0e3dce6079a905925621a', metadataCoordinate: 'androidx.compose.ui:ui-android:1.13.0-beta01',
-                    constrainedUiModules: uiConstraints.toList().sort(), androidVariantSuffix: '-android'],
+                    constrainedUiModules: uiConstraints.toList().sort(), androidVariantSuffix: '-android',
+                    instrumentationVersionContractSha256: instrumentationContractSha256,
+                    instrumentationSupportedResolvedVersions: instrumentationContract.collectEntries { key, value -> [(key): value.toList().sort()] }],
                 status: failures.isEmpty() ? 'validated' : 'failed', configurations: graphs,
                 validationFailures: failures]
             reportFile.parentFile.mkdirs()
             reportFile.setText(JsonOutput.prettyPrint(JsonOutput.toJson(proof)) + '\n', 'UTF-8')
-            if (!failures.isEmpty()) throw new GradleException('Compose UI resolution proof failed; inspect reports/compose-ui-resolution.json')
+            if (!failures.isEmpty()) throw new GradleException('Resolution proof failed; inspect reports/compose-ui-resolution.json')
         }
     }
     app.tasks.matching { it.name == 'checkReleaseAarMetadata' }.configureEach {
+        mustRunAfter(reportTask)
+    }
+    app.tasks.matching { it.name in ['assembleRelease', 'assembleReleaseAndroidTest'] }.configureEach {
+        mustRunAfter(reportTask)
+    }
+    app.tasks.matching { it.name in ['compileReleaseKotlin', 'compileReleaseJavaWithJavac',
+                                     'compileReleaseAndroidTestKotlin', 'compileReleaseAndroidTestJavaWithJavac'] }.configureEach {
         mustRunAfter(reportTask)
     }
 }

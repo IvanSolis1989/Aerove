@@ -1,4 +1,4 @@
-"""Bind eight verified Runner 1.6.2/1.7.0 shards to actual APK log-only discovery and terminal statuses."""
+"""Bind eight verified instrumentation shards to APK log-only discovery and terminal statuses."""
 import argparse
 from collections import Counter
 import hashlib
@@ -19,6 +19,30 @@ SHARD_COUNT = 8
 def require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+VERSION_CONTRACT = Path(__file__).with_name("instrumentation-version-contract.json")
+
+
+def load_version_contract(path=VERSION_CONTRACT):
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    expected_coordinates = {"androidx.test:runner", "junit:junit"}
+    require(type(data) is dict and set(data) == {"schemaVersion", "coordinates"}
+            and type(data.get("schemaVersion")) is int and data["schemaVersion"] == 1,
+            "Invalid instrumentation version contract schema")
+    coordinates = data.get("coordinates")
+    require(type(coordinates) is dict and set(coordinates) == expected_coordinates,
+            "Invalid instrumentation version contract coordinates")
+    supported = {}
+    for coordinate, policy in coordinates.items():
+        versions = policy.get("supportedResolvedVersions") if type(policy) is dict else None
+        require(type(policy) is dict and set(policy) == {"supportedResolvedVersions"}
+                and type(versions) is list and bool(versions)
+                and all(type(version) is str and bool(version) for version in versions)
+                and len(versions) == len(set(versions)),
+                f"Invalid supported versions for {coordinate}")
+        supported[coordinate] = frozenset(versions)
+    return supported
 
 
 def sha(path):
@@ -97,7 +121,7 @@ def discover(log, proof_path, source_path, sums_path):
     require((runtime / "dependencies/releaseAndroidTestRuntimeClasspath.exit.txt").read_text().strip() == "0", "Dependency graph did not resolve")
     graph = report.read_text()
     resolved_versions = {}
-    for coordinate, supported in (("androidx.test:runner", ("1.6.2", "1.7.0")), ("junit:junit", ("4.13.2",))):
+    for coordinate, supported in load_version_contract().items():
         resolved = {target or requested for requested, target in re.findall(re.escape(coordinate) + r":([^\s]+)(?: -> ([^\s]+))?", graph)}
         require(len(resolved) == 1 and resolved.issubset(supported), f"Unsupported resolved {coordinate}: {resolved}")
         resolved_versions[coordinate] = resolved.pop()

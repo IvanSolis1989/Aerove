@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "coordinates": {
+    "androidx.test:runner": {
+      "supportedResolvedVersions": ["1.6.2", "1.7.0"]
+    },
+    "junit:junit": {
+      "supportedResolvedVersions": ["4.13.2"]
+    }
+  }
+}

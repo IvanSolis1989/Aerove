@@ -85,13 +85,15 @@ class ShardSelectionTests(unittest.TestCase):
         self.assertEqual("androidx.test:runner:1.6.2", receipt["runner"])
         self.assertEqual([], receipt["passedTests"])
         self.assertEqual(len(self.descriptions), receipt["discoveryCount"])
-        graph.write_text(graph.read_text().replace("1.6.2", "1.7.0"))
+        actual_run141_graph = "+--- androidx.test:runner:1.6.2 -> 1.7.0\n+--- junit:junit:4.13.2\n"
+        graph.write_text(actual_run141_graph)
         with self.assertRaisesRegex(ValueError, "source-bound"):
             shards.discover(log, proof, source, sums)
         manifest["files"][0]["sha256"] = shards.sha(graph)
         manifest_path.write_text(json.dumps(manifest))
         receipt = shards.discover(log, proof, source, sums)
         self.assertEqual("androidx.test:runner:1.7.0", receipt["runner"])
+        self.assertIn("androidx.test:runner:1.6.2 -> 1.7.0", graph.read_text())
         self.assertEqual("logOnly-no-test-method-execution", receipt["discoveryMode"])
         self.assertEqual([], receipt["passedTests"])
         self.assertEqual(sorted(self.descriptions), receipt["discoveredDescriptions"])
@@ -119,6 +121,47 @@ class ShardSelectionTests(unittest.TestCase):
         sums.write_text(sums.read_text().replace("c" * 64, "f" * 64))
         with self.assertRaisesRegex(ValueError, "APKs differ"):
             shards.discover(log, proof, source, sums)
+
+    def test_version_contract_is_the_single_strict_source_for_resolved_support(self):
+        contract = shards.load_version_contract()
+        self.assertEqual({"androidx.test:runner", "junit:junit"}, set(contract))
+        invalid_contracts = [
+            {"schemaVersion": 1, "coordinates": {"androidx.test:runner": {"supportedResolvedVersions": ["1.7.0"]}}},
+            {"schemaVersion": 1, "coordinates": {"androidx.test:runner": {"supportedResolvedVersions": ["1.7.0", "1.7.0"]},
+                "junit:junit": {"supportedResolvedVersions": ["4.13.2"]}}},
+            {"schemaVersion": 2, "coordinates": {"androidx.test:runner": {"supportedResolvedVersions": ["1.7.0"]},
+                "junit:junit": {"supportedResolvedVersions": ["4.13.2"]}}},
+        ]
+        contract_path = self.root / "bad-instrumentation-version-contract.json"
+        for invalid in invalid_contracts:
+            contract_path.write_text(json.dumps(invalid))
+            with self.subTest(contract=invalid), self.assertRaises(ValueError):
+                shards.load_version_contract(contract_path)
+        contract_path.unlink(missing_ok=True)
+
+    def test_both_package_abis_run_resolution_gate_before_apk_tasks(self):
+        repository = Path(__file__).resolve().parents[3]
+        workflow = (repository / ".github/workflows/aerove-lite-build.yaml").read_text(encoding="utf-8")
+        commands = [line.strip() for line in workflow.splitlines()
+                    if "--init-script tool/compose_ui_graphs.gradle" in line
+                    and ":app:reportComposeUiResolution" in line]
+        self.assertEqual(2, len(commands))
+        arm = next(command for command in commands if "-PliteAbi=arm64-v8a" in command)
+        x86 = next(command for command in commands if "-PliteAbi=x86_64" in command)
+        for command in (arm, x86):
+            self.assertLess(command.index(":app:reportComposeUiResolution"), command.index(":app:assembleRelease"))
+        self.assertNotIn(":app:assembleReleaseAndroidTest", arm)
+        self.assertLess(x86.index(":app:assembleRelease"), x86.index(":app:assembleReleaseAndroidTest"))
+        graph_task = (repository / "apps/aerove-lite/tool/compose_ui_graphs.gradle").read_text(encoding="utf-8")
+        self.assertIn("releaseAndroidTestRuntimeClasspath", graph_task)
+        self.assertIn("app.rootProject.file('tool/instrumentation-version-contract.json')", graph_task)
+        self.assertIn("mustRunAfter(reportTask)", graph_task)
+        compile_ordering = graph_task.split("app.tasks.matching { it.name in ['compileReleaseKotlin'", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("mustRunAfter(reportTask)", compile_ordering)
+        for compile_task in ("compileReleaseKotlin", "compileReleaseJavaWithJavac",
+                             "compileReleaseAndroidTestKotlin", "compileReleaseAndroidTestJavaWithJavac"):
+            with self.subTest(compile_task=compile_task):
+                self.assertIn(compile_task, graph_task)
 
     def test_parse_rejects_partial_duplicate_failure_unknown_and_excluded_class(self):
         good = self.log(self.descriptions)

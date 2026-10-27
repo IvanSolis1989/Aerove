@@ -171,12 +171,12 @@ jobs:
     - name: Signed preview ARM64 APK
       if: inputs.abi == 'arm64-v8a'
       working-directory: apps/aerove-lite
-      run: gradle --no-daemon :app:assembleRelease -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA"
+      run: gradle --no-daemon --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:assembleRelease -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA"
     - name: Emulator application and instrumentation APK
       id: emulator_apks
       if: inputs.abi == 'x86_64'
       working-directory: apps/aerove-lite
-      run: gradle --no-daemon :app:assembleRelease :app:assembleReleaseAndroidTest -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA"
+      run: gradle --no-daemon --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:assembleRelease :app:assembleReleaseAndroidTest -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA"
     - name: Check the signed APK and record its exact provenance
       id: apk_inspection
       run: |
