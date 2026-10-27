@@ -10,6 +10,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -146,6 +147,67 @@ class LiteAppRenderingTest(private val case: RenderCase) {
             }
             val context = InstrumentationRegistry.getInstrumentation().targetContext
             fun text(id: Int) = context.getString(id)
+            fun recordImportErrorFailure(invalidInput: String, failure: AssertionError) {
+                val detail = try {
+                    fun rect(values: androidx.compose.ui.geometry.Rect) = org.json.JSONArray(listOf(values.left, values.top, values.right, values.bottom))
+                    val nodes = JSONObject()
+                    listOf("profile-import-error", "profile-import-input", "profile-import-submit").forEach { tag ->
+                        val value = runCatching {
+                            val node = compose.onNodeWithTag(tag, useUnmergedTree = true).fetchSemanticsNode()
+                            JSONObject().put("boundsInRoot", rect(node.boundsInRoot))
+                        }.getOrElse { diagnosticFailure ->
+                            rethrowMatrixCancellation(diagnosticFailure, failure)
+                            JSONObject().put("unavailable", "${diagnosticFailure.javaClass.name}:${diagnosticFailure.message}")
+                        }
+                        nodes.put(tag, value)
+                    }
+                    val rootBounds = runCatching {
+                        rect(compose.onRoot(useUnmergedTree = true).fetchSemanticsNode().boundsInRoot)
+                    }.getOrElse { diagnosticFailure ->
+                        rethrowMatrixCancellation(diagnosticFailure, failure)
+                        JSONObject().put("unavailable", "${diagnosticFailure.javaClass.name}:${diagnosticFailure.message}")
+                    }
+                    val viewport = JSONObject()
+                    compose.activityRule.scenario.onActivity { activity ->
+                        val decor = activity.window.decorView
+                        val location = IntArray(2).also(decor::getLocationOnScreen)
+                        val insets = decor.rootWindowInsets
+                        viewport.put("decorBoundsOnScreen", org.json.JSONArray(listOf(location[0], location[1], decor.width, decor.height)))
+                            .put("imeVisible", insets?.isVisible(android.view.WindowInsets.Type.ime()) ?: false)
+                            .put("imeBottomInsetPx", insets?.getInsets(android.view.WindowInsets.Type.ime())?.bottom ?: 0)
+                    }
+                    val directory = File(requireNotNull(context.getExternalFilesDir(null)), "captures/lite-app-import-error-failures")
+                    check(directory.mkdirs() || directory.isDirectory) { "Cannot create failure diagnostics directory: $directory" }
+                    val caseLabel = case.toString().replace(Regex("[^A-Za-z0-9_.-]"), "_").take(100)
+                    val inputLabel = if (invalidInput.startsWith("proxies:")) "proxies" else "rules"
+                    val label = "profile-import-error-$caseLabel-$inputLabel-${System.currentTimeMillis()}"
+                    val screenshot = File(directory, "$label.png")
+                    val bitmap = requireNotNull(InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()) {
+                        "UiAutomation returned no display screenshot"
+                    }
+                    try {
+                        screenshot.outputStream().use { output ->
+                            check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)) { "PNG encoding failed" }
+                        }
+                    } finally { bitmap.recycle() }
+                    val metadata = File(directory, "$label.json")
+                    metadata.writeText(JSONObject()
+                        .put("case", case.toString())
+                        .put("invalidInput", invalidInput)
+                        .put("originalFailure", failure.toString())
+                        .put("appBoundsInWindow", probe.bounds["app"]?.let(::rect) ?: JSONObject.NULL)
+                        .put("composeRootBoundsInRoot", rootBounds)
+                        .put("viewport", viewport)
+                        .put("nodes", nodes)
+                        .put("screenshot", screenshot.absolutePath)
+                        .toString(2))
+                    "savedScreenshot=${screenshot.absolutePath}; savedMetadata=${metadata.absolutePath}"
+                } catch (diagnosticFailure: Throwable) {
+                    rethrowMatrixCancellation(diagnosticFailure, failure)
+                    "diagnosticFailed=${diagnosticFailure.javaClass.name}:${diagnosticFailure.message}"
+                }
+                failure.addSuppressed(AssertionError("Failure-only import error evidence: $detail"))
+            }
             val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
             fun navigate(id: Int) {
                 compose.onNode(tab and hasText(text(id))).performClick()
@@ -185,7 +247,13 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                     compose.onNodeWithTag("profile-import-submit").performScrollTo().assertIsEnabled().performClick()
                     compose.waitUntil(3000) { roots.rejectedInput(invalidInput) }
                     compose.mainClock.advanceTimeByFrame()
-                    compose.onNodeWithTag("profile-import-error").performScrollTo().assertIsDisplayed().assertTextEquals(text(R.string.age_import_failed))
+                    val importErrorNode = compose.onNodeWithTag("profile-import-error")
+                    try {
+                        importErrorNode.performScrollTo().assertIsDisplayed().assertTextEquals(text(R.string.age_import_failed))
+                    } catch (failure: AssertionError) {
+                        recordImportErrorFailure(invalidInput, failure)
+                        throw failure
+                    }
                     importInput().assertTextEquals(invalidInput)
                     compose.onNodeWithTag("profile-import-submit").assertIsEnabled()
                     roots.assertNothingImported()
