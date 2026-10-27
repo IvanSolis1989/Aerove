@@ -150,8 +150,13 @@ class DnsPreferencesUiTest {
         val old = submittedToken
         compose.runOnUiThread { attempts.complete(old, failed = true) }
         compose.onNodeWithTag("dns-save").assertIsEnabled()
-        compose.onNodeWithTag("dns-save").performClick()
-        compose.runOnUiThread { attempts.complete(old, failed = true) }
+        compose.onNodeWithTag("dns-save").assertIsDisplayed().performClick()
+        compose.runOnUiThread {
+            val receipt = "old=$old token=$submittedToken count=${requests.size}"
+            assertEquals("Retry must submit a second request: $receipt", 2, requests.size)
+            assertTrue("Retry must establish a newer pending token: $receipt", submittedToken > old)
+            attempts.complete(old, failed = true)
+        }
         compose.onNodeWithTag("dns-save").assertIsNotEnabled()
         compose.runOnUiThread { attempts.complete(submittedToken, failed = false) }
         compose.onNodeWithTag("dns-save").assertIsNotEnabled()
