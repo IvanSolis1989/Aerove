@@ -501,7 +501,9 @@ private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foreground
                         val glyph = if (case.checked) FullGlyphs.check else FullGlyphs.close
                         val paint = visuals.ink.copy(alpha = if (case.enabled) 1f else 0.38f)
                         // The no-lens plane retains the original Aurora foreground intent.
-                        LiteIcon(glyph, Modifier.align(Alignment.Center), paint, size = 14.dp)
+                        Box(contentAlignment = Alignment.Center, propagateMinConstraints = false) {
+                            LiteIcon(glyph, Modifier.align(Alignment.Center), paint, size = 14.dp)
+                        }
                     }
                 }
             }
