@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.toPixelMap
 import java.io.ByteArrayOutputStream
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -72,10 +73,43 @@ class ProxyPresentationRootUiTest {
             compose.onNodeWithTag("proxy-search-field").assertIsDisplayed().performTextInput("no match")
             compose.onNodeWithTag("proxy-presentation-options").assertDoesNotExist()
             compose.onNodeWithContentDescription(context.getString(R.string.proxy_presentation_clear_search)).performClick()
+            val clearedNode = compose.onNodeWithTag("proxy-search-field").fetchSemanticsNode()
+            val actualEmpty: Any? = clearedNode.config.getOrNull(SemanticsProperties.EditableText)
+            val expectedEmpty = AnnotatedString("")
+            android.util.Log.i("AEROVE-ProxyPredicate", org.json.JSONObject(mapOf(
+                "kind" to "proxy-clear-editable-predicate", "uniqueTagMatch" to true, "nodeId" to clearedNode.id,
+                "actual" to annotatedPredicateSnapshot(actualEmpty), "expected" to annotatedPredicateSnapshot(expectedEmpty),
+                "wholeValueEqual" to (actualEmpty == expectedEmpty), "textEqual" to ((actualEmpty as? AnnotatedString)?.text == expectedEmpty.text),
+                "inputText" to clearedNode.config.getOrNull(SemanticsProperties.InputText)?.text,
+                "textList" to clearedNode.config.getOrNull(SemanticsProperties.Text)?.map { it.text },
+                "selection" to clearedNode.config.getOrNull(SemanticsProperties.TextSelectionRange)?.let { listOf(it.start, it.end) },
+            )).toString())
             compose.onNodeWithTag("proxy-search-field").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithTag("proxy-search-field").assertDoesNotExist()
             compose.onNodeWithTag("proxy-presentation-options").assertIsDisplayed()
         } finally { runBlocking { workspace.closeAndJoin(); iconLoader.closeAndJoin() }; client.close(); scope.cancel(); directory.deleteRecursively() }
     }
+}
+
+private fun annotatedPredicateSnapshot(value: Any?): Map<String, Any?> {
+    if (value == null) return mapOf("isNull" to true)
+    if (value !is AnnotatedString) return mapOf("isNull" to false, "class" to value.javaClass.name,
+        "classLoader" to value.javaClass.classLoader?.toString(), "classLoaderIdentity" to System.identityHashCode(value.javaClass.classLoader),
+        "isAnnotatedString" to false, "representation" to value.toString())
+    val annotationStorage = runCatching {
+        val getter = value.javaClass.declaredMethods.single { it.name.startsWith("getAnnotations$") && it.parameterCount == 0 }
+        val raw = getter.invoke(value)
+        mapOf("getter" to getter.name, "isNull" to (raw == null), "class" to raw?.javaClass?.name,
+            "count" to (raw as? List<*>)?.size, "items" to (raw as? List<*>)?.map { it.toString() })
+    }.getOrElse { mapOf("unavailable" to "${it.javaClass.name}: ${it.message}") }
+    return mapOf(
+        "isNull" to false, "class" to value.javaClass.name, "classLoader" to value.javaClass.classLoader?.toString(),
+        "classLoaderIdentity" to System.identityHashCode(value.javaClass.classLoader),
+        "text" to value.text, "textLength" to value.text.length, "codePoints" to value.text.codePoints().toArray().toList(),
+        "spanStyles" to value.spanStyles.map { mapOf("start" to it.start, "end" to it.end, "tag" to it.tag, "item" to it.item.toString()) },
+        "paragraphStyles" to value.paragraphStyles.map { mapOf("start" to it.start, "end" to it.end, "tag" to it.tag, "item" to it.item.toString()) },
+        "stringAnnotations" to value.getStringAnnotations(0, value.length).map { mapOf("start" to it.start, "end" to it.end, "tag" to it.tag, "item" to it.item) },
+        "annotationStorage" to annotationStorage,
+    )
 }
