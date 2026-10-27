@@ -68,7 +68,56 @@ jobs:
           reused_installed=false
           apt_executed=false
           last_completed=workspace-initialized
-          trap 'rc=$?; printf "reusedInstalledGdb=%s\naptExecuted=%s\nlastCompletedStage=%s\n" "$reused_installed" "$apt_executed" "$last_completed" > "$receipt/mode.txt"; printf "role=diagnosticToolPreparation\ncompiled=false\nemulatorStarted=false\naccepted=false\nexitCode=%s\n" "$rc" > "$receipt/STATUS.txt"' EXIT
+          finish_prepare() {
+            rc=$?
+            trap - EXIT
+            if [[ -n "${private:-}" && -e "$private/public-keyring-owner.json" ]]; then
+              if /usr/bin/timeout --signal=TERM --kill-after=1s 2s /usr/bin/python3 - "$private/public-keyring-owner.json" "$receipt" <<'CLEANUP'
+          import json, os, re, stat, sys
+          from pathlib import Path
+
+          marker, receipt = map(Path, sys.argv[1:])
+          result = dict(role="ownedPublicArchiveKeyringCleanup", status="CHECKING", recursive=False)
+          try:
+              record_info = marker.lstat()
+              if not stat.S_ISREG(record_info.st_mode) or record_info.st_uid != os.getuid() or stat.S_IMODE(record_info.st_mode) != 0o600 or record_info.st_size > 4096:
+                  raise ValueError("Public keyring ownership record is not private task data")
+              owner = json.loads(marker.read_text())
+              directory = Path(owner["path"])
+              if not re.fullmatch(r"/tmp/aerove-archive\.[A-Za-z0-9_]+", str(directory)) or owner["uid"] != os.getuid():
+                  raise ValueError("Public keyring directory is outside the recorded task scope")
+              parent = directory.parent.lstat()
+              info = directory.lstat()
+              if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != 0 or stat.S_IMODE(parent.st_mode) != 0o1777
+                      or not stat.S_ISDIR(info.st_mode) or info.st_uid != owner["uid"] or info.st_mode & 0o022
+                      or (info.st_dev, info.st_ino) != (owner["dev"], owner["ino"])):
+                  raise ValueError("Public keyring cleanup directory identity differs")
+              entries = list(directory.iterdir())
+              if any(entry.name != "verified-ubuntu-archive.gpg" for entry in entries):
+                  raise ValueError("Unexpected contents retained in the owned public keyring directory")
+              for entry in entries:
+                  key = entry.lstat()
+                  if not stat.S_ISREG(key.st_mode) or key.st_uid != owner["uid"] or stat.S_IMODE(key.st_mode) != 0o444:
+                      raise ValueError("Public keyring cleanup file identity differs")
+              for entry in entries:
+                  entry.unlink()
+              directory.rmdir()
+              result.update(status="CLEANED", directory=str(directory), removedFiles=len(entries), directoryRemoved=True)
+          except Exception as error:
+              result.update(status="FAILED", directoryRemoved=False, errorType=type(error).__name__,
+                            message=str(error) if isinstance(error, ValueError) else "Owned public keyring cleanup failed")
+          finally:
+              (receipt / "public-keyring-cleanup.json").write_text(json.dumps(result, indent=2) + "\n")
+          sys.exit(0 if result["status"] == "CLEANED" else 1)
+          CLEANUP
+              then :; else
+                if [[ "$rc" -eq 0 ]]; then rc=1; fi
+              fi
+            fi
+            printf "reusedInstalledGdb=%s\naptExecuted=%s\nlastCompletedStage=%s\n" "$reused_installed" "$apt_executed" "$last_completed" > "$receipt/mode.txt"; printf "role=diagnosticToolPreparation\ncompiled=false\nemulatorStarted=false\naccepted=false\nexitCode=%s\n" "$rc" > "$receipt/STATUS.txt"
+            exit "$rc"
+          }
+          trap finish_prepare EXIT
           printf 'controller=%s\nimage=%s\n' "$GITHUB_SHA" "${ImageVersion:-unknown}" > "$receipt/controller.txt"
           private=$(mktemp -d "$RUNNER_TEMP/gdb-apt.XXXXXX")
           [[ "$private" =~ ^/[A-Za-z0-9_./-]+$ ]] || exit 2
@@ -181,7 +230,7 @@ jobs:
               return sorted(fingerprints)
 
           def recover_archive_keyring(private, receipt, original):
-              import subprocess, time
+              import subprocess, tempfile, time
               result = dict(role="isolatedUbuntuKeyringRecovery", compiled=False, accepted=False, systemKeyringModified=False,
                             status="CHECKING", original=dict(original), officialReferences=KEY_REFERENCES,
                             pinnedArchiveFingerprints=sorted(ARCHIVE_KEYS), pinnedPackageFingerprints=sorted(PACKAGE_KEYS),
@@ -269,7 +318,7 @@ jobs:
                       raise ValueError("Original keyring bytes differ from trusted installed-package metadata")
                   result["snapshot"] = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest(), installedPackageMd5Matched=True,
                                             md5IsNotSecurityProof=True)
-                  def readonly_copy(path, content):
+                  def readonly_copy(path, content, public=False):
                       fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
                       try:
                           with os.fdopen(fd, "wb", closefd=False) as stream:
@@ -277,17 +326,17 @@ jobs:
                       finally:
                           os.close(fd)
                       info = path.lstat()
-                      traversal = [dict(path=str(parent), uid=parent.stat().st_uid,
-                          mode=oct(stat.S_IMODE(parent.stat().st_mode))) for parent in path.parents]
+                      traversal = [dict(path=str(parent), uid=parent.lstat().st_uid,
+                          mode=oct(stat.S_IMODE(parent.lstat().st_mode))) for parent in path.parents]
                       result.setdefault("privateCopies", []).append(dict(path=str(path), uid=info.st_uid,
-                          mode=oct(stat.S_IMODE(info.st_mode)), bytes=info.st_size, parents=traversal))
+                          mode=oct(stat.S_IMODE(info.st_mode)), bytes=info.st_size, parents=traversal, role="aptPublic" if public else "actorPrivate"))
                       if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o444
                               or info.st_uid != os.getuid() or path.read_bytes() != content
-                              or any(not stat.S_ISDIR(parent.stat().st_mode) or parent.stat().st_uid not in {0, os.getuid()}
-                                     or (parent.stat().st_mode & 0o022 and not (str(parent) == "/tmp" and parent.stat().st_uid == 0
-                                         and parent.stat().st_mode & stat.S_ISVTX))
-                                     or not parent.stat().st_mode & stat.S_IXOTH for parent in path.parents)):
-                          raise ValueError("Private keyring read-back or non-writable mode differs")
+                              or any(not stat.S_ISDIR(parent.lstat().st_mode) or parent.lstat().st_uid not in {0, os.getuid()}
+                                     or (parent.lstat().st_mode & 0o022 and not (str(parent) == "/tmp" and parent.lstat().st_uid == 0
+                                         and parent.lstat().st_mode & stat.S_ISVTX))
+                                     or (public and not parent.lstat().st_mode & stat.S_IXOTH) for parent in path.parents)):
+                          raise ValueError("Task keyring read-back, trusted parent or role-specific traversal differs")
                   snapshot = private / "original-keyring-snapshot.gpg"; readonly_copy(snapshot, data)
                   common = ["/usr/bin/gpg", "--no-options", "--batch", "--no-tty", "--no-autostart", "--homedir", str(home),
                             "--no-auto-key-retrieve", "--no-auto-check-trustdb"]
@@ -302,14 +351,39 @@ jobs:
                   result["phase"] = "private-archive-keyring"
                   isolated = private / "verified-ubuntu-archive.gpg"; readonly_copy(isolated, exported)
                   result["exportedArchiveFingerprints"] = inspect(isolated, ARCHIVE_KEYS)
+                  result["phase"] = "public-archive-keyring"
+                  temporary_root = Path("/tmp").lstat()
+                  if not stat.S_ISDIR(temporary_root.st_mode) or temporary_root.st_uid != 0 or stat.S_IMODE(temporary_root.st_mode) != 0o1777:
+                      raise ValueError("Public archive keyring requires the exact root-owned sticky /tmp")
+                  public_directory = Path(tempfile.mkdtemp(prefix="aerove-archive.", dir="/tmp"))
+                  directory_info = public_directory.lstat()
+                  if not stat.S_ISDIR(directory_info.st_mode) or directory_info.st_uid != os.getuid() or stat.S_IMODE(directory_info.st_mode) != 0o700:
+                      raise ValueError("New public archive keyring directory identity differs")
+                  ownership = dict(path=str(public_directory), uid=directory_info.st_uid, dev=directory_info.st_dev, ino=directory_info.st_ino)
+                  try:
+                      marker_fd = os.open(private / "public-keyring-owner.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                      with os.fdopen(marker_fd, "w") as marker:
+                          marker.write(json.dumps(ownership) + "\n"); marker.flush(); os.fsync(marker.fileno())
+                  except Exception:
+                      public_directory.rmdir()
+                      raise
+                  result["publicDirectory"] = ownership
+                  os.chmod(public_directory, 0o755)
+                  published_info = public_directory.lstat()
+                  if (published_info.st_dev, published_info.st_ino, published_info.st_uid, stat.S_IMODE(published_info.st_mode)) != (ownership["dev"], ownership["ino"], ownership["uid"], 0o755):
+                      raise ValueError("Public archive keyring directory read-back is not the owned 0755 directory")
+                  public_keyring = public_directory / "verified-ubuntu-archive.gpg"
+                  readonly_copy(public_keyring, exported, public=True)
                   if deadline - time.monotonic() < 3:
                       raise ValueError("Insufficient existing-step budget for the actual APT sandbox readback")
                   command("apt-sandbox-readable", ["/usr/bin/sudo", "-n", "-u", "_apt", "--", "/usr/bin/timeout",
-                      "--signal=TERM", "--kill-after=1s", "1s", "/usr/bin/test", "-r", str(isolated)])
+                      "--signal=TERM", "--kill-after=1s", "1s", "/usr/bin/test", "-r", str(public_keyring)])
                   result["aptSandbox"] = dict(user="_apt", readVerified=True)
                   result.update(status="RECOVERED", phase="complete", privateKeyring=dict(path=str(isolated), uid=isolated.stat().st_uid, mode="0o444", bytes=len(exported),
                       sha256=hashlib.sha256(exported).hexdigest()), sourcePermissionRiskPreserved=True)
-                  return str(isolated), exported
+                  result["publicKeyring"] = dict(path=str(public_keyring), uid=public_keyring.lstat().st_uid, mode="0o444", bytes=len(exported),
+                      sha256=hashlib.sha256(exported).hexdigest(), role="aptSignedBy")
+                  return str(public_keyring), exported
               except Exception as error:
                   result.update(status="FAILED", failure=dict(type=type(error).__name__,
                       message=str(error) if isinstance(error, ValueError) else "Keyring evidence unavailable; recovery denied"))
