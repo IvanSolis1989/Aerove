@@ -1,5 +1,5 @@
 name: AEROVE Standard internal x86 QA probe of an existing package (diagnostic only)
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('AEROVE Standard internal x86 QA probe of artifact {0} from run {1} for formal run {2}', inputs.qa_artifact_id, inputs.qa_run_id, inputs.formal_run_id) || format('AEROVE Standard internal x86 QA probe registration {0} {1}', github.event_name, github.sha) }}
+run-name: ${{ inputs.evidence_only && format('AEROVE evidence only - Lite147 matrix and runner tools - not a Standard release - controller {0}', github.sha) || (github.event_name == 'workflow_dispatch' && format('AEROVE Standard internal x86 QA probe of artifact {0} from run {1} for formal run {2}', inputs.qa_artifact_id, inputs.qa_run_id, inputs.formal_run_id) || format('AEROVE Standard internal x86 QA probe registration {0} {1}', github.event_name, github.sha)) }}
 
 on:
   push:
@@ -20,6 +20,11 @@ on:
         type: string
         required: true
 
+      evidence_only:
+        description: Read fixed Lite147 evidence and existing runner debugger inventory only; no package, emulator or acceptance
+        type: boolean
+        default: false
+
       host_crash_observer:
         description: Observe only the owned emulator host in the isolated diagnostic controller; never acceptance
         type: boolean
@@ -39,7 +44,7 @@ defaults:
 
 jobs:
   probe_existing_qa:
-    if: github.repository == 'IvanSolis1989/Aerove' && github.event_name == 'workflow_dispatch' && ((!inputs.host_crash_observer && github.ref == 'refs/heads/codex/aerove-lite-meow-app') || (inputs.host_crash_observer && github.ref == 'refs/heads/codex/aerove-standard-host-crash-31'))
+    if: ${{ !inputs.evidence_only && github.repository == 'IvanSolis1989/Aerove' && github.event_name == 'workflow_dispatch' && ((!inputs.host_crash_observer && github.ref == 'refs/heads/codex/aerove-lite-meow-app') || (inputs.host_crash_observer && github.ref == 'refs/heads/codex/aerove-standard-host-crash-31')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -129,3 +134,429 @@ jobs:
           name: Std-internal-x86-probe-first-screen-${{ github.run_id }}
           path: ${{ runner.temp }}/standard-x86-qa-render/
           if-no-files-found: warn
+
+  matrix_evidence:
+    name: Evidence only - fixed Lite147 original matrix Davey lines
+    if: ${{ github.repository == 'IvanSolis1989/Aerove' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/aerove-standard-host-crash-31' && inputs.evidence_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    env:
+      EVIDENCE_ONLY: ${{ inputs.evidence_only }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Evidence only - fixed Lite147 original matrix Davey lines
+        timeout-minutes: 4
+        run: |
+          python3 - <<'PY'
+          """Fixed original Lite147 evidence read; never application acceptance."""
+          import binascii
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath
+          import re
+          import selectors
+          import shutil
+          import signal
+          import stat
+          import subprocess
+          import tempfile
+          import time
+          import zipfile
+
+          REPO = "IvanSolis1989/Aerove"
+          RUN = 40542295511
+          SOURCE = "9e24281641c86d6315dfc70b67ed62ff01c26f6b"
+          TREE = "13ffe0b535bed5f3cdd231778cb268e5c6f6b6ed"
+          ARTIFACT = 12752950352
+          SIZE = 33013619
+          DIGEST = "1fc5e357cfa89bc9de08b9ba0e85d04881e7ab5d5049d0d042347b4a566e9727"
+          NAME = "AEROVE-Lite-dashboard-matrix-attempt-1"
+          TARGETS = ("123135942212", "152969274352")
+          ENTRIES = {"SOURCE.json": (610, 335, "801f7ccc"), "logcat.txt": (5732345, 816202, "fd26c3b8")}
+
+
+          def require(condition, message):
+              if not condition:
+                  raise ValueError(message)
+
+
+          def controller():
+              require(os.environ.get("GITHUB_REPOSITORY") == REPO
+                      and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+                      and os.environ.get("GITHUB_REF") == "refs/heads/codex/aerove-standard-host-crash-31"
+                      and os.environ.get("EVIDENCE_ONLY") == "true", "Evidence-only controller context mismatch")
+              return {key: os.environ.get(key) for key in ("GITHUB_SHA", "GITHUB_REF", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")}
+
+
+          def gh(route, destination, limit, timeout, receipts):
+              """Bound stdout/stderr and time; never persist headers, signed URLs or stderr text."""
+              command = [shutil.which("gh") or "/usr/bin/gh", "api", route]
+              env = dict(PATH="/usr/bin:/bin", HOME=os.environ["HOME"], GH_TOKEN=os.environ["GH_TOKEN"],
+                         GH_PROMPT_DISABLED="1", NO_COLOR="1")
+              proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                                      env=env, start_new_session=True)
+              counts = {"stdout": 0, "stderr": 0}
+              stderr = bytearray()
+              started = time.monotonic()
+              error = None
+              try:
+                  with selectors.DefaultSelector() as selector, Path(destination).open("wb") as output:
+                      selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
+                      selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+                      while selector.get_map():
+                          require(time.monotonic() - started < timeout, "gh time limit exceeded")
+                          for key, _ in selector.select(0.2):
+                              chunk = os.read(key.fileobj.fileno(), 65536)
+                              if not chunk:
+                                  selector.unregister(key.fileobj)
+                                  continue
+                              counts[key.data] += len(chunk)
+                              require(counts["stdout"] <= limit and counts["stderr"] <= 8192, "gh output limit exceeded")
+                              if key.data == "stdout":
+                                  output.write(chunk)
+                              else:
+                                  stderr.extend(chunk)
+                      require(proc.wait(timeout=2) == 0, "gh API/download failed")
+              except Exception as caught:
+                  error = caught
+              finally:
+                  if proc.poll() is None:
+                      os.killpg(proc.pid, signal.SIGKILL)
+                      proc.wait(timeout=5)
+                  proc.stdout.close()
+                  proc.stderr.close()
+                  receipts.append(dict(route=route, stdoutBytes=counts["stdout"], stderrBytes=counts["stderr"],
+                      stderrCategories=[word for word in ("eof", "timeout", "forbidden", "reset") if word.encode() in stderr.lower()],
+                      exitCode=proc.returncode, seconds=round(time.monotonic() - started, 3),
+                      stderrTextPersisted=False, credentialsOrSignedUrlsPersisted=False))
+              if error:
+                  raise error
+
+
+          def validate_api(run, artifact):
+              require(run.get("id") == RUN and run.get("head_sha") == SOURCE and run.get("run_attempt") == 1
+                      and run.get("run_number") == 147 and run.get("path") == ".github/workflows/aerove-lite.yaml"
+                      and run.get("status") == "completed" and run.get("conclusion") == "failure"
+                      and all(run.get(key, {}).get("full_name") == REPO for key in ("repository", "head_repository")),
+                      "Original Lite147 API run identity/terminal mismatch")
+              require(artifact.get("id") == ARTIFACT and artifact.get("name") == NAME
+                      and artifact.get("size_in_bytes") == SIZE and artifact.get("expired") is False
+                      and artifact.get("digest") == "sha256:" + DIGEST
+                      and artifact.get("workflow_run", {}).get("id") == RUN
+                      and artifact.get("workflow_run", {}).get("head_sha") == SOURCE,
+                      "Original artifact API identity/digest/size/expiry mismatch")
+
+
+          def read_entries(archive):
+              require(Path(archive).stat().st_size == SIZE, "ZIP size mismatch")
+              hasher = hashlib.sha256()
+              with Path(archive).open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      hasher.update(chunk)
+              digest = hasher.hexdigest()
+              require(digest == DIGEST, "Full original ZIP digest mismatch")
+              output, receipts = {}, {}
+              with zipfile.ZipFile(archive) as package:
+                  infos = package.infolist()
+                  require(len(infos) <= 12000, "ZIP entry limit exceeded")
+                  seen = set()
+                  for entry in infos:
+                      path = PurePosixPath(entry.filename)
+                      mode = entry.external_attr >> 16
+                      require(entry.filename and "\\" not in entry.filename and ":" not in entry.filename
+                              and not entry.filename.startswith("/") and "\x00" not in entry.filename
+                              and all(part not in ("", ".", "..") and not part.endswith((".", " ")) for part in path.parts)
+                              and path.as_posix() == entry.filename.rstrip("/") and entry.filename.casefold() not in seen
+                              and stat.S_IFMT(mode) in (0, stat.S_IFREG, stat.S_IFDIR)
+                              and not entry.flag_bits & 1 and entry.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                              and 0 <= entry.header_offset < package.start_dir, "Unsafe, duplicate or unsupported ZIP entry")
+                      seen.add(entry.filename.casefold())
+                  for name, (size, compressed, crc) in ENTRIES.items():
+                      entry = package.getinfo(name)
+                      require((entry.file_size, entry.compress_size, f"{entry.CRC:08x}") == (size, compressed, crc)
+                              and size <= 6 * 1024 * 1024 and size <= max(1, compressed) * 1000, "Fixed entry metadata mismatch")
+                      data = package.read(entry)
+                      require(len(data) == size and f"{binascii.crc32(data) & 0xffffffff:08x}" == crc, "Entry CRC/size mismatch")
+                      output[name] = data
+                      receipts[name] = dict(bytes=size, compressedBytes=compressed, crc32=crc, sha256=hashlib.sha256(data).hexdigest())
+              source = json.loads(output["SOURCE.json"])
+              require(all(str(source.get(key)) == str(value) for key, value in dict(sourceRevision=SOURCE, sourceTree=TREE,
+                  workflowRun=RUN, appBuildRun=RUN, harnessRun=RUN, harnessRevision=SOURCE, runNumber=147, runAttempt=1, phase="matrix").items())
+                  and source.get("testShard") is None and source.get("prebuiltApks") is True,
+                  "Original SOURCE entry differs from fixed Lite147 identity")
+              return output["logcat.txt"], source, receipts, digest
+
+
+          def sensitive_text(text):
+              token = os.environ.get("GH_TOKEN")
+              return bool(re.search(r"https?://|\b(?:proxy-)?authorization[\"']?\s*[:=]\s*\S|\b(?:sig|signature)[\"']?\s*[:=]\s*\S",
+                                    text, re.IGNORECASE) or (token and token in text))
+
+
+          def davey_slices(data):
+              lines = data.decode("utf-8", errors="strict").splitlines()
+              fields = ("FrameTimelineVsyncId", "IssueDrawCommandsStart", "SwapBuffersCompleted", "FrameCompleted")
+              matches, contexts = {}, {}
+              for target in TARGETS:
+                  selected = []
+                  for index, line in enumerate(lines):
+                      if (re.search(r"(?:^|[ /])(?:HWUI|OpenGLRenderer)(?:\(\s*\d+\))?\s*:\s*Davey!", line)
+                              and re.search(r"\bIntendedVsync=" + target + r"(?=[,;\s]|$)", line)):
+                          require(len(line.encode()) <= 16384, "Matched Davey line exceeds safe output limit")
+                          require(not sensitive_text(line),
+                                  "Matched line contains suspected credential/URL material and cannot be persisted whole")
+                          values = {key: re.findall(r"\b" + key + r"=([0-9]+)(?=[,;\s]|$)", line) for key in fields}
+                          selected.append(dict(lineNumber=index + 1, fullLine=line,
+                              lineSha256=hashlib.sha256(line.encode()).hexdigest(), fields=values,
+                              requiredFieldsPresent=all(len(value) == 1 for value in values.values())))
+                          for adjacent in range(max(0, index - 2), min(len(lines), index + 3)):
+                              nearby = lines[adjacent]
+                              if adjacent == index or (re.search(r"HWUI|OpenGLRenderer|Choreographer|frame-commit|Frame", nearby)
+                                      and len(nearby.encode()) <= 4096 and not sensitive_text(nearby)):
+                                  contexts[adjacent + 1] = nearby
+                  require(len(selected) <= 4, "Too many matching Davey lines for a fixed target")
+                  matches[target] = selected
+              complete = all(matches[target] and all(row["requiredFieldsPresent"] for row in matches[target]) for target in TARGETS)
+              text = "\n".join(f"{number}: {line}" for number, line in sorted(contexts.items())) + "\n"
+              require(len(text.encode()) <= 160 * 1024, "Davey context exceeds output cap")
+              return matches, text, complete
+
+
+          def main():
+              out = Path(os.environ["RUNNER_TEMP"]) / "diagnostic-evidence/matrix/out"
+              out.mkdir(parents=True, exist_ok=True)
+              receipt = dict(role="evidenceOnly", compiled=False, emulatorStarted=False, accepted=False,
+                  controller=controller(), originalSource=SOURCE, originalTree=TREE, originalRun=RUN, originalAttempt=1,
+                  artifactId=ARTIFACT, artifactName=NAME, expectedZipBytes=SIZE, expectedZipSha256=DIGEST,
+                  requests=[], wholeZipDigestVerified=False, completed=False)
+              try:
+                  with tempfile.TemporaryDirectory(prefix="lite147-original-matrix-") as private:
+                      private = Path(private)
+                      for name, route in (("run", f"repos/{REPO}/actions/runs/{RUN}"),
+                                          ("artifact", f"repos/{REPO}/actions/artifacts/{ARTIFACT}")):
+                          gh(route, private / (name + ".json"), 1024 * 1024, 20, receipt["requests"])
+                      validate_api(json.loads((private / "run.json").read_text()), json.loads((private / "artifact.json").read_text()))
+                      gh(f"repos/{REPO}/actions/artifacts/{ARTIFACT}/zip", private / "original.zip", SIZE, 160, receipt["requests"])
+                      log, source, entries, digest = read_entries(private / "original.zip")
+                      receipt.update(wholeZipDigestVerified=True, actualZipSha256=digest, sourceEntry=source, entries=entries)
+                      matches, text, complete = davey_slices(log)
+                      receipt.update(matches=matches, completed=complete)
+                      (out / "DAVEY-SLICES.txt").write_text(text, encoding="utf-8")
+                      require(complete, "Fixed Davey target or required field is missing; no frame association inferred")
+              except Exception as error:
+                  receipt["failure"] = dict(type=type(error).__name__, message=str(error) if isinstance(error, ValueError) else "Read failed; raw stderr and URLs withheld")
+                  raise SystemExit(1)
+              finally:
+                  (out / "MATRIX-EVIDENCE.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+
+          if __name__ == "__main__":
+              main()
+          PY
+      - name: Preserve small evidence-only receipt even on failure
+        if: always()
+        timeout-minutes: 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Evidence-only-Lite147-Davey-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/diagnostic-evidence/matrix/out/
+          if-no-files-found: error
+          retention-days: 7
+
+  host_tools_evidence:
+    name: Evidence only - existing runner debugger inventory
+    if: ${{ github.repository == 'IvanSolis1989/Aerove' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/codex/aerove-standard-host-crash-31' && inputs.evidence_only }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    env:
+      EVIDENCE_ONLY: ${{ inputs.evidence_only }}
+    steps:
+      - name: Evidence only - existing runner debugger inventory
+        timeout-minutes: 4
+        run: |
+          python3 - <<'PY'
+          """Bounded fresh-runner debugger inventory; never attach, install or start an emulator."""
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import selectors
+          import shutil
+          import signal
+          import stat
+          import subprocess
+          import tempfile
+          import time
+
+          NAMES = ("gdb", "gdb-multiarch", "lldb")
+          CONTROLLED_PATH = "/usr/bin:/bin"
+          TRUSTED = ("/usr", "/opt", "/bin", "/sbin", "/snap", "/home/linuxbrew/.linuxbrew",
+                     "/home/runner/.local/bin", "/home/runner/.cargo/bin", "/home/runner/.dotnet/tools")
+
+
+          def trusted(path):
+              value = str(path.resolve())
+              return any(value == root or value.startswith(root + "/") for root in TRUSTED)
+
+
+          def controlled_probe(command, home, seconds):
+              env = dict(PATH=CONTROLLED_PATH, HOME=str(home), XDG_CONFIG_HOME=str(home), LC_ALL="C", LANG="C",
+                  TERM="dumb", DEBUGINFOD_URLS="", PYTHONNOUSERSITE="1", PYTHONSAFEPATH="1", GDBHISTFILE="/dev/null")
+              proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
+                  env=env, start_new_session=True)
+              output = {"stdout": bytearray(), "stderr": bytearray()}
+              started = time.monotonic()
+              stopped = None
+              try:
+                  with selectors.DefaultSelector() as selector:
+                      selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
+                      selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+                      while selector.get_map():
+                          if time.monotonic() - started >= seconds:
+                              raise TimeoutError("bounded debugger inventory probe timed out")
+                          for key, _ in selector.select(0.1):
+                              chunk = os.read(key.fileobj.fileno(), 4096)
+                              if not chunk:
+                                  selector.unregister(key.fileobj)
+                              else:
+                                  if sum(map(len, output.values())) + len(chunk) > 16384:
+                                      raise ValueError("bounded debugger inventory output limit")
+                                  output[key.data].extend(chunk)
+                      proc.wait(timeout=1)
+              except (TimeoutError, ValueError, subprocess.TimeoutExpired) as error:
+                  stopped = type(error).__name__
+              finally:
+                  if proc.poll() is None:
+                      os.killpg(proc.pid, signal.SIGKILL)
+                      proc.wait(timeout=3)
+                  proc.stdout.close()
+                  proc.stderr.close()
+              text = {key: re.sub(r"https?://\S+", "[URL]", value.decode("utf-8", errors="replace")) for key, value in output.items()}
+              return dict(exitCode=proc.returncode, stopped=stopped, seconds=round(time.monotonic() - started, 3), **text)
+
+
+          def inventory(original_path):
+              requested = original_path.split(os.pathsep)
+              scope_limits = []
+              if len(requested) > 32:
+                  scope_limits.append("original PATH capped at32 directories")
+              requested = requested[:32] + ["/usr/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin", "/usr/local/swift/usr/bin"]
+              llvm = sorted(Path("/usr/lib").glob("llvm-*/bin"))[:16]
+              requested += [str(path) for path in llvm]
+              sdk_roots = [Path("/usr/local/lib/android/sdk"), Path("/opt/android-sdk")]
+              sdk_roots += [Path(os.environ[key]) for key in ("ANDROID_HOME", "ANDROID_SDK_ROOT") if os.environ.get(key)]
+              for sdk in sorted(set(sdk_roots)):
+                  if not sdk.is_absolute() or not trusted(sdk) or not sdk.is_dir():
+                      continue
+                  versions = sorted((sdk / "ndk").glob("*"))
+                  if len(versions) > 16:
+                      scope_limits.append("existing NDK versions capped at16 per SDK root")
+                  for ndk in versions[:16] + ([sdk / "ndk-bundle"] if (sdk / "ndk-bundle").is_dir() else []):
+                      if ndk.is_dir():
+                          requested += [str(ndk / suffix) for suffix in ("toolchains/llvm/prebuilt/linux-x86_64/bin", "prebuilt/linux-x86_64/bin")]
+              directories, tools = [], []
+              seen = set()
+              started = time.monotonic()
+              for raw in requested:
+                  if raw in seen:
+                      continue
+                  seen.add(raw)
+                  if len(directories) >= 96 or time.monotonic() - started > 12:
+                      scope_limits.append("directory count/time bound reached")
+                      break
+                  directory = Path(raw)
+                  row = dict(requested=raw, searched=False)
+                  directories.append(row)
+                  try:
+                      if not directory.is_absolute() or not trusted(directory) or not directory.is_dir():
+                          row["reason"] = "absent or outside trusted image-directory scope"
+                          continue
+                      row.update(realPath=str(directory.resolve()), searched=True)
+                      if directory.stat().st_mode & stat.S_IWOTH:
+                          row.update(searched=False, reason="world-writable directory excluded")
+                          continue
+                      with os.scandir(directory) as entries:
+                          for count, entry in enumerate(entries):
+                              if count >= 8192 or len(tools) >= 128 or time.monotonic() - started > 12:
+                                  scope_limits.append("shallow entry/tool/time bound reached")
+                                  break
+                              if not re.fullmatch(r"(?:gdb|gdb-multiarch|lldb)(?:-\d+)?", entry.name):
+                                  continue
+                              path = Path(entry.path)
+                              real = path.resolve()
+                              regular = path.is_file()
+                              executable = regular and os.access(path, os.X_OK)
+                              eligible = executable and trusted(real) and not real.stat().st_mode & stat.S_IWOTH
+                              tools.append(dict(path=str(path), realPath=str(real), name=entry.name, regularFile=regular,
+                                  executable=executable, trustedExecutable=eligible, isSymlink=path.is_symlink()))
+                  except OSError as error:
+                      row.update(searched=False, errorType=type(error).__name__)
+              return directories, tools, sorted(set(scope_limits))
+
+
+          def main():
+              out = Path(os.environ["RUNNER_TEMP"]) / "diagnostic-evidence/host-tools/out"
+              out.mkdir(parents=True, exist_ok=True)
+              receipt = dict(role="evidenceOnly", compiled=False, emulatorStarted=False, accepted=False,
+                  ptraceAttempted=False, toolsInstalled=False, controller={key: os.environ.get(key) for key in
+                      ("GITHUB_SHA", "GITHUB_REF", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")}, completed=False)
+              try:
+                  if (os.environ.get("GITHUB_REPOSITORY") != "IvanSolis1989/Aerove"
+                          or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+                          or os.environ.get("GITHUB_REF") != "refs/heads/codex/aerove-standard-host-crash-31"
+                          or os.environ.get("EVIDENCE_ONLY") != "true"):
+                      raise ValueError("Evidence-only controller context mismatch")
+                  original_path = os.environ.get("PATH", "")
+                  directories, tools, limits = inventory(original_path)
+                  receipt.update(declaredImage="ubuntu-24.04", runnerImage={key: os.environ.get(key) for key in
+                      ("ImageOS", "ImageVersion", "RUNNER_OS", "RUNNER_ARCH")}, originalPath=original_path,
+                      controlledPath=CONTROLLED_PATH, originalPathLookup={name: shutil.which(name, path=original_path) for name in NAMES},
+                      controlledPathLookup={name: shutil.which(name, path=CONTROLLED_PATH) for name in NAMES},
+                      directories=directories, tools=tools, scopeLimits=limits, probes=[],
+                      scope="Listed trusted directories only, shallow scan; absence here is not whole-filesystem absence")
+                  probed = set()
+                  with tempfile.TemporaryDirectory(prefix="empty-gdb-inventory-home-") as home:
+                      for tool in tools:
+                          if not tool["name"].startswith("gdb") or not tool["trustedExecutable"] or tool["realPath"] in probed:
+                              continue
+                          if len(probed) >= 4:
+                              receipt["scopeLimits"].append("GDB controlled probes capped at4 unique real executables")
+                              break
+                          probed.add(tool["realPath"])
+                          common = [tool["realPath"], "-nx", "-nh", "--batch"]
+                          version = controlled_probe(common + ["--version"], home, 3)
+                          readiness = controlled_probe(common + ["-iex", "set auto-load off", "-iex", "set auto-load safe-path /nonexistent",
+                              "-iex", "set debuginfod enabled off", "-ex", 'python import sys; print("AEROVE_GDB_PYTHON_READY=" + sys.version.split()[0])'], home, 5)
+                          ready = readiness["exitCode"] == 0 and readiness["stopped"] is None and bool(re.search(
+                              r"(?m)^AEROVE_GDB_PYTHON_READY=\d+\.\d+\.\d+", readiness["stdout"]))
+                          receipt["probes"].append(dict(realPath=tool["realPath"], version=version, pythonReadiness=readiness,
+                              pythonReady=ready, autoLoadDisabled=True, debuginfodDisabled=True, emptyHome=True, attached=False))
+                  receipt.update(completed=True, controlledGdbProbeCount=len(probed),
+                      discoveredGdbExecutableCount=len({tool["realPath"] for tool in tools if tool["name"].startswith("gdb") and tool["trustedExecutable"]}),
+                      gdbAbsenceClaim="No whole-filesystem absence claim; inspect inventory scope and actual controlled probes")
+              except Exception as error:
+                  receipt["failure"] = dict(type=type(error).__name__, message=str(error) if isinstance(error, ValueError) else "Bounded inventory failed")
+                  raise SystemExit(1)
+              finally:
+                  (out / "HOST-TOOLS-EVIDENCE.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+
+          if __name__ == "__main__":
+              main()
+          PY
+      - name: Preserve small evidence-only receipt even on failure
+        if: always()
+        timeout-minutes: 1
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Evidence-only-runner-host-tools-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/diagnostic-evidence/host-tools/out/
+          if-no-files-found: error
+          retention-days: 7
