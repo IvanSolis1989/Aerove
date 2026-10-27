@@ -2,6 +2,10 @@ package dev.aerove.lite.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -26,6 +30,20 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.platform.app.InstrumentationRegistry
+import android.content.Context
+import dev.aerove.lite.LiteFeatureHost
+import dev.aerove.lite.data.ProfileRepository
+import dev.aerove.lite.data.ProfileValidator
+import dev.aerove.lite.integration.ProxyPresentationWorkspace
+import dev.aerove.lite.integration.ProfileImportWorkspace
+import java.io.Closeable
+import java.io.File
+import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.runBlocking
 import dev.aerove.lite.LiteState
 import dev.aerove.lite.MainActivity
 import dev.aerove.lite.R
@@ -43,82 +61,119 @@ import org.junit.runners.Parameterized
 class LiteAppRenderingTest(private val case: RenderCase) {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
+    private class RenderingFeatureRoots(context: Context, private val state: MutableState<LiteState>) : Closeable {
+        private val directory = File(context.cacheDir, "app-render-owner-${UUID.randomUUID()}")
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        private val repository = ProfileRepository(directory, ProfileValidator { error("Rendering must not validate a valid import") })
+        private val proxies = ProxyPresentationWorkspace(scope, { state.value.settings.proxyPresentation }, repository::updateProxyGroupUi,
+            { saved -> state.value = state.value.copy(profiles = state.value.profiles.map { if (it.id == saved.id) saved else it }) }, { true })
+        private val imports = ProfileImportWorkspace(scope, repository, { true }, {
+            state.value = state.value.copy(profiles = repository.list())
+        }, { prompt -> state.value = state.value.copy(profileImportKeyPrompt = prompt) },
+            { state.value = state.value.copy(profileImportVisible = false) }, { error("Unexpected rendering import failure") })
+
+        @Composable fun Content(content: @Composable () -> Unit) {
+            IpQualityFixture(state.value) {
+                val base = LocalLiteFeatures.current()
+                val host = remember(base) { object : LiteFeatureHost by base {
+                    override val proxyPresentation = proxies
+                    override val profileImports = imports
+                } }
+                val factory: () -> LiteFeatureHost = remember(host) { { host } }
+                CompositionLocalProvider(LocalLiteFeatures provides factory, content = content)
+            }
+        }
+
+        override fun close() {
+            try { runBlocking { try { imports.quiesce() } finally { proxies.closeAndJoin() } } }
+            finally {
+                try { imports.close() }
+                finally { try { proxies.close() } finally { scope.cancel(); directory.deleteRecursively() } }
+            }
+        }
+    }
+
     @Test
     fun productionPagesChromeAndModalRenderWithoutInvokingCore() {
         fullAuroraMesh(FullAuroraSeed, FullAuroraColors, case.dark)
         compose.mainClock.autoAdvance = false
         val state = mutableStateOf(LiteState(settings = case.settings))
         val actions = UiTestActions { state.value = state.value.copy(settings = it) }
-        val probe = RenderProbe()
-        compose.replaceAppContent {
-            val view = LocalView.current
-            val density = LocalDensity.current.density
-            val fontScale = LocalDensity.current.fontScale
-            SideEffect { probe.view = view; probe.density = density; probe.fontScale = fontScale }
-            Box(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["app"] = it.boundsInWindow() }) { LiteApp(state.value, actions) }
-        }
-        val capture = HardwareCapture(compose, probe, "app_$case")
-        val report = JSONObject().put("case", case.toString()).put("businessState", "In-memory instrumentation fixture; no live VPN or production fake nodes")
-        fun save(label: String) {
-            compose.mainClock.advanceTimeBy(400)
-            capture.capture(label).close()
-        }
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        fun text(id: Int) = context.getString(id)
-        val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
-        fun navigate(id: Int) {
-            compose.onNode(tab and hasText(text(id))).performClick()
-            compose.mainClock.advanceTimeByFrame()
-        }
-        fun openTool(id: Int) {
-            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(id)) and hasClickAction())
-            compose.onNode(hasText(text(id)) and hasClickAction()).performClick()
-            compose.mainClock.advanceTimeByFrame()
-        }
+        val roots = RenderingFeatureRoots(InstrumentationRegistry.getInstrumentation().targetContext, state)
         try {
-            val disabledStart = hasContentDescription(text(R.string.lite_start)) and
-                SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button) and hasClickAction()
-            compose.onNode(disabledStart, useUnmergedTree = true).assertIsDisplayed().assertIsNotEnabled()
-            compose.onAllNodes(tab).assertCountEquals(3)
-            compose.onNode(tab and hasText(text(R.string.lite_tab_proxies))).assertDoesNotExist()
-            save("home")
-            compose.runOnUiThread { state.value = state.value.copy(groups = listOf(ProxyGroup("Fixture group", "Selector", "DIRECT", listOf(ProxyNode("DIRECT", "Direct"))))) }
-            // Auto-advance is disabled for deterministic optical captures; let this state change recompose before querying tabs.
-            compose.mainClock.advanceTimeByFrame()
-            compose.onAllNodes(tab).assertCountEquals(4)
-            navigate(R.string.lite_tab_proxies)
-            compose.onNodeWithText("Fixture group").assertExists()
-            save("proxies-test-fixture")
-            navigate(R.string.lite_tab_profiles)
-            compose.onNodeWithText(text(R.string.lite_no_profiles)).assertExists()
-            save("profiles-empty")
-            compose.onNodeWithContentDescription(text(R.string.lite_add_subscription)).performClick()
-            compose.mainClock.advanceTimeByFrame()
-            compose.onNode(tab).assertDoesNotExist()
-            compose.onNode(hasText(text(R.string.lite_add_subscription)) and hasClickAction()).performClick()
-            compose.mainClock.advanceTimeByFrame()
-            compose.onNodeWithText(text(R.string.lite_subscription_error)).assertExists()
-            save("subscription-validation-modal")
-            compose.onNodeWithContentDescription(text(R.string.lite_close)).performClick()
-            compose.mainClock.advanceTimeByFrame()
-            navigate(R.string.lite_tab_tools)
-            save("tools")
-            openTool(R.string.lite_tab_connections)
-            compose.onNodeWithText(text(R.string.lite_no_connections)).assertExists()
-            save("connections-empty")
-            compose.onNodeWithContentDescription(text(R.string.lite_back)).performClick()
-            compose.mainClock.advanceTimeByFrame()
-            openTool(R.string.lite_theme)
-            save("theme")
-            compose.onNodeWithContentDescription(text(R.string.lite_aurora)).performClick()
-            compose.runOnUiThread { assertEquals(!case.aurora, state.value.settings.aurora) }
-            save("theme-aurora-toggled")
-            compose.runOnUiThread {
-                assertEquals(1, actions.settings.size)
-                assertTrue("These screenshot fixtures must not invoke a real import, VPN or core action", actions.events.all { it == "changeSettings" })
+            val probe = RenderProbe()
+            compose.replaceAppContent {
+                roots.Content {
+                    val view = LocalView.current
+                    val density = LocalDensity.current.density
+                    val fontScale = LocalDensity.current.fontScale
+                    SideEffect { probe.view = view; probe.density = density; probe.fontScale = fontScale }
+                    Box(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["app"] = it.boundsInWindow() }) { LiteApp(state.value, actions) }
+                }
             }
-            report.put("settingsActions", actions.settings.size).put("serviceActions", 0)
-        } finally { try { capture.metrics(report) } finally { capture.close() } }
+            val capture = HardwareCapture(compose, probe, "app_$case")
+            val report = JSONObject().put("case", case.toString()).put("businessState", "In-memory instrumentation fixture; no live VPN or production fake nodes")
+            fun save(label: String) {
+                compose.mainClock.advanceTimeBy(400)
+                capture.capture(label).close()
+            }
+            val context = InstrumentationRegistry.getInstrumentation().targetContext
+            fun text(id: Int) = context.getString(id)
+            val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
+            fun navigate(id: Int) {
+                compose.onNode(tab and hasText(text(id))).performClick()
+                compose.mainClock.advanceTimeByFrame()
+            }
+            fun openTool(id: Int) {
+                compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(id)) and hasClickAction())
+                compose.onNode(hasText(text(id)) and hasClickAction()).performClick()
+                compose.mainClock.advanceTimeByFrame()
+            }
+            try {
+                val disabledStart = hasContentDescription(text(R.string.lite_start)) and
+                    SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button) and hasClickAction()
+                compose.onNode(disabledStart, useUnmergedTree = true).assertIsDisplayed().assertIsNotEnabled()
+                compose.onAllNodes(tab).assertCountEquals(3)
+                compose.onNode(tab and hasText(text(R.string.lite_tab_proxies))).assertDoesNotExist()
+                save("home")
+                compose.runOnUiThread { state.value = state.value.copy(groups = listOf(ProxyGroup("Fixture group", "Selector", "DIRECT", listOf(ProxyNode("DIRECT", "Direct"))))) }
+                // Auto-advance is disabled for deterministic optical captures; let this state change recompose before querying tabs.
+                compose.mainClock.advanceTimeByFrame()
+                compose.onAllNodes(tab).assertCountEquals(4)
+                navigate(R.string.lite_tab_proxies)
+                compose.onNodeWithText("Fixture group").assertExists()
+                save("proxies-test-fixture")
+                navigate(R.string.lite_tab_profiles)
+                compose.onNodeWithText(text(R.string.lite_no_profiles)).assertExists()
+                save("profiles-empty")
+                compose.onNodeWithContentDescription(text(R.string.lite_add_subscription)).performClick()
+                compose.mainClock.advanceTimeByFrame()
+                compose.onNode(tab).assertDoesNotExist()
+                compose.onNode(hasText(text(R.string.lite_add_subscription)) and hasClickAction()).performClick()
+                compose.mainClock.advanceTimeByFrame()
+                compose.onNodeWithText(text(R.string.lite_subscription_error)).assertExists()
+                save("subscription-validation-modal")
+                compose.onNodeWithContentDescription(text(R.string.lite_close)).performClick()
+                compose.mainClock.advanceTimeByFrame()
+                navigate(R.string.lite_tab_tools)
+                save("tools")
+                openTool(R.string.lite_tab_connections)
+                compose.onNodeWithText(text(R.string.lite_no_connections)).assertExists()
+                save("connections-empty")
+                compose.onNodeWithContentDescription(text(R.string.lite_back)).performClick()
+                compose.mainClock.advanceTimeByFrame()
+                openTool(R.string.lite_theme)
+                save("theme")
+                compose.onNodeWithContentDescription(text(R.string.lite_aurora)).performClick()
+                compose.runOnUiThread { assertEquals(!case.aurora, state.value.settings.aurora) }
+                save("theme-aurora-toggled")
+                compose.runOnUiThread {
+                    assertEquals(1, actions.settings.size)
+                    assertTrue("These screenshot fixtures must not invoke a real import, VPN or core action", actions.events.all { it == "changeSettings" })
+                }
+                report.put("settingsActions", actions.settings.size).put("serviceActions", 0)
+            } finally { try { capture.metrics(report) } finally { capture.close() } }
+        } finally { roots.close() }
     }
 
     companion object {
