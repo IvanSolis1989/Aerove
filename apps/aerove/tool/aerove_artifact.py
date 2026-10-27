@@ -11,6 +11,7 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -336,6 +337,307 @@ def validate_artifacts(
     return expected['version']
 
 
+
+RECHECK_SOURCE = '2dd3c67864236087b9a681e7772ad08eaf59a295'
+RECHECK_RUN = 40488925368
+RECHECK_TEST = 'apps/aerove/test/views/dashboard/traffic_test.dart'
+RECHECK_TEST_BLOBS = ('2d9fe51959f80315d21a1ca300ad60fd1bd71eca',
+                     'fd1a3471654b81e884b487f7d9c2cfaddabee394')
+RECHECK_WIRING = {WORKFLOW, 'apps/aerove/tool/aerove_artifact.py',
+                 'apps/aerove/tool/test_aerove_artifact.py',
+                 'apps/aerove/tool/test_aerove_workflow.py'}
+RECHECK_WORKFLOW_BLOB = '8d7fb8ca4854dc29a2d99c07cf0051065608ce53'
+RECHECK_ARTIFACTS = {
+    'Aerove-android-arm64': (12728776871, 64740563,
+                            'sha256:b94af041ffddc75397a176b7766d6a11e320826029446e92fbc5963bf3cb8f21'),
+    'xclash-generated': (12726327557, 341,
+                        'sha256:6a01730f638c07a1d5e7624db330e4316c5133b399f59a8c2cc21ecf85f7cb26'),
+}
+RECHECK_PAYLOADS = {
+    APK_NAME: (66524964, '8fff93954945b16885626674b77f76d9452759935bddcfa281db460fd4ad8db3'),
+    'BUILD_INFO.json': (650, '0894b4b12063e7de64cf7160e0c5040126585e8913c0c07e7a52075c37411d21'),
+    'SHA256SUMS': (173, '9cbad27d7ccbbeac4b109b50dc942d7c0ad7f39fe3fe431bb88ba32809b859f0'),
+    'xclash-generated.patch': (0, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+    'xclash-verified-tree.txt': (41, 'cf787ce5264df880b761365929c4932731d9ed63d7a97302b75c694af8acec7e'),
+}
+RECHECK_ARTIFACT = 'aerove-original-apk-recheck'
+RECHECK_SIGNER = '0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60'
+
+
+def _command(arguments: list[str], root: Path | None = None) -> str:
+    result = subprocess.run(arguments, cwd=root, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise ArtifactError(f'{arguments[0]} failed: {result.stderr.strip()}')
+    return result.stdout
+
+
+def _git(root: Path, *arguments: str) -> str:
+    return _command(['git', *arguments], root).strip()
+
+
+def _api_object(endpoint: str) -> dict[str, Any]:
+    result = _json(_command(['gh', 'api', '--method', 'GET', endpoint,
+                            '-H', 'Accept: application/vnd.github+json']))
+    if not isinstance(result, dict):
+        raise ArtifactError('Expected an API object')
+    return result
+
+
+def _run_identity(repository: str, run: dict[str, Any], source: str) -> None:
+    for field in ('id', 'run_number', 'run_attempt'):
+        _positive(run.get(field), field)
+    if (run.get('head_sha') != source or run.get('path') != WORKFLOW
+            or run.get('event') not in ('push', 'workflow_dispatch')
+            or not _same_repository(run, 'repository', repository)
+            or not _same_repository(run, 'head_repository', repository)):
+        raise ArtifactError('Run repository/workflow/event/source mismatch')
+
+
+def _recheck_jobs(repository: str, run: dict[str, Any], *, final: bool) -> None:
+    if __package__:
+        from . import ci_verify
+    else:
+        import ci_verify
+    required = {'prep', 'static', 'native', 'verify', 'reuse'}
+    for group, rows in ci_verify.matrices().items():
+        required.update(f'{group} ({row["suite"]} {row["shard"]})' for row in rows)
+    if final:
+        required.add('recheck')
+    jobs = _api_items(f'repos/{repository}/actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs', 'jobs')
+    names = [job.get('name') for job in jobs]
+    for name in required | {'apk'}:
+        matches = [job for job in jobs if job.get('name') == name]
+        wanted = 'skipped' if name == 'apk' else 'success'
+        if (len(matches) != 1 or matches[0].get('run_id') != run['id']
+                or matches[0].get('head_sha') != run['head_sha']
+                or matches[0].get('run_attempt', run['run_attempt']) != run['run_attempt']
+                or matches[0].get('status') != 'completed' or matches[0].get('conclusion') != wanted):
+            raise ArtifactError(f'Recheck requires exactly one completed {name}: {wanted}')
+    permitted = required | {'recheck', 'apk', 'release'}
+    if any(name not in permitted for name in names) or len(names) != len(set(names)):
+        raise ArtifactError('Recheck has unexpected or duplicate jobs')
+    release = [job for job in jobs if job.get('name') == 'release']
+    if release and any(job.get('conclusion') != 'skipped' for job in release):
+        raise ArtifactError('Recheck must not publish')
+
+
+def _workflow_inputs_unchanged(before: str, after: str) -> None:
+    def job(text: str, name: str) -> str:
+        match = re.search(rf'(?ms)^  {name}:\n.*?(?=^  [a-z][a-z_-]*:|\Z)', text)
+        if match is None:
+            raise ArtifactError(f'Missing protected workflow job: {name}')
+        return match[0]
+    addition = ('      original_build_run:\n'
+                '        description: Immutable original APK run to recheck (40488925368 only)\n'
+                '        type: string\n        default: \'\'\n')
+    before_header, after_header = before.split('jobs:\n', 1)[0], after.split('jobs:\n', 1)[0]
+    if after_header.replace(addition, '') != before_header or after_header.count(addition) != 1:
+        raise ArtifactError('Recheck changed workflow toolchain/defaults/permissions/inputs')
+    for name in ('prep', 'static', 'native', 'render', 'regressions', 'verify', 'apk'):
+        old, new = job(before, name), job(after, name)
+        if name == 'prep':
+            new = new.replace('inputs.verification_recheck || ', '')
+        if name in ('render', 'regressions'):
+            new = new.replace('fail-fast: false', 'fail-fast: true')
+        if name == 'apk':
+            new = new.replace("!inputs.verification_recheck && (github.event_name == 'push' || inputs.build_apk)",
+                              "github.event_name == 'push' || inputs.build_apk")
+        if old != new:
+            raise ArtifactError(f'Recheck changed protected production/verification job: {name}')
+
+
+def recheck_inputs(root: Path, source: str) -> list[dict[str, str]]:
+    _sha(source, 'test_harness_source')
+    _git(root, 'merge-base', '--is-ancestor', RECHECK_SOURCE, source)
+    paths = _command(['git', 'diff', '--no-renames', '--name-only', '-z', RECHECK_SOURCE, source], root).split('\0')
+    result = []
+    for path in filter(None, paths):
+        documentation = path.startswith('docs/') and path.endswith('.md')
+        if path not in RECHECK_WIRING | {RECHECK_TEST} and not documentation:
+            raise ArtifactError(f'Recheck changed an unapproved APK/build input: {path}')
+        entries = [_git(root, 'ls-tree', revision, '--', path) for revision in (RECHECK_SOURCE, source)]
+        if any(not re.fullmatch(r'100644 blob [0-9a-f]{40}\t' + re.escape(path), item) for item in entries):
+            raise ArtifactError(f'Recheck requires existing regular files: {path}')
+        before, after = [entry.split()[2] for entry in entries]
+        if path == RECHECK_TEST and (before, after) != RECHECK_TEST_BLOBS:
+            raise ArtifactError('Recheck test is not the reviewed Std55 bounds fix')
+        result.append(dict(path=path, before=before, after=after))
+    if RECHECK_TEST not in {row['path'] for row in result}:
+        raise ArtifactError('Recheck must contain the exact reviewed Std55 test fix')
+    if _git(root, 'rev-parse', f'{source}:{WORKFLOW}') != RECHECK_WORKFLOW_BLOB:
+        raise ArtifactError('Recheck workflow is not the exact reviewed verification wiring')
+    _workflow_inputs_unchanged(
+        _command(['git', 'show', f'{RECHECK_SOURCE}:{WORKFLOW}'], root),
+        _command(['git', 'show', f'{source}:{WORKFLOW}'], root),
+    )
+    return result
+
+
+def original_recheck_build(repository: str, build_run: int) -> dict[str, Any]:
+    _repository(repository)
+    if repository != 'IvanSolis1989/Aerove' or build_run != RECHECK_RUN:
+        raise ArtifactError('Only the explicit Std55 original APK run is approved')
+    run = _api_object(f'repos/{repository}/actions/runs/{build_run}')
+    _run_identity(repository, run, RECHECK_SOURCE)
+    if run['id'] != build_run or run['run_attempt'] != 1 or run.get('status') != 'completed' or run.get('conclusion') not in ('failure', 'success'):
+        raise ArtifactError('Original run must retain its completed first attempt')
+    jobs = _api_items(f'repos/{repository}/actions/runs/{build_run}/attempts/1/jobs', 'jobs')
+    apk = [job for job in jobs if job.get('name') == 'apk']
+    if (len(apk) != 1 or apk[0].get('status') != 'completed' or apk[0].get('conclusion') != 'success'
+            or apk[0].get('head_sha') != RECHECK_SOURCE or apk[0].get('run_id') != build_run
+            or apk[0].get('run_attempt', 1) != 1):
+        raise ArtifactError('Original APK job has not succeeded in its original attempt')
+    artifacts = _api_items(f'repos/{repository}/actions/runs/{build_run}/artifacts', 'artifacts')
+    selected = dict(run_id=build_run, run_number=run['run_number'], build_source=RECHECK_SOURCE,
+                    build_conclusion=run['conclusion'], build_attempt=1)
+    for name, key in [('Aerove-android-arm64', 'artifact_id'), ('xclash-generated', 'generated_artifact_id')]:
+        matches = [item for item in artifacts if item.get('name') == name]
+        if len(matches) != 1 or matches[0].get('expired') is not False:
+            raise ArtifactError(f'Original artifact is missing, duplicate or expired: {name}')
+        item = matches[0]
+        _positive(item.get('id'), 'artifact id')
+        provenance = item.get('workflow_run')
+        if not isinstance(provenance, dict) or provenance.get('id') != build_run or provenance.get('head_sha') != RECHECK_SOURCE:
+            raise ArtifactError('Original artifact source/run provenance mismatch')
+        if (item['id'], item.get('size_in_bytes'), item.get('digest')) != RECHECK_ARTIFACTS[name]:
+            raise ArtifactError('Original artifact ID/size/digest differs from the fixed Std55 evidence')
+        selected[key] = item['id']
+    return selected
+
+
+def recheck_plan(*, root: Path, repository: str, source: str, build_run: int) -> dict[str, Any]:
+    changed = recheck_inputs(root, source)
+    selected = original_recheck_build(repository, build_run)
+    selected.update(build_tree=_git(root, 'rev-parse', f'{RECHECK_SOURCE}^{{tree}}'),
+                    test_harness_source=source, changed=changed)
+    return selected
+
+
+def _digest(path: Path) -> str:
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def _original_payloads(directory: Path, generated: Path) -> None:
+    for name, expected in RECHECK_PAYLOADS.items():
+        path = (generated if name.startswith('xclash-') else directory) / name
+        if path.is_symlink() or not path.is_file() or (path.stat().st_size, _digest(path)) != expected:
+            raise ArtifactError(f'Original Std55 payload bytes/hash mismatch: {name}')
+
+
+def recheck_receipt(*, root: Path, repository: str, source: str, build_run: int,
+                    run_id: int, directory: Path, generated_directory: Path,
+                    apksigner: Path, aapt: Path) -> dict[str, Any]:
+    selected = recheck_plan(root=root, repository=repository, source=source, build_run=build_run)
+    run = _api_object(f'repos/{repository}/actions/runs/{run_id}')
+    _run_identity(repository, run, source)
+    if (run.get('event') != 'workflow_dispatch' or run['id'] == build_run
+            or run.get('head_branch') == 'main'):
+        raise ArtifactError('Recheck must be an independent workflow dispatch')
+    _recheck_jobs(repository, run, final=False)
+    _original_payloads(directory, generated_directory)
+    with tempfile.TemporaryDirectory() as temporary:
+        fixed = Path(temporary)
+        for name in ('pubspec.yaml', 'tool/upstream-version.json'):
+            path = fixed / Path(name).name
+            path.write_text(_command(['git', 'show', f'{RECHECK_SOURCE}:apps/aerove/{name}'], root), encoding='utf-8')
+        validate_artifacts(directory=directory, generated_directory=generated_directory,
+                           source=RECHECK_SOURCE, tree=selected['build_tree'], repository=repository,
+                           run_id=build_run, run_number=selected['run_number'],
+                           metadata=fixed / 'upstream-version.json', pubspec=fixed / 'pubspec.yaml')
+    apk = directory / APK_NAME
+    certs = _command([str(apksigner), 'verify', '--print-certs', str(apk)])
+    signers = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})$', certs, re.MULTILINE)
+    if signers != [RECHECK_SIGNER]:
+        raise ArtifactError('Original APK signer mismatch')
+    info = _json((directory / 'BUILD_INFO.json').read_text(encoding='utf-8'))
+    name, code = info['version'].rsplit('+', 1)
+    badging = _command([str(aapt), 'dump', 'badging', str(apk)])
+    if not badging.startswith(f"package: name='com.follow.clash.dev' versionCode='{code}' versionName='{name}' "):
+        raise ArtifactError('Actual original APK package/version mismatch')
+    hashes = {name: _digest(directory / name) for name in (APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')}
+    return dict(schema=1, role='originalApkVerificationRecheck', accepted=True, compiled=False,
+                repository=repository, originalBuild=selected,
+                testHarness=dict(source=source, tree=_git(root, 'rev-parse', f'{source}^{{tree}}'),
+                                 run_id=run_id, run_attempt=run['run_attempt']),
+                files=hashes, signer_sha256=RECHECK_SIGNER)
+
+
+def _download_receipt(repository: str, run: dict[str, Any]) -> dict[str, Any]:
+    artifacts = _api_items(f'repos/{repository}/actions/runs/{run["id"]}/artifacts', 'artifacts')
+    matches = [item for item in artifacts if item.get('name') == RECHECK_ARTIFACT]
+    if (len(matches) != 1 or matches[0].get('expired') is not False
+            or matches[0].get('workflow_run', {}).get('id') != run['id']
+            or matches[0].get('workflow_run', {}).get('head_sha') != run['head_sha']):
+        raise ArtifactError('Recheck receipt artifact is unavailable or has wrong provenance')
+    with tempfile.TemporaryDirectory() as temporary:
+        _command(['gh', 'run', 'download', str(run['id']), '--repo', repository,
+                  '--name', RECHECK_ARTIFACT, '--dir', temporary])
+        _files(Path(temporary), {'recheck.json'})
+        return _json((Path(temporary) / 'recheck.json').read_text(encoding='utf-8'))
+
+
+def recheck_main_inputs(root: Path, harness: str, source: str) -> None:
+    _sha(harness, 'test_harness_source')
+    _sha(source, 'latest_main_source')
+    _git(root, 'merge-base', '--is-ancestor', harness, source)
+    paths = _command(['git', 'diff', '--no-renames', '--name-only', '-z', harness, source], root).split('\0')
+    for path in filter(None, paths):
+        if not (path.startswith('docs/') and path.endswith('.md')):
+            raise ArtifactError(f'Main changed an input outside existing regular Markdown documentation: {path}')
+        entries = [_git(root, 'ls-tree', revision, '--', path) for revision in (harness, source)]
+        if any(not re.fullmatch(r'100644 blob [0-9a-f]{40}\t' + re.escape(path), entry) for entry in entries):
+            raise ArtifactError('Main documentation drift must preserve existing regular files')
+
+
+def find_rechecked_artifacts(*, root: Path, repository: str, source: str, exclude_run: int) -> dict[str, Any]:
+    _repository(repository)
+    _sha(source, 'source')
+    _positive(exclude_run, 'exclude_run')
+    runs = _api_items(f'repos/{repository}/actions/workflows/xclash-android.yaml/runs',
+                      'workflow_runs', status='success', event='workflow_dispatch')
+    for run in sorted(runs, key=lambda item: item['id'], reverse=True):
+        harness = _sha(run.get('head_sha'), 'recheck source')
+        if run['id'] == exclude_run:
+            continue
+        _run_identity(repository, run, harness)
+        if run.get('status') != 'completed' or run.get('conclusion') != 'success':
+            continue
+        if harness != source:
+            relation = subprocess.run(['git', 'merge-base', '--is-ancestor', harness, source], cwd=root, capture_output=True)
+            if relation.returncode:
+                continue
+            delta = _command(['git', 'diff', '--no-renames', '--name-only', '-z', harness, source], root).split('\0')
+            if any(path and not (path.startswith('docs/') and path.endswith('.md')) for path in delta):
+                continue
+            recheck_main_inputs(root, harness, source)
+        artifacts = _api_items(f'repos/{repository}/actions/runs/{run["id"]}/artifacts', 'artifacts')
+        if not any(item.get('name') == RECHECK_ARTIFACT for item in artifacts):
+            continue
+        _recheck_jobs(repository, run, final=True)
+        receipt = _download_receipt(repository, run)
+        expected = recheck_plan(root=root, repository=repository, source=harness, build_run=RECHECK_RUN)
+        if (receipt.get('schema') != 1 or receipt.get('role') != 'originalApkVerificationRecheck'
+                or receipt.get('accepted') is not True or receipt.get('compiled') is not False
+                or receipt.get('repository') != repository or receipt.get('originalBuild') != expected
+                or receipt.get('testHarness') != dict(source=harness, tree=_git(root, 'rev-parse', f'{harness}^{{tree}}'),
+                                                     run_id=run['id'], run_attempt=run['run_attempt'])
+                or receipt.get('signer_sha256') != RECHECK_SIGNER
+                or set(receipt.get('files', {})) != {APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS'}
+                or any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value)
+                       for value in receipt['files'].values())):
+            raise ArtifactError('Recheck receipt identity/input map mismatch')
+        return {**expected, 'recheck_run': run['id'], 'receipt': receipt}
+    try:
+        recheck_inputs(root, source)
+    except ArtifactError:
+        paths = _command(['git', 'diff', '--no-renames', '--name-only', '-z', RECHECK_SOURCE, source], root).split('\0')
+        if any(path and path not in RECHECK_WIRING | {RECHECK_TEST}
+               and not (path.startswith('docs/') and path.endswith('.md')) for path in paths):
+            return {}
+    raise ArtifactError('The reviewed test-only source has no accepted original-APK recheck; rebuilding is forbidden')
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -354,9 +656,51 @@ def main(argv: list[str] | None = None) -> int:
     validate.add_argument('--run-number', type=int, required=True)
     validate.add_argument('--metadata', type=Path, required=True)
     validate.add_argument('--pubspec', type=Path)
+    validate.add_argument('--promotion-root', type=Path)
+    validate.add_argument('--promotion-source')
+    validate.add_argument('--recheck-run', type=int)
+    for name in ('recheck-plan', 'recheck-receipt', 'find-rechecked'):
+        command = commands.add_parser(name)
+        command.add_argument('--root', type=Path, required=True)
+        command.add_argument('--repository', required=True)
+        command.add_argument('--source', required=True)
+        command.add_argument('--output', type=Path, required=True)
+        if name == 'find-rechecked':
+            command.add_argument('--exclude-run', type=int, required=True)
+        else:
+            command.add_argument('--build-run', type=int, required=True)
+        if name == 'recheck-receipt':
+            command.add_argument('--run-id', type=int, required=True)
+            command.add_argument('--directory', type=Path, required=True)
+            command.add_argument('--generated-directory', type=Path, required=True)
+            command.add_argument('--apksigner', type=Path, required=True)
+            command.add_argument('--aapt', type=Path, required=True)
+    drift = commands.add_parser('recheck-main')
+    drift.add_argument('--root', type=Path, required=True)
+    drift.add_argument('--harness', required=True)
+    drift.add_argument('--source', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == 'find':
+        if args.command == 'recheck-main':
+            recheck_main_inputs(args.root, args.harness, args.source)
+            print(f'Validated latest main {args.source} against recheck harness {args.harness}')
+        elif args.command in ('recheck-plan', 'recheck-receipt', 'find-rechecked'):
+            parameters = dict(root=args.root, repository=args.repository, source=args.source)
+            if args.command == 'recheck-receipt':
+                result = recheck_receipt(**parameters, build_run=args.build_run, run_id=args.run_id,
+                                         directory=args.directory, generated_directory=args.generated_directory,
+                                         apksigner=args.apksigner, aapt=args.aapt)
+                args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+            else:
+                result = (recheck_plan(**parameters, build_run=args.build_run) if args.command == 'recheck-plan'
+                          else find_rechecked_artifacts(**parameters, exclude_run=args.exclude_run))
+                with args.output.open('a', encoding='utf-8') as output:
+                    keys = (*OUTPUTS, 'build_source', 'build_tree', 'test_harness_source', 'recheck_run')
+                    output.write(''.join(f'{key}={result.get(key, "")}\n' for key in keys))
+                if result.get('receipt') is not None:
+                    args.output.with_suffix('.receipt.json').write_text(json.dumps(result['receipt']), encoding='utf-8')
+            print(json.dumps(result, sort_keys=True))
+        elif args.command == 'find':
             if args.output is None:
                 raise ArtifactError('--output or GITHUB_OUTPUT is required')
             selected = find_artifacts(
@@ -366,6 +710,19 @@ def main(argv: list[str] | None = None) -> int:
                 output.write(''.join(f'{key}={selected[key]}\n' for key in OUTPUTS))
             print(json.dumps(selected, sort_keys=True))
         else:
+            if any(value is not None for value in (args.promotion_root, args.promotion_source, args.recheck_run)):
+                if any(value is None for value in (args.promotion_root, args.promotion_source, args.recheck_run)):
+                    raise ArtifactError('Promotion requires root, source and recheck run together')
+                selected = find_rechecked_artifacts(root=args.promotion_root, repository=args.repository,
+                                                     source=args.promotion_source, exclude_run=int(os.environ['GITHUB_RUN_ID']))
+                if (selected.get('recheck_run') != args.recheck_run or selected.get('run_id') != args.run_id
+                        or selected.get('run_number') != args.run_number or selected.get('build_source') != args.source
+                        or selected.get('build_tree') != args.tree):
+                    raise ArtifactError('Promotion does not match the accepted original build receipt')
+                _original_payloads(args.directory, args.generated_directory)
+                hashes = {name: _digest(args.directory / name) for name in (APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')}
+                if selected['receipt']['files'] != hashes:
+                    raise ArtifactError('Downloaded original APK files differ from accepted recheck receipt')
             result = validate_artifacts(
                 directory=args.directory, generated_directory=args.generated_directory,
                 source=args.source, tree=args.tree, repository=args.repository,

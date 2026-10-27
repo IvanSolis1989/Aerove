@@ -47,6 +47,10 @@ on:
         description: Recheck test fixes only; ignored when building or publishing an APK
         type: boolean
         default: false
+      original_build_run:
+        description: Immutable original APK run to recheck (40488925368 only)
+        type: string
+        default: ''
       build_apk:
         description: Build the Android arm64 APK after verification
         type: boolean
@@ -79,19 +83,38 @@ jobs:
       contents: read
       actions: read
     outputs:
-      run_id: ${{ steps.find.outputs.run_id }}
-      run_number: ${{ steps.find.outputs.run_number }}
-      artifact_id: ${{ steps.find.outputs.artifact_id }}
-      generated_artifact_id: ${{ steps.find.outputs.generated_artifact_id }}
+      run_id: ${{ steps.origin.outputs.run_id || steps.find.outputs.run_id || steps.rechecked.outputs.run_id }}
+      run_number: ${{ steps.origin.outputs.run_number || steps.find.outputs.run_number || steps.rechecked.outputs.run_number }}
+      artifact_id: ${{ steps.origin.outputs.artifact_id || steps.find.outputs.artifact_id || steps.rechecked.outputs.artifact_id }}
+      generated_artifact_id: ${{ steps.origin.outputs.generated_artifact_id || steps.find.outputs.generated_artifact_id || steps.rechecked.outputs.generated_artifact_id }}
+      build_source: ${{ steps.origin.outputs.build_source || steps.rechecked.outputs.build_source || github.sha }}
+      recheck_run: ${{ steps.rechecked.outputs.recheck_run }}
+      test_harness_source: ${{ steps.rechecked.outputs.test_harness_source }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Select the explicit original APK for a verification recheck
+        id: origin
+        if: ${{ inputs.verification_recheck }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_APK: ${{ inputs.build_apk }}
+          PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          PREPARE_SOURCES: ${{ inputs.prepare_sources }}
+          ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
+        run: |
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$BUILD_APK" = false && test "$PUBLISH_RELEASE" = false && test "$PREPARE_SOURCES" = false
+          python3 tool/aerove_artifact.py recheck-plan \
+            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
+            --build-run "$ORIGINAL_BUILD_RUN" --output "$GITHUB_OUTPUT"
       - name: Find a successful build of this exact commit
         id: find
         if: >-
           github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
-          !inputs.prepare_sources && (github.event_name == 'push' || inputs.publish_release)
+          !inputs.verification_recheck && !inputs.prepare_sources && (github.event_name == 'push' || inputs.publish_release)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -99,9 +122,22 @@ jobs:
             --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
             --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
 
+      - name: Find an accepted independent verification recheck
+        id: rechecked
+        if: >-
+          github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
+          !inputs.verification_recheck && !inputs.prepare_sources &&
+          (github.event_name == 'push' || inputs.publish_release) && steps.find.outputs.run_id == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tool/aerove_artifact.py find-rechecked \
+            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
+            --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
+
   prep:
     needs: reuse
-    if: ${{ needs.reuse.outputs.run_id == '' }}
+    if: ${{ inputs.verification_recheck || needs.reuse.outputs.run_id == '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
@@ -286,7 +322,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 11
       matrix: ${{ fromJSON(needs.prep.outputs.render_matrix) }}
     steps:
@@ -334,7 +370,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
-      fail-fast: true
+      fail-fast: false
       max-parallel: 6
       matrix: ${{ fromJSON(needs.prep.outputs.regressions_matrix) }}
     steps:
@@ -414,7 +450,7 @@ jobs:
         run: python3 tool/ci_verify.py gate
 
   apk:
-    if: ${{ github.event_name == 'push' || inputs.build_apk }}
+    if: ${{ !inputs.verification_recheck && (github.event_name == 'push' || inputs.build_apk) }}
     needs: prep
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -570,10 +606,56 @@ jobs:
           name: Aerove-android-arm64
           path: apps/aerove/dist/
 
+  recheck:
+    if: ${{ !cancelled() && inputs.verification_recheck && needs.verify.result == 'success' && needs.reuse.result == 'success' }}
+    needs: [reuse, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.reuse.outputs.artifact_id }}
+          run-id: ${{ needs.reuse.outputs.run_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/original-apk
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.reuse.outputs.generated_artifact_id }}
+          run-id: ${{ needs.reuse.outputs.run_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/original-generated
+      - name: Accept only the unchanged signed original APK after every required combination
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
+        run: |
+          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          mkdir -p "$RUNNER_TEMP/original-apk-recheck"
+          python3 tool/aerove_artifact.py recheck-receipt \
+            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
+            --build-run "$ORIGINAL_BUILD_RUN" --run-id "$GITHUB_RUN_ID" \
+            --directory "$RUNNER_TEMP/original-apk" --generated-directory "$RUNNER_TEMP/original-generated" \
+            --apksigner "$build_tools/apksigner" --aapt "$build_tools/aapt" \
+            --output "$RUNNER_TEMP/original-apk-recheck/recheck.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: aerove-original-apk-recheck
+          path: ${{ runner.temp }}/original-apk-recheck/recheck.json
+          if-no-files-found: error
+
   release:
     if: >-
       ${{ !cancelled() && github.repository == 'IvanSolis1989/Aerove' &&
-      github.ref == 'refs/heads/main' && needs.reuse.result == 'success' && !inputs.prepare_sources &&
+      github.ref == 'refs/heads/main' && needs.reuse.result == 'success' && !inputs.prepare_sources && !inputs.verification_recheck &&
       (github.event_name == 'push' || inputs.publish_release) &&
       (needs.reuse.outputs.run_id != '' ||
       (needs.verify.result == 'success' && needs.apk.result == 'success')) }}
@@ -584,6 +666,9 @@ jobs:
       contents: write
       actions: read
     env:
+      BUILD_SOURCE: ${{ needs.reuse.outputs.build_source || github.sha }}
+      RECHECK_RUN: ${{ needs.reuse.outputs.recheck_run }}
+      TEST_HARNESS_SOURCE: ${{ needs.reuse.outputs.test_harness_source }}
       BUILD_RUN_ID: ${{ needs.reuse.outputs.run_id || github.run_id }}
       BUILD_RUN_NUMBER: ${{ needs.reuse.outputs.run_number || github.run_number }}
     steps:
@@ -607,13 +692,19 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/xclash-generated
       - name: Verify original build identity and APK
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          recheck_flags=()
+          if test -n "$RECHECK_RUN"; then
+            recheck_flags=(--promotion-root "$GITHUB_WORKSPACE" --promotion-source "$GITHUB_SHA" --recheck-run "$RECHECK_RUN")
+          fi
           python3 tool/aerove_artifact.py validate \
             --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
-            --source "$GITHUB_SHA" --tree "$(git -C "$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}')" \
+            --source "$BUILD_SOURCE" --tree "$(git -C "$GITHUB_WORKSPACE" rev-parse "$BUILD_SOURCE^{tree}")" \
             --repository "$GITHUB_REPOSITORY" --run-id "$BUILD_RUN_ID" \
             --run-number "$BUILD_RUN_NUMBER" --metadata "$GITHUB_WORKSPACE/apps/aerove/tool/upstream-version.json" \
-            --pubspec "$GITHUB_WORKSPACE/apps/aerove/pubspec.yaml"
+            --pubspec "$GITHUB_WORKSPACE/apps/aerove/pubspec.yaml" "${recheck_flags[@]}"
           build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           "$build_tools/apksigner" verify --print-certs dist/Aerove-android-arm64.apk
           "$build_tools/aapt" dump badging dist/Aerove-android-arm64.apk > "$RUNNER_TEMP/promoted-badging.txt"
@@ -628,6 +719,10 @@ jobs:
           check_main_inputs() {
             git fetch --no-tags --recurse-submodules=no origin main
             main=$(git rev-parse FETCH_HEAD)
+            if test -n "$RECHECK_RUN"; then
+              python3 tool/aerove_artifact.py recheck-main \
+                --root "$GITHUB_WORKSPACE" --harness "$TEST_HARNESS_SOURCE" --source "$main"
+            fi
             if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main"; then
               echo '::error::The build source is no longer an ancestor of main; publication stopped.'
               return 1
@@ -644,11 +739,11 @@ jobs:
             done < "$RUNNER_TEMP/release-main-paths"
           }
           (cd dist && sha256sum --check SHA256SUMS)
-          test "$(jq -r .source dist/BUILD_INFO.json)" = "$GITHUB_SHA"
+          test "$(jq -r .source dist/BUILD_INFO.json)" = "$BUILD_SOURCE"
           check_main_inputs
           existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish 2>/dev/null || true)
           if test -n "$existing"; then
-            test "$(jq -r .targetCommitish <<< "$existing")" = "$GITHUB_SHA"
+            test "$(jq -r .targetCommitish <<< "$existing")" = "$BUILD_SOURCE"
             if test "$(jq -r .isDraft <<< "$existing")" = false; then
               echo 'This release is already published; its assets were preserved.' >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -657,11 +752,11 @@ jobs:
           python3 -m unittest tool.test_aerove_release_notes -v
           previous_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
           python3 tool/aerove_release_notes.py \
-            --tag "$TAG" --source "$GITHUB_SHA" --previous-tag "$previous_tag" \
+            --tag "$TAG" --source "$BUILD_SOURCE" --previous-tag "$previous_tag" \
             --build-info dist/BUILD_INFO.json \
             --output "$RUNNER_TEMP/xclash-release.md"
           if test -z "$existing"; then
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$BUILD_SOURCE" \
               --title "AEROVE $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
           fi
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" \

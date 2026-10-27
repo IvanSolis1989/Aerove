@@ -1,4 +1,7 @@
 import os
+import json
+import shlex
+import sys
 from pathlib import Path
 import re
 import shutil
@@ -260,6 +263,109 @@ class GeneratedPatchGitTest(unittest.TestCase):
                                  if not section.startswith('diff --git a/apps/aerove/core/go.sum ')),
                          encoding='utf-8', newline='\n')
         self.shell(run_block('Apply verified generated sources'), success=False)
+
+
+
+class OriginalApkRecheckWorkflowTest(unittest.TestCase):
+    def job(self, name):
+        return re.search(rf'(?ms)^  {name}:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)', FULL)[1]
+
+    def test_recheck_has_explicit_original_run_and_cannot_build_or_publish(self):
+        self.assertIn('original_build_run:', FULL)
+        self.assertIn('40488925368 only', FULL)
+        origin = run_block('Select the explicit original APK for a verification recheck')
+        for guard in ('test "$GITHUB_EVENT_NAME" = workflow_dispatch', 'test "$BUILD_APK" = false',
+                      'test "$PUBLISH_RELEASE" = false', 'test "$PREPARE_SOURCES" = false'):
+            self.assertIn(guard, origin)
+        self.assertIn('!inputs.verification_recheck', self.job('apk'))
+        self.assertIn('!inputs.verification_recheck', self.job('release'))
+        self.assertIn("inputs.verification_recheck || needs.reuse.outputs.run_id == ''", self.job('prep'))
+        for group in ('render', 'regressions'):
+            self.assertIn('fail-fast: false', self.job(group))
+        self.assertIn("needs.verify.result == 'success'", self.job('recheck'))
+        self.assertIn('needs: [reuse, verify]', self.job('recheck'))
+        self.assertNotIn('flutter build', self.job('recheck'))
+        self.assertIn('recheck-receipt', self.job('recheck'))
+
+    def test_promotion_selects_and_revalidates_original_source_without_rewriting_build_info(self):
+        self.assertIn('find-rechecked', self.job('reuse'))
+        release = self.job('release')
+        self.assertIn('BUILD_SOURCE: ${{ needs.reuse.outputs.build_source || github.sha }}', release)
+        self.assertIn('--source "$BUILD_SOURCE" --tree', release)
+        self.assertIn('--promotion-source "$GITHUB_SHA" --recheck-run "$RECHECK_RUN"', release)
+        self.assertIn('test "$(jq -r .source dist/BUILD_INFO.json)" = "$BUILD_SOURCE"', release)
+        self.assertIn('--target "$BUILD_SOURCE"', release)
+        self.assertNotIn('> dist/BUILD_INFO.json', release)
+        self.assertIn('apksigner" verify --print-certs', release)
+
+
+
+class RecheckLatestMainGuardTest(unittest.TestCase):
+    def case(self, kind, accepted):
+        from tool.test_aerove_artifact import OriginalApkRecheckTest
+        fixture = OriginalApkRecheckTest()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        relative = 'docs/development/recheck.md'
+        if kind == 'existing_doc_symlink':
+            blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], input='../../apps/aerove/pubspec.yaml',
+                                  cwd=fixture.root, env=fixture.env, capture_output=True, text=True, check=True).stdout.strip()
+            fixture.git('update-index', '--cacheinfo', f'120000,{blob},{relative}')
+            fixture.git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'post-selection doc symlink')
+        else:
+            if kind == 'new_unapproved_doc_file':
+                relative = 'docs/unapproved-build-input.txt'
+            (fixture.root / relative).write_text('Main documentation update\n', encoding='utf-8')
+            fixture.commit()
+        latest = fixture.git('rev-parse', 'HEAD')
+        delta = fixture.git('diff', '--raw', fixture.harness, latest)
+        fixture.git('remote', 'add', 'origin', str(fixture.root))
+        tool = fixture.root / 'apps/aerove/tool'
+        for name in ('aerove_artifact.py', 'aerove_version.py', 'xclash_version.py'):
+            shutil.copyfile(ROOT / 'apps/aerove/tool' / name, tool / name)
+        function = re.search(r'(?ms)^          check_main_inputs\(\) \{\n.*?^          \}', FULL)[0]
+        function = '\n'.join(line[10:] for line in function.splitlines())
+        self.assertIn('if test -n "$RECHECK_RUN"; then', function)
+        self.assertIn('--harness "$TEST_HARNESS_SOURCE" --source "$main"', function)
+        publish = run_block('Publish verified APK to Releases')
+        self.assertEqual(len(re.findall(r'^check_main_inputs$', publish, re.MULTILINE)), 2)
+        git = Path(shutil.which('git')).resolve()
+        bash = git.parent.parent / 'bin/bash.exe' if os.name == 'nt' else shutil.which('bash')
+        evidence = []
+        for when in ('before_first_fetch', 'between_fetches'):
+            fixture.git('branch', '-f', 'main', latest if when == 'before_first_fetch' else fixture.harness)
+            environment = {**fixture.env, 'GITHUB_SHA': fixture.harness,
+                           'GITHUB_WORKSPACE': fixture.root.as_posix(), 'RUNNER_TEMP': fixture.root.as_posix(),
+                           'RECHECK_RUN': '777', 'TEST_HARNESS_SOURCE': fixture.harness}
+            script = ('set -euo pipefail\npython3() { ' + shlex.quote(Path(sys.executable).as_posix()) + ' "$@"; }\n'
+                      + function + '\ncheck_main_inputs\necho FIRST_FETCH_ACCEPTED\n'
+                      + 'git update-ref refs/heads/main ' + latest + '\n'
+                      + 'check_main_inputs\necho SECOND_FETCH_ACCEPTED\n')
+            result = subprocess.run([str(bash), '--noprofile', '--norc', '-c', script],
+                                    cwd=fixture.root / 'apps/aerove', env=environment,
+                                    capture_output=True, text=True)
+            evidence.append(dict(kind=kind, mutationTiming=when, delta=delta,
+                                 exactGuardExit=result.returncode, stdout=result.stdout, stderr=result.stderr))
+            if accepted:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn('SECOND_FETCH_ACCEPTED', result.stdout)
+            else:
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertNotIn('SECOND_FETCH_ACCEPTED', result.stdout)
+                self.assertEqual('FIRST_FETCH_ACCEPTED' in result.stdout, when == 'between_fetches')
+        if os.environ.get('RECHECK_DRIFT_EVIDENCE'):
+            target = Path(os.environ['RECHECK_DRIFT_EVIDENCE']) / (kind + '.json')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(evidence, indent=2) + '\n', encoding='utf-8')
+
+    def test_rejects_existing_markdown_replaced_with_symlink_at_each_fetch(self):
+        self.case('existing_doc_symlink', False)
+
+    def test_rejects_new_non_markdown_document_at_each_fetch(self):
+        self.case('new_unapproved_doc_file', False)
+
+    def test_accepts_existing_regular_markdown_body_update_at_each_fetch(self):
+        self.case('existing_regular_markdown_update', True)
 
 
 if __name__ == '__main__':
