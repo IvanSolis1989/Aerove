@@ -158,7 +158,7 @@ class LitePromotionGateTests(unittest.TestCase):
             validated_path = root / "validated.json"
             validated_path.write_text(json.dumps(validated), encoding="utf-8")
             body = notes_text + (f"\n\nPromotion receipt\n\nAcceptance run: `123` (run number `123`, attempt `2`)\n"
-                                 f"Source: `{source}`\nAPK SHA-256: `{validated['apk_sha256']}`\n")
+                                 f"Build source: `{source}`\nRelease source: `{source}`\nAPK SHA-256: `{validated['apk_sha256']}`\n")
             asset_names = ("AEROVE-Lite-android-arm64.apk", "BUILD_INFO.json", "SHA256SUMS")
             assets = [{"id": 800 + index, "name": name,
                        "size": (directory / name).stat().st_size if (directory / name).exists()
@@ -167,8 +167,22 @@ class LitePromotionGateTests(unittest.TestCase):
             release_api = {"id": 700, "draft": False, "prerelease": True, "tag_name": tag,
                            "target_commitish": source, "name": f"AEROVE Lite {tag}",
                            "body": body, "assets": assets}
+            projection = dict(release_tree=tree)
+            selected = dict(projection=projection, artifacts={}, build_tree=tree, build_source=source)
+            promotion = dict(schema=1, role="originalProductArtifactPromotion", product="aerove-lite",
+                repository=release.REPO, compiled=False, projection=projection, artifacts={},
+                build_run=123, build_attempt=2, build_number=123, build_tree=tree, build_source=source,
+                release_source=source, release_tree=tree, release_run=999, release_attempt=1,
+                files=dict(arm={name: dict(bytes=(directory / name).stat().st_size,
+                    sha256=release._sha(directory / name)) for name in asset_names}))
+            receipt = root / "promotion.json"
+            receipt.write_text(json.dumps(promotion), encoding="utf-8")
 
             def gh_json(route):
+                if route.endswith("/actions/runs/999"):
+                    return dict(id=999, run_attempt=1, run_number=200, head_sha=source,
+                        path=".github/workflows/aerove-lite.yaml", event="workflow_dispatch", head_branch="main",
+                        repository=dict(full_name=release.REPO), head_repository=dict(full_name=release.REPO))
                 self.assertIn(tag, route)
                 return release_api
 
@@ -176,13 +190,16 @@ class LitePromotionGateTests(unittest.TestCase):
                 (Path(destination)).write_bytes((directory / asset["name"]).read_bytes())
 
             with mock.patch.object(release, "_has_release", return_value=True), \
+                    mock.patch.object(release, "accepted_build", return_value=selected), \
+                    mock.patch.object(release, "_current_main_inputs"), \
                     mock.patch.object(release, "_gh_json", side_effect=gh_json), \
                     mock.patch.object(release, "_tag_commit", return_value=source), \
                     mock.patch.object(release, "_release_asset_bytes", side_effect=read_asset), \
                     mock.patch.object(release, "_assert_release_not_latest"), \
                     mock.patch.dict(release.os.environ, {"RUNNER_TEMP": temp,
                         "GITHUB_STEP_SUMMARY": str(root / "summary.md")}):
-                release.publish(directory, validated_path, notes_path, source, 123, 2, 123)
+                release.publish(directory, validated_path, notes_path, source, 123, 2, 123,
+                    receipt=receipt, root=root, release_run=999, release_attempt=1)
             self.assertIn("already matches", (root / "summary.md").read_text(encoding="utf-8"))
 
     def test_parallel_jobs_require_every_producer_and_android_phase_in_same_attempt(self):
@@ -208,6 +225,15 @@ class LitePromotionGateTests(unittest.TestCase):
                 "Check the signed APK and record its exact provenance"]
         jobs = [dict(name=name,status="completed",conclusion="success",run_id=11,run_attempt=2,
             steps=[dict(name=step,conclusion="success") for step in steps]) for name,steps in required.items()]
+        for index, job in enumerate(jobs):
+            job.update(id=index + 1, head_sha="a" * 40)
+        with mock.patch.object(release, "_gh_json", return_value=dict(total_count=len(jobs), jobs=jobs)):
+            release._candidate_jobs(11, 2, "a" * 40)
+            for job in jobs:
+                job["head_sha"] = "b" * 40
+                with self.subTest(sourceMismatch=job["name"]), self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11, 2, "a" * 40)
+                job["head_sha"] = "a" * 40
         with mock.patch.object(release,"_gh_json",return_value={"jobs":jobs}):
             self.assertEqual(len(required),len(release._candidate_jobs(11,2)))
             for target in range(len(jobs)):
@@ -536,6 +562,65 @@ class CurrentRendererPromotionTests(unittest.TestCase):
         self.write(path, value)
         with self.assertRaises(release.PromotionError):
             self.verify()
+
+class ExplicitBuildPromotionTest(unittest.TestCase):
+    def setUp(self):
+        self.source = "a" * 40
+        self.target = "b" * 40
+        self.run = dict(id=123, run_number=44, run_attempt=2, head_sha=self.source,
+            head_branch="codex/aerove-lite-meow-app", path=".github/workflows/aerove-lite.yaml",
+            event="workflow_dispatch", status="completed", conclusion="success",
+            repository=dict(full_name=release.REPO), head_repository=dict(full_name=release.REPO))
+        self.artifacts = [dict(id=100 + index, name=prefix + "2", expired=False,
+            workflow_run=dict(id=123, head_sha=self.source), digest="sha256:" + "c" * 64,
+            size_in_bytes=1000) for index, prefix in enumerate(release.ARTIFACT_PREFIXES.values())]
+        self.projection = dict(build_tree="d" * 40, release_tree="e" * 40)
+
+    def select(self):
+        with mock.patch.object(release, "_gh_json", return_value=self.run), \
+                mock.patch.object(release, "_gh_items", return_value=self.artifacts), \
+                mock.patch.object(release, "_candidate_jobs") as jobs, \
+                mock.patch.object(release.product_source, "equivalent", return_value=self.projection):
+            result = release.accepted_build(Path("unused"), self.target, 123, 456)
+            jobs.assert_called_once_with(123, 2, self.source)
+            return result
+
+    def test_explicit_original_run_keeps_build_identity_separate_from_release(self):
+        result = self.select()
+        self.assertEqual(result["build_source"], self.source)
+        self.assertEqual(result["run_id"], 123)
+        self.assertEqual(result["run_attempt"], 2)
+        self.assertEqual(set(result["artifact_ids"]), {"arm", "x86", "helper", "matrix"})
+
+    def test_forged_failed_wrong_attempt_or_expired_original_is_rejected(self):
+        for key, value in (("id", 999), ("conclusion", "failure"), ("status", "in_progress"),
+                           ("repository", dict(full_name="fork/repository")), ("run_attempt", 3)):
+            original = self.run[key]
+            self.run[key] = value
+            with self.subTest(field=key), self.assertRaises(release.PromotionError):
+                self.select()
+            self.run[key] = original
+        for key, value in (("expired", True), ("digest", None),
+                           ("workflow_run", dict(id=999, head_sha=self.source))):
+            original = self.artifacts[0][key]
+            self.artifacts[0][key] = value
+            with self.subTest(field=key), self.assertRaises(release.PromotionError):
+                self.select()
+            self.artifacts[0][key] = original
+
+    def test_missing_current_source_or_changed_product_inputs_fail_before_publication(self):
+        with mock.patch.object(release, "_gh_json", return_value=self.run), \
+                mock.patch.object(release.product_source, "equivalent", side_effect=release.product_source.ProjectionError("changed product input")):
+            with self.assertRaises(release.product_source.ProjectionError):
+                release.accepted_build(Path("unused"), self.target, 123, 456)
+        with self.assertRaises(release.PromotionError):
+            release.accepted_build(Path("unused"), self.target, 123, 123)
+
+    def test_api_pagination_rejects_duplicate_or_missing_rows(self):
+        for payload in (dict(total_count=2, artifacts=[]), dict(total_count=2, artifacts=[dict(id=1), dict(id=1)])):
+            with mock.patch.object(release, "_gh_json", return_value=payload), self.assertRaises(release.PromotionError):
+                release._gh_items("endpoint?per_page=100", "artifacts")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -16,6 +17,9 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import urlencode
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tooling"))
+import product_source
 
 if __package__:
     from . import aerove_version as product
@@ -638,6 +642,236 @@ def find_rechecked_artifacts(*, root: Path, repository: str, source: str, exclud
     raise ArtifactError('The reviewed test-only source has no accepted original-APK recheck; rebuilding is forbidden')
 
 
+def accepted_build(*, root: Path, repository: str, source: str, build_run: int,
+                   release_run: int) -> dict[str, Any]:
+    _repository(repository)
+    _sha(source, 'release_source')
+    _positive(build_run, 'build_run')
+    _positive(release_run, 'release_run')
+    if build_run == release_run:
+        raise ArtifactError('Promotion requires an independently accepted original run')
+    run = _api_object(f'repos/{repository}/actions/runs/{build_run}')
+    original = _sha(run.get('head_sha'), 'build_source')
+    _run_identity(repository, run, original)
+    if build_run == RECHECK_RUN and original == RECHECK_SOURCE:
+        return accepted_rechecked_build(root=root, repository=repository, source=source,
+            build_run=build_run, release_run=release_run)
+    if run['id'] != build_run or run.get('status') != 'completed' or run.get('conclusion') != 'success':
+        raise ArtifactError('Explicit original run is not fully accepted')
+    projection = product_source.equivalent(root=root, product='aerove',
+        build_source=original, release_source=source)
+    if __package__:
+        from . import ci_verify
+    else:
+        import ci_verify
+    required = {'reuse', 'prep', 'static', 'native', 'verify', 'apk'}
+    for group, rows in ci_verify.matrices().items():
+        required.update(f'{group} ({row["suite"]} {row["shard"]})' for row in rows)
+    jobs = _api_items(f'repos/{repository}/actions/runs/{build_run}/attempts/{run["run_attempt"]}/jobs', 'jobs')
+    producers = {}
+    for name in required:
+        matches = [job for job in jobs if job.get('name') == name]
+        if (len(matches) != 1 or matches[0].get('run_id') != build_run
+                or matches[0].get('head_sha') != original
+                or matches[0].get('run_attempt', run['run_attempt']) != run['run_attempt']
+                or matches[0].get('status') != 'completed' or matches[0].get('conclusion') != 'success'):
+            raise ArtifactError(f'Original run requires one successful exact-attempt {name} job')
+        producers[name] = matches[0]
+    rows = _api_items(f'repos/{repository}/actions/runs/{build_run}/artifacts', 'artifacts')
+    artifacts = {}
+    for name, key in [('Aerove-android-arm64', 'artifact_id'), ('xclash-generated', 'generated_artifact_id')]:
+        matches = [item for item in rows if item.get('name') == name]
+        if len(matches) != 1:
+            raise ArtifactError(f'Original artifact missing/duplicate: {name}')
+        item = matches[0]
+        if (item.get('expired') is not False or item.get('workflow_run', {}).get('id') != build_run
+                or item.get('workflow_run', {}).get('head_sha') != original
+                or type(item.get('size_in_bytes')) is not int or item['size_in_bytes'] < 1
+                or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(item.get('digest', '')))):
+            raise ArtifactError('Original artifact provenance/size/digest mismatch')
+        _positive(item.get('id'), 'artifact_id')
+        job = producers['apk' if name == 'Aerove-android-arm64' else 'prep']
+        _positive(job.get('id'), 'producer job id')
+        try:
+            stamps = [datetime.fromisoformat(value.replace('Z', '+00:00'))
+                      for value in (job['started_at'], item['created_at'], job['completed_at'])]
+        except (KeyError, TypeError, AttributeError, ValueError) as error:
+            raise ArtifactError('Original artifact has no exact-attempt producer time binding') from error
+        if (any(stamp.tzinfo is None or stamp.utcoffset() != timezone.utc.utcoffset(stamp) for stamp in stamps)
+                or not stamps[0] <= stamps[1] <= stamps[2]):
+            raise ArtifactError('Original artifact was not created by the successful selected-attempt producer')
+        artifacts[key] = {field: item[field] for field in ('id', 'name', 'size_in_bytes', 'digest', 'created_at')}
+        artifacts[key].update(producer_job_id=job['id'], producer_attempt=run['run_attempt'])
+    return dict(run_id=build_run, run_number=run['run_number'], build_attempt=run['run_attempt'],
+        build_source=original, build_tree=projection['build_tree'], projection=projection, artifacts=artifacts,
+        **{key: item['id'] for key, item in artifacts.items()})
+
+
+def accepted_rechecked_build(*, root, repository, source, build_run, release_run):
+    original = original_recheck_build(repository, build_run)
+    runs = _api_items(f'repos/{repository}/actions/workflows/xclash-android.yaml/runs',
+        'workflow_runs', status='success', event='workflow_dispatch')
+    for run in sorted(runs, key=lambda item: item['id'], reverse=True):
+        harness = _sha(run.get('head_sha'), 'recheck source')
+        if run['id'] == release_run or run.get('status') != 'completed' or run.get('conclusion') != 'success':
+            continue
+        _run_identity(repository, run, harness)
+        artifacts = _api_items(f'repos/{repository}/actions/runs/{run["id"]}/artifacts', 'artifacts')
+        if not any(item.get('name') == RECHECK_ARTIFACT for item in artifacts):
+            continue
+        try:
+            projection = product_source.equivalent(root=root, product='aerove',
+                build_source=harness, release_source=source)
+        except product_source.ProjectionError:
+            continue
+        _recheck_jobs(repository, run, final=True)
+        receipt = _download_receipt(repository, run)
+        expected = recheck_plan(root=root, repository=repository, source=harness, build_run=build_run)
+        hashes = {name: digest for name, (_, digest) in RECHECK_PAYLOADS.items()
+                  if name in (APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')}
+        identity = dict(source=harness, tree=_git(root, 'rev-parse', f'{harness}^{{tree}}'),
+                        run_id=run['id'], run_attempt=run['run_attempt'])
+        if (receipt.get('schema') != 1 or receipt.get('role') != 'originalApkVerificationRecheck'
+                or receipt.get('accepted') is not True or receipt.get('compiled') is not False
+                or receipt.get('repository') != repository or receipt.get('originalBuild') != expected
+                or receipt.get('testHarness') != identity or receipt.get('signer_sha256') != RECHECK_SIGNER
+                or receipt.get('files') != hashes):
+            raise ArtifactError('Explicit Std55 promotion requires its unchanged accepted hard recheck receipt')
+        pinned = {}
+        for name, key in [('Aerove-android-arm64', 'artifact_id'), ('xclash-generated', 'generated_artifact_id')]:
+            artifact_id, size, digest = RECHECK_ARTIFACTS[name]
+            pinned[key] = dict(id=artifact_id, name=name, size_in_bytes=size, digest=digest)
+        return dict(**original, build_tree=expected['build_tree'], projection=projection, artifacts=pinned,
+                    recheck_run=run['id'], test_harness_source=harness, acceptance=identity)
+    raise ArtifactError('Explicit Std55 original has no accepted hard recheck for unchanged current product inputs')
+
+
+def promotion_receipt(*, root: Path, repository: str, source: str, build_run: int,
+                      release_run: int, release_attempt: int, directory: Path,
+                      generated_directory: Path) -> dict[str, Any]:
+    selected = accepted_build(root=root, repository=repository, source=source,
+        build_run=build_run, release_run=release_run)
+    current = _api_object(f'repos/{repository}/actions/runs/{release_run}')
+    _run_identity(repository, current, source)
+    if (current['id'] != release_run or current['run_attempt'] != release_attempt
+            or current.get('event') != 'workflow_dispatch' or current.get('head_branch') != 'main'):
+        raise ArtifactError('Promotion must bind the current explicit main release run/attempt')
+    with tempfile.TemporaryDirectory() as temporary:
+        fixed = Path(temporary)
+        for name in ('pubspec.yaml', 'tool/upstream-version.json'):
+            (fixed / Path(name).name).write_bytes(_git_bytes(root, 'show', f'{selected["build_source"]}:apps/aerove/{name}'))
+        validate_artifacts(directory=directory, generated_directory=generated_directory,
+            source=selected['build_source'], tree=selected['build_tree'], repository=repository,
+            run_id=build_run, run_number=selected['run_number'],
+            metadata=fixed / 'upstream-version.json', pubspec=fixed / 'pubspec.yaml')
+        files = {}
+        for key, payload in [('artifact_id', directory), ('generated_artifact_id', generated_directory)]:
+            artifact = selected['artifacts'][key]
+            archive = fixed / (key + '.zip')
+            with archive.open('wb') as stream:
+                subprocess.run(['gh', 'api', f'repos/{repository}/actions/artifacts/{artifact["id"]}/zip'],
+                    check=True, stdout=stream)
+            files[key] = product_source.bind_archive(archive, payload, artifact)
+    return dict(schema=1, role='originalProductArtifactPromotion', product='aerove', repository=repository,
+        build_source=selected['build_source'], build_tree=selected['build_tree'],
+        build_run=build_run, build_attempt=selected['build_attempt'], build_number=selected['run_number'],
+        release_source=source, release_tree=selected['projection']['release_tree'],
+        release_run=release_run, release_attempt=release_attempt, compiled=False,
+        projection=selected['projection'], artifacts=selected['artifacts'], files=files,
+        acceptance=selected.get('acceptance'))
+
+
+def _git_bytes(root, *arguments):
+    return subprocess.run(['git', *arguments], cwd=root, check=True, capture_output=True).stdout
+
+
+def check_promotion_receipt(*, root, repository, source, build_run, release_run,
+                            release_attempt, directory, generated_directory, receipt):
+    selected = accepted_build(root=root, repository=repository, source=source,
+        build_run=build_run, release_run=release_run)
+    current = _api_object(f'repos/{repository}/actions/runs/{release_run}')
+    _run_identity(repository, current, source)
+    if (current['id'] != release_run or current['run_attempt'] != release_attempt
+            or current.get('event') != 'workflow_dispatch' or current.get('head_branch') != 'main'):
+        raise ArtifactError('Promotion receipt current release run/attempt mismatch')
+    value = _json(receipt.read_text(encoding='utf-8'))
+    expected = dict(schema=1, role='originalProductArtifactPromotion', product='aerove', repository=repository,
+        build_source=selected['build_source'], build_tree=selected['build_tree'],
+        build_run=build_run, build_attempt=selected['build_attempt'], build_number=selected['run_number'],
+        release_source=source, release_tree=selected['projection']['release_tree'],
+        release_run=release_run, release_attempt=release_attempt, compiled=False,
+        projection=selected['projection'], artifacts=selected['artifacts'], acceptance=selected.get('acceptance'))
+    if any(value.get(key) != item for key, item in expected.items()):
+        raise ArtifactError('Promotion receipt build/release/API/input identity mismatch')
+    files = {}
+    for key, target, names in (
+            ('artifact_id', directory, (APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')),
+            ('generated_artifact_id', generated_directory, ('xclash-generated.patch', 'xclash-verified-tree.txt'))):
+        _files(target, set(names))
+        files[key] = {name: dict(bytes=(target / name).stat().st_size, sha256=_digest(target / name)) for name in names}
+    if value.get('files') != files:
+        raise ArtifactError('Original payload bytes changed after the promotion receipt was saved')
+
+
+def _tag_source(repository, tag, draft):
+    response = subprocess.run(['gh', 'api', '--method', 'GET', f'repos/{repository}/git/ref/tags/{tag}'],
+        check=False, capture_output=True, text=True)
+    value = _json(response.stdout)
+    if response.returncode:
+        if draft and isinstance(value, dict) and str(value.get('status')) == '404':
+            return None
+        raise ArtifactError('Could not read the exact release tag identity')
+    reference = value.get('object', {})
+    for _ in range(10):
+        sha = _sha(reference.get('sha'), 'release tag SHA')
+        if reference.get('type') == 'commit':
+            return sha
+        if reference.get('type') != 'tag':
+            break
+        reference = _api_object(f'repos/{repository}/git/tags/{sha}').get('object', {})
+    raise ArtifactError('Release tag does not resolve to one commit')
+
+
+def verify_release_assets(*, repository, source, tag, directory, allow_missing=False):
+    _repository(repository)
+    _sha(source, 'release_source')
+    _files(directory, {APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS'})
+    release = _api_object(f'repos/{repository}/releases/tags/{tag}')
+    draft = release.get('draft')
+    if (type(draft) is not bool or release.get('tag_name') != tag
+            or release.get('target_commitish') != source):
+        raise ArtifactError('Existing release tag/target does not match the separate release source')
+    tag_source = _tag_source(repository, tag, draft)
+    if tag_source != source and not (draft and tag_source is None):
+        raise ArtifactError('Existing release tag resolves to another commit')
+    info = _json((directory / 'BUILD_INFO.json').read_text(encoding='utf-8'))
+    if not draft and release.get('prerelease') != (info.get('appEnv') == 'pre'):
+        raise ArtifactError('Published release has the wrong product channel')
+    rows = release.get('assets')
+    if not isinstance(rows, list):
+        raise ArtifactError('Invalid existing release asset list')
+    names = [item.get('name') for item in rows]
+    expected = {APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS'}
+    if len(names) != len(set(names)) or set(names) - expected:
+        raise ArtifactError('Existing release has duplicate or unexpected assets')
+    missing = expected - set(names)
+    if missing and not (allow_missing and draft):
+        raise ArtifactError('Published/uploaded release does not contain all three original assets')
+    with tempfile.TemporaryDirectory() as temporary:
+        for item in rows:
+            identity = _positive(item.get('id'), 'release asset ID')
+            original = directory / item['name']
+            if item.get('size') != original.stat().st_size:
+                raise ArtifactError('Existing release asset size differs from the original build')
+            target = Path(temporary) / item['name']
+            with target.open('wb') as stream:
+                subprocess.run(['gh', 'api', f'repos/{repository}/releases/assets/{identity}',
+                    '-H', 'Accept: application/octet-stream'], check=True, stdout=stream)
+            if target.stat().st_size != original.stat().st_size or _digest(target) != _digest(original):
+                raise ArtifactError('Existing release asset bytes differ from the original build')
+    return sorted(missing)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
@@ -675,13 +909,66 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument('--generated-directory', type=Path, required=True)
             command.add_argument('--apksigner', type=Path, required=True)
             command.add_argument('--aapt', type=Path, required=True)
+    for name in ('select-build', 'promotion-receipt'):
+        command = commands.add_parser(name)
+        command.add_argument('--root', type=Path, required=True)
+        command.add_argument('--repository', required=True)
+        command.add_argument('--source', required=True)
+        command.add_argument('--build-run', type=int, required=True)
+        command.add_argument('--release-run', type=int, required=True)
+        command.add_argument('--output', type=Path, required=True)
+        if name == 'promotion-receipt':
+            command.add_argument('--release-attempt', type=int, required=True)
+            command.add_argument('--directory', type=Path, required=True)
+            command.add_argument('--generated-directory', type=Path, required=True)
+    source_check = commands.add_parser('source-check')
+    source_check.add_argument('--root', type=Path, required=True)
+    source_check.add_argument('--build-source', required=True)
+    source_check.add_argument('--source', required=True)
+    check = commands.add_parser('check-promotion')
+    for name in ('root', 'directory', 'generated-directory', 'receipt'):
+        check.add_argument('--' + name, type=Path, required=True)
+    for name in ('repository', 'source'):
+        check.add_argument('--' + name, required=True)
+    for name in ('build-run', 'release-run', 'release-attempt'):
+        check.add_argument('--' + name, type=int, required=True)
+    assets = commands.add_parser('release-assets')
+    for name in ('repository', 'source', 'tag'):
+        assets.add_argument('--' + name, required=True)
+    assets.add_argument('--directory', type=Path, required=True)
+    assets.add_argument('--output', type=Path, required=True)
+    assets.add_argument('--allow-missing', action='store_true')
     drift = commands.add_parser('recheck-main')
     drift.add_argument('--root', type=Path, required=True)
     drift.add_argument('--harness', required=True)
     drift.add_argument('--source', required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == 'recheck-main':
+        if args.command == 'release-assets':
+            missing = verify_release_assets(repository=args.repository, source=args.source,
+                tag=args.tag, directory=args.directory, allow_missing=args.allow_missing)
+            args.output.write_text(''.join(name + '\n' for name in missing), encoding='utf-8')
+        elif args.command == 'check-promotion':
+            check_promotion_receipt(root=args.root, repository=args.repository, source=args.source,
+                build_run=args.build_run, release_run=args.release_run, release_attempt=args.release_attempt,
+                directory=args.directory, generated_directory=args.generated_directory, receipt=args.receipt)
+        elif args.command == 'source-check':
+            print(json.dumps(product_source.equivalent(root=args.root, product='aerove',
+                build_source=args.build_source, release_source=args.source), sort_keys=True))
+        elif args.command in ('select-build', 'promotion-receipt'):
+            parameters = dict(root=args.root, repository=args.repository, source=args.source,
+                build_run=args.build_run, release_run=args.release_run)
+            if args.command == 'promotion-receipt':
+                result = promotion_receipt(**parameters, release_attempt=args.release_attempt,
+                    directory=args.directory, generated_directory=args.generated_directory)
+                args.output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+            else:
+                result = accepted_build(**parameters)
+                with args.output.open('a', encoding='utf-8') as output:
+                    output.write(''.join(f'{key}={result.get(key, "")}\n' for key in
+                        (*OUTPUTS, 'build_source', 'build_tree', 'build_attempt', 'recheck_run', 'test_harness_source')))
+            print(json.dumps(result, sort_keys=True))
+        elif args.command == 'recheck-main':
             recheck_main_inputs(args.root, args.harness, args.source)
             print(f'Validated latest main {args.source} against recheck harness {args.harness}')
         elif args.command in ('recheck-plan', 'recheck-receipt', 'find-rechecked'):
@@ -730,7 +1017,7 @@ def main(argv: list[str] | None = None) -> int:
                 pubspec=args.pubspec,
             )
             print(f'Validated {result} from original run {args.run_id}')
-    except (ArtifactError, OSError, UnicodeError) as error:
+    except (ArtifactError, product_source.ProjectionError, OSError, UnicodeError, subprocess.CalledProcessError) as error:
         print(f'aerove_artifact: {error}', file=sys.stderr)
         return 1
     return 0

@@ -898,5 +898,180 @@ class OriginalApkReceiptTest(unittest.TestCase):
                 self.assertEqual(self.module.main(args), 1)
 
 
+class ExplicitBuildPromotionTest(unittest.TestCase):
+    def setUp(self):
+        self.module = importlib.import_module('tool.aerove_artifact')
+        self.run = dict(id=123, run_number=44, run_attempt=2, head_sha=SOURCE,
+            path=self.module.WORKFLOW, event='workflow_dispatch', status='completed', conclusion='success',
+            repository=dict(full_name=REPOSITORY), head_repository=dict(full_name=REPOSITORY))
+        from tool import ci_verify
+        required = {'reuse', 'prep', 'static', 'native', 'verify', 'apk'}
+        for group, rows in ci_verify.matrices().items():
+            required.update(f'{group} ({row["suite"]} {row["shard"]})' for row in rows)
+        self.jobs = [dict(id=index + 1, name=name, run_id=123, head_sha=SOURCE, run_attempt=2,
+            status='completed', conclusion='success', started_at='2026-10-27T01:00:00Z',
+            completed_at='2026-10-27T01:10:00Z') for index, name in enumerate(sorted(required))]
+        self.artifacts = [dict(id=index + 100, name=name, expired=False, size_in_bytes=1000,
+            digest='sha256:' + 'c' * 64, workflow_run=dict(id=123, head_sha=SOURCE),
+            created_at='2026-10-27T01:05:00Z')
+            for index, name in enumerate(('Aerove-android-arm64', 'xclash-generated'))]
+
+    def select(self):
+        with patch.object(self.module, '_api_object', return_value=self.run), \
+                patch.object(self.module, '_api_items', side_effect=[self.jobs, self.artifacts]), \
+                patch.object(self.module.product_source, 'equivalent', return_value=dict(build_tree=TREE)):
+            return self.module.accepted_build(root=Path('unused'), repository=REPOSITORY,
+                source='f' * 40, build_run=123, release_run=456)
+
+    def test_explicit_original_requires_every_producer_and_matrix_job(self):
+        selected = self.select()
+        self.assertEqual(selected['build_source'], SOURCE)
+        self.assertEqual(selected['build_attempt'], 2)
+        for job in self.jobs:
+            job['conclusion'] = 'failure'
+            with self.subTest(job=job['name']), self.assertRaises(self.module.ArtifactError):
+                self.select()
+            job['conclusion'] = 'success'
+
+    def test_run_attempt_repository_and_original_artifact_digest_are_required(self):
+        for key, value in (('id', 999), ('run_attempt', 3), ('conclusion', 'failure'),
+                           ('head_repository', dict(full_name='fork/repository'))):
+            old = self.run[key]
+            self.run[key] = value
+            with self.subTest(field=key), self.assertRaises(self.module.ArtifactError):
+                self.select()
+            self.run[key] = old
+        for key, value in (('expired', True), ('digest', None), ('created_at', '2026-10-26T01:05:00Z'),
+                           ('workflow_run', dict(id=123, head_sha='e' * 40))):
+            old = self.artifacts[0][key]
+            self.artifacts[0][key] = value
+            with self.subTest(field=key), self.assertRaises(self.module.ArtifactError):
+                self.select()
+            self.artifacts[0][key] = old
+
+    def test_promotion_cli_requires_explicit_build_and_release_run_identity(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            self.module.main(['select-build', '--root', '.', '--repository', REPOSITORY,
+                '--source', SOURCE, '--release-run', '456', '--output', 'unused'])
+
+    def test_successful_main_source_sync_run_is_never_an_accepted_original_build(self):
+        self.run.update(event='push', head_branch='main')
+        for job in self.jobs:
+            if job['name'] != 'reuse':
+                job['conclusion'] = 'skipped'
+        with self.assertRaises(self.module.ArtifactError):
+            self.select()
+
+
+class PromotionReceiptReadbackTest(unittest.TestCase):
+    def setUp(self):
+        self.module = importlib.import_module('tool.aerove_artifact')
+
+    def test_saved_receipt_rejects_any_original_payload_or_release_identity_swap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dist, generated = root / 'dist', root / 'generated'
+            dist.mkdir(); generated.mkdir()
+            inventories = {}
+            for key, directory, names in (
+                    ('artifact_id', dist, (self.module.APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')),
+                    ('generated_artifact_id', generated, ('xclash-generated.patch', 'xclash-verified-tree.txt'))):
+                inventories[key] = {}
+                for name in names:
+                    (directory / name).write_bytes(name.encode())
+                    inventories[key][name] = dict(bytes=len(name), sha256=hashlib.sha256(name.encode()).hexdigest())
+            selected = dict(build_source=SOURCE, build_tree=TREE, build_attempt=2, run_number=44,
+                projection=dict(release_tree='e' * 40), artifacts={})
+            receipt = dict(schema=1, role='originalProductArtifactPromotion', product='aerove', repository=REPOSITORY,
+                build_source=SOURCE, build_tree=TREE, build_run=123, build_attempt=2, build_number=44,
+                release_source='f' * 40, release_tree='e' * 40, release_run=456, release_attempt=1,
+                compiled=False, projection=selected['projection'], artifacts={}, acceptance=None, files=inventories)
+            saved = root / 'receipt.json'
+            current = dict(id=456, run_number=99, run_attempt=1, head_sha='f' * 40,
+                path=self.module.WORKFLOW, event='workflow_dispatch', head_branch='main',
+                repository=dict(full_name=REPOSITORY), head_repository=dict(full_name=REPOSITORY))
+            args = dict(root=root, repository=REPOSITORY, source='f' * 40, build_run=123, release_run=456,
+                release_attempt=1, directory=dist, generated_directory=generated, receipt=saved)
+            saved.write_text(json.dumps(receipt), encoding='utf-8')
+            with patch.object(self.module, 'accepted_build', return_value=selected), \
+                    patch.object(self.module, '_api_object', return_value=current):
+                self.module.check_promotion_receipt(**args)
+                current['event'] = 'push'
+                with self.assertRaises(self.module.ArtifactError):
+                    self.module.check_promotion_receipt(**args)
+                current['event'] = 'workflow_dispatch'
+                for name in (self.module.APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS'):
+                    (dist / name).write_bytes(b'swapped')
+                    with self.subTest(payload=name), self.assertRaises(self.module.ArtifactError):
+                        self.module.check_promotion_receipt(**args)
+                    (dist / name).write_bytes(name.encode())
+                for key, value in (('release_source', SOURCE), ('build_attempt', 1), ('release_run', 999)):
+                    changed = {**receipt, key: value}
+                    saved.write_text(json.dumps(changed), encoding='utf-8')
+                    with self.subTest(identity=key), self.assertRaises(self.module.ArtifactError):
+                        self.module.check_promotion_receipt(**args)
+
+    def test_fixed_std55_uses_only_accepted_hard_recheck_then_product_projection(self):
+        fixture = OriginalApkRecheckTest()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        other = fixture.root / 'apps/aerove-lite/app/Other.kt'
+        other.parent.mkdir(parents=True, exist_ok=True)
+        other.write_text('other product change', encoding='utf-8')
+        fixture.commit()
+        source = fixture.git('rev-parse', 'HEAD')
+        original = dict(run_id=self.module.RECHECK_RUN, run_number=55, build_source=fixture.original,
+            build_attempt=1, artifact_id=10, generated_artifact_id=11, build_conclusion='failure')
+        expected = dict(**original, build_tree=fixture.git('rev-parse', fixture.original + '^{tree}'))
+        run = dict(id=777, run_number=56, run_attempt=1, head_sha=fixture.harness,
+            path=self.module.WORKFLOW, event='workflow_dispatch', status='completed', conclusion='success',
+            repository=dict(full_name=REPOSITORY), head_repository=dict(full_name=REPOSITORY))
+        identity = dict(source=fixture.harness, tree=fixture.git('rev-parse', fixture.harness + '^{tree}'),
+            run_id=777, run_attempt=1)
+        receipt = dict(schema=1, role='originalApkVerificationRecheck', accepted=True, compiled=False,
+            repository=REPOSITORY, originalBuild=expected, testHarness=identity, signer_sha256=self.module.RECHECK_SIGNER,
+            files={name: digest for name, (_, digest) in self.module.RECHECK_PAYLOADS.items()
+                if name in (self.module.APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')})
+        args = dict(root=fixture.root, repository=REPOSITORY, source=source,
+            build_run=self.module.RECHECK_RUN, release_run=999)
+        def select():
+            with patch.object(self.module, 'original_recheck_build', return_value=original), \
+                    patch.object(self.module, '_api_items', side_effect=[[run], [dict(name=self.module.RECHECK_ARTIFACT)]]), \
+                    patch.object(self.module, '_recheck_jobs'), \
+                    patch.object(self.module, '_download_receipt', return_value=receipt), \
+                    patch.object(self.module, 'recheck_plan', return_value=expected):
+                return self.module.accepted_rechecked_build(**args)
+        self.assertEqual(select()['acceptance'], identity)
+        receipt['files']['BUILD_INFO.json'] = '0' * 64
+        with self.assertRaises(self.module.ArtifactError):
+            select()
+
+    def test_existing_release_reads_back_original_assets_and_never_overwrites_wrong_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            contents = {self.module.APK_NAME: b'original apk', 'BUILD_INFO.json': b'{"appEnv":"pre"}',
+                        'SHA256SUMS': b'original sums'}
+            for name, content in contents.items():
+                (directory / name).write_bytes(content)
+            release = dict(draft=False, prerelease=True, tag_name='v1.0.0-beta.1+44', target_commitish=SOURCE,
+                assets=[dict(id=index + 1, name=name, size=len(content))
+                        for index, (name, content) in enumerate(contents.items())])
+            rows = {str(item['id']): item['name'] for item in release['assets']}
+            def download(command, *, check, stdout):
+                stdout.write(contents[rows[command[2].rsplit('/', 1)[1]]])
+            args = dict(repository=REPOSITORY, source=SOURCE, tag=release['tag_name'], directory=directory)
+            with patch.object(self.module, '_api_object', return_value=release), \
+                    patch.object(self.module, '_tag_source', return_value=SOURCE), \
+                    patch.object(self.module.subprocess, 'run', side_effect=download):
+                self.assertEqual(self.module.verify_release_assets(**args), [])
+                release['assets'][0]['size'] += 1
+                with self.assertRaises(self.module.ArtifactError):
+                    self.module.verify_release_assets(**args)
+                release['assets'][0]['size'] -= 1
+                contents[self.module.APK_NAME] = b'altered apk!'
+                with self.assertRaises(self.module.ArtifactError):
+                    self.module.verify_release_assets(**args)
+
+
 if __name__ == '__main__':
     unittest.main()

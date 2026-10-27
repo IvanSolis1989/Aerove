@@ -100,7 +100,7 @@ class WorkflowPolicyTest(unittest.TestCase):
         self.assertIn('needs: [prep, static, render, native, regressions]', job('verify'))
         self.assertIn('CI_VERIFY_NEEDS: ${{ toJSON(needs) }}', job('verify'))
         self.assertIn('python3 tool/ci_verify.py gate', job('verify'))
-        self.assertIn('needs: [reuse, verify, apk]', job('release'))
+        self.assertIn('needs: [promotion_request, reuse, verify, apk]', job('release'))
         self.assertIn("needs.verify.result == 'success' && needs.apk.result == 'success'", job('release'))
         self.assertIn('needs.reuse.outputs.run_id || github.run_id', job('release'))
         self.assertIn('hooks_runner/shared/rust_api', job('native'))
@@ -294,9 +294,34 @@ class OriginalApkRecheckWorkflowTest(unittest.TestCase):
         self.assertIn('--source "$BUILD_SOURCE" --tree', release)
         self.assertIn('--promotion-source "$GITHUB_SHA" --recheck-run "$RECHECK_RUN"', release)
         self.assertIn('test "$(jq -r .source dist/BUILD_INFO.json)" = "$BUILD_SOURCE"', release)
-        self.assertIn('--target "$BUILD_SOURCE"', release)
+        self.assertIn('--target "$RELEASE_SOURCE"', release)
         self.assertNotIn('> dist/BUILD_INFO.json', release)
         self.assertIn('apksigner" verify --print-certs', release)
+
+    def test_main_push_source_sync_graph_skips_all_app_jobs_and_publication(self):
+        reuse = self.job('reuse')
+        self.assertIn("if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}", reuse)
+        sync = run_block('Record source sync without selecting, building or publishing an application')
+        self.assertIn("echo 'mode=source-sync'", sync)
+        self.assertNotRegex(sync, r'python|flutter|dart|aerove_artifact|upload-artifact')
+        self.assertIn("if: ${{ inputs.publish_release }}", reuse)
+        self.assertIn('No accepted original artifact; publish never rebuilds.', reuse)
+        self.assertIn('needs: reuse', self.job('prep'))
+        self.assertIn('needs: promotion_request', reuse)
+        self.assertIn('accepted_build_run:', FULL)
+        self.assertNotIn('|| github.sha', reuse)
+        skipped = []
+        for name in ('prep', 'static', 'native', 'render', 'regressions', 'verify', 'apk', 'recheck'):
+            self.assertIn("if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == ''", self.job(name))
+            skipped.append(name)
+        self.assertEqual(len(skipped), 8)
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.accepted_build_run", self.job('release'))
+        self.assertIn("needs.promotion_request.result == 'success'", self.job('release'))
+        for name in ('Find a successful build of this exact commit',
+                     'Find an accepted independent verification recheck'):
+            start = reuse.index('- name: ' + name)
+            section = reuse[start:].split('        env:', 1)[0]
+            self.assertIn("github.event_name == 'workflow_dispatch'", section)
 
 
 
@@ -306,7 +331,11 @@ class RecheckLatestMainGuardTest(unittest.TestCase):
         fixture = OriginalApkRecheckTest()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
-        relative = 'docs/development/recheck.md'
+        relative = 'docs/aerove/CHANGELOG.md'
+        (fixture.root / relative).parent.mkdir(parents=True, exist_ok=True)
+        (fixture.root / relative).write_text('Original release facts\n', encoding='utf-8')
+        fixture.commit()
+        fixture.harness = fixture.git('rev-parse', 'HEAD')
         if kind == 'existing_doc_symlink':
             blob = subprocess.run(['git', 'hash-object', '-w', '--stdin'], input='../../apps/aerove/pubspec.yaml',
                                   cwd=fixture.root, env=fixture.env, capture_output=True, text=True, check=True).stdout.strip()
@@ -323,6 +352,8 @@ class RecheckLatestMainGuardTest(unittest.TestCase):
         tool = fixture.root / 'apps/aerove/tool'
         for name in ('aerove_artifact.py', 'aerove_version.py', 'xclash_version.py'):
             shutil.copyfile(ROOT / 'apps/aerove/tool' / name, tool / name)
+        (fixture.root / 'tooling').mkdir(exist_ok=True)
+        shutil.copyfile(ROOT / 'tooling/product_source.py', fixture.root / 'tooling/product_source.py')
         function = re.search(r'(?ms)^          check_main_inputs\(\) \{\n.*?^          \}', FULL)[0]
         function = '\n'.join(line[10:] for line in function.splitlines())
         self.assertIn('if test -n "$RECHECK_RUN"; then', function)
@@ -334,9 +365,9 @@ class RecheckLatestMainGuardTest(unittest.TestCase):
         evidence = []
         for when in ('before_first_fetch', 'between_fetches'):
             fixture.git('branch', '-f', 'main', latest if when == 'before_first_fetch' else fixture.harness)
-            environment = {**fixture.env, 'GITHUB_SHA': fixture.harness,
+            environment = {**fixture.env, 'GITHUB_SHA': fixture.harness, 'RELEASE_SOURCE': fixture.harness,
                            'GITHUB_WORKSPACE': fixture.root.as_posix(), 'RUNNER_TEMP': fixture.root.as_posix(),
-                           'RECHECK_RUN': '777', 'TEST_HARNESS_SOURCE': fixture.harness}
+                           'RECHECK_RUN': '777', 'TEST_HARNESS_SOURCE': fixture.harness, 'ACCEPTED_BUILD_RUN': ''}
             script = ('set -euo pipefail\npython3() { ' + shlex.quote(Path(sys.executable).as_posix()) + ' "$@"; }\n'
                       + function + '\ncheck_main_inputs\necho FIRST_FETCH_ACCEPTED\n'
                       + 'git update-ref refs/heads/main ' + latest + '\n'

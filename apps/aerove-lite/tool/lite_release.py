@@ -12,6 +12,10 @@ import stat
 import subprocess
 import sys
 import zipfile
+import tempfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tooling"))
+import product_source
 
 import instrumentation_shards
 
@@ -77,9 +81,9 @@ def _successful_steps(job, required):
     return all(steps.get(name) == "success" for name in required)
 
 
-def _candidate_jobs(run, attempt):
+def _candidate_jobs(run, attempt, source=None):
     route = f"repos/{REPO}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100"
-    jobs = _gh_json(route).get("jobs", [])
+    jobs = _gh_items(route, "jobs") if source is not None else _gh_json(route).get("jobs", [])
     expected = {
         "resolve": ("Stable lock and host production regression",),
         "verify": ("Kotlin data, lifecycle and UI compilation checks",),
@@ -105,15 +109,116 @@ def _candidate_jobs(run, attempt):
     found = {}
     for key, steps in expected.items():
         matches = [job for job in jobs if job.get("name") == key and _successful_steps(job, steps)]
-        if len(matches) != 1 or matches[0].get("run_id") != run or matches[0].get("run_attempt") != attempt:
+        if len(matches) != 1 or matches[0].get("run_id") != run or matches[0].get("run_attempt") != attempt or (source is not None and matches[0].get("head_sha") != source):
             raise PromotionError(f"Acceptance run has no unique successful {key} job")
         found[key] = matches[0]
     return found
 
 
-def select_acceptance(source, current_run, outputs):
+def _gh_items(route, key):
+    result, ids, page, count = [], set(), 1, None
+    while True:
+        payload = _gh_json(route + f"&page={page}")
+        total, rows = payload.get("total_count"), payload.get(key)
+        if type(total) is not int or total < 0 or not isinstance(rows, list):
+            raise PromotionError("Invalid paginated GitHub API response")
+        if count is None:
+            count = total
+        if count != total or (not rows and len(result) < count):
+            raise PromotionError("Inconsistent GitHub API pagination")
+        for row in rows:
+            identity = row.get("id")
+            if type(identity) is not int or identity < 1 or identity in ids:
+                raise PromotionError("Invalid or duplicate GitHub API identity")
+            ids.add(identity)
+            result.append(row)
+        if len(result) > count:
+            raise PromotionError("GitHub API pagination exceeds total_count")
+        if len(result) == count:
+            return result
+        page += 1
+
+
+def _run_identity(run, run_id, source=None, release=False):
+    if (type(run_id) is not int or run_id < 1 or run.get("id") != run_id
+            or type(run.get("run_attempt")) is not int or run["run_attempt"] < 1
+            or type(run.get("run_number")) is not int or run["run_number"] < 1
+            or not re.fullmatch(r"[0-9a-f]{40}", str(run.get("head_sha", "")))
+            or (source is not None and run.get("head_sha") != source)
+            or run.get("path") != f".github/workflows/{WORKFLOW}"
+            or any(not isinstance(run.get(key), dict) or run[key].get("full_name", "").casefold() != REPO.casefold()
+                   for key in ("repository", "head_repository"))):
+        raise PromotionError("Original/release run repository/workflow/source/identity mismatch")
+    if release:
+        if run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main":
+            raise PromotionError("Promotion must be an explicit main workflow dispatch")
+    elif (run.get("event") not in {"push", "workflow_dispatch"}
+            or run.get("head_branch") not in {"codex/aerove-independent-architecture", "codex/aerove-lite-meow-app"}
+            or run.get("status") != "completed" or run.get("conclusion") != "success"):
+        raise PromotionError("Explicit original build is not a fully accepted product run")
+
+
+def accepted_build(root, source, build_run, current_run):
+    if build_run == current_run:
+        raise PromotionError("Promotion cannot use its own run as an accepted original build")
+    run = _gh_json(f"repos/{REPO}/actions/runs/{build_run}")
+    _run_identity(run, build_run)
+    projection = product_source.equivalent(root=root, product="aerove-lite",
+        build_source=run["head_sha"], release_source=source)
+    _candidate_jobs(build_run, run["run_attempt"], run["head_sha"])
+    artifacts = _gh_items(f"repos/{REPO}/actions/runs/{build_run}/artifacts?per_page=100", "artifacts")
+    selected = {}
+    for key, prefix in ARTIFACT_PREFIXES.items():
+        rows = [item for item in artifacts if item.get("name") == prefix + str(run["run_attempt"])]
+        if len(rows) != 1:
+            raise PromotionError("Original artifact is missing or duplicated")
+        artifact = rows[0]
+        if (artifact.get("expired") is not False
+                or artifact.get("workflow_run", {}).get("id") != build_run
+                or artifact.get("workflow_run", {}).get("head_sha") != run["head_sha"]
+                or type(artifact.get("size_in_bytes")) is not int or artifact["size_in_bytes"] < 1
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", str(artifact.get("digest", "")))):
+            raise PromotionError("Original artifact provenance/size/digest mismatch")
+        selected[key] = {field: artifact[field] for field in ("id", "name", "digest", "size_in_bytes")}
+    return dict(run_id=build_run, run_number=run["run_number"], run_attempt=run["run_attempt"],
+        build_source=run["head_sha"], build_tree=projection["build_tree"], artifacts=selected, projection=projection,
+        artifact_ids={key: item["id"] for key, item in selected.items()})
+
+
+def promotion_receipt(root, source, release_run, release_attempt, build_run, validation, directories):
+    selected = accepted_build(root, source, build_run, release_run)
+    run = _gh_json(f"repos/{REPO}/actions/runs/{release_run}")
+    _run_identity(run, release_run, source, release=True)
+    if run["run_attempt"] != release_attempt:
+        raise PromotionError("Release attempt differs from the current API run")
+    expected = dict(source=selected["build_source"], tree=selected["build_tree"], run_id=build_run,
+        run_number=selected["run_number"], run_attempt=selected["run_attempt"])
+    if any(validation.get(key) != value for key, value in expected.items()):
+        raise PromotionError("Validated original payload identity differs from selected API build")
+    files = {}
+    with tempfile.TemporaryDirectory() as temporary:
+        for key, artifact in selected["artifacts"].items():
+            archive = Path(temporary) / (key + ".zip")
+            _gh_binary(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", archive)
+            files[key] = product_source.bind_archive(archive, directories[key], artifact)
+    return dict(schema=1, role="originalProductArtifactPromotion", product="aerove-lite", repository=REPO,
+        build_source=selected["build_source"], build_tree=selected["build_tree"],
+        build_run=build_run, build_attempt=selected["run_attempt"], build_number=selected["run_number"],
+        release_source=source, release_tree=selected["projection"]["release_tree"],
+        release_run=release_run, release_attempt=release_attempt, compiled=False,
+        artifacts=selected["artifacts"], projection=selected["projection"], files=files)
+
+
+def select_acceptance(source, current_run, outputs, root=None, build_run=None):
     if not re.fullmatch(r"[0-9a-f]{40}", source):
         raise PromotionError("Full main source SHA is required")
+    if build_run is not None:
+        result = accepted_build(root, source, build_run, current_run)
+        with Path(outputs).open("a", encoding="utf-8") as output:
+            for key in ("run_id", "run_number", "run_attempt", "build_source", "build_tree"):
+                output.write(f"{key}={result[key]}\n")
+            output.write("artifact_ids=" + json.dumps(result["artifact_ids"], separators=(",", ":")) + "\n")
+        return result
     data = _gh_json(f"repos/{REPO}/actions/workflows/{WORKFLOW}/runs?head_sha={source}&per_page=100")
     candidates = []
     for run in data.get("workflow_runs", []):
@@ -452,16 +557,47 @@ def _assert_exact_published_release(release, tag, source, body, expected):
         raise PromotionError("Published Lite tag is immutable and does not exactly match this accepted artifact")
 
 
-def publish(directory, validated, notes, source, run, attempt, number):
+def _current_main_inputs(root, source):
+    subprocess.run(["git", "fetch", "--no-tags", "--recurse-submodules=no", "origin", "main"],
+        cwd=root, check=True, capture_output=True)
+    main = subprocess.check_output(["git", "rev-parse", "FETCH_HEAD"], cwd=root, text=True).strip()
+    subprocess.run(["git", "merge-base", "--is-ancestor", source, main],
+        cwd=root, check=True, capture_output=True)
+    return product_source.equivalent(root=root, product="aerove-lite",
+        build_source=source, release_source=main)
+
+
+def publish(directory, validated, notes, source, run, attempt, number, receipt=None, root=None, release_run=None, release_attempt=None):
     directory = Path(directory)
     validation = _json(validated)
+    if receipt is None:
+        raise PromotionError("Publishing requires a separately verified original build promotion receipt")
+    promotion = _json(receipt)
+    build_source = promotion["build_source"] if promotion is not None else source
+    if promotion is not None:
+        if root is None or release_run is None or release_attempt is None:
+            raise PromotionError("Promotion receipt requires release root/run/attempt")
+        selected = accepted_build(root, source, run, release_run)
+        current = _gh_json(f"repos/{REPO}/actions/runs/{release_run}")
+        _run_identity(current, release_run, source, release=True)
+        if (promotion.get("schema") != 1 or promotion.get("role") != "originalProductArtifactPromotion"
+                or promotion.get("repository") != REPO or promotion.get("product") != "aerove-lite"
+                or promotion.get("compiled") is not False or promotion.get("projection") != selected["projection"]
+                or promotion.get("artifacts") != selected["artifacts"]
+                or promotion.get("build_run") != run or promotion.get("build_attempt") != attempt
+                or promotion.get("build_number") != number or promotion.get("build_tree") != selected["build_tree"]
+                or build_source != selected["build_source"] or promotion.get("release_source") != source
+                or promotion.get("release_tree") != selected["projection"]["release_tree"]
+                or promotion.get("release_run") != release_run or promotion.get("release_attempt") != release_attempt
+                or current["run_attempt"] != release_attempt):
+            raise PromotionError("Promotion receipt differs from original API build/release/projection")
     tag = validation.get("tag", "")
     if not re.fullmatch(r"lite-v[^+\s/]+\+[1-9][0-9]*", tag):
         raise PromotionError("Invalid Lite release tag")
     build = validation.get("build_info", {})
-    if (validation.get("source") != source or validation.get("run_id") != run
+    if (validation.get("source") != build_source or validation.get("run_id") != run
             or validation.get("run_number") != number or validation.get("run_attempt") != attempt
-            or build.get("source") != source or build.get("run_number") != number
+            or build.get("source") != build_source or build.get("run_number") != number
             or build.get("run_attempt") != attempt or build.get("workflow") != f"https://github.com/{REPO}/actions/runs/{run}"):
         raise PromotionError("Validated artifact does not bind the selected source and attempt")
     apk = directory / "AEROVE-Lite-android-arm64.apk"
@@ -469,18 +605,26 @@ def publish(directory, validated, notes, source, run, attempt, number):
     sums = directory / "SHA256SUMS"
     _only_files(directory, {apk.name, info.name, sums.name})
     _checksums(directory, {apk.name, info.name})
+    if (_json(info) != build or validation.get("tree") != promotion.get("build_tree")
+            or build.get("tree") != promotion.get("build_tree")):
+        raise PromotionError("Original Build Info bytes/tree differ from the validated promotion identity")
     expected = {path.name: {"sha256": _sha(path), "size": path.stat().st_size}
                 for path in (apk, info, sums)}
+    if promotion is not None:
+        actual = {name: dict(bytes=item["size"], sha256=item["sha256"]) for name, item in expected.items()}
+        if promotion.get("files", {}).get("arm") != actual:
+            raise PromotionError("Original three payload bytes differ from promotion receipt")
     if validation.get("apk_sha256") != expected[apk.name]["sha256"]:
         raise PromotionError("Validated APK hash differs from original artifact bytes")
     if tag != f"lite-v{build.get('version')}+{build.get('version_code')}":
         raise PromotionError("Promotion tag does not match original APK Build Info")
     body = Path(notes).read_text(encoding="utf-8")
     marker = (f"\n\nPromotion receipt\n\nAcceptance run: `{run}` (run number `{number}`, attempt `{attempt}`)\n"
-              f"Source: `{source}`\nAPK SHA-256: `{expected[apk.name]['sha256']}`\n")
+              f"Build source: `{build_source}`\nRelease source: `{source}`\nAPK SHA-256: `{expected[apk.name]['sha256']}`\n")
     body += marker
     bound_notes = Path(os.environ.get("RUNNER_TEMP", ".")) / "lite-bound-release-notes.md"
     bound_notes.write_text(body, encoding="utf-8")
+    _current_main_inputs(root, source)
     releases = _gh_json(f"repos/{REPO}/releases/tags/{tag}") if _has_release(tag) else None
     if releases is not None:
         if releases.get("draft") is False:
@@ -532,6 +676,7 @@ def publish(directory, validated, notes, source, run, attempt, number):
                                 Path(os.environ.get("RUNNER_TEMP", ".")) / "lite-release-readback")
     if release.get("draft") is not True or release.get("prerelease") is not True:
         raise PromotionError("Release ceased to be a preview draft before readback")
+    _current_main_inputs(root, source)
     subprocess.run(["gh", "api", "--method", "PATCH", f"repos/{REPO}/releases/{release['id']}",
                     "-F", "draft=false", "-F", "prerelease=true", "-f", "make_latest=false"], check=True)
     published = _gh_json(f"repos/{REPO}/releases/{release['id']}")
@@ -623,6 +768,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     select = sub.add_parser("select")
     select.add_argument("--source", required=True); select.add_argument("--current-run", required=True, type=int)
+    select.add_argument("--root", type=Path)
+    select.add_argument("--build-run", type=int)
     select.add_argument("--outputs", type=Path, default=Path(os.environ.get("GITHUB_OUTPUT", "promotion-outputs.txt")))
     extract = sub.add_parser("extract")
     extract.add_argument("--artifact-id", required=True, type=int); extract.add_argument("--destination", required=True, type=Path)
@@ -635,6 +782,11 @@ def main():
         validate.add_argument("--" + name, required=True)
     for name in ("run", "attempt", "number"):
         validate.add_argument("--" + name, required=True, type=int)
+    validate.add_argument("--root", type=Path)
+    validate.add_argument("--release-source")
+    validate.add_argument("--release-run", type=int)
+    validate.add_argument("--release-attempt", type=int)
+    validate.add_argument("--receipt", type=Path)
     validate.add_argument("--output", type=Path, required=True)
     publish_parser = sub.add_parser("publish")
     for name in ("directory", "validated", "notes"):
@@ -644,25 +796,39 @@ def main():
     for name in ("run", "attempt"):
         publish_parser.add_argument("--" + name, required=True, type=int)
     publish_parser.add_argument("--number", required=True, type=int)
+    publish_parser.add_argument("--root", type=Path, required=True)
+    publish_parser.add_argument("--receipt", type=Path, required=True)
+    publish_parser.add_argument("--release-run", type=int, required=True)
+    publish_parser.add_argument("--release-attempt", type=int, required=True)
     previous = sub.add_parser("previous-changelog")
     previous.add_argument("--output", required=True, type=Path)
     previous.add_argument("--target-tag", required=True)
     args = parser.parse_args()
     try:
         if args.command == "select":
-            select_acceptance(args.source, args.current_run, args.outputs)
+            if args.root is None or args.build_run is None:
+                raise PromotionError("Publishing requires an explicit accepted --build-run and --root; never rebuild")
+            select_acceptance(args.source, args.current_run, args.outputs, args.root, args.build_run)
         elif args.command == "extract":
             download_artifact(args.artifact_id, args.destination)
         elif args.command == "validate":
             result = validate_artifacts(args.arm, args.helper, args.runtime, args.matrix, args.source,
                 args.tree, args.run, args.attempt, args.number, args.helper_source,
                 args.arm_badging, args.arm_signature, args.x86_badging, args.x86_signature)
+            promotion_args = (args.root, args.release_source, args.release_run, args.release_attempt, args.receipt)
+            if any(value is not None for value in promotion_args):
+                if any(value is None for value in promotion_args):
+                    raise PromotionError("Release root/source/run/attempt/receipt must be supplied together")
+                receipt = promotion_receipt(args.root, args.release_source, args.release_run, args.release_attempt,
+                    args.run, result, dict(arm=args.arm, helper=args.helper, x86=args.runtime, matrix=args.matrix))
+                args.receipt.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
             args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             print(json.dumps(result, indent=2))
         elif args.command == "previous-changelog":
             previous_changelog(args.output, args.target_tag)
         else:
-            publish(args.directory, args.validated, args.notes, args.source, args.run, args.attempt, args.number)
+            publish(args.directory, args.validated, args.notes, args.source, args.run, args.attempt, args.number,
+                args.receipt, args.root, args.release_run, args.release_attempt)
     except (PromotionError, ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
         print(f"Lite promotion refused: {error}", file=sys.stderr)
         return 2

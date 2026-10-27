@@ -10,9 +10,47 @@ concurrency:
 env:
   NDK_VERSION: 28.2.13676358
 jobs:
+  promotion_request:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    env:
+      ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
+      PUBLISH_RELEASE: ${{ inputs.publish_release }}
+      BUILD_APK: ${{ inputs.build_apk }}
+      PREPARE_SOURCES: ${{ inputs.prepare_sources }}
+      VERIFICATION_RECHECK: ${{ inputs.verification_recheck }}
+      ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
+      DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
+      MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
+      QA84_ONLY: ${{ inputs.qa84_only }}
+      QA79_ONLY: ${{ inputs.qa79_only }}
+      CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
+      NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
+    steps:
+      - name: Reject ambiguous build and promotion requests before any producer
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          e = os.environ
+          accepted, publish = e.get('ACCEPTED_BUILD_RUN', ''), e.get('PUBLISH_RELEASE') == 'true'
+          if bool(accepted) != publish:
+              raise SystemExit('Publish requires an explicit accepted_build_run; accepted_build_run cannot start a build')
+          if accepted:
+              if not re.fullmatch(r'[1-9][0-9]*', accepted):
+                  raise SystemExit('accepted_build_run must be a positive original run ID')
+              if e['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or e['GITHUB_REF'] != 'refs/heads/main':
+                  raise SystemExit('Promotion requires an explicit main workflow dispatch')
+              flags = ('BUILD_APK', 'PREPARE_SOURCES', 'VERIFICATION_RECHECK', 'MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'NATIVE_PREFLIGHT')
+              if any(e.get(key) == 'true' for key in flags) or e.get('DIAGNOSTIC_TARGET', '') not in ('', 'none') or e.get('ORIGINAL_BUILD_RUN'):
+                  raise SystemExit('Promotion cannot build, recheck, prepare or diagnose')
+          elif e.get('ORIGINAL_BUILD_RUN') and e.get('VERIFICATION_RECHECK') != 'true':
+              raise SystemExit('original_build_run belongs only to verification_recheck')
+          PY
+
   diagnostic_guard:
     name: Validate prebuilt Android diagnosis only
-    if: ${{ inputs.diagnostic_target != 'none' && (github.event_name == 'workflow_dispatch' || inputs.diagnostic_target) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (inputs.diagnostic_target != 'none' && (github.event_name == 'workflow_dispatch' || inputs.diagnostic_target)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -43,7 +81,7 @@ jobs:
   diagnostic_lite125_test_only:
     name: Lite125 test-only dry-run task graph (no APK build)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-test-only' }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-test-only') }}
     permissions:
       contents: read
       actions: read
@@ -51,7 +89,7 @@ jobs:
   diagnostic_lite125_original_samples:
     name: Three isolated Lite125 original render samples
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-original-samples' }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-original-samples') }}
     permissions:
       contents: read
       actions: read
@@ -61,7 +99,7 @@ jobs:
   diagnostic_lite94:
     name: Immutable Lite run94 matrix diagnosis
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite94-matrix' || inputs.diagnostic_target == 'both') }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite94-matrix' || inputs.diagnostic_target == 'both')) }}
     permissions:
       contents: read
       actions: read
@@ -72,7 +110,7 @@ jobs:
   diagnostic_beta14_profile:
     name: Immutable beta14 render profile only (no build)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'beta14-profile-only' }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'beta14-profile-only') }}
     permissions:
       contents: read
       actions: read
@@ -83,7 +121,7 @@ jobs:
   diagnostic_lite141_shards:
     name: Lite141 original APK remaining shard ${{ matrix.shard_index }}/8 (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite141-prebuilt-shards' }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite141-prebuilt-shards') }}
     permissions:
       contents: read
       actions: read
@@ -99,7 +137,7 @@ jobs:
   diagnostic_lite141_aggregate:
     name: Lite141 diagnostic-only eight-shard aggregate
     needs: [diagnostic_guard, diagnostic_lite141_shards]
-    if: ${{ always() && needs.diagnostic_guard.result == 'success' && needs.diagnostic_lite141_shards.result != 'skipped' }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (always() && needs.diagnostic_guard.result == 'success' && needs.diagnostic_lite141_shards.result != 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -134,7 +172,7 @@ jobs:
         path: ${{ runner.temp }}/lite141-diagnostic-aggregate.json
         if-no-files-found: warn
   qa84:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only)) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only))) }}
     permissions:
       contents: read
       actions: read
@@ -142,7 +180,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.qa79_only && !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   qa79:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only)))) }}
     permissions:
       contents: read
       actions: read
@@ -150,7 +188,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   legacy_native_diagnosis:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release))))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release)))))) }}
     env:
       RUSTC_BOOTSTRAP: '1'
     runs-on: ubuntu-24.04
@@ -345,7 +383,7 @@ jobs:
           ${{ runner.temp }}/lite-native-preflight/
         if-no-files-found: warn
   resolve:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -430,7 +468,7 @@ jobs:
           apps/aerove-lite/meow-native/build/
         if-no-files-found: error
   verify:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release))))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -522,6 +560,7 @@ jobs:
           apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
         if-no-files-found: warn
   reuse:
+    needs: promotion_request
     if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -533,20 +572,25 @@ jobs:
       run_number: ${{ steps.select.outputs.run_number }}
       run_attempt: ${{ steps.select.outputs.run_attempt }}
       artifact_ids: ${{ steps.select.outputs.artifact_ids }}
+      build_source: ${{ steps.select.outputs.build_source }}
+      build_tree: ${{ steps.select.outputs.build_tree }}
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         ref: ${{ github.sha }}
+        fetch-depth: 0
         persist-credentials: false
     - name: Select the exact successful acceptance run
       id: select
       env:
         GH_TOKEN: ${{ github.token }}
-      run: python3 apps/aerove-lite/tool/lite_release.py select --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
+        ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
+      run: python3 apps/aerove-lite/tool/lite_release.py select --root "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
   release:
     if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success'))))) }}
     needs:
     - reuse
+    - promotion_request
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -558,10 +602,13 @@ jobs:
       ACCEPTANCE_NUMBER: ${{ needs.reuse.outputs.run_number }}
       ACCEPTANCE_ATTEMPT: ${{ needs.reuse.outputs.run_attempt }}
       ARTIFACT_IDS: ${{ needs.reuse.outputs.artifact_ids }}
+      BUILD_SOURCE: ${{ needs.reuse.outputs.build_source }}
+      BUILD_TREE: ${{ needs.reuse.outputs.build_tree }}
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         ref: ${{ github.sha }}
+        fetch-depth: 0
         persist-credentials: false
     - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
       with:
@@ -605,7 +652,10 @@ jobs:
         python3 apps/aerove-lite/tool/lite_release.py validate \
           --arm "$RUNNER_TEMP/lite-promotion/arm" --helper "$RUNNER_TEMP/lite-promotion/helper" \
           --runtime "$RUNNER_TEMP/lite-promotion/x86" --matrix "$RUNNER_TEMP/lite-promotion/matrix" \
-          --source "$GITHUB_SHA" --tree "$(git rev-parse HEAD^{tree})" \
+          --source "$BUILD_SOURCE" --tree "$BUILD_TREE" \
+          --root "$GITHUB_WORKSPACE" --release-source "$GITHUB_SHA" \
+          --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT" \
+          --receipt "$RUNNER_TEMP/lite-promotion/promotion.json" \
           --run "$ACCEPTANCE_RUN" --attempt "$ACCEPTANCE_ATTEMPT" --number "$ACCEPTANCE_NUMBER" \
           --helper-source apps/aerove-lite/regexp2 \
           --arm-badging "$RUNNER_TEMP/lite-promotion/arm-badging.txt" \
@@ -613,6 +663,12 @@ jobs:
           --x86-badging "$RUNNER_TEMP/lite-promotion/x86-badging.txt" \
           --x86-signature "$RUNNER_TEMP/lite-promotion/x86-signature.txt" \
           --output "$RUNNER_TEMP/lite-promotion/validated.json"
+    - name: Preserve the separate build and release promotion receipt
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: aerove-lite-product-promotion-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-promotion/promotion.json
+        if-no-files-found: error
     - name: Render source-bound release notes
       run: |
         info="$RUNNER_TEMP/lite-promotion/arm/BUILD_INFO.json"
@@ -631,10 +687,12 @@ jobs:
           --validated "$RUNNER_TEMP/lite-promotion/validated.json" \
           --notes "$RUNNER_TEMP/lite-promotion/notes.md" \
           --source "$GITHUB_SHA" --run "$ACCEPTANCE_RUN" --attempt "$ACCEPTANCE_ATTEMPT" \
-          --number "$ACCEPTANCE_NUMBER"
+          --number "$ACCEPTANCE_NUMBER" \
+          --root "$GITHUB_WORKSPACE" --receipt "$RUNNER_TEMP/lite-promotion/promotion.json" \
+          --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT"
   build_arm:
     name: build (arm64-v8a)
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: arm64-v8a
@@ -645,7 +703,7 @@ jobs:
       actions: read
   build_x86:
     name: build (x86_64)
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
     with:
       abi: x86_64
@@ -657,7 +715,7 @@ jobs:
   standard_original_reference:
     name: Std 原包 Android 取图诊断（不构建）
     continue-on-error: ${{ !inputs.diagnostic_target || inputs.diagnostic_target == 'none' }}
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both') }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -784,7 +842,7 @@ jobs:
           path: ${{ runner.temp }}/standard-original-reference/
           if-no-files-found: warn
   acceptance:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     needs:
     - build_x86
     strategy:
@@ -971,7 +1029,7 @@ jobs:
           ${{ runner.temp }}/lite-fixture.log
         if-no-files-found: warn
   accepted:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release))))) }}
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release)))))) }}
     needs:
     - resolve
     - verify
@@ -1041,6 +1099,10 @@ jobs:
         required: false
         type: boolean
         default: false
+      accepted_build_run:
+        description: Explicit fully accepted original build run to promote without rebuilding
+        type: string
+        default: ''
       publish_release:
         description: Promote a fully accepted Lite artifact for this exact main commit; never rebuild
         required: false
