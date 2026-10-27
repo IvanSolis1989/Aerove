@@ -248,7 +248,9 @@ internal fun LiteSwitch(checked: Boolean, label: String, onCheckedChange: (Boole
                     LitePane(Modifier.size(24.dp), corner = LiteCorner.Full, selected = checked, glassStyle = finish, glassTint = thumbTint,
                         interactionSource = interaction,
                         solidColor = if (checked) Color.White else visuals.secondaryInk) {
-                        if (visuals.material != dev.aerove.lite.MaterialTier.Solid) LiteIcon(if (checked) FullGlyphs.check else FullGlyphs.close, Modifier.align(Alignment.Center), visuals.ink.copy(alpha = if (enabled) 1f else 0.38f), size = 14.dp)
+                        if (visuals.material != dev.aerove.lite.MaterialTier.Solid) Box(contentAlignment = Alignment.Center, propagateMinConstraints = false) {
+                            LiteIcon(if (checked) FullGlyphs.check else FullGlyphs.close, Modifier.align(Alignment.Center), visuals.ink.copy(alpha = if (enabled) 1f else 0.38f), size = 14.dp)
+                        }
                     }
                 }
             }
