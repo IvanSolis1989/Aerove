@@ -14,21 +14,30 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import dev.aerove.lite.LiteFeatureHost
@@ -64,7 +73,13 @@ class LiteAppRenderingTest(private val case: RenderCase) {
     private class RenderingFeatureRoots(context: Context, private val state: MutableState<LiteState>) : Closeable {
         private val directory = File(context.cacheDir, "app-render-owner-${UUID.randomUUID()}")
         private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        private val repository = ProfileRepository(directory, ProfileValidator { error("Rendering must not validate a valid import") })
+        private val validationCalls = java.util.concurrent.atomic.AtomicInteger()
+        private val networkCalls = java.util.concurrent.atomic.AtomicInteger()
+        private val repository = ProfileRepository(directory, ProfileValidator {
+            validationCalls.incrementAndGet(); error("Rendering must not validate a valid import")
+        }, downloader = dev.aerove.lite.data.SubscriptionDownloader(okhttp3.OkHttpClient.Builder().addInterceptor {
+            networkCalls.incrementAndGet(); throw java.io.IOException("Rendering imports must remain local")
+        }.build()))
         private val proxies = ProxyPresentationWorkspace(scope, { state.value.settings.proxyPresentation }, repository::updateProxyGroupUi,
             { saved -> state.value = state.value.copy(profiles = state.value.profiles.map { if (it.id == saved.id) saved else it }) }, { true })
         private val imports = ProfileImportWorkspace(scope, repository, { true }, {
@@ -82,6 +97,18 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                 val factory: () -> LiteFeatureHost = remember(host) { { host } }
                 CompositionLocalProvider(LocalLiteFeatures provides factory, content = content)
             }
+        }
+
+        fun rejectedInput(input: String): Boolean = imports.state.value.let {
+            it.input == input && it.errorCode == "invalid_input" && it.issues.isNotEmpty() && !it.preparing
+        }
+
+        fun assertNothingImported() {
+            assertTrue(state.value.profiles.isEmpty())
+            assertTrue(imports.batchState.value.items.isEmpty())
+            assertTrue(runBlocking(Dispatchers.IO) { ProfileRepository(directory, ProfileValidator {}).list().isEmpty() })
+            assertEquals(0, validationCalls.get())
+            assertEquals(0, networkCalls.get())
         }
 
         override fun close() {
@@ -149,9 +176,21 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                 compose.onNodeWithContentDescription(text(R.string.lite_add_subscription)).performClick()
                 compose.mainClock.advanceTimeByFrame()
                 compose.onNode(tab).assertDoesNotExist()
-                compose.onNode(hasText(text(R.string.lite_add_subscription)) and hasClickAction()).performClick()
-                compose.mainClock.advanceTimeByFrame()
-                compose.onNodeWithText(text(R.string.lite_subscription_error)).assertExists()
+                fun importInput() = compose.onNode(hasAnyAncestor(hasTestTag("profile-import-input")) and hasSetTextAction() and
+                    SemanticsMatcher.keyIsDefined(SemanticsActions.RequestFocus), useUnmergedTree = true)
+                compose.onNodeWithTag("profile-import-submit").assertIsNotEnabled()
+                for (invalidInput in listOf("proxies: [", "rules: [")) {
+                    importInput().performScrollTo().performTextReplacement(invalidInput)
+                    compose.mainClock.advanceTimeByFrame()
+                    compose.onNodeWithTag("profile-import-submit").performScrollTo().assertIsEnabled().performClick()
+                    compose.waitUntil(3000) { roots.rejectedInput(invalidInput) }
+                    compose.mainClock.advanceTimeByFrame()
+                    compose.onNodeWithTag("profile-import-error").performScrollTo().assertIsDisplayed().assertTextEquals(text(R.string.age_import_failed))
+                    importInput().assertTextEquals(invalidInput)
+                    compose.onNodeWithTag("profile-import-submit").assertIsEnabled()
+                    roots.assertNothingImported()
+                }
+                compose.onNodeWithContentDescription(text(R.string.lite_close)).performScrollTo()
                 save("subscription-validation-modal")
                 compose.onNodeWithContentDescription(text(R.string.lite_close)).performClick()
                 compose.mainClock.advanceTimeByFrame()

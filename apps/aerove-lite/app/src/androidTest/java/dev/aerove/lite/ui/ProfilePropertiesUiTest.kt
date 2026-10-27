@@ -61,7 +61,8 @@ class ProfilePropertiesUiTest {
     }
 
     private fun openProperties() {
-        compose.onNodeWithTag("profile-${initial.id}").performTouchInput { longClick() }
+        compose.onNode(hasText(initial.name) and hasAnyAncestor(hasTestTag("profile-${initial.id}")),
+            useUnmergedTree = true).performScrollTo().performTouchInput { longClick() }
         compose.onNodeWithText(context.getString(R.string.profile_properties)).performClick()
         compose.waitUntil(3000) { compose.onAllNodesWithTag("profile-property-save").fetchSemanticsNodes().any { androidx.compose.ui.semantics.SemanticsProperties.Disabled !in it.config } }
     }
