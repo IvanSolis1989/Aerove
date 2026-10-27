@@ -112,7 +112,11 @@ class ProxyPresentationRootUiTest {
                 "textList" to clearedNode.config.getOrNull(SemanticsProperties.Text)?.map { it.text },
                 "selection" to clearedNode.config.getOrNull(SemanticsProperties.TextSelectionRange)?.let { listOf(it.start, it.end) },
             )).toString())
-            compose.onNodeWithTag("proxy-search-field").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+            compose.onNodeWithTag("proxy-search-field").assert(
+                SemanticsMatcher("EditableText.text is exactly empty") { node ->
+                    node.config.getOrNull(SemanticsProperties.EditableText)?.text == ""
+                }
+            )
             compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
             compose.onNodeWithTag("proxy-search-field").assertDoesNotExist()
             compose.onNodeWithTag("proxy-presentation-options").assertIsDisplayed()
