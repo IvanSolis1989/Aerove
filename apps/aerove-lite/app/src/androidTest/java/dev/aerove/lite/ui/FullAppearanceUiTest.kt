@@ -1,6 +1,7 @@
 package dev.aerove.lite.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
@@ -42,6 +43,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.test.platform.app.InstrumentationRegistry
@@ -386,6 +388,8 @@ class FullAppearanceUiTest {
                 val clock = java.util.concurrent.atomic.AtomicReference<LongState>()
                 val gate = java.util.concurrent.atomic.AtomicReference<Boolean>()
                 val restClock = java.util.concurrent.atomic.AtomicReference<LongState>()
+                val captureRest = mutableStateOf(false)
+                var lastPairInputs = JSONObject()
                 var runningImage: androidx.compose.ui.graphics.ImageBitmap? = null
                 var restImage: androidx.compose.ui.graphics.ImageBitmap? = null
                 var pair = 0
@@ -402,23 +406,72 @@ class FullAppearanceUiTest {
                                 val density = LocalDensity.current
                                 val resolvedReduced = LocalLiteReducedMotion.current
                                 SideEffect { clock.set(time); restClock.set(rest); gate.set(resolvedReduced); probe.density = density.density; probe.fontScale = density.fontScale }
-                                Column {
-                                    Box(Modifier.size(160.dp, 320.dp).testTag("running").onGloballyPositioned { probe.bounds["running"] = it.boundsInWindow() }) { AuroraWallpaper(time, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
-                                    Box(Modifier.size(160.dp, 320.dp).testTag("rest").onGloballyPositioned { probe.bounds["rest"] = it.boundsInWindow() }) { AuroraWallpaper(rest, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
+                                Box(Modifier.size(160.dp, 640.dp)) {
+                                    Box(Modifier.offset { IntOffset(0, if (captureRest.value) 320.dp.roundToPx() else 0) }.size(160.dp, 320.dp)
+                                        .testTag("running").onGloballyPositioned { probe.bounds["running"] = it.boundsInWindow() }) {
+                                        AuroraWallpaper(time, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize())
+                                    }
+                                    Box(Modifier.offset { IntOffset(0, if (captureRest.value) 0 else 320.dp.roundToPx()) }.size(160.dp, 320.dp)
+                                        .testTag("rest").onGloballyPositioned { probe.bounds["rest"] = it.boundsInWindow() }) {
+                                        AuroraWallpaper(rest, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize())
+                                    }
                                 }
                             }
                         }
                     }
+                    fun captureInputs(selectRest: Boolean? = null): JSONObject {
+                        lateinit var input: JSONObject
+                        compose.runOnUiThread {
+                            if (selectRest != null) captureRest.value = selectRest
+                            val bounds = probe.bounds.getValue(if (captureRest.value) "rest" else "running")
+                            val live = requireNotNull(clock.get()).longValue
+                            val zero = requireNotNull(restClock.get()).longValue
+                            val selected = if (captureRest.value) zero else live
+                            input = JSONObject().put("bounds", JSONArray(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom)))
+                                .put("width", bounds.width.toInt()).put("height", bounds.height.toInt())
+                                .put("seed", FullAuroraSeed).put("colors", JSONArray(FullAuroraColors)).put("dark", true)
+                                .put("reduced", gate.get()).put("restSelected", captureRest.value)
+                                .put("liveMicros", live).put("restMicros", zero).put("renderedMicros", selected)
+                        }
+                        return input
+                    }
                     fun atRest(): Boolean {
                         pair++
                         runningImage = null; restImage = null
-                        step("reduced.running.capture.before", "start=$reducedAtStart; pair=$pair; reduced=${gate.get()}; rawClockMicros=${clock.get()?.longValue}; bounds=${probe.bounds}")
+                        val runningInput = captureInputs(false).put("boundsStage", "placement requested; capture synchronizes actual layout")
+                        lastPairInputs = JSONObject().put("runningBefore", runningInput)
+                        step("reduced.running.capture.before", "start=$reducedAtStart; pair=$pair; reduced=${gate.get()}; rawClockMicros=${clock.get()?.longValue}; bounds=${probe.bounds}; input=$runningInput")
                         val running = compose.onNodeWithTag("running").captureToImage().also { runningImage = it }.toPixelMap()
-                        step("reduced.running.capture.after", "start=$reducedAtStart; pair=$pair; size=${running.width}x${running.height}; buffer=${running.buffer.size}; rawClockMicros=${clock.get()?.longValue}")
-                        step("reduced.rest.capture.before", "start=$reducedAtStart; pair=$pair; reduced=${gate.get()}; restClockMicros=${restClock.get()?.longValue}; bounds=${probe.bounds}")
+                        val runningAfter = captureInputs()
+                        lastPairInputs.put("runningAfter", runningAfter)
+                        step("reduced.running.capture.after", "start=$reducedAtStart; pair=$pair; size=${running.width}x${running.height}; buffer=${running.buffer.size}; rawClockMicros=${clock.get()?.longValue}; input=$runningAfter")
+                        val restInput = captureInputs(true).put("boundsStage", "placement requested; capture synchronizes actual layout")
+                        lastPairInputs.put("restBefore", restInput)
+                        step("reduced.rest.capture.before", "start=$reducedAtStart; pair=$pair; reduced=${gate.get()}; restClockMicros=${restClock.get()?.longValue}; bounds=${probe.bounds}; input=$restInput")
                         val resting = compose.onNodeWithTag("rest").captureToImage().also { restImage = it }.toPixelMap()
+                        val restAfter = captureInputs()
+                        lastPairInputs.put("restAfter", restAfter)
+                        for (key in listOf("bounds", "width", "height", "seed", "colors", "dark", "reduced"))
+                            assertEquals("Both independent captures must share $key", runningAfter.get(key).toString(), restAfter.get(key).toString())
+                        for (input in listOf(runningInput, restInput)) {
+                            for (key in listOf("seed", "colors", "dark", "reduced"))
+                                assertEquals("Capture configuration must remain $key", runningAfter.get(key).toString(), input.get(key).toString())
+                        }
+                        assertEquals(runningAfter.getInt("width"), running.width)
+                        assertEquals(runningAfter.getInt("height"), running.height)
+                        assertEquals(running.width, resting.width); assertEquals(running.height, resting.height)
+                        assertEquals(0L, restInput.getLong("renderedMicros")); assertEquals(0L, restAfter.getLong("renderedMicros"))
+                        if (runningInput.getBoolean("reduced")) {
+                            assertEquals(0L, runningInput.getLong("renderedMicros")); assertEquals(0L, runningAfter.getLong("renderedMicros"))
+                        }
+                        val runningBitmap = requireNotNull(runningImage).asAndroidBitmap()
+                        val restBitmap = requireNotNull(restImage).asAndroidBitmap()
+                        assertTrue("Each capture must return an independent image and bitmap", runningImage !== restImage && runningBitmap !== restBitmap)
+                        lastPairInputs.put("runningImageIdentity", System.identityHashCode(runningImage)).put("restImageIdentity", System.identityHashCode(restImage))
+                            .put("runningBitmapIdentity", System.identityHashCode(runningBitmap)).put("restBitmapIdentity", System.identityHashCode(restBitmap))
+                        captureInputs(false)
                         val equal = running.buffer.contentEquals(resting.buffer)
-                        step("reduced.rest.capture.after", "start=$reducedAtStart; pair=$pair; size=${resting.width}x${resting.height}; buffer=${resting.buffer.size}; rawClockMicros=${clock.get()?.longValue}; equal=$equal")
+                        step("reduced.rest.capture.after", "start=$reducedAtStart; pair=$pair; size=${resting.width}x${resting.height}; buffer=${resting.buffer.size}; rawClockMicros=${clock.get()?.longValue}; equal=$equal; input=$restAfter")
                         return equal
                     }
                     compose.mainClock.advanceTimeBy(5_000)
@@ -458,6 +511,8 @@ class FullAppearanceUiTest {
                                 .put("captureApi", "original Compose captureToImage; latest original pair exported after original assertions")
                                 .put("density", probe.density).put("fontScale", probe.fontScale).put("boundsInWindow", JSONObject(probe.bounds.mapValues { (_, rect) -> JSONArray(listOf(rect.left, rect.top, rect.right, rect.bottom)) }))
                                 .put("inputKey", JSONObject().put("seed", FullAuroraSeed).put("colors", JSONArray(FullAuroraColors)).put("dark", true))
+                                .put("fixturePolicy", "two persistent independent production wallpaper renderers; sequential captures at the same viewport; live clock versus existing zero clock")
+                                .put("captureInputs", lastPairInputs)
                                 .put("privateLayerKeyAndOriginObserved", false).put("phaseAndGateReceipt", "LiteUiStep before/after capture; composition gate snapshot is not a renderer trace")
                                 .put("images", images).put("originalFailure", originalFailure?.let { "${it.javaClass.name}: ${it.message}" } ?: JSONObject.NULL).toString(2))
                         } catch (diagnosticFailure: Throwable) {
