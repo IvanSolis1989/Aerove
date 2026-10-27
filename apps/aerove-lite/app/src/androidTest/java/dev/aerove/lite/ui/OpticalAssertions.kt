@@ -78,18 +78,7 @@ internal fun assertCorners(
 
 internal data class LineProfile(val positions: DoubleArray, val values: DoubleArray) {
     val contrast: Double get() = values.max() - values.min()
-    private val measuredCentroid: Double? get() {
-        val baseline = values.min()
-        val cutoff = contrast * 0.20
-        var weight = 0.0
-        var moment = 0.0
-        values.indices.forEach { i ->
-            val amount = (values[i] - baseline - cutoff).coerceAtLeast(0.0)
-            weight += amount
-            moment += positions[i] * amount
-        }
-        return if (weight > 0) moment / weight else null
-    }
+    private val measuredCentroid: Double? get() = markerProfileMoment(positions, values).centroid
     val centroid: Double get() = requireNotNull(measuredCentroid) { "Marker profile has no measurable contrast" }
     fun json() = JSONObject().put("positionDp", JSONArray(positions.toList())).put("channelValue", JSONArray(values.toList()))
         .put("contrast", contrast).put("centroidDp", measuredCentroid ?: JSONObject.NULL)
@@ -117,6 +106,32 @@ internal fun lineProfile(
         },
     )
 }
+
+internal fun directionalChromaticProfile(
+    frame: CapturedFrame, probe: RenderProbe, pane: Rect, bottom: Boolean,
+): DirectionalChromaticResult {
+    // Keep the whole original 30dp depth. A central 120dp field retains the sloped marker along x.
+    val halfWidth = 60f * probe.density
+    val left = ceil(pane.center.x - halfWidth).toInt()
+    val right = floor(pane.center.x + halfWidth).toInt()
+    val top = ceil(if (bottom) pane.bottom - 30 * probe.density else pane.top).toInt()
+    val end = floor(if (bottom) pane.bottom else pane.top + 30 * probe.density).toInt()
+    require(left >= pane.left && right <= pane.right && top >= 0 && end <= frame.bitmap.height)
+    val pixels = IntArray((right - left) * (end - top))
+    frame.bitmap.getPixels(pixels, 0, right - left, left, top, right - left, end - top)
+    return directionalChromaticDiagnostic(pixels, right - left, end - top, probe.density.toDouble(), bottom)
+}
+
+internal fun DirectionalChromaticResult.json(): JSONObject = JSONObject()
+    .put("axis", "horizontal; top R-B, bottom B-R; fixed 45-degree marker")
+    .put("depthBandDp", 30).put("horizontalHalfWidthDp", 60)
+    .put("widthPixels", width).put("depthRows", height).put("rowWeighting", "equal; all original depth rows")
+    .put("missingSignalRows", JSONArray(missingSignalRows)).put("boundaryRows", JSONArray(boundaryRows))
+    .put("meanSignedRedBlueDp", meanSignedRedBlueDp ?: JSONObject.NULL)
+    .put("rows", JSONArray(rows.map { row -> JSONObject().put("row", row.row)
+        .put("centroidsPx", JSONArray(row.centroidsPx.map { it ?: JSONObject.NULL }))
+        .put("contrastRgb", JSONArray(row.contrasts)).put("touchesStartRgb", JSONArray(row.touchesStart))
+        .put("touchesEndRgb", JSONArray(row.touchesEnd)).put("signedRedBlueDp", row.signedRedBlueDp ?: JSONObject.NULL) }))
 
 internal fun cardOptics(source: CapturedFrame, actual: CapturedFrame, control: CapturedFrame, probe: RenderProbe, case: RenderCase): JSONObject {
     val pane = requireNotNull(probe.bounds["pane"])
@@ -156,8 +171,16 @@ internal fun cardOptics(source: CapturedFrame, actual: CapturedFrame, control: C
                 val red = lineProfile(actual, probe, pane.center.x, start, end, halfWidthDp = 1f, channel = 0)
                 val blue = lineProfile(actual, probe, pane.center.x, start, end, halfWidthDp = 1f, channel = 2)
                 val dispersion = (red.centroid - blue.centroid) * if (bottom) 1 else -1
-                report.getJSONObject(if (bottom) "bottom" else "top").put("red", red.json()).put("blue", blue.json()).put("dispersionDp", dispersion)
-                assertTrue("Clear must provide spatial color dispersion, not a uniform colored outline", dispersion >= 0.15)
+                val directional = directionalChromaticProfile(actual, probe, pane, bottom)
+                report.getJSONObject(if (bottom) "bottom" else "top").put("red", red.json()).put("blue", blue.json())
+                    .put("legacyVerticalDispersionDp", dispersion).put("directionalDispersion", directional.json())
+                    .put("dispersionDp", directional.meanSignedRedBlueDp ?: JSONObject.NULL)
+                if (directional.missingSignalRows.isNotEmpty() || directional.boundaryRows.isNotEmpty()) {
+                    assertTrue("Every original depth row must contain a complete horizontal RGB marker; fullDepthEvidence=${directional.json()}", false)
+                }
+                if (requireNotNull(directional.meanSignedRedBlueDp) < 0.15) {
+                    assertTrue("Clear must provide spatial color dispersion, not a uniform colored outline; fullDepthEvidence=${directional.json()}", false)
+                }
             }
         }
     }
