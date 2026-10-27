@@ -156,6 +156,167 @@ jobs:
                   row["errorType"] = type(error).__name__
               return row
 
+          ARCHIVE_KEYS = {"790BC7277767219C42C86F933B4FE6ACC0B21F32", "F6ECB3762474EDA9D21B7022871920D1991BC93C"}
+          PACKAGE_KEYS = ARCHIVE_KEYS | {"843938DF228D22F7B3742BC0D94AA3F0EFE21092"}
+          KEY_REFERENCES = ("https://wiki.ubuntu.com/Security/FAQ#GPG_Keys_used_by_Ubuntu",
+                            "https://documentation.ubuntu.com/security/software-integrity/image-verification/",
+                            "https://manpages.ubuntu.com/manpages/noble/man1/dpkg.1.html")
+
+          def key_fingerprints(listing, expected):
+              fingerprints, pending = [], False
+              for line in listing.decode("utf-8").splitlines():
+                  fields = line.split(":")
+                  if fields[0] == "pub":
+                      if pending or len(fields) < 12 or fields[2:4] != ["4096", "1"] or fields[1] in {"r", "e", "d", "i"}:
+                          raise ValueError("Unexpected Ubuntu public-key identity or status")
+                      pending = True
+                  elif fields[0] == "fpr":
+                      if not pending or len(fields) < 10 or not re.fullmatch(r"[0-9A-F]{40}", fields[9]):
+                          raise ValueError("Unexpected Ubuntu fingerprint record")
+                      fingerprints.append(fields[9]); pending = False
+                  elif fields[0] not in {"uid", "tru"}:
+                      raise ValueError("Subkeys, secret keys or unknown key records are not admitted")
+              if pending or len(fingerprints) != len(expected) or set(fingerprints) != expected:
+                  raise ValueError("Ubuntu key set differs from the officially pinned fingerprints")
+              return sorted(fingerprints)
+
+          def recover_archive_keyring(private, receipt, original):
+              import subprocess, time
+              result = dict(role="isolatedUbuntuKeyringRecovery", compiled=False, accepted=False, systemKeyringModified=False,
+                            status="CHECKING", original=dict(original), officialReferences=KEY_REFERENCES,
+                            pinnedArchiveFingerprints=sorted(ARCHIVE_KEYS), pinnedPackageFingerprints=sorted(PACKAGE_KEYS),
+                            metadata=[], pathChecks=[], commands=[], phase="installed-package-metadata", recoveryBudgetSeconds=15)
+              deadline = time.monotonic() + 15
+              try:
+                  if (original.get("path") != KEYRING or original.get("failedChecks") != ["group_or_other_writable"]
+                          or original.get("uid") != 0 or original.get("type") != "regular" or original.get("symlink")
+                          or original.get("mode") != "0o777"):
+                      raise ValueError("Recovery only admits the observed root regular 0777 keyring case")
+                  def trusted_blob(path, limit):
+                      path = Path(path)
+                      for parent in path.parents:
+                          result["checkingPath"] = str(parent)
+                          info = parent.lstat()
+                          result["pathChecks"].append(dict(path=str(parent), uid=info.st_uid, mode=oct(stat.S_IMODE(info.st_mode)), directory=True))
+                          if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                              raise ValueError("Installed-package metadata/tool directory is not trusted")
+                      result["checkingPath"] = str(path)
+                      before = path.lstat()
+                      result["pathChecks"].append(dict(path=str(path), uid=before.st_uid, mode=oct(stat.S_IMODE(before.st_mode)), directory=False))
+                      if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or before.st_mode & 0o022 or before.st_size > limit:
+                          raise ValueError("Installed-package metadata/tool is not root-owned non-writable regular data")
+                      data = path.read_bytes()
+                      after = path.lstat()
+                      if len(data) > limit or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_uid, before.st_mode) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_uid, after.st_mode):
+                          raise ValueError("Installed-package metadata/tool changed or exceeded its size bound")
+                      result["metadata"].append(dict(path=str(path), uid=before.st_uid, mode=oct(stat.S_IMODE(before.st_mode)),
+                          bytes=len(data), sha256=hashlib.sha256(data).hexdigest()))
+                      return data
+                  trusted_blob("/var/lib/dpkg/status", 32 * 1024 * 1024)
+                  package_list = trusted_blob("/var/lib/dpkg/info/ubuntu-keyring.list", 65536).decode("utf-8").splitlines()
+                  sums = trusted_blob("/var/lib/dpkg/info/ubuntu-keyring.md5sums", 65536).decode("ascii").splitlines()
+                  if package_list.count(KEYRING) != 1:
+                      raise ValueError("Installed ubuntu-keyring package does not uniquely list the original keyring")
+                  expected_md5 = [line.split()[0] for line in sums if len(line.split()) == 2 and line.split()[1] == KEYRING.lstrip("/")]
+                  if len(expected_md5) != 1 or not re.fullmatch(r"[0-9a-f]{32}", expected_md5[0]):
+                      raise ValueError("Installed ubuntu-keyring content checksum is missing or ambiguous")
+                  for tool in ("/usr/bin/dpkg-query", "/usr/bin/gpg", "/usr/bin/sudo", "/usr/bin/timeout", "/usr/bin/test"):
+                      trusted_blob(tool, 16 * 1024 * 1024)
+                      if not os.access(tool, os.X_OK):
+                          raise ValueError("Existing package/query tool is not executable")
+                  home = private / "keyring-home"; home.mkdir(mode=0o700)
+                  environment = dict(PATH="/usr/bin:/bin", HOME=str(home), GNUPGHOME=str(home), LC_ALL="C", LANG="C")
+                  def command(kind, arguments):
+                      remaining = deadline - time.monotonic()
+                      if remaining <= 0:
+                          raise ValueError("Keyring recovery exceeded its existing-step time allowance")
+                      row = dict(kind=kind, attempted=True)
+                      result["commands"].append(row)
+                      try:
+                          run = subprocess.run(arguments, stdin=subprocess.DEVNULL, capture_output=True, env=environment,
+                                               timeout=min(3, remaining), check=False)
+                      except Exception as error:
+                          row["errorType"] = type(error).__name__
+                          raise
+                      row.update(exitCode=run.returncode, stdoutBytes=len(run.stdout), stderrBytes=len(run.stderr))
+                      if run.returncode or len(run.stdout) > 131072 or len(run.stderr) > 16384:
+                          raise ValueError("Existing keyring recovery command failed or exceeded its output bound")
+                      return run.stdout
+                  identity = command("installed-package", ["/usr/bin/dpkg-query", "--admindir=/var/lib/dpkg", "-W",
+                      "-f=${Package}\t${Version}\t${Architecture}\t${Status}\n", "ubuntu-keyring"]).decode("ascii").strip().split("\t")
+                  if (len(identity) != 4 or identity[0] != "ubuntu-keyring" or identity[2:] != ["all", "install ok installed"]
+                          or not re.fullmatch(r"[0-9][0-9A-Za-z.+:~_-]*", identity[1])):
+                      raise ValueError("Installed ubuntu-keyring package identity is not admitted")
+                  result["installedPackage"] = dict(package=identity[0], version=identity[1], architecture=identity[2], status=identity[3])
+                  owner = command("package-file-owner", ["/usr/bin/dpkg-query", "--admindir=/var/lib/dpkg", "-S", KEYRING]).decode("ascii").strip()
+                  if owner != "ubuntu-keyring: " + KEYRING:
+                      raise ValueError("Original archive keyring has an unexpected installed-package owner")
+                  result["phase"] = "package-content-snapshot"
+                  fd = os.open(KEYRING, os.O_RDONLY | os.O_NOFOLLOW)
+                  try:
+                      before = os.fstat(fd)
+                      if not stat.S_ISREG(before.st_mode) or before.st_uid != 0 or stat.S_IMODE(before.st_mode) != 0o777:
+                          raise ValueError("Original writable keyring identity changed before snapshot")
+                      with os.fdopen(fd, "rb", closefd=False) as stream:
+                          data = stream.read(65537)
+                      after = os.fstat(fd)
+                      if (len(data) > 65536 or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_uid, before.st_mode) !=
+                              (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_uid, after.st_mode)):
+                          raise ValueError("Original keyring snapshot changed or exceeded its size bound")
+                  finally:
+                      os.close(fd)
+                  if hashlib.md5(data).hexdigest() != expected_md5[0]:
+                      raise ValueError("Original keyring bytes differ from trusted installed-package metadata")
+                  result["snapshot"] = dict(bytes=len(data), sha256=hashlib.sha256(data).hexdigest(), installedPackageMd5Matched=True,
+                                            md5IsNotSecurityProof=True)
+                  def readonly_copy(path, content):
+                      fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o444)
+                      try:
+                          with os.fdopen(fd, "wb", closefd=False) as stream:
+                              stream.write(content); stream.flush(); os.fsync(fd)
+                      finally:
+                          os.close(fd)
+                      info = path.lstat()
+                      traversal = [dict(path=str(parent), uid=parent.stat().st_uid,
+                          mode=oct(stat.S_IMODE(parent.stat().st_mode))) for parent in path.parents]
+                      result.setdefault("privateCopies", []).append(dict(path=str(path), uid=info.st_uid,
+                          mode=oct(stat.S_IMODE(info.st_mode)), bytes=info.st_size, parents=traversal))
+                      if (not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o444
+                              or info.st_uid != os.getuid() or path.read_bytes() != content
+                              or any(not stat.S_ISDIR(parent.stat().st_mode) or parent.stat().st_uid not in {0, os.getuid()}
+                                     or (parent.stat().st_mode & 0o022 and not (str(parent) == "/tmp" and parent.stat().st_uid == 0
+                                         and parent.stat().st_mode & stat.S_ISVTX))
+                                     or not parent.stat().st_mode & stat.S_IXOTH for parent in path.parents)):
+                          raise ValueError("Private keyring read-back or non-writable mode differs")
+                  snapshot = private / "original-keyring-snapshot.gpg"; readonly_copy(snapshot, data)
+                  common = ["/usr/bin/gpg", "--no-options", "--batch", "--no-tty", "--no-autostart", "--homedir", str(home),
+                            "--no-auto-key-retrieve", "--no-auto-check-trustdb"]
+                  def inspect(path, expected):
+                      return key_fingerprints(command("public-key-fingerprints", common + ["--with-colons", "--fingerprint", "--show-keys", str(path)]), expected)
+                  result["phase"] = "official-fingerprint-check"
+                  result["actualPackageFingerprints"] = inspect(snapshot, PACKAGE_KEYS)
+                  exported = command("export-pinned-archive-keys", common + ["--no-default-keyring", "--keyring", str(snapshot),
+                      "--export-options", "export-minimal", "--export", *sorted(ARCHIVE_KEYS)])
+                  if not exported or len(exported) > 65536:
+                      raise ValueError("Pinned archive key export is empty or oversized")
+                  result["phase"] = "private-archive-keyring"
+                  isolated = private / "verified-ubuntu-archive.gpg"; readonly_copy(isolated, exported)
+                  result["exportedArchiveFingerprints"] = inspect(isolated, ARCHIVE_KEYS)
+                  if deadline - time.monotonic() < 3:
+                      raise ValueError("Insufficient existing-step budget for the actual APT sandbox readback")
+                  command("apt-sandbox-readable", ["/usr/bin/sudo", "-n", "-u", "_apt", "--", "/usr/bin/timeout",
+                      "--signal=TERM", "--kill-after=1s", "1s", "/usr/bin/test", "-r", str(isolated)])
+                  result["aptSandbox"] = dict(user="_apt", readVerified=True)
+                  result.update(status="RECOVERED", phase="complete", privateKeyring=dict(path=str(isolated), uid=isolated.stat().st_uid, mode="0o444", bytes=len(exported),
+                      sha256=hashlib.sha256(exported).hexdigest()), sourcePermissionRiskPreserved=True)
+                  return str(isolated), exported
+              except Exception as error:
+                  result.update(status="FAILED", failure=dict(type=type(error).__name__,
+                      message=str(error) if isinstance(error, ValueError) else "Keyring evidence unavailable; recovery denied"))
+                  raise SystemExit("Writable Ubuntu keyring recovery failed; inspect keyring-recovery.json")
+              finally:
+                  (receipt / "keyring-recovery.json").write_text(json.dumps(result, indent=2) + "\n")
+
           private, receipt = map(Path, sys.argv[1:])
           paths = {value: describe_path(Path(value)) for value in ("/etc/apt/sources.list.d/ubuntu.sources", "/etc/apt/sources.list", KEYRING)}
           def require_path(path):
@@ -176,7 +337,11 @@ jobs:
           if paths[str(source)]["failedChecks"] == ["missing"]:
               source = Path("/etc/apt/sources.list")
           text = require_path(source).decode("utf-8")
-          keyring_data = require_path(Path(KEYRING))
+          effective_keyring = KEYRING
+          if paths[KEYRING]["failedChecks"] == ["group_or_other_writable"] and paths[KEYRING]["mode"] == "0o777":
+              effective_keyring, keyring_data = recover_archive_keyring(private, receipt, paths[KEYRING])
+          else:
+              keyring_data = require_path(Path(KEYRING))
           mirrors = []
           if MIRROR in text:
               for line in require_path(Path("/etc/apt/apt-mirrors.txt")).decode("utf-8").splitlines():
@@ -189,10 +354,12 @@ jobs:
               if not mirrors or len(mirrors) > 3 or len(mirrors) != len(set(mirrors)):
                   raise SystemExit("Invalid fixed runner mirror set")
           records = validate_sources(text, source.name == "sources.list", mirrors)
+          for record in records:
+              record["Signed-By"] = effective_keyring
           canonical = "\n\n".join("\n".join(key + ": " + record[key] for key in ("Types", "URIs", "Suites", "Components", "Signed-By", "Architectures")) for record in records) + "\n"
           (private / "ubuntu.sources").write_text(canonical)
           (receipt / "ubuntu-source.json").write_text(json.dumps(dict(path=str(source), sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
-              keyringSha256=hashlib.sha256(keyring_data).hexdigest(), records=records, existingMirrorUris=mirrors,
+              keyringSha256=hashlib.sha256(keyring_data).hexdigest(), originalKeyringPath=KEYRING, effectiveKeyringPath=effective_keyring, records=records, existingMirrorUris=mirrors,
               canonicalSourceSha256=hashlib.sha256(canonical.encode()).hexdigest()), indent=2) + "\n")
           PY
             cat > "$private/apt.conf" <<EOF
