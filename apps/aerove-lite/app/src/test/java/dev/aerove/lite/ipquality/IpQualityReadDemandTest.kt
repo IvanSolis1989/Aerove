@@ -1,6 +1,7 @@
 package dev.aerove.lite.ipquality
 
 import java.nio.file.Files
+import dev.aerove.lite.ui.ipQualityObservationForeground
 import kotlinx.coroutines.*
 import org.junit.Assert.*
 import org.junit.Test
@@ -59,4 +60,33 @@ class IpQualityReadDemandTest {
             until { calls == 2 && owner.state.value.quality != null }; assertEquals(2, calls)
         } finally { lease.close(); owner.close() }
     }
+    @Test fun cardToOwnDetailKeepsTheLookupUntilRootCoverAndResumesOnce() = runBlocking<Unit> {
+        var calls = 0; var cancellations = 0
+        val owner = IpQualityFeature(this, {
+            calls++
+            try { awaitCancellation() } finally { cancellations++ }
+        })
+        var card: java.io.Closeable? = null; var detail: java.io.Closeable? = null
+        try {
+            owner.bind("profile", true, "1.1.1.1"); owner.setForeground(true)
+            assertFalse(ipQualityObservationForeground(false, false, false)); yield(); assertEquals(0, calls)
+            card = owner.observe(); until { calls == 1 }
+            val owned = ipQualityObservationForeground(false, true, true)
+            if (!owned) { card?.close(); card = null }
+            detail = if (owned) owner.observe() else null
+            yield(); assertEquals(1, calls); assertEquals(0, cancellations)
+            assertFalse(ipQualityObservationForeground(false, false, true))
+            card?.close(); card = null; detail?.close(); detail = null
+            until { cancellations == 1 }; assertEquals(1, calls)
+            val uncovered = ipQualityObservationForeground(false, true, true)
+            card = if (uncovered) owner.observe() else null
+            detail = if (uncovered) owner.observe() else null
+            until { calls == 2 }; assertEquals(1, cancellations)
+            assertFalse(ipQualityObservationForeground(false, true, false))
+            assertTrue(ipQualityObservationForeground(true, true, false))
+            detail?.close(); detail = null; yield(); assertEquals(2, calls); assertEquals(1, cancellations)
+            assertFalse(ipQualityObservationForeground(false, null, true))
+        } finally { detail?.close(); card?.close(); owner.close() }
+    }
+
 }

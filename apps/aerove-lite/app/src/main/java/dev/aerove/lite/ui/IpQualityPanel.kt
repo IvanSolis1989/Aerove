@@ -13,6 +13,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,16 +40,22 @@ import dev.aerove.lite.ipquality.IpQualitySourceStatus
 import dev.aerove.lite.ipquality.IpQualityState
 import dev.aerove.lite.ipquality.IpType
 
+internal val LocalIpQualityRootForeground = staticCompositionLocalOf<Boolean?> { null }
+
+internal fun ipQualityObservationForeground(foreground: Boolean, rootForeground: Boolean?, owned: Boolean): Boolean =
+    if (owned) rootForeground ?: foreground else foreground
+
 @Composable
 internal fun IpQualityStatus(feature: IpQualityFeature, content: @Composable (IpQualityState, () -> Unit) -> Unit) {
     val state by feature.state.collectAsState()
     val overlay = LocalLiteOverlay.current
     val foreground = LocalDiagnosticsForeground.current
+    val rootForeground = LocalIpQualityRootForeground.current
     val view = LocalView.current
     var visible by remember { mutableStateOf(false) }
     var owned by remember { mutableStateOf<(@Composable () -> Unit)?>(null) }
     val detailOpen = owned != null && overlay.content === owned
-    val demand = foreground && (detailOpen || (visible && overlay.content == null))
+    val demand = ipQualityObservationForeground(foreground, rootForeground, detailOpen) && (detailOpen || (visible && overlay.content == null))
     DisposableEffect(feature, demand) {
         val lease = if (demand) feature.observe() else null
         onDispose { lease?.close() }
@@ -58,7 +66,13 @@ internal fun IpQualityStatus(feature: IpQualityFeature, content: @Composable (Ip
         visible = !bounds.isEmpty && bounds.overlaps(Rect(0f, 0f, view.rootView.width.toFloat(), view.rootView.height.toFloat()))
     }) {
         content(state) {
-            val sheet: @Composable () -> Unit = { IpQualityPanel(feature) { overlay.dismiss(); owned = null } }
+            val sheet: @Composable () -> Unit = {
+                val detailForeground = ipQualityObservationForeground(LocalDiagnosticsForeground.current,
+                    LocalIpQualityRootForeground.current, owned != null && overlay.content === owned)
+                CompositionLocalProvider(LocalDiagnosticsForeground provides detailForeground) {
+                    IpQualityPanel(feature) { overlay.dismiss(); owned = null }
+                }
+            }
             owned = sheet
             overlay.content = sheet
         }

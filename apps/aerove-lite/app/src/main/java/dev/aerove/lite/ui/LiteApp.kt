@@ -165,7 +165,8 @@ fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.int
         var deleting by remember { mutableStateOf<ProfileSummary?>(null) }
         val appearanceOverlay = remember { LiteOverlayState() }
         val requiresConsent = state.initialized && state.settings.acceptedDisclaimerVersion < dev.aerove.lite.maintenance.CURRENT_DISCLAIMER_VERSION
-        val otherCovered = requiresConsent || subscriptionEditor || state.profileImportVisible || state.profileImportKeyPrompt || deleting != null || state.message != null || appearanceOverlay.content != null || state.updatePromptVisible || state.externalProfile != null
+        val rootCovered = requiresConsent || subscriptionEditor || state.profileImportVisible || state.profileImportKeyPrompt || deleting != null || state.message != null || state.updatePromptVisible || state.externalProfile != null
+        val otherCovered = rootCovered || appearanceOverlay.content != null
         val covered = profileDetailOpen || otherCovered
         val modal = covered || scanMounted || editorProfile != null || dashboardEditing || builderProfile != null || scriptEditing != null
         val overrideWorkspace = if (detail in setOf(DetailPage.Extend, DetailPage.Scripts, DetailPage.GlobalRules) || scriptEditing != null) features().overrides else null
@@ -276,7 +277,9 @@ fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.int
                         }, openRequests = { detail = DetailPage.Requests }, openDns = { detail = DetailPage.DnsQueries })
                 }
                 CompositionLocalProvider(LocalDiagnosticsForeground provides
-                    (resumed && windowFocused && !covered && !scanMounted && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing)) {
+                    (resumed && windowFocused && !covered && !scanMounted && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing),
+                    LocalIpQualityRootForeground provides (resumed && windowFocused && !profileDetailOpen && !rootCovered && !scanMounted &&
+                        editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing)) {
                 val navigationVisible = detail == null && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing
                 val floating = state.settings.floatingNavigationBar
                 val navigationEnabled = navigationVisible && resumed && !modal
