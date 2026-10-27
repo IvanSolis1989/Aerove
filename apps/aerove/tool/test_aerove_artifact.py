@@ -853,6 +853,7 @@ class OriginalApkReceiptTest(unittest.TestCase):
         self.assertEqual(before, {path: path.read_bytes() for path in before})
 
     def test_acceptance_rejects_wrong_signer_actual_package_and_original_source(self):
+        valid_badging = self.badging
         for value in ('Signer #1 certificate SHA-256 digest: ' + 'a' * 64 + '\n',
                       self.certs + self.certs):
             self.certs = value
@@ -862,9 +863,14 @@ class OriginalApkReceiptTest(unittest.TestCase):
         self.badging = self.badging.replace('com.follow.clash.dev', 'dev.aerove.lite')
         with self.assertRaises(self.module.ArtifactError):
             self.receipt()
+        self.badging = valid_badging
+        before = {path.name: path.read_bytes() for path in self.fixture.dist.iterdir()}
         self.fixture.info['source'] = 'f' * 40
-        self.fixture.save_info()
-        with self.assertRaisesRegex(self.module.ArtifactError, 'BUILD_INFO'):
+        (self.fixture.dist / 'BUILD_INFO.json').write_text(json.dumps(self.fixture.info), encoding='utf-8')
+        changed = {path.name for path in self.fixture.dist.iterdir() if path.read_bytes() != before[path.name]}
+        self.assertEqual(changed, {'BUILD_INFO.json'})
+        with self.assertRaisesRegex(self.module.ArtifactError,
+                                    r'^Original Std55 payload bytes/hash mismatch: BUILD_INFO\.json$'):
             self.receipt()
 
     def test_any_original_payload_byte_change_is_rejected_before_acceptance(self):
