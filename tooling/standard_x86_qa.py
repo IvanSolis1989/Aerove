@@ -1423,6 +1423,7 @@ import gdb, os, json, time, hashlib, select, stat
 config = json.loads(CONFIG_JSON)
 last_signal = None
 captured = 0
+failure_context = {}
 def marker(kind, **values):
     print('AEROVE_HOST_OBSERVER ' + json.dumps(dict(kind=kind, **values)), flush=True)
 def stopped(event):
@@ -1458,7 +1459,13 @@ try:
     if permission != b'GO\n' or time.monotonic() > config['startupDeadline']:
         raise RuntimeError('Startup was not admitted before its deadline or stdin EOF')
     marker('admitted')
-    if target_identity() != config['target']:
+    actual_target = target_identity()
+    if actual_target != config['target']:
+        failure_context = dict(phase='before-attach',
+            expected={key: (config['target'][key][:4096] if key == 'executable' else config['target'][key])
+                      for key in ('pid', 'parent', 'startTicks', 'executable')},
+            actual={key: (actual_target[key][:4096] if key == 'executable' else actual_target[key])
+                    for key in ('pid', 'parent', 'startTicks', 'executable')})
         raise RuntimeError('Owned target identity changed before attach')
     gdb.execute('attach %d' % config['target']['pid'], to_string=True)
     attached = True
@@ -1508,7 +1515,7 @@ except BaseException as error:
     if isinstance(error, KeyboardInterrupt) and os.path.exists(config['stop']):
         marker('stop-interrupt')
     else:
-        marker('error', errorType=type(error).__name__, error=str(error))
+        marker('error', errorType=type(error).__name__, error=str(error), **failure_context)
 finally:
     if attached and gdb.selected_inferior().pid:
         try:
