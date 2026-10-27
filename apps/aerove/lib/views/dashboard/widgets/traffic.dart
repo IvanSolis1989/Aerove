@@ -731,16 +731,26 @@ class RenderTrafficReadings extends RenderBox
   double _gap = 0;
   double get firstRowHeight => _firstHeight;
   double _firstHeight = 0;
-  List<Rect> get inkBounds {
+  List<Rect> get inkBounds => _inkBounds();
+
+  List<Rect> inkBoundsWith(TextPainter Function(RenderParagraph) textLayout) =>
+      _inkBounds(textLayout);
+
+  List<Rect> _inkBounds([TextPainter Function(RenderParagraph)? textLayout]) {
     final bounds = <Rect>[];
     void visit(RenderObject node) {
       if (node is RenderParagraph) {
         for (final word in RegExp(
           r'\S+',
         ).allMatches(node.text.toPlainText(includeSemanticsLabels: false))) {
-          for (final box in node.getBoxesForSelection(
-            TextSelection(baseOffset: word.start, extentOffset: word.end),
-          )) {
+          final selection = TextSelection(
+            baseOffset: word.start,
+            extentOffset: word.end,
+          );
+          final boxes = textLayout == null
+              ? node.getBoxesForSelection(selection)
+              : textLayout(node).getBoxesForSelection(selection);
+          for (final box in boxes) {
             bounds.add(
               MatrixUtils.transformRect(
                 node.getTransformTo(this),
@@ -765,6 +775,72 @@ class RenderTrafficReadings extends RenderBox
 
     visit(this);
     return bounds;
+  }
+
+  ({Size size, List<Rect> ink})? projectedGeometry(
+    double maxWidth,
+    TextPainter Function(RenderParagraph) textLayout,
+  ) {
+    final rows = <({double width, double height, List<Rect> ink})>[];
+    var width = 0.0;
+    var height = 0.0;
+    for (var child = firstChild; child != null; child = childAfter(child)) {
+      RenderParagraph? paragraph;
+      RenderCustomPaint? glyph;
+      RenderFlex? row;
+      void visit(RenderObject node) {
+        if (node is RenderParagraph) paragraph ??= node;
+        if (node is RenderFlex) row ??= node;
+        if (node is RenderCustomPaint && node.painter is GlyphPainter) {
+          glyph ??= node;
+        }
+        node.visitChildren(visit);
+      }
+
+      visit(child);
+      if (paragraph == null || glyph == null || row == null || !child.hasSize) {
+        return null;
+      }
+      final painter = textLayout(paragraph!);
+      final arrowSize = glyph!.size;
+      final naturalWidth = arrowSize.width + row!.spacing + painter.width;
+      final rowWidth = math.min(maxWidth, naturalWidth);
+      final rowHeight = child.size.height;
+      final rtl = row!.textDirection == TextDirection.rtl;
+      final textOrigin = Offset(
+        rtl ? 0 : arrowSize.width + row!.spacing,
+        (rowHeight - painter.height) / 2,
+      );
+      final arrowOrigin = Offset(
+        rtl ? painter.width + row!.spacing : 0,
+        (rowHeight - arrowSize.height) / 2,
+      );
+      final ink = <Rect>[
+        (glyph!.painter! as GlyphPainter)
+            .paintedBounds(arrowSize, pixelRatio: _pixelRatio)
+            .shift(arrowOrigin),
+        for (final word in RegExp(r'\S+').allMatches(
+          paragraph!.text.toPlainText(includeSemanticsLabels: false),
+        ))
+          for (final box in painter.getBoxesForSelection(
+            TextSelection(baseOffset: word.start, extentOffset: word.end),
+          ))
+            box.toRect().shift(textOrigin),
+      ];
+      rows.add((width: rowWidth, height: rowHeight, ink: ink));
+      width = math.max(width, rowWidth);
+      if (child != firstChild) height += _gap;
+      height += rowHeight;
+    }
+    var top = 0.0;
+    final ink = <Rect>[];
+    for (final row in rows) {
+      ink.addAll(
+        row.ink.map((bound) => bound.shift(Offset(width - row.width, top))),
+      );
+      top += row.height + _gap;
+    }
+    return (size: Size(width, height), ink: ink);
   }
 
   void alignLineCenters(double distance) {

@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'outbound_motion.dart';
@@ -23,7 +25,7 @@ class StatusCardLayout extends MultiChildRenderObjectWidget {
     this.allowAppend = false,
   }) : super(
          children: [
-           RepaintBoundary(child: backdrop),
+           _StatusLocal(child: RepaintBoundary(child: backdrop)),
            RepaintBoundary(child: body),
            _TrafficStop(child: RepaintBoundary(child: figures)),
          ],
@@ -226,113 +228,111 @@ class RenderStatusCardLayout extends RenderBox
   }
 
   @override
-  void performLayout() {
-    final textLayout = _StatusTextLayout();
-    try {
-      _layoutCard(textLayout);
-    } finally {
-      textLayout.dispose();
-    }
-  }
+  void performLayout() => _layoutCard();
 
-  void _layoutCard(_StatusTextLayout textLayout) {
+  Size _bodySize = Size.zero;
+  Size _laidOutSize = Size.zero;
+  bool _layingOut = false;
+
+  double get _innerWidth => constraints.deflate(_padding).maxWidth;
+
+  void _layoutCard() {
     final backdrop = _backdrop;
     final body = _body;
     final figures = _figures;
-    if (backdrop == null || body == null || figures == null) {
+    if (backdrop == null || body == null || figures is! _RenderTrafficStop) {
       size = constraints.smallest;
       return;
     }
-    final inner = constraints.deflate(_padding);
-    final loose = inner.loosen();
-    body.layout(loose, parentUsesSize: true);
-    figures.layout(
-      BoxConstraints(maxWidth: inner.maxWidth),
-      parentUsesSize: true,
-    );
-    final bleed = math.min(_bleed, _padding.right);
-    final provisional = constraints.constrain(_padding.inflateSize(body.size));
+    _layingOut = true;
+    try {
+      invokeLayoutCallback<BoxConstraints>((_) {
+        for (final local in [backdrop, figures]) {
+          if (local is _StatusLocalBuild) local.flushBuild?.call();
+        }
+      });
+      body.layout(constraints.deflate(_padding).loosen(), parentUsesSize: true);
+      _bodySize = body.size;
+      final provisional = constraints.constrain(
+        _padding.inflateSize(_bodySize),
+      );
+      figures.layout(BoxConstraints.tight(_padding.deflateSize(provisional)));
+      size = figures._plan!.cardSize;
+      _laidOutSize = size;
+      figures.layout(BoxConstraints.tight(_padding.deflateSize(size)));
+      _parentDataOf(body).offset = _padding.topLeft;
+      _parentDataOf(figures).offset = _padding.topLeft;
+      final baseline = math.max(0.0, size.height - 1);
+      _baseline = baseline;
+      const bandTop = 0.0;
+      _bandTop = bandTop;
+      backdrop.layout(
+        BoxConstraints.tightFor(
+          width: size.width,
+          height: (baseline - bandTop) / _baselineRatio,
+        ),
+      );
+      _parentDataOf(backdrop).offset = const Offset(0, bandTop);
+    } finally {
+      _layingOut = false;
+    }
+  }
+
+  _StatusFiguresPlan _planFigures(
+    Size figures,
+    List<Rect> rows,
+    double? firstHeight,
+    _StatusTextLayout textLayout,
+  ) {
+    final body = _body!;
+    final provisional = constraints.constrain(_padding.inflateSize(_bodySize));
     final anchor = _cornerCenter(provisional);
     final centers = _footerCenters(body, textLayout);
-    RenderTrafficReadings? readings;
-    void findReadings(RenderObject node) {
-      if (node is RenderTrafficReadings) readings ??= node;
-      node.visitChildren(findReadings);
-    }
-
-    findReadings(figures);
-    if (centers != null && readings != null) {
-      invokeLayoutCallback<BoxConstraints>((_) {
-        readings!.alignLineCenters(centers.$2 - centers.$1);
-      });
-      figures.layout(
-        BoxConstraints(maxWidth: inner.maxWidth),
-        parentUsesSize: true,
-      );
-    }
-    final top = centers == null || readings == null
+    final top = centers == null || firstHeight == null
         ? anchor.dy - _padding.top
-        : centers.$1 - readings!.firstRowHeight / 2;
-    Rect? corner;
-    invokeLayoutCallback<BoxConstraints>((_) {
-      final rows = [
-        for (final row in readings?.inkBounds ?? const <Rect>[])
-          MatrixUtils.transformRect(readings!.getTransformTo(figures), row),
-      ];
-      corner = _cornerFor(
-        figures.size,
-        body,
-        textLayout,
-        bleed,
-        top,
-        rows: rows,
-        right: anchor.dx - _padding.left,
-      );
-    });
-    _footerSlotAvailable = corner != null;
+        : centers.$1 - firstHeight / 2;
+    var corner = _cornerFor(
+      figures,
+      body,
+      textLayout,
+      math.min(_bleed, _padding.right),
+      top,
+      rows: rows,
+      right: anchor.dx - _padding.left,
+    );
+    final available = corner != null;
     if (corner == null && !_allowAppend) {
       corner =
-          Offset(
-            math.max(0, anchor.dx - _padding.left - figures.size.width),
-            top,
-          ) &
-          figures.size;
+          Offset(math.max(0, anchor.dx - _padding.left - figures.width), top) &
+          figures;
     }
     final overlaid = corner != null;
-    final origin = _padding.topLeft;
-    _parentDataOf(body).offset = origin;
-    _parentDataOf(figures).offset =
-        origin +
-        (corner?.topLeft ??
-            Offset(
-              math.max(0, anchor.dx - _padding.left - figures.size.width),
-              body.size.height + _gap,
-            ));
-    size = constraints.constrain(
-      _padding.inflateSize(
-        overlaid
-            ? body.size
-            : Size(
-                math.max(body.size.width, figures.size.width),
-                body.size.height + _gap + figures.size.height,
-              ),
+    return _StatusFiguresPlan(
+      available: available,
+      overlaid: overlaid,
+      origin:
+          corner?.topLeft ??
+          Offset(
+            math.max(0, anchor.dx - _padding.left - figures.width),
+            _bodySize.height + _gap,
+          ),
+      cardSize: constraints.constrain(
+        _padding.inflateSize(
+          overlaid
+              ? _bodySize
+              : Size(
+                  math.max(_bodySize.width, figures.width),
+                  _bodySize.height + _gap + figures.height,
+                ),
+        ),
       ),
     );
-    _overlaid = overlaid;
-    if (figures is _RenderTrafficStop) {
-      figures.order = overlaid ? _overlaidOrder : _appendedOrder;
-    }
-    final baseline = math.max(0.0, size.height - 1);
-    _baseline = baseline;
-    const bandTop = 0.0;
-    _bandTop = bandTop;
-    backdrop.layout(
-      BoxConstraints.tightFor(
-        width: size.width,
-        height: (baseline - bandTop) / _baselineRatio,
-      ),
-    );
-    _parentDataOf(backdrop).offset = const Offset(0, bandTop);
+  }
+
+  void _commitFigures(_StatusFiguresPlan plan, _RenderTrafficStop stop) {
+    _footerSlotAvailable = plan.available;
+    _overlaid = plan.overlaid;
+    stop.order = plan.overlaid ? _overlaidOrder : _appendedOrder;
   }
 
   Offset _cornerCenter(Size size) {
@@ -363,12 +363,12 @@ class RenderStatusCardLayout extends RenderBox
     required List<Rect> rows,
     double? right,
   }) {
-    if (figures.width > body.size.width + bleed ||
-        figures.height > body.size.height) {
+    if (figures.width > _bodySize.width + bleed ||
+        figures.height > _bodySize.height) {
       return null;
     }
-    var left = (right ?? body.size.width + bleed) - figures.width;
-    while (left >= 0 && left + figures.width <= body.size.width + bleed) {
+    var left = (right ?? _bodySize.width + bleed) - figures.width;
+    while (left >= 0 && left + figures.width <= _bodySize.width + bleed) {
       final corner = Offset(left, top) & figures;
       final stops = [
         for (final mark in _foreground)
@@ -382,7 +382,7 @@ class RenderStatusCardLayout extends RenderBox
       ];
       if (stops.isEmpty) return corner;
       left = stops.reduce(math.min);
-      if (left < 0 || left + figures.width > body.size.width + bleed) {
+      if (left < 0 || left + figures.width > _bodySize.width + bleed) {
         return null;
       }
     }
@@ -708,7 +708,91 @@ class _RenderStatusCurveEdge extends RenderProxyBox with _StatusMark {
   void _leave(RenderStatusCardLayout owner) => owner._edges.remove(this);
 }
 
-class _TrafficStop extends SingleChildRenderObjectWidget {
+class _StatusFiguresPlan {
+  const _StatusFiguresPlan({
+    required this.available,
+    required this.overlaid,
+    required this.origin,
+    required this.cardSize,
+  });
+
+  final bool available;
+  final bool overlaid;
+  final Offset origin;
+  final Size cardSize;
+}
+
+class _StatusLocal extends SingleChildRenderObjectWidget {
+  const _StatusLocal({required super.child});
+
+  @override
+  SingleChildRenderObjectElement createElement() => _StatusLocalElement(this);
+
+  @override
+  RenderBox createRenderObject(BuildContext context) => _RenderStatusBackdrop();
+}
+
+mixin _StatusLocalBuild on RenderBox {
+  VoidCallback? flushBuild;
+}
+
+class _RenderStatusBackdrop extends RenderProxyBox with _StatusLocalBuild {}
+
+/// These children need no new constraints to rebuild. Flush their build scope
+/// before layout instead of asking the enclosing SliverLayoutBuilder to run.
+class _StatusLocalElement extends SingleChildRenderObjectElement {
+  _StatusLocalElement(_StatusLocal super.widget);
+
+  @override
+  BuildScope get buildScope => _scope;
+  late final _scope = BuildScope(scheduleRebuild: _schedule);
+  bool _scheduled = false;
+
+  @override
+  void mount(Element? parent, Object? newSlot) {
+    super.mount(parent, newSlot);
+    (renderObject as _StatusLocalBuild).flushBuild = _flush;
+  }
+
+  @override
+  void unmount() {
+    (renderObject as _StatusLocalBuild).flushBuild = null;
+    super.unmount();
+  }
+
+  @override
+  void update(_StatusLocal newWidget) {
+    super.update(newWidget);
+    if (renderObject case final _RenderTrafficStop figures) {
+      figures._card.markNeedsLayout();
+    }
+  }
+
+  void _schedule() {
+    if (SchedulerBinding.instance.schedulerPhase ==
+        SchedulerPhase.persistentCallbacks) {
+      if (renderObject.parent case final RenderStatusCardLayout card) {
+        card.markNeedsLayout();
+      }
+      return;
+    }
+    if (_scheduled) return;
+    _scheduled = true;
+    scheduleMicrotask(() {
+      if (_scheduled && mounted) _flush();
+    });
+  }
+
+  void _flush() {
+    _scheduled = false;
+    owner!.buildScope(this);
+    if (renderObject case final _RenderTrafficStop figures) {
+      figures.prepareFigures();
+    }
+  }
+}
+
+class _TrafficStop extends _StatusLocal {
   const _TrafficStop({required super.child});
 
   @override
@@ -716,7 +800,93 @@ class _TrafficStop extends SingleChildRenderObjectWidget {
       _RenderTrafficStop();
 }
 
-class _RenderTrafficStop extends RenderProxyBox {
+class _RenderTrafficStop extends RenderShiftedBox with _StatusLocalBuild {
+  _RenderTrafficStop() : super(null);
+  _StatusFiguresPlan? _plan;
+  RenderStatusCardLayout get _card => parent! as RenderStatusCardLayout;
+
+  RenderTrafficReadings? get _readings {
+    RenderTrafficReadings? readings;
+    void visit(RenderObject node) {
+      if (node is RenderTrafficReadings) readings ??= node;
+      node.visitChildren(visit);
+    }
+
+    child?.visitChildren(visit);
+    if (child is RenderTrafficReadings) return child as RenderTrafficReadings;
+    return readings;
+  }
+
+  void prepareFigures() {
+    final card = _card;
+    if (!card.hasSize || card._layingOut) return;
+    final readings = _readings;
+    if (readings == null) {
+      card.markNeedsLayout();
+      return;
+    }
+    final textLayout = _StatusTextLayout();
+    try {
+      final projection = readings.projectedGeometry(
+        card._innerWidth,
+        textLayout.of,
+      );
+      if (projection == null) {
+        card.markNeedsLayout();
+        return;
+      }
+      final plan = card._planFigures(
+        projection.size,
+        projection.ink,
+        readings.firstRowHeight,
+        textLayout,
+      );
+      if (plan.cardSize != card._laidOutSize) card.markNeedsLayout();
+    } finally {
+      textLayout.dispose();
+    }
+  }
+
+  @override
+  void performLayout() {
+    size = constraints.biggest;
+    final card = _card;
+    final child = this.child;
+    if (child == null) return;
+    final childConstraints = BoxConstraints(maxWidth: card._innerWidth);
+    child.layout(childConstraints, parentUsesSize: true);
+    final textLayout = _StatusTextLayout();
+    try {
+      final readings = _readings;
+      final centers = card._footerCenters(card._body!, textLayout);
+      if (centers != null && readings != null) {
+        invokeLayoutCallback<BoxConstraints>((_) {
+          readings.alignLineCenters(centers.$2 - centers.$1);
+        });
+        child.layout(childConstraints, parentUsesSize: true);
+      }
+      late _StatusFiguresPlan plan;
+      invokeLayoutCallback<BoxConstraints>((_) {
+        final rows = [
+          for (final row
+              in readings?.inkBoundsWith(textLayout.of) ?? const <Rect>[])
+            MatrixUtils.transformRect(readings!.getTransformTo(child), row),
+        ];
+        plan = _plan = card._planFigures(
+          child.size,
+          rows,
+          readings?.firstRowHeight,
+          textLayout,
+        );
+      });
+      assert(card._layingOut || plan.cardSize == card._laidOutSize);
+      (child.parentData! as BoxParentData).offset = plan.origin;
+      card._commitFigures(plan, this);
+    } finally {
+      textLayout.dispose();
+    }
+  }
+
   int _order = 0;
   set order(int value) {
     if (value == _order) return;
