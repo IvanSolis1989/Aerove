@@ -475,7 +475,7 @@ class DashboardFitText extends StatelessWidget {
           text.replaceAllMapped(RegExp('[.:]'), (match) => '${match[0]}\u200B'),
           semanticsLabel: text,
           inkRole: GlassInkRole.body,
-          style: style.copyWith(fontSize: size * floor),
+          style: style.withFontSize(size * floor),
         );
       },
     );
