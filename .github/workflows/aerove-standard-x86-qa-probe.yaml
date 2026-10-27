@@ -65,66 +65,135 @@ jobs:
           export PATH=/usr/bin:/bin
           receipt="$RUNNER_TEMP/standard-x86-qa-render/environment/gdb"
           mkdir -p "$receipt"
-          trap 'rc=$?; printf "role=diagnosticToolPreparation\ncompiled=false\nemulatorStarted=false\naccepted=false\nexitCode=%s\n" "$rc" > "$receipt/STATUS.txt"' EXIT
+          reused_installed=false
+          apt_executed=false
+          last_completed=workspace-initialized
+          trap 'rc=$?; printf "reusedInstalledGdb=%s\naptExecuted=%s\nlastCompletedStage=%s\n" "$reused_installed" "$apt_executed" "$last_completed" > "$receipt/mode.txt"; printf "role=diagnosticToolPreparation\ncompiled=false\nemulatorStarted=false\naccepted=false\nexitCode=%s\n" "$rc" > "$receipt/STATUS.txt"' EXIT
           printf 'controller=%s\nimage=%s\n' "$GITHUB_SHA" "${ImageVersion:-unknown}" > "$receipt/controller.txt"
           private=$(mktemp -d "$RUNNER_TEMP/gdb-apt.XXXXXX")
           [[ "$private" =~ ^/[A-Za-z0-9_./-]+$ ]] || exit 2
           chmod 755 "$private"
           mkdir -p "$private/home" "$private/lists/partial" "$private/archives/partial"
           if [[ -x /usr/bin/gdb ]]; then
-            printf 'reusedInstalledGdb=true\naptExecuted=false\n' > "$receipt/mode.txt"
+            reused_installed=true
           else
-            printf 'reusedInstalledGdb=false\naptExecuted=true\n' > "$receipt/mode.txt"
             /usr/bin/python3 - "$private" "$receipt" <<'PY'
-          import hashlib, json, os, re, sys
+          import hashlib, json, os, re, stat, sys
           from pathlib import Path
           from urllib.parse import urlsplit
 
-          def validate_sources(text):
-              records = []
-              for block in re.split(r"\n\s*\n", text.strip()):
-                  fields = {}
-                  for line in block.splitlines():
-                      if not line.strip() or line.lstrip().startswith("#"):
+          KEYRING = "/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+          MIRROR = "mirror+file:/etc/apt/apt-mirrors.txt"
+
+          def official_uri(value):
+              uri = urlsplit(value)
+              if (uri.scheme not in {"http", "https"} or uri.hostname not in {"archive.ubuntu.com", "azure.archive.ubuntu.com", "security.ubuntu.com"}
+                      or uri.port is not None or uri.username or uri.password or uri.query or uri.fragment or uri.path.rstrip("/") != "/ubuntu"):
+                  raise ValueError("Ubuntu source URI is outside the existing official archive scope")
+              return value
+
+          def validate_sources(text, classic=False, mirrors=()):
+              if classic:
+                  combined = {}
+                  for line in text.splitlines():
+                      line = re.sub(r"\s+#.*$", "", line).strip()
+                      if not line or line.startswith("#"):
                           continue
-                      key, sep, value = line.partition(":")
-                      if not sep or key in fields or key not in {"Types", "URIs", "Suites", "Components", "Signed-By", "Architectures"}:
-                          raise ValueError("Unsupported Ubuntu source record")
-                      fields[key] = value.strip()
-                  if not fields:
-                      continue
-                  if (fields.get("Types") != "deb" or fields.get("Signed-By") != "/usr/share/keyrings/ubuntu-archive-keyring.gpg"
+                      match = re.fullmatch(r"deb\s+(?:\[([^]]+)\]\s+)?(\S+)\s+(\S+)\s+(.+)", line)
+                      if not match:
+                          raise ValueError("Unsupported classic Ubuntu source record")
+                      options = (match[1] or "").split()
+                      if len(options) != len(set(options)) or any(option not in {"arch=amd64", "signed-by=" + KEYRING} for option in options):
+                          raise ValueError("Unsupported classic Ubuntu source option")
+                      record = combined.setdefault((match[2], match[3]), dict(Types="deb", URIs=match[2], Suites=match[3], Components="", **{"Signed-By": KEYRING}))
+                      record["Components"] = " ".join(dict.fromkeys((record["Components"] + " " + match[4]).split()))
+                  records = list(combined.values())
+              else:
+                  records = []
+                  for block in re.split(r"\n\s*\n", text.strip()):
+                      fields = {}
+                      for line in block.splitlines():
+                          if not line.strip() or line.lstrip().startswith("#"):
+                              continue
+                          key, sep, value = line.partition(":")
+                          if not sep or key in fields or key not in {"Types", "URIs", "Suites", "Components", "Signed-By", "Architectures"}:
+                              raise ValueError("Unsupported Ubuntu source record")
+                          fields[key] = value.strip()
+                      if fields:
+                          records.append(fields)
+              if not records or len(records) > 4:
+                  raise ValueError("Missing or oversized Ubuntu source set")
+              for fields in records:
+                  if (fields.get("Types") != "deb" or fields.get("Signed-By") != KEYRING
                           or not fields.get("Suites", "").split() or not set(fields["Suites"].split()) <= {"noble", "noble-updates", "noble-security", "noble-backports"}
                           or "main" not in fields.get("Components", "").split()
                           or not set(fields["Components"].split()) <= {"main", "universe", "restricted", "multiverse"}
                           or fields.get("Architectures", "amd64") != "amd64" or not fields.get("URIs", "").split()):
                       raise ValueError("Unexpected Ubuntu suite, signature or architecture")
+                  values = []
                   for value in fields["URIs"].split():
-                      uri = urlsplit(value)
-                      if (uri.scheme not in {"http", "https"} or uri.hostname not in {"archive.ubuntu.com", "azure.archive.ubuntu.com", "security.ubuntu.com"}
-                              or uri.port is not None or uri.username or uri.password or uri.query or uri.fragment or uri.path.rstrip("/") != "/ubuntu"):
-                          raise ValueError("Ubuntu source URI is outside the existing official archive scope")
-                  records.append(fields)
-              if not records or len(records) > 4:
-                  raise ValueError("Missing or oversized Ubuntu source set")
+                      if value == MIRROR:
+                          if not mirrors:
+                              raise ValueError("Known runner mirror file is unavailable")
+                          value = mirrors[0]
+                      values.append(official_uri(value))
+                  fields["URIs"] = " ".join(values)
+                  fields["Architectures"] = "amd64"
               return records
 
+          def describe_path(path):
+              row = dict(path=str(path), present=False, exists=False, type="missing", uid=None, mode=None, failedChecks=[])
+              try:
+                  link = path.lstat()
+                  row.update(present=True, lstatUid=link.st_uid, lstatMode=oct(stat.S_IMODE(link.st_mode)),
+                             type="symlink" if stat.S_ISLNK(link.st_mode) else "other")
+                  value = path.stat()
+                  row.update(exists=True, type="regular" if stat.S_ISREG(value.st_mode) else "other", uid=value.st_uid,
+                             mode=oct(stat.S_IMODE(value.st_mode)), symlink=path.is_symlink())
+                  row["failedChecks"] = (["not_regular"] if not stat.S_ISREG(value.st_mode) else []) + (["uid_not_root"] if value.st_uid != 0 else []) + (["group_or_other_writable"] if value.st_mode & 0o022 else [])
+              except OSError as error:
+                  row["failedChecks"] = ["missing" if isinstance(error, FileNotFoundError) and not row["present"] else "stat_error"]
+                  row["errorType"] = type(error).__name__
+              return row
+
           private, receipt = map(Path, sys.argv[1:])
+          paths = {value: describe_path(Path(value)) for value in ("/etc/apt/sources.list.d/ubuntu.sources", "/etc/apt/sources.list", KEYRING)}
+          def require_path(path):
+              paths[str(path)] = describe_path(path)
+              (receipt / "source-paths.json").write_text(json.dumps(paths, indent=2) + "\n")
+              if paths[str(path)]["failedChecks"]:
+                  raise SystemExit("Ubuntu source/keyring trust failure; inspect source-paths.json failedChecks")
+              data = path.read_bytes()
+              if len(data) > 65536:
+                  raise SystemExit("Ubuntu source/keyring size limit")
+              return data
+
+          (receipt / "source-paths.json").write_text(json.dumps(paths, indent=2) + "\n")
           release = dict(line.split("=", 1) for line in Path("/etc/os-release").read_text().splitlines() if "=" in line)
           if release.get("ID", "").strip('"') != "ubuntu" or release.get("VERSION_CODENAME", "").strip('"') != "noble":
               raise SystemExit("Only the declared Ubuntu24.04 runner is supported")
           source = Path("/etc/apt/sources.list.d/ubuntu.sources")
-          keyring = Path("/usr/share/keyrings/ubuntu-archive-keyring.gpg")
-          for path in (source, keyring):
-              if not path.is_file() or path.stat().st_uid != 0 or path.stat().st_mode & 0o022:
-                  raise SystemExit("Ubuntu source/keyring must be existing root-owned non-writable files")
-          text = source.read_text()
-          if len(text.encode()) > 65536:
-              raise SystemExit("Ubuntu source size limit")
-          records = validate_sources(text)
-          (private / "ubuntu.sources").write_text(text)
+          if paths[str(source)]["failedChecks"] == ["missing"]:
+              source = Path("/etc/apt/sources.list")
+          text = require_path(source).decode("utf-8")
+          keyring_data = require_path(Path(KEYRING))
+          mirrors = []
+          if MIRROR in text:
+              for line in require_path(Path("/etc/apt/apt-mirrors.txt")).decode("utf-8").splitlines():
+                  fields = line.split()
+                  if not fields or fields[0].startswith("#"):
+                      continue
+                  if len(fields) > 2 or (len(fields) == 2 and not re.fullmatch(r"priority:[1-3]", fields[1])):
+                      raise SystemExit("Unsupported fixed runner mirror record")
+                  mirrors.append(official_uri(fields[0]))
+              if not mirrors or len(mirrors) > 3 or len(mirrors) != len(set(mirrors)):
+                  raise SystemExit("Invalid fixed runner mirror set")
+          records = validate_sources(text, source.name == "sources.list", mirrors)
+          canonical = "\n\n".join("\n".join(key + ": " + record[key] for key in ("Types", "URIs", "Suites", "Components", "Signed-By", "Architectures")) for record in records) + "\n"
+          (private / "ubuntu.sources").write_text(canonical)
           (receipt / "ubuntu-source.json").write_text(json.dumps(dict(path=str(source), sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
-              keyringSha256=hashlib.sha256(keyring.read_bytes()).hexdigest(), records=records), indent=2) + "\n")
+              keyringSha256=hashlib.sha256(keyring_data).hexdigest(), records=records, existingMirrorUris=mirrors,
+              canonicalSourceSha256=hashlib.sha256(canonical.encode()).hexdigest()), indent=2) + "\n")
           PY
             cat > "$private/apt.conf" <<EOF
           Dir::Etc::parts "-";
@@ -143,7 +212,17 @@ jobs:
           Acquire::https::Timeout "20";
           EOF
             apt_env=(/usr/bin/env -i PATH=/usr/bin:/bin LC_ALL=C DEBIAN_FRONTEND=noninteractive APT_CONFIG="$private/apt.conf")
+            last_completed=source-validation-completed
+            apt_executed=unknown
+            set +e
+            timeout --kill-after=2s 10s "${apt_env[@]}" /usr/bin/apt-get --version > "$receipt/apt-version.txt" 2>&1
+            apt_version_rc=$?
+            set -e
+            if grep -Eq '^apt [0-9]+\.' "$receipt/apt-version.txt"; then apt_executed=true; fi
+            (( apt_version_rc == 0 )) && [[ "$apt_executed" == true ]] || exit 2
+            last_completed=apt-version-completed
             sudo -n /usr/bin/nice -n 19 /usr/bin/timeout --signal=TERM --kill-after=5s 90s "${apt_env[@]}" /usr/bin/apt-get -o APT::Update::Error-Mode=any update > "$receipt/apt-update.log" 2>&1
+            last_completed=apt-update-completed
             timeout --kill-after=2s 10s "${apt_env[@]}" /usr/bin/apt-cache policy gdb > "$receipt/apt-policy.txt"
             candidate=$(awk '$1 == "Candidate:" {print $2}' "$receipt/apt-policy.txt")
             [[ "$candidate" =~ ^[0-9][0-9A-Za-z.+:~_-]*ubuntu[0-9A-Za-z.+:~_-]*$ ]] || exit 2
@@ -154,6 +233,7 @@ jobs:
             (( new_count >= 1 && new_count <= 12 )) || exit 2
             timeout --kill-after=2s 10s "${apt_env[@]}" /usr/bin/apt-cache show "gdb=$candidate" > "$receipt/apt-gdb-metadata.txt"
             sudo -n /usr/bin/nice -n 19 /usr/bin/timeout --signal=TERM --kill-after=5s 120s "${apt_env[@]}" /usr/bin/apt-get -y "${install_args[@]}" > "$receipt/apt-install.log" 2>&1
+            last_completed=apt-install-completed
             shopt -s nullglob
             debs=("$private"/archives/gdb_*.deb)
             (( ${#debs[@]} == 1 )) || exit 2
@@ -178,6 +258,7 @@ jobs:
           timeout --signal=TERM --kill-after=2s 10s "${gdb_env[@]}" /usr/bin/gdb -nx -nh --batch --version > "$receipt/gdb-version.txt" 2>&1
           timeout --signal=TERM --kill-after=2s 10s "${gdb_env[@]}" /usr/bin/gdb -nx -nh --batch -iex 'set auto-load off' -iex 'set auto-load safe-path /nonexistent' -iex 'set debuginfod enabled off' -ex 'python import sys; print("AEROVE_GDB_PYTHON_READY=" + sys.version.split()[0])' > "$receipt/gdb-python.txt" 2>&1
           grep -Eq '^AEROVE_GDB_PYTHON_READY=[0-9]+\.[0-9]+\.[0-9]+' "$receipt/gdb-python.txt"
+          last_completed=gdb-readiness-completed
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
         timeout-minutes: 5
         with:
