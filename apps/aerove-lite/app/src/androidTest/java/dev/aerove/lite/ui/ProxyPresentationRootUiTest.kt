@@ -43,7 +43,12 @@ class ProxyPresentationRootUiTest {
         val workspace = ProxyPresentationWorkspace(scope, { state.settings.proxyPresentation }, repository::updateProxyGroupUi,
             { saved -> state = state.copy(profiles = listOf(saved)) }, { true })
         workspace.profile(profile)
-        workspace.bind(client, profile.id, client, { repository.readConfig(profile.id) }, { true })
+        val sourceReads = java.util.concurrent.atomic.AtomicInteger()
+        val sourceReturns = java.util.concurrent.atomic.AtomicInteger()
+        workspace.bind(client, profile.id, client, {
+            sourceReads.incrementAndGet()
+            try { repository.readConfig(profile.id) } finally { sourceReturns.incrementAndGet() }
+        }, { true })
         try {
             compose.replaceAppContent {
                 IpQualityFixture(state) {
@@ -58,7 +63,30 @@ class ProxyPresentationRootUiTest {
             }
             compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab) and
                 hasText(context.getString(R.string.lite_tab_proxies))).performClick()
-            compose.waitUntil(3000) { workspace.state.value.ready }
+            try {
+                compose.waitUntil(3000) { workspace.state.value.ready }
+            } catch (failure: Throwable) {
+                rethrowMatrixCancellation(failure)
+                try {
+                    val actual = workspace.state.value
+                    android.util.Log.i("LiteProxyReadyFailure", org.json.JSONObject(mapOf(
+                        "ready" to actual.ready, "failed" to actual.failed,
+                        "profileMatches" to (actual.profileId == profile.id),
+                        "sourceReads" to sourceReads.get(), "sourceReturns" to sourceReturns.get(),
+                        "groupUrlCount" to actual.groupUrls.size, "groupIconCount" to actual.groupIcons.size,
+                        "scopeActive" to (scope.coroutineContext[Job]?.isActive == true),
+                        "lifecycle" to compose.activity.lifecycle.currentState.name,
+                        "windowFocused" to compose.activity.hasWindowFocus(),
+                        "finishing" to compose.activity.isFinishing,
+                        "autoAdvance" to compose.mainClock.autoAdvance,
+                        "failureType" to failure.javaClass.name,
+                    )).toString())
+                } catch (diagnostic: Throwable) {
+                    rethrowMatrixCancellation(diagnostic, failure)
+                    failure.addSuppressed(diagnostic)
+                }
+                throw failure
+            }
             compose.waitUntil(3000) {
                 runCatching {
                     val image = compose.onNodeWithTag("proxy-group-icon-group").captureToImage()

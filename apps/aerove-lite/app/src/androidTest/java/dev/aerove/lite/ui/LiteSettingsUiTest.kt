@@ -1,6 +1,12 @@
 package dev.aerove.lite.ui
 
 import android.util.Log
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.performScrollTo
+import dev.aerove.lite.dnssettings.*
 import org.json.JSONObject
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -174,39 +180,65 @@ class LiteSettingsUiTest {
 
     @Test
     fun customDnsRequiresExplicitValidatedSaveAndCanReturnToProfile() {
-        val initial = LiteSettings(colorMode = ColorMode.Light)
+        val inherited = DnsPreferences(values = mapOf(DnsField.Nameserver to DnsValue.Entries(listOf("https://1.1.1.1/dns-query"))))
+        val initial = LiteSettings(colorMode = ColorMode.Light, dnsPreferences = inherited)
         val state = mutableStateOf(LiteState(settings = initial))
-        val actions = UiTestActions { state.value = state.value.copy(settings = it) }
+        val requests = mutableListOf<DnsPreferences>()
+        val attempts = DnsSaveAttempts { state.value = state.value.copy(dnsSaveReceipt = it) }
+        var submitted = 0L
+        val settingsActions = UiTestActions { state.value = state.value.copy(settings = it) }
+        val actions = object : dev.aerove.lite.LiteActions by settingsActions {
+            override fun saveDnsPreferences(preferences: DnsPreferences): Long {
+                requests += preferences
+                return attempts.begin().also { submitted = it }
+            }
+        }
         compose.replaceAppContent { LiteApp(state.value, actions) }
-        val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
-        compose.onNode(tab and hasText(text(R.string.lite_tab_tools))).performClick()
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(R.string.lite_dns)) and hasClickAction())
-        compose.onNodeWithText(text(R.string.lite_dns_follow_profile)).assertExists()
-        compose.onNodeWithText(initial.dnsServers.single()).assertDoesNotExist()
+        openSettingsDetail(R.string.integration_advanced_configuration)
         click(R.string.lite_dns)
-        compose.onNodeWithText(text(R.string.lite_dns_follow_profile)).assertExists()
-        compose.onNode(hasSetTextAction()).assertDoesNotExist()
-        compose.onNodeWithContentDescription(text(R.string.lite_dns_custom)).performClick()
-        compose.runOnIdle { assertTrue("Enabling editing must not silently apply the saved/default address", actions.settings.isEmpty()) }
-        compose.onNode(hasSetTextAction()).performTextReplacement("")
-        click(R.string.lite_save)
-        compose.onNodeWithText(text(R.string.lite_dns_empty)).assertExists()
-        compose.runOnIdle { assertTrue(actions.settings.isEmpty()) }
+        compose.onNodeWithTag("dns-preferences").assertExists()
+        val nameserver = compose.onNodeWithTag("dns-field-nameserver")
+        nameserver.performScrollTo().assert(hasAnyDescendant(hasText(text(R.string.dns_preferences_inherit))))
+        compose.onNodeWithText("https://1.1.1.1/dns-query").assertDoesNotExist()
+        nameserver.performClick()
+        val override = compose.onNodeWithContentDescription(text(R.string.dns_preferences_override))
+        override.assertIsOff().performClick()
+        compose.runOnIdle { assertTrue(requests.isEmpty()); assertEquals(inherited, state.value.settings.dnsPreferences) }
+        val entry = compose.onNodeWithContentDescription(context.getString(R.string.dns_preferences_entry, 1))
+        entry.performTextReplacement("")
+        compose.onNodeWithTag("dns-save").performScrollTo().performClick()
+        compose.onNodeWithText(context.getString(R.string.dns_preferences_invalid, "dns.nameserver[0]")).assertExists()
+        compose.runOnIdle { assertTrue(requests.isEmpty()); assertEquals(inherited, state.value.settings.dnsPreferences) }
         val server = "https://9.9.9.9/dns-query"
-        compose.onNode(hasSetTextAction()).performTextReplacement(server)
-        click(R.string.lite_save)
-        compose.runOnIdle {
-            assertEquals(listOf(initial.copy(overrideDns = true, dnsServers = listOf(server))), actions.settings)
-            assertTrue(state.value.settings.overrideDns)
+        entry.performTextReplacement(server)
+        compose.onNodeWithTag("dns-save").performScrollTo().performClick()
+        val saved = inherited.withValue(DnsField.Nameserver, DnsValue.Entries(listOf(server)))
+        compose.runOnIdle { assertEquals(listOf(saved), requests); assertEquals(initial, state.value.settings) }
+        compose.onNodeWithTag("dns-save").assertIsNotEnabled()
+        compose.runOnUiThread {
+            state.value = state.value.copy(settings = initial.copy(dnsPreferences = requests.single()))
+            attempts.complete(submitted, failed = false)
         }
-        compose.onNodeWithContentDescription(text(R.string.lite_dns_custom)).performClick()
-        compose.onNode(hasSetTextAction()).assertDoesNotExist()
-        compose.onNodeWithText(text(R.string.lite_dns_follow_profile)).assertExists()
+        compose.onNodeWithTag("dns-save").assertDoesNotExist()
+        nameserver.performScrollTo().performClick()
+        override.assertIsOn().performClick()
+        compose.runOnIdle { assertEquals(1, requests.size); assertEquals(saved, state.value.settings.dnsPreferences) }
+        compose.onNodeWithTag("dns-save").performScrollTo().performClick()
         compose.runOnIdle {
-            assertEquals(2, actions.settings.size)
-            assertFalse(actions.settings.last().overrideDns)
-            assertEquals(listOf(server), actions.settings.last().dnsServers)
+            assertEquals(listOf(saved, saved.inherit(DnsField.Nameserver)), requests)
+            assertFalse(DnsField.Nameserver in requests.last().overridden)
+            assertEquals(listOf(server), (requests.last().value(DnsField.Nameserver) as DnsValue.Entries).value)
+            assertEquals(saved, state.value.settings.dnsPreferences)
+            assertTrue(settingsActions.settings.isEmpty())
         }
+        compose.onNodeWithTag("dns-save").assertIsNotEnabled()
+        compose.runOnUiThread {
+            state.value = state.value.copy(settings = initial.copy(dnsPreferences = requests.last()))
+            attempts.complete(submitted, failed = false)
+        }
+        compose.onNodeWithTag("dns-save").assertDoesNotExist()
+        nameserver.assert(hasAnyDescendant(hasText(text(R.string.dns_preferences_inherit))))
+        compose.runOnIdle { assertEquals(initial.copy(dnsPreferences = saved.inherit(DnsField.Nameserver)), state.value.settings) }
     }
 
     @Test

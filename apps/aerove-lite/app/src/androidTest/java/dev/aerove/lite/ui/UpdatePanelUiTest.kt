@@ -119,7 +119,32 @@ class UpdatePanelUiTest {
         compose.waitUntil { !automatic && !feature.state.value.shouldShowPrompt }
         compose.onNodeWithText(context.getString(R.string.lite_tab_tools)).performClick()
         compose.onNodeWithText(context.getString(R.string.lite_about)).performScrollTo().performClick()
-        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(context.getString(R.string.lite_license_aerove)))
+        try {
+            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(context.getString(R.string.lite_license_aerove)))
+        } catch (failure: Throwable) {
+            rethrowMatrixCancellation(failure)
+            try {
+                android.util.Log.i("LiteAboutLicenseFailure", JSONObject(mapOf(
+                    "automatic" to automatic, "checks" to checks,
+                    "promptVisible" to feature.state.value.shouldShowPrompt,
+                    "phase" to feature.state.value.phase.name,
+                    "lifecycle" to compose.activity.lifecycle.currentState.name,
+                    "windowFocused" to compose.activity.hasWindowFocus(),
+                    "finishing" to compose.activity.isFinishing,
+                    "failureType" to failure.javaClass.name,
+                )).toString())
+                val tree = compose.onRoot(useUnmergedTree = true).printToString(maxDepth = 5).take(8800)
+                tree.chunked(2200).forEachIndexed { part, text ->
+                    android.util.Log.i("LiteAboutLicenseFailure", JSONObject(mapOf(
+                        "kind" to "fixture-root", "part" to part, "tree" to text,
+                    )).toString())
+                }
+            } catch (diagnostic: Throwable) {
+                rethrowMatrixCancellation(diagnostic, failure)
+                failure.addSuppressed(diagnostic)
+            }
+            throw failure
+        }
         compose.onNodeWithText(context.getString(R.string.lite_license_aerove)).assertExists()
         compose.onNodeWithText(context.getString(R.string.update_check)).performScrollTo().performClick()
         compose.waitUntil { checks == 2 && feature.state.value.shouldShowPrompt }
