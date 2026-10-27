@@ -12,6 +12,8 @@ import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.core.app.ActivityOptionsCompat
@@ -159,7 +161,8 @@ class ProfileListUiTest {
             CompositionLocalProvider(LocalLiteMotionOverride provides true, LocalActivityResultRegistryOwner provides registry,
                 LocalLiteFeatures provides { factories++; host }) { LiteApp(state.value, actions) }
         }
-        compose.onNodeWithText(context.getString(R.string.lite_tab_profiles)).performClick()
+        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab) and
+            hasText(context.getString(R.string.lite_tab_profiles))).performClick()
     }
 
     private fun menu(profile: ProfileSummary, resource: Int) {
@@ -218,7 +221,8 @@ class ProfileListUiTest {
         compose.waitUntil { feature.state.value.notice == ProfileListNotice.Cancelled && !feature.state.value.busy }
         assertEquals(1, registry.requests.size)
         assertEquals(yaml, runBlocking(Dispatchers.IO) { repository.readConfig(first.id) })
-        compose.onNodeWithText(context.getString(R.string.lite_tab_profiles)).performClick()
+        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab) and
+            hasText(context.getString(R.string.lite_tab_profiles))).performClick()
         compose.waitForIdle()
         assertEquals(1, registry.requests.size)
     }

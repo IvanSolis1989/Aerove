@@ -2,6 +2,8 @@ package dev.aerove.lite.ui
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -54,7 +56,8 @@ class ProfilePropertiesUiTest {
                 CompositionLocalProvider(LocalLiteMotionOverride provides true, LocalLiteFeatures provides { host }) { LiteApp(state.value, actions) }
             }
         }
-        compose.onNodeWithText(context.getString(R.string.lite_tab_profiles)).performClick()
+        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab) and
+            hasText(context.getString(R.string.lite_tab_profiles))).performClick()
     }
 
     private fun openProperties() {
