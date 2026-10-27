@@ -114,7 +114,16 @@ void main() {
     final boxes = paragraph.getBoxesForSelection(
       const TextSelection(baseOffset: 0, extentOffset: 22),
     );
-    expect(boxes.single.right, 308);
+    expect(paragraph.text.toPlainText(), 'MMMMMMMMMMMMMMMMMMMMMM');
+    final textBounds = boxes.single.toRect().shift(
+      tester.getTopLeft(find.byType(RichText)),
+    );
+    final footerSlot = Alignment.topRight.inscribe(
+      tester.getSize(find.byKey(figuresKey)),
+      body,
+    );
+    expect(body.intersect(textBounds), textBounds);
+    expect(textBounds.overlaps(footerSlot), isTrue);
     update(() => expanded = false);
     await tester.pump();
     expect(tester.takeException(), isNull);
@@ -122,6 +131,20 @@ void main() {
     expect(layout.overlaid, isTrue);
     expect(tester.getRect(find.byKey(bodyKey)), body);
     expect(layout.size.height, 100);
+    expect(paragraph.text.toPlainText(), 'clear');
+    final restoredBounds = paragraph
+        .getBoxesForSelection(
+          const TextSelection(baseOffset: 0, extentOffset: 5),
+        )
+        .single
+        .toRect()
+        .shift(tester.getTopLeft(find.byType(RichText)));
+    final restoredSlot = Alignment.topRight.inscribe(
+      tester.getSize(find.byKey(figuresKey)),
+      body,
+    );
+    expect(body.intersect(restoredBounds), restoredBounds);
+    expect(restoredBounds.overlaps(restoredSlot), isFalse);
   });
 
   testWidgets('zero and unsampled speed retain real zero values', (
