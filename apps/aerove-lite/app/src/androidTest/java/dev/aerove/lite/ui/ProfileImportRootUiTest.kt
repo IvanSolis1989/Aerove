@@ -2,6 +2,7 @@ package dev.aerove.lite.ui
 
 import androidx.compose.runtime.*
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -53,7 +54,9 @@ class ProfileImportRootUiTest {
             hasText(context.getString(R.string.lite_tab_profiles))).performClick()
         compose.onNodeWithText(context.getString(R.string.lite_add_subscription)).performClick()
         compose.onNodeWithContentDescription(context.getString(R.string.age_name)).performTextInput("Root import")
-        compose.onNodeWithTag("profile-import-input").performTextInput("rules: [MATCH,DIRECT]")
+        compose.onNode(hasAnyAncestor(hasTestTag("profile-import-input")) and hasSetTextAction() and
+            SemanticsMatcher.keyIsDefined(SemanticsActions.RequestFocus), useUnmergedTree = true)
+            .performTextInput("rules: [MATCH,DIRECT]")
         compose.onNodeWithTag("profile-import-submit").performScrollTo().performClick()
         compose.waitUntil(3000) { runBlocking(Dispatchers.IO) { repository.list().isNotEmpty() } }
         compose.waitUntil(3000) { compose.onAllNodesWithTag("profile-import-input").fetchSemanticsNodes().isEmpty() }
