@@ -2,21 +2,33 @@
 
 ## 待发布
 
-当前候选为 **0.1.0-beta.18（安装编号 18）**。beta.17/code17 已有 arm64-v8a 与 x86_64 应用包构建，但原 run133 整体 CI 失败且未发行；beta.18/code18 按独立版本规范递增。包名 `dev.aerove.lite`、签名和更新入口沿用。内核来源及例外仍见[核心记录](core/meow-migration.md)。
+下一应用候选为 **0.1.0-beta.19（安装编号 19）**；包名 `dev.aerove.lite`、独立签名与 preview 通道沿用。beta.18/code18 原构建身份保留；beta.19 APK 尚未构建。
 
-本候选包含已整合源码：
+- **UI 与工具链预检：** run139（source `73bd1af5ff709d47bf028b0bf7e1a7d626c28ea1`）client-only verify 成功，覆盖 Compose UI `1.13.0-beta01`、SDK 37.1、`concurrent-futures-ktx` 1.2 双依赖图/AAR、main/unit/AndroidTest 编译、1482 unit（0 failures/errors/skips）、lint 0 Error/Fatal 和 main R8。它不是 APK 或 Android 仪器验收；原 ProductionFeatureFlow 的 RectList、9 owner、Profiles/History 等实际 Android 行为仍待测。
+- **Native 网络：** run137 整体取消；Native 42 targets 为345 pass/0 fail，`owned_runtime` 为6 pass/0 fail，含网络 API/barrier 实测。Core 只完成26/32条命令（75 pass），余下未完成；formatter 与负控未验，不能称整轮通过。
+- **Smart：** W 已整合 11 路径的 `v6.0.20-meow.5`（固定上游 `dba12215fe8f8d139a94fbd2d5b981282fbcf9c7`）。来源与 reader/无损证明通过，current fixture 为153 providers /172 rules /55 groups；新 App 的 QuickJS/JNI 与 allPinned 仍待实际执行。500,000 MRS 限额按展开后的实际 dot labels 计；旧错误文案称“trie nodes”，编码节点数不等于此预算。
+- **后续接线边界：** 菜单语义修正（`7c30aa65`）、NoLens（`9e34b8e3`）及导航/主题测试前置（`4a9d3518`）在 run139 后整合，未由该固定源验证。source `73bd1af5` 的 Service 内容只提供精确生命周期诊断，17 ms 重启失败仍未修复。
 
-- Smart-Config-Kit Lite 专版为 `v6.0.20-meow.4`，固定来源 `23a2c93b6cba799b83f51e56f95b7f378b425503`；三片 MRS 保留既有单片预算，native predicate 并集与原始输入一致（411,634 个唯一 predicate、1,260,199 个 label，missing/added 均为 0）。Android fixture `fc1079c2` 已绑定 bundled `.4`；新候选上的 QuickJS/JNI 实际执行仍待验收。
-- 保留原生生命周期 409、TalkBack 遍历语义与输入焦点接线，以及只读 UI 采样的焦点暂停/恢复策略；模块或 JVM 结果不代替新 APK Android 验收。
-- DNS/Hosts 保存使用精确 token 与终态回执，并按已保存 readback 关闭（`96582d13`）；10 项状态测试和源码编译有记录，原 Android 红结果仍须新候选复验。
-- 完整双行速度源码已实现：无安全同排槽时底部自然追加，有槽时恢复原 footer；保留正文、大按钮和完整数值。新 APK/Android 行为仍待验收。
-- Dock 局部选中镜片解除继承的整 Dock 最小约束，保留外壳与既有镜片几何、按压/RTL 公式、材质和透明背景路径。修复来自 `2f4f4282694301a05813334c4c0390c478a4f01c`，独立窄审未发现 P1/P2；新增 Android 几何/输入用例仅编译，未运行，尚无修后 Android 像素验收。
+待 beta.19 新源码完成相应 Android 行为、网络/服务生命周期与上述后续改动的专门验收；当前没有 beta.19 APK、整体 App 验收或发行结论。
+
+## 历史未发行候选记录
+
+### 0.1.0-beta.18（安装编号 18）
+
+beta.18/code18 原构建来自 run136（`40420651068`），source `457fab8455ac8713fc9828e129d2050b11bf1beb`、tree `d2331f5a63c2c050a87f89c42361ce415b085412`；arm64-v8a 与 x86_64 包身份 readback 通过，原 bundled 工作脚本为 `v6.0.20-meow.4`。
+
+beta.18 源码包含以下已整合范围：
+
+- Smart-Config-Kit Lite 专版为 `v6.0.20-meow.4`，固定来源 `23a2c93b6cba799b83f51e56f95b7f378b425503`；三片 MRS 保留既有单片预算，native predicate 并集与原始输入一致（411,634 个唯一 predicate、1,260,199 个 label，missing/added 均为 0）。Android fixture `fc1079c2` 已绑定 bundled `.4`；beta.18 APK 上的 QuickJS/JNI 实际执行仍待验收。
+- 保留原生生命周期 409、TalkBack 遍历语义与输入焦点接线，以及只读 UI 采样的焦点暂停/恢复策略；模块或 JVM 结果不代替 beta.18 APK Android 验收。
+- DNS/Hosts 保存使用精确 token 与终态回执，并按已保存 readback 关闭（`96582d13`）；10 项状态测试和源码编译有记录，原 Android 红结果仍待 beta.18 APK 复验。
+- 完整双行速度源码已实现：无安全同排槽时底部自然追加，有槽时恢复原 footer；保留正文、大按钮和完整数值。beta.18 APK 的 Android 行为仍待验收。
+- Dock 局部选中镜片解除继承的整 Dock 最小约束，保留外壳与既有镜片几何、按压/RTL 公式、材质和透明背景路径。修复来自 `2f4f4282694301a05813334c4c0390c478a4f01c`，独立窄审未发现 P1/P2；相关 Dock 几何方法在 run136 实际通过；真实 Matrix 12/12 截图仅证明静态外观，用户已确认 Dock 修正。整套功能与光学验收仍有失败门，不能称整体验收通过。
+
 
 beta.17 原 run133（`40390763814`）结果为 **155 pass、79 fail、12 assumption、2 active、168 unstarted**；shard2 SDK 模拟器下载失败、shard1/3 超时，原 run 整体失败。Matrix 11 格通过原捕获门，第 06 格仅迟帧诊断；这不等于十二图通过或用户确认。Smart 两个方法实跑通过，固定 payload 到 Native 的方法未执行；DNS 5 项通过、3 项未开始。历史结果不代表 beta.18 验收。
 
-发行前仍须以 beta.18 新源码完成真实 Android CI 与 APK 验收，包括功能、取消/恢复、TalkBack/焦点、DNS/Hosts、速度与 Dock 行为；完成三种材质、两种底图、浅深主题的十二宫格真实 Android 渲染并由用户确认。未完成这些门槛前不发行。
-
-## 历史未发行候选记录
+beta.18 原 run136 整体失败：422项中286 pass、113 fail、12 assumption、1 active、10 unstarted。其 verify 主路1479 unit、0 lint error、main R8成功，不能改写整体失败。真实 Matrix 12/12 已完成；用户明确确认的仅是 Dock 修正，不能称其余视觉项均获确认。beta.18 未接受、未发行。
 
 ### 0.1.0-beta.17（安装编号 17）
 
