@@ -135,7 +135,7 @@ def validate_png(data):
         end = position + 12 + size
         require(end <= len(data) and count < 10000, "PNG chunk limit exceeded")
         require(kind in (b"IHDR", b"PLTE", b"IDAT", b"IEND"),
-                "Unsupported evidence PNG chunk; no image emitted")
+                f"Unsupported evidence PNG chunk; no image emitted (chunkHex={kind.hex()})")
         require(binascii.crc32(data[position + 4:end - 4]) & 0xffffffff == struct.unpack(">I", data[end - 4:end])[0], "PNG CRC mismatch")
         if count == 0:
             require(kind == b"IHDR" and size == 13, "PNG IHDR missing")
