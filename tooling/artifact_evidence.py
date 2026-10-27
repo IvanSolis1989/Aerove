@@ -128,19 +128,26 @@ def validate_api(request, run, artifact):
 def validate_png(data):
     require(data.startswith(b"\x89PNG\r\n\x1a\n"), "Invalid PNG signature")
     position, count, ended = 8, 0, False
+    seen_srgb, seen_palette_or_data = False, False
     while position < len(data):
         require(position + 12 <= len(data), "Truncated PNG chunk")
         size = struct.unpack(">I", data[position:position + 4])[0]
         kind = data[position + 4:position + 8]
         end = position + 12 + size
         require(end <= len(data) and count < 10000, "PNG chunk limit exceeded")
-        require(kind in (b"IHDR", b"PLTE", b"IDAT", b"IEND"),
+        require(kind in (b"IHDR", b"PLTE", b"IDAT", b"IEND", b"sRGB"),
                 f"Unsupported evidence PNG chunk; no image emitted (chunkHex={kind.hex()})")
         require(binascii.crc32(data[position + 4:end - 4]) & 0xffffffff == struct.unpack(">I", data[end - 4:end])[0], "PNG CRC mismatch")
         if count == 0:
             require(kind == b"IHDR" and size == 13, "PNG IHDR missing")
             width, height = struct.unpack(">II", data[position + 8:position + 16])
             require(0 < width <= 16384 and 0 < height <= 16384 and width * height <= 64000000, "PNG dimensions exceeded")
+        if kind == b"sRGB":
+            require(size == 1 and data[position + 8] <= 3, "Invalid PNG sRGB rendering intent")
+            require(not seen_srgb and not seen_palette_or_data, "Duplicate or out-of-order PNG sRGB")
+            seen_srgb = True
+        if kind in (b"PLTE", b"IDAT"):
+            seen_palette_or_data = True
         count += 1
         position = end
         if kind == b"IEND":
