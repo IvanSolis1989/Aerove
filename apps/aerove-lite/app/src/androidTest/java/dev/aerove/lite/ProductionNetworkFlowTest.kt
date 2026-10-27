@@ -61,7 +61,7 @@ class ProductionNetworkFlowTest {
             assertSameSession(original)
             assertProxyFixture("127.0.0.1", mixed, session.fixture)
             assertProxyFixture("127.0.0.1", http, session.fixture)
-            awaitPortsReleased(listOf(oldMixed))
+            awaitPortsReleased("hot-apply-old-mixed", listOf(oldMixed))
 
             toggle(R.string.network_allow_lan)
             desired = session.saved { it.allowLan && it.ports.mixed == mixed }
@@ -90,7 +90,7 @@ class ProductionNetworkFlowTest {
                 assertTrue("A bind conflict must produce a real failure", !failed.error.isNullOrBlank() ||
                     !session.controller.state.value.networkError.isNullOrBlank())
                 assertNull("Failed listeners cannot leave a usable controller", failed.endpoint)
-                awaitPortsReleased(listOf(oldMixed, mixed, http, original.endpoint!!.port))
+                awaitPortsReleased("bind-failure-session", listOf(oldMixed, mixed, http, original.endpoint!!.port))
             } finally { blocker.close() }
             // The saved intent remains authoritative: recovery starts that exact now-available port.
             session.activity.onActivity { session.controller.dismissMessage(); session.controller.connect() }
@@ -393,21 +393,36 @@ class ProductionNetworkFlowTest {
         error("No isolated legal user proxy port is available")
     }
     private fun freeUserPort(excluded: Set<Int> = emptySet()): Int = reserveUserPort(excluded).use { it.localPort }
-    private suspend fun awaitPortsReleased(ports: List<Int>) = withTimeout(20_000) {
-        while (true) {
-            val reservations = mutableListOf<ServerSocket>()
-            try {
-                ports.distinct().forEach { port ->
-                    val socket = ServerSocket()
+    private suspend fun awaitPortsReleased(stage: String, ports: List<Int>) {
+        var lastPort: Int? = null
+        var lastFailure: java.io.IOException? = null
+        try {
+            withTimeout(20_000) {
+                while (true) {
+                    val reservations = mutableListOf<ServerSocket>()
                     try {
-                        socket.reuseAddress = false
-                        socket.bind(InetSocketAddress("127.0.0.1", port))
-                        reservations += socket
-                    } catch (failure: java.io.IOException) { socket.close(); throw failure }
+                        ports.distinct().forEach { port ->
+                            val socket = ServerSocket()
+                            try {
+                                socket.reuseAddress = false
+                                socket.bind(InetSocketAddress("127.0.0.1", port))
+                                reservations += socket
+                            } catch (failure: java.io.IOException) {
+                                lastPort = port; lastFailure = failure
+                                socket.close(); throw failure
+                            }
+                        }
+                        return@withTimeout
+                    } catch (_: java.io.IOException) { delay(100) }
+                    finally { reservations.forEach { it.close() } }
                 }
-                return@withTimeout
-            } catch (_: java.io.IOException) { delay(100) }
-            finally { reservations.forEach { it.close() } }
+            }
+        } catch (timeout: TimeoutCancellationException) {
+            try {
+                android.util.Log.e("NetworkPortRelease",
+                    "stage=$stage expectedPorts=${ports.distinct()} lastPort=$lastPort " +
+                        "lastType=${lastFailure?.javaClass?.name} lastMessage=${lastFailure?.message}", lastFailure)
+            } finally { throw timeout }
         }
     }
 }
