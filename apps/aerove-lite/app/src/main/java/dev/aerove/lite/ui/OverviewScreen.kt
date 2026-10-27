@@ -74,6 +74,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontSynthesis
@@ -844,22 +845,40 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
             fun fit(room: Int) = forms.values.minOf { (single, split) -> minOf(1f, room / (split?.second ?: single).coerceAtLeast(1f)) }
             val inset = listOf(8.dp, 4.dp).firstOrNull { fit(cell - with(density) { 2 * it.roundToPx() }) >= 1f } ?: 4.dp
             val room = (cell - with(density) { 2 * inset.roundToPx() }).coerceAtLeast(0)
-            val scale = maxOf(minOf(1f, 11f / (style.fontSize.value * density.fontScale)), fit(room))
+            val minimum = minOf(1f, 11f / (style.fontSize.value * density.fontScale))
+            val estimated = maxOf(minimum, fit(room))
             val shown = forms.mapValues { (_, form) ->
-                AnnotatedString(if (form.first * scale <= room + 0.01f || form.second == null) form.third else form.second!!.first)
+                AnnotatedString(if (form.first * estimated <= room + 0.01f || form.second == null) form.third else form.second!!.first)
             }
+            val alternatives = forms.mapValues { (_, form) -> form.second?.first?.let(::AnnotatedString) }
+            val measurements = mutableMapOf<Float, DashboardControlMeasurement>()
+            fun measureAt(scale: Float): DashboardControlMeasurement = measurements.getOrPut(scale) {
+                val textStyle = dashboardControlStyle(style, scale)
+                fun measure(text: AnnotatedString) = measurer.measure(text, style = textStyle,
+                    softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
+                    constraints = Constraints(maxWidth = room))
+                val labels = shown.mapValues { (key, text) ->
+                    val measured = measure(text)
+                    val alternative = alternatives.getValue(key)
+                    if (measured.multiParagraph.width > room && alternative != null && alternative != text) {
+                        val wrapped = measure(alternative)
+                        if (wrapped.multiParagraph.width < measured.multiParagraph.width) alternative to wrapped else text to measured
+                    } else text to measured
+                }
+                DashboardControlMeasurement(textStyle, labels)
+            }
+            val scale = dashboardControlFitScale(estimated, minimum) { candidate ->
+                measureAt(candidate).labels.values.all { (_, result) -> result.multiParagraph.width <= room }
+            }
+            val measured = measureAt(scale)
             val height = with(density) {
-                val labelWidth = room
-                val textHeight = shown.values.maxOf { label ->
-                    val result = measurer.measure(label, style = dashboardControlStyle(style, scale),
-                        softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
-                        constraints = Constraints(maxWidth = labelWidth))
+                val textHeight = measured.labels.values.maxOf { (_, result) ->
                     maxOf(result.size.height, ceil(result.multiParagraph.height).toInt())
                 }
                 maxOf((52.dp * fontScale.coerceAtLeast(1f)).roundToPx(),
                     textHeight + DashboardControlIconSize.roundToPx() + DashboardControlLabelGap.roundToPx() + 2 * DashboardControlVerticalInset.roundToPx()).toDp()
             }
-            DashboardControlPlan(shown, scale, inset, height)
+            DashboardControlPlan(measured.labels.mapValues { it.value.first }, measured.style, inset, height)
         }
         Row(Modifier.fillMaxWidth().height(plan.height), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             NetworkControlPill(proxyModeLabel(state.settings.mode), when (state.settings.mode) { ProxyMode.Rule -> FullGlyphs.rules; ProxyMode.Global -> FullGlyphs.proxies; ProxyMode.Direct -> FullGlyphs.target }, true, enabled,
@@ -884,14 +903,29 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
     }
 }
 
-private data class DashboardControlPlan(val shown: Map<String, AnnotatedString>, val scale: Float,
+private data class DashboardControlPlan(val shown: Map<String, AnnotatedString>, val style: TextStyle,
     val inset: androidx.compose.ui.unit.Dp, val height: androidx.compose.ui.unit.Dp)
+
+private data class DashboardControlMeasurement(val style: TextStyle,
+    val labels: Map<String, Pair<AnnotatedString, TextLayoutResult>>)
 
 private fun dashboardControlStyle(base: TextStyle, scale: Float) = base.copy(
     fontSize = base.fontSize * scale, lineHeight = base.lineHeight * scale,
     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
     lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph,
     hyphens = androidx.compose.ui.text.style.Hyphens.None)
+
+private fun dashboardControlFitScale(upper: Float, minimum: Float, fits: (Float) -> Boolean): Float {
+    if (fits(upper) || upper <= minimum) return upper
+    if (!fits(minimum)) return minimum
+    var lower = minimum
+    var higher = upper
+    repeat(8) {
+        val candidate = (lower + higher) / 2f
+        if (fits(candidate)) lower = candidate else higher = candidate
+    }
+    return lower
+}
 
 @Composable
 private fun NetworkControlPill(label: String, icon: LiteGlyph, selected: Boolean, enabled: Boolean,
@@ -909,7 +943,7 @@ private fun NetworkControlPill(label: String, icon: LiteGlyph, selected: Boolean
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(DashboardControlLabelGap)) {
             LiteIcon(icon, color = visuals.secondaryInk, size = DashboardControlIconSize)
             Text(shown, Modifier.fillMaxWidth().testTag("dashboard-control-label").semantics { hideFromAccessibility() },
-                color = visuals.ink, style = dashboardControlStyle(LiteType.Footnote.copy(fontFamily = LocalLiteFontFamily.current), plan.scale), softWrap = false,
+                color = visuals.ink, style = plan.style, softWrap = false,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Visible)
         }
     }
