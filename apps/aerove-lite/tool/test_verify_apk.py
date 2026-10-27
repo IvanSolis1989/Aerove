@@ -928,7 +928,7 @@ class ApkInspectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             apk = self.make_apk(root)
             result = self.verify(apk, "arm64-v8a")
-            self.assertEqual(result["bundled_meow_script"]["commit"], "23a2c93b6cba799b83f51e56f95b7f378b425503")
+            self.assertEqual(result["bundled_meow_script"]["commit"], "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7")
             self.assertEqual(len(result["bundled_meow_script"]["assets"]), 3)
             self.assertEqual(set(result["client_helpers"]), set(module.HELPER_LIBRARIES))
             for name, details in result["client_helpers"].items():
@@ -973,9 +973,9 @@ class BundledScriptApkTests(unittest.TestCase):
 
     def test_actual_three_source_asset_bytes_read_back(self):
         proof = self.inspect()
-        self.assertEqual(proof["commit"], "23a2c93b6cba799b83f51e56f95b7f378b425503")
+        self.assertEqual(proof["commit"], "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7")
         self.assertEqual(len(proof["assets"]), 3)
-        self.assertEqual(proof["assets"]["assets/scripts/smart-config-kit-meow.js"]["bytes"], 115462)
+        self.assertEqual(proof["assets"]["assets/scripts/smart-config-kit-meow.js"]["bytes"], 116534)
 
     def test_explicit_frozen_bundle_pins_stay_independent_of_current_table(self):
         proof = self.inspect()

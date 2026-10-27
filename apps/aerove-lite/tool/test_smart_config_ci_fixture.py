@@ -65,9 +65,9 @@ class SmartCiFixtureTest(unittest.TestCase):
     def test_current_and_legacy_fixture_owners_keep_distinct_fixed_identities(self):
         import prepare_smart_config_meow_ci_fixture as current
         import prepare_smart_config_meow_legacy_ci_fixture as legacy
-        self.assertEqual(current.COMMIT, "23a2c93b6cba799b83f51e56f95b7f378b425503")
-        self.assertEqual(current.SCRIPT_SHA, "2acc2840a9c1d896672c9933904a4ccf63a61beb8881543b9138c0606e53c88f")
-        self.assertEqual(current.MANIFEST_SHA, "e956168cfab6da7befaf2aa4d442b18a1dd8f7165398b5a9b613caacdd7bc2f4")
+        self.assertEqual(current.COMMIT, "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7")
+        self.assertEqual(current.SCRIPT_SHA, "c80118f8fad6f86ab17a6e2b2ecd9ed8dfe5e15ea27ab6f6d72e8a1b6b9a71a8")
+        self.assertEqual(current.MANIFEST_SHA, "234442db6cd3be995e4d5b323f50a360ff2c846b37e9cbd1e742b3f7833ab108")
         self.assertEqual(legacy.COMMIT, "89abb221a157acc98d6b52c85583e6b5a5b2742b")
         self.assertEqual(legacy.SCRIPT_SHA, "217a4d7ecfb56d99cbb79148159ee636b882af5520c4ad7b6c6c870405f938cb")
         self.assertEqual(legacy.MANIFEST_SHA, "cdf3e8c05f59555b2ef8f711aafa212d963160779e9a1eb1592fd038269fc70b")

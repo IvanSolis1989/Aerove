@@ -16,7 +16,7 @@ import urllib.request
 
 from prepare_smart_config_meow_current_fixture import COMMIT, SCRIPT, SCRIPT_SHA, prepare
 
-MANIFEST_SHA = "e956168cfab6da7befaf2aa4d442b18a1dd8f7165398b5a9b613caacdd7bc2f4"
+MANIFEST_SHA = "234442db6cd3be995e4d5b323f50a360ff2c846b37e9cbd1e742b3f7833ab108"
 PINNED_GEO = {
     "mmdb": dict(file="Country.mmdb", repository="Loyalsoldier/geoip",
         commit="7ae41d7f3d4e7acc37acd1b02e554b7bb85f3a8d",
@@ -33,7 +33,7 @@ ASN = dict(file="ASN.mmdb", bytes=10789175,
            gitBlobSha1="c654595f1ba22d31396dbd8f7ce731ae0b6a298c",
            sha256="c0507cfb091f42ac525f4eb8a0051a7897f5fac72e852799e01096583566033b")
 ASN_PATH = "apps/aerove/assets/data/ASN.mmdb"
-SMART_TREE = "5ae653737c826b64452536fec4df35c02795a9a4"
+SMART_TREE = "d7ba10c398eaf3789aff605ad8a6e418cbf67707"
 
 
 def sha(data):
@@ -118,7 +118,7 @@ def load_verified_fixture(root):
     if sha(manifest_bytes) != MANIFEST_SHA:
         raise ValueError("Pinned Smart fixture manifest mismatch")
     manifest = json.loads(manifest_bytes)
-    if manifest["smartCommit"] != COMMIT or len(manifest["providers"]) != 151:
+    if manifest["smartCommit"] != COMMIT or len(manifest["providers"]) != 153:
         raise ValueError("Pinned Smart fixture source/count mismatch")
     entries = [manifest["script"]] + manifest["providers"] + manifest["geo"]
     files = {"manifest.json": manifest_bytes}
@@ -136,7 +136,7 @@ def load_verified_fixture(root):
             raise ValueError("Fixture saved-file readback mismatch: " + str(relative))
         files[entry["file"]] = data
     actual = {path.relative_to(root).as_posix() for path in paths if path.is_file()}
-    if len(files) != 156 or actual != set(files):
+    if len(files) != 158 or actual != set(files):
         raise ValueError("Unexpected or missing files in controlled Smart fixture")
     return files
 
@@ -148,10 +148,10 @@ def verify_receipt(path, source, tree):
     receipt = json.loads(path.read_text(encoding="utf-8"))
     expected = dict(schema=1, appSourceRevision=source, appSourceTree=tree,
                     smartCommit=COMMIT, smartTree=SMART_TREE,
-                    fixtureManifestSha256=MANIFEST_SHA, fixtureFiles=156, fixtureDataBytes=27298874)
+                    fixtureManifestSha256=MANIFEST_SHA, fixtureFiles=158, fixtureDataBytes=27364030)
     if any(receipt.get(key) != value for key, value in expected.items()):
         raise ValueError("Fixture receipt differs from actual app/source identity")
-    if len(receipt.get("providers", [])) != 151 or receipt["script"]["sha256"] != SCRIPT_SHA:
+    if len(receipt.get("providers", [])) != 153 or receipt["script"]["sha256"] != SCRIPT_SHA:
         raise ValueError("Fixture receipt script/provider mismatch")
     if len(receipt.get("geo", [])) != 2:
         raise ValueError("Fixture receipt Geo count mismatch")

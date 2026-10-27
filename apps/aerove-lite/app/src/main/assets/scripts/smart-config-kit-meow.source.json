@@ -1,17 +1,17 @@
 {
   "repository": "IvanSolis1989/Smart-Config-Kit",
-  "commit": "23a2c93b6cba799b83f51e56f95b7f378b425503",
+  "commit": "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7",
   "requestedRef": "main",
   "path": "Meow内核系/Aerove Lite/AeroveLite(meow).js",
-  "blobSha": "31c4c3fbd76dc229a543c6579c20ebcc3ebd56f3",
-  "bytes": 115462,
-  "sha256": "2acc2840a9c1d896672c9933904a4ccf63a61beb8881543b9138c0606e53c88f",
-  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/23a2c93b6cba799b83f51e56f95b7f378b425503/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
-  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/23a2c93b6cba799b83f51e56f95b7f378b425503/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
+  "blobSha": "94d1508a455997437635b641a7e04c528e596bd0",
+  "bytes": 116534,
+  "sha256": "c80118f8fad6f86ab17a6e2b2ecd9ed8dfe5e15ea27ab6f6d72e8a1b6b9a71a8",
+  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/dba12215fe8f8d139a94fbd2d5b981282fbcf9c7/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
+  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/dba12215fe8f8d139a94fbd2d5b981282fbcf9c7/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
   "updateUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
   "versionHeader": [
     "// AEROVE Lite / meow-rs 分流覆写候选（共享 Meow 分流实现）",
-    "// 版本：v6.0.20-meow.4 | Build：2026-10-27",
+    "// 版本：v6.0.20-meow.5 | Build：2026-10-27",
     "// 架构：最多 22 个 url-test 区域组 + 33 业务组；融合 MRS / residual YAML",
     "// 规则源：rulesets/source/routing-graph.js v6.0.20",
     "// 生成：node tools/generate-meow.js；运行时输入：Mihomo内核系/FlClash/FlClash(mihomo).js",
@@ -53,6 +53,6 @@
     ],
     "originalLicenseFetch": "Fresh fixed-commit root inventory; no tracked independent root license text"
   },
-  "fetchedBy": "authenticated read-only GitHub contents API; exact original bytes",
+  "fetchedBy": "read-only local Git fixed commit; remote main identity independently verified",
   "scriptExecuted": false
 }

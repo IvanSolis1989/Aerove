@@ -809,7 +809,7 @@ jobs:
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         repository: IvanSolis1989/Smart-Config-Kit
-        ref: 23a2c93b6cba799b83f51e56f95b7f378b425503
+        ref: dba12215fe8f8d139a94fbd2d5b981282fbcf9c7
         path: .ci-fixture-sources/smart-config
         persist-credentials: false
         fetch-depth: 1

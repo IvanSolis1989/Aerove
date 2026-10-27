@@ -394,9 +394,9 @@ class SmartConfigMeowScriptAndroidTest {
         }
     }
     companion object {
-        private const val COMMIT = "23a2c93b6cba799b83f51e56f95b7f378b425503"
-        private const val SCRIPT_SHA = "2acc2840a9c1d896672c9933904a4ccf63a61beb8881543b9138c0606e53c88f"
-        private const val MANIFEST_SHA = "e956168cfab6da7befaf2aa4d442b18a1dd8f7165398b5a9b613caacdd7bc2f4"
+        private const val COMMIT = "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7"
+        private const val SCRIPT_SHA = "c80118f8fad6f86ab17a6e2b2ecd9ed8dfe5e15ea27ab6f6d72e8a1b6b9a71a8"
+        private const val MANIFEST_SHA = "234442db6cd3be995e4d5b323f50a360ff2c846b37e9cbd1e742b3f7833ab108"
         private const val PRIVATE_SECRET = "0123456789abcdef0123456789abcdef"
     }
 }
