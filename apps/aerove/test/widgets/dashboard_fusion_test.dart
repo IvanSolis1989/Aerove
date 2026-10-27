@@ -749,29 +749,61 @@ void main() {
   }
 
   testWidgets(
-    'status speed and button do not overlap at narrow double text scale',
+    'phone status keeps full speed and body geometry at 1.15 text scale',
     (tester) async {
-      await pump(
+      const scale = 1.15;
+      final container = await pumpTraffic(
         tester,
-        const CurrentOutboundCard(),
-        scale: 2,
-        width: 328,
+        const CurrentOutboundCard(showTraffic: false),
+        scale: scale,
+        width: 412,
         fontFamily: _font,
       );
-      final layout = tester.renderObject<RenderStatusCardLayout>(
-        find.byType(StatusCardLayout),
+      container
+          .read(trafficsProvider.notifier)
+          .addTraffic(const Traffic(up: 1048471142, down: 1048471142));
+      await tester.pump();
+      await tester.pump();
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(DashboardCard)),
       );
-      expect(layout.overlaid, isFalse);
-      expect(layout.footerSlotAvailable, isFalse);
-      final body = layout.childAfter(layout.firstChild!)!;
-      final bodyRect = body.localToGlobal(Offset.zero) & body.size;
       final mainParts = [
         find.text('状态'),
         find.byType(DashboardChip).first,
         find.text('203.0.113.9'),
         find.byType(EmojiCover),
         find.byType(OutboundBubble),
+        find.text(l10n.runTime),
+        find.text(l10n.ipOrganization),
+        find.text('Example Organization'),
+        find.byTooltip(l10n.stop),
       ];
+      final mainBefore = [for (final part in mainParts) tester.getRect(part)];
+      final cardBefore = tester.getRect(find.byType(DashboardCard));
+      final beforeLayout = tester.renderObject<RenderStatusCardLayout>(
+        find.byType(StatusCardLayout),
+      );
+      final beforeBody = beforeLayout.childAfter(beforeLayout.firstChild!)!;
+      final bodyBefore =
+          beforeBody.localToGlobal(Offset.zero) & beforeBody.size;
+      await pump(
+        tester,
+        const CurrentOutboundCard(),
+        scale: scale,
+        width: 412,
+        fontFamily: _font,
+        existing: container,
+      );
+      final layout = tester.renderObject<RenderStatusCardLayout>(
+        find.byType(StatusCardLayout),
+      );
+      expect(layout.overlaid, isTrue);
+      expect(layout.footerSlotAvailable, isTrue);
+      final body = layout.childAfter(layout.firstChild!)!;
+      final bodyRect = body.localToGlobal(Offset.zero) & body.size;
+      expect(bodyRect, bodyBefore);
+      expect(tester.getRect(find.byType(DashboardCard)), cardBefore);
+      expect([for (final part in mainParts) tester.getRect(part)], mainBefore);
       final figures = tester.getRect(find.byType(OutboundTrafficFigures));
       final chip = tester.getRect(find.byType(DashboardChip).first);
       final flag = tester.getRect(find.byType(OutboundBubble));
@@ -784,10 +816,9 @@ void main() {
         final rect = tester.getRect(part);
         expect(bodyRect.intersect(rect), rect, reason: '$part');
       }
-      expect(figures.top, closeTo(bodyRect.bottom + 8, 0.01));
       expect(
         tester.getSize(find.byType(DashboardCard)).height,
-        closeTo(body.size.height + 36 + 8 + figures.height, 0.01),
+        body.size.height + 36,
       );
       final speeds = find.descendant(
         of: find.byType(OutboundTrafficFigures),
@@ -795,7 +826,14 @@ void main() {
       );
       expect(speeds, findsNWidgets(2));
       for (final element in speeds.evaluate()) {
-        expect(tester.getSize(find.byWidget(element.widget)).height, 20);
+        final text = element.widget as GlassText;
+        expect(text.data, '999.9 MB/s');
+        expect(text.style?.fontSize, 10);
+        expect(text.style?.fontWeight, FontWeight.w400);
+        expect(
+          tester.getSize(find.byWidget(text)).height,
+          (10 * scale).ceilToDouble(),
+        );
       }
       expect(
         figures.overlaps(chip),
@@ -807,11 +845,73 @@ void main() {
         isFalse,
         reason: 'figures=$figures flag=$flag',
       );
+      final buttonPaint = tester
+          .renderObjectList<RenderCustomPaint>(
+            find.descendant(
+              of: find.byTooltip(l10n.stop),
+              matching: find.byType(CustomPaint),
+            ),
+          )
+          .where((paint) => paint.painter is OutboundDropletPainter)
+          .single;
+      final buttonPainter = buttonPaint.painter! as OutboundDropletPainter;
+      final buttonPath = buttonPainter
+          .pathOf(buttonPaint.size)
+          .transform(buttonPaint.getTransformTo(null).storage);
+      final buttonBounds = buttonPath.getBounds();
+      expect(buttonBounds.isEmpty, isFalse);
       expect(
-        figures.overlaps(button),
-        isFalse,
-        reason: 'figures=$figures button=$button',
+        [
+          buttonBounds.left,
+          buttonBounds.top,
+          buttonBounds.right,
+          buttonBounds.bottom,
+        ].every((coordinate) => coordinate.isFinite),
+        isTrue,
       );
+      final buttonVisualCenter = buttonPaint.localToGlobal(
+        buttonPaint.size.center(Offset.zero),
+      );
+      expect(buttonPath.contains(buttonVisualCenter), isTrue);
+      final speedParts = <Rect>[
+        for (final element in speeds.evaluate())
+          ..._paintedBounds(tester, find.byWidget(element.widget)),
+        for (final paint
+            in tester
+                .renderObjectList<RenderCustomPaint>(
+                  find.descendant(
+                    of: find.byType(OutboundTrafficFigures),
+                    matching: find.byType(CustomPaint),
+                  ),
+                )
+                .where((paint) => paint.painter is GlyphPainter))
+          MatrixUtils.transformRect(
+            paint.getTransformTo(null),
+            (paint.painter! as GlyphPainter).paintedBounds(
+              paint.size,
+              pixelRatio: tester.view.devicePixelRatio,
+            ),
+          ),
+      ];
+      expect(speedParts, hasLength(4));
+      Rect overlapWithButton(Rect part) => Path.combine(
+        PathOperation.intersect,
+        buttonPath,
+        Path()..addRect(part),
+      ).getBounds();
+      final control = speedParts[0].shift(
+        buttonVisualCenter - speedParts[0].center,
+      );
+      expect(overlapWithButton(control).isEmpty, isFalse);
+      for (final part in speedParts) {
+        final overlap = overlapWithButton(part);
+        expect(
+          overlap.isEmpty,
+          isTrue,
+          reason:
+              'speed=$part button=$button path=$buttonBounds phase=${buttonPainter.phase} overlap=$overlap',
+        );
+      }
       expect(tester.takeException(), null);
     },
   );
