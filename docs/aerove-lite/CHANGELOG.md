@@ -2,16 +2,24 @@
 
 ## 待发布
 
-下一应用候选为 **0.1.0-beta.19（安装编号 19）**；包名 `dev.aerove.lite`、独立签名与 preview 通道沿用。beta.18/code18 原构建身份保留；beta.19 APK 尚未构建。
+下一应用候选为 **0.1.0-beta.20（安装编号 20）**；包名 `dev.aerove.lite`、独立签名与 preview 通道沿用。beta.19/code19 的原始应用构建和身份保留，不改写或挪作 beta.20 验收。beta.20 的应用 APK 与 AndroidTest APK 尚未构建；新源码完整 Android 验收、十二宫格光学确认及用户 APK 确认均未完成，本候选未接受、未发行。
 
-- **UI 与工具链预检：** run139（source `73bd1af5ff709d47bf028b0bf7e1a7d626c28ea1`）client-only verify 成功，覆盖 Compose UI `1.13.0-beta01`、SDK 37.1、`concurrent-futures-ktx` 1.2 双依赖图/AAR、main/unit/AndroidTest 编译、1482 unit（0 failures/errors/skips）、lint 0 Error/Fatal 和 main R8。它不是 APK 或 Android 仪器验收；原 ProductionFeatureFlow 的 RectList、9 owner、Profiles/History 等实际 Android 行为仍待测。
-- **Native 网络：** run137 整体取消；Native 42 targets 为345 pass/0 fail，`owned_runtime` 为6 pass/0 fail，含网络 API/barrier 实测。Core 只完成26/32条命令（75 pass），余下未完成；formatter 与负控未验，不能称整轮通过。
-- **Smart：** W 已整合 11 路径的 `v6.0.20-meow.5`（固定上游 `dba12215fe8f8d139a94fbd2d5b981282fbcf9c7`）。来源与 reader/无损证明通过，current fixture 为153 providers /172 rules /55 groups；新 App 的 QuickJS/JNI 与 allPinned 仍待实际执行。500,000 MRS 限额按展开后的实际 dot labels 计；旧错误文案称“trie nodes”，编码节点数不等于此预算。
-- **后续接线边界：** 菜单语义修正（`7c30aa65`）、NoLens（`9e34b8e3`）及导航/主题测试前置（`4a9d3518`）在 run139 后整合，未由该固定源验证。source `73bd1af5` 的 Service 内容只提供精确生命周期诊断，17 ms 重启失败仍未修复。
+- **IP 质量读取：** 修正质量详情仍由其自有详情面板持有读取租约；真正根界面覆盖或失焦时仍释放需求（`7bc94e88`）。这记录源码变化，不表示本轮 Android 质量流程已验收。
+- **服务文字与网络控制胶囊：** 服务名和状态使用现有文字样式自然换行并自然增高；三胶囊依据 Row 的实际整数可用宽度等分，以最终共享字体样式实测自然高度并统一行高，保留原字号、三个标签、字体、图标、颜色和点击行为。模块实现证据已记录，Android 新源实际布局仍待验。
+- **VPN Service：** 撤销清理回到主服务所有者处理，并以最新 startId 收敛停止，保留撤销后到达的新启动（`e2b03393`）。对应服务时序回归已更新；新源码 Android 执行仍待验。
+- **动效：** 系统减少动态效果或页面失活时，动画当帧返回目标值，恢复后继续由原 Animatable 收敛（`072c519a`）。
+- **光学 fixture 与诊断：** 增加 RGB 空间位移校准和纯色背景导出需求切换场景（`77efa42a`、`4917a959`）。这些是隔离校准/测试输入，不是生产光学通过、十二图完成或用户确认。
+- **UI fixture 与故障诊断：** 状态标题和组织断言改读真实文字节点；内存详情从实际显示数据流核对；导入编辑节点、设置入口、历史详情和 DNS 重试前提的 Android 测试接线得到修正（`836e4678`、`5f59c6b0`、`40cc7850`、`9f632774`、`d8563fd3`、`fca98e86`）。
+- **CI 诊断：** 分片失败时保存逐方法索引；runner 版本契约兼容已核验的 1.7.0，并对两种 ABI 前置检查（`194c3c0c`、`19db6c21`）。这些改动改善失败定位，不代替新 App 的源码验收。
 
-待 beta.19 新源码完成相应 Android 行为、网络/服务生命周期与上述后续改动的专门验收；当前没有 beta.19 APK、整体 App 验收或发行结论。
+β20 仍须按固定新源码完成完整 Lite CI、真实 Android 功能与服务验收、光学/十二宫格检查和用户确认；任何旧 beta.19 包或局部 fixture、诊断及模块证据均不替代这些门槛。
 
 ## 历史未发行候选记录
+
+### 0.1.0-beta.19（安装编号 19）
+
+beta.19/code19 的原始 Android 应用构建已执行一次。其原始构建身份保持不变；本记录不把该包用于 beta.20，也不推断它满足本轮新源码的验收。
+
 
 ### 0.1.0-beta.18（安装编号 18）
 
