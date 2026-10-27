@@ -120,7 +120,8 @@ internal fun FixtureState.opticalConfiguration(): JSONObject {
         .put("switchForegroundReference", if (!switchForegroundControl) JSONObject.NULL else JSONObject()
             .put("stages", "NoLens; non-Solid only; existing FlatThumb foreground unchanged")
             .put("glyph", "Original check/close selected by RenderCase.checked")
-            .put("paint", "Original visuals.ink; enabled alpha1, disabled alpha0.38; GlyphDrawing without liteInk")
+            .put("paint", "Original visuals.ink and shared LiteIcon/liteInk intent; enabled alpha1, disabled alpha0.38")
+            .put("sharedForegroundPrimitive", true).put("independentGlyphOracle", false)
             .put("requestedSizeDp", 14).put("alignment", "Center in the original 24dp control thumb")
             .put("actualGlyphBounds", "See switch-control-thumb/track window Rects; original glyph constraints retained")
             .put("positionStages", "NoLens and FlatThumb; foreground rendering remains independently selected").put("checkedPosition", "Independent measured track maxWidth minus 28dp, rounded once in pixels"))
@@ -372,8 +373,8 @@ private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foreground
                     if ((foregroundControl || !flatTrack) && case.tier != MaterialTier.Solid) {
                         val glyph = if (case.checked) FullGlyphs.check else FullGlyphs.close
                         val paint = visuals.ink.copy(alpha = if (case.enabled) 1f else 0.38f)
-                        if (foregroundControl) GlyphDrawing(glyph, Modifier.align(Alignment.Center).size(14.dp), paint, fill = 0f)
-                        else LiteIcon(glyph, Modifier.align(Alignment.Center), paint, size = 14.dp)
+                        // The no-lens plane retains the original Aurora foreground intent.
+                        LiteIcon(glyph, Modifier.align(Alignment.Center), paint, size = 14.dp)
                     }
                 }
             }
