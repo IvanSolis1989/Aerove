@@ -909,6 +909,12 @@ Lite 当前生产专版为 `v6.0.20-meow.5`，按固定提交 `dba12215fe8f8d139
 
 同一 `0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6` 提交另只读核对 [`libs/hwui/jni/RenderEffect.cpp`](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/libs/hwui/jni/RenderEffect.cpp) 的 RuntimeShader 单输入绑定，用于极光前景蒙版修正；未复制实现。
 
+Lite API 33 VPN Service stop/revoke 语义另只读参考同一固定 revision：`VpnService.java` 的 Binder `onRevoke` 默认无参 `stopSelf()` 路径、`Service.java` 的无参到 `stopSelf(-1)` 转发，以及 `ActiveServices.java` 的 `lastStartId` 门；`Vpn.java` 的 `prepare` 权限与副作用语义用于界定该入口。
+
+固定源码身份：[VpnService.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/core/java/android/net/VpnService.java) blob `1ae1b050d32fb9de385add62e2969a63f8132428` / SHA-256 `15a45a3cba6c6d339b6f1dd6d004a62e36d50149236f30e4830935cc965eb7ec`；[Service.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/core/java/android/app/Service.java) blob `7635138f6cdded8a4fe7f2bbc9597d23b36d139a` / SHA-256 `0020bce4870ee209292670367260c460ce7b35b16de0d5f5f5292d5396878a4b`；[ActiveServices.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/services/core/java/com/android/server/am/ActiveServices.java) blob `8368b4dfe070394c5c4e0159944d06cb6e1176e8` / SHA-256 `5ced826fdf9c89bd1c3e9f653b611f5ab951dd3ffbedc58da0fa7b36f3cea38a`；[Vpn.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/services/core/java/com/android/server/connectivity/Vpn.java) blob `77d3392da99319d9b3681030b1a4afafd4fc2cb0` / SHA-256 `1125e66e495fca81d869676f3d62162efad4fad8430cdf0dd39fbaf7ffcb97c6`。
+
+仅作 framework API / 行为参考，未复制 Java 源码或新增依赖；来源登记不表示 Lite Service、Android Binder 或 VPN 验收通过。
+
 **许可证、署名与证据：** Apache-2.0，原 AOSP 源文件许可头；[固定 ActivityManager.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/1cdfff555f4a21f71ccc978290e2e212e2f8b168/core/java/android/app/ActivityManager.java)、[官方 API](https://developer.android.com/reference/android/app/ActivityManager.AppTask#getTaskInfo())。；run83 固定来源中的两份 AOSP 源文件许可为 Apache-2.0，证据见 `SOURCES.json`
 
 #### [torvalds/linux](https://github.com/torvalds/linux)
@@ -1051,6 +1057,8 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 
 分片验收另按实际解析依赖 `androidx.test:runner:1.6.2` 固定 `axt_08_14_2024` / `6de0b804ca086a6194a108ef2988fa6104eea96d`：[`TestRequestBuilder.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/internal/runner/TestRequestBuilder.java) 与 Google Maven sources JAR 对应源码逐字节相同。该版使用 `abs(hash) % numShards`，不混用旧参考 revision 的 `floorMod`。只复用公开 `numShards`、`shardIndex` 和无测试执行的 `log=true` 参数；参考 `AndroidLogOnlyBuilder`、`NonExecutingRunner` 和结果协议，保留真实 APK discovery 与执行集合核验，未复制实现或新增依赖。
 
+另核官方 Google Maven `androidx.test:runner:1.7.0` 发布产物：[sources JAR](https://dl.google.com/dl/android/maven2/androidx/test/runner/1.7.0/runner-1.7.0-sources.jar) SHA256 `22d99db01579e249e415802fb7926dfbb04bf8b89d5ea62cba1459ccb0ff0628`，AAR SHA256 `970311c47119928a2e406a88892a3d270387cc5a49a181a1c44511105b41b818`；两者均匹配 Google Maven 官方 `.sha512`。来源身份为发行版本与包哈希，无对应 Git commit。两版 AAR 的 `ShardingFilter` 对原 423 个描述项比对符合既有分片算法；仅作工具兼容/只读参考，不复制代码、不新增运行依赖，也不代表 APK 方法已执行。
+
 同固定提交另只读核对 [`GrantPermissionRule.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/rules/java/androidx/test/rule/GrantPermissionRule.java#L37-L45) 中“撤销已授予权限会使 Instrumentation 进程崩溃”的说明；[`AndroidJUnitRunner.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/runner/AndroidJUnitRunner.java#L92-L107) 记录精确 `class#method` 和 `notClass` 选择接口；[`TestRequestBuilder.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/internal/runner/TestRequestBuilder.java#L417-L508) 记录参数化方法名后缀与根方法名的过滤行为。仅作权限与测试选择 API 行为参考，未复制代码或新增依赖；既有主分片算法来源和说明保持不变。
 
 **许可证、署名与证据：** Apache-2.0；固定来源与许可证据见 run83 `SOURCES.json`
@@ -1074,9 +1082,9 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 
 #### [junit-team/junit4](https://github.com/junit-team/junit4)
 
-**固定版本 / revision：** `r4.13.2` / `05fe2a64f59127c02135be22f416e91260d6ede6`
+**固定版本 / revision：** `r4.13.2` / `05fe2a64f59127c02135be22f416e91260d6ede6`；Maven Central 官方 [sources JAR](https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2-sources.jar) SHA256 `34181df6482d40ea4c046b063cb53c7ffae94bdf1b1d62695bdf3adf9dea7e3a`、[JAR](https://repo.maven.apache.org/maven2/junit/junit/4.13.2/junit-4.13.2.jar) SHA256 `8e495b634469d64fb8acfa3495a065cbacc8a0fff55ce1e31007be4c16dc57d3`；均匹配官方 `.sha1`。
 
-**用途与采用方式：** 只读参考 `Description.java`、`Parameterized.java`、`BlockJUnit4ClassRunner.java` 和 `BlockJUnit4ClassRunnerWithParameters.java`，核对真实参数化 case 的名称与 Description 身份，避免用源码名称代替 R8 后的 APK discovery。未复制实现、未新增依赖；已使用的 JUnit 版本保持不变。
+**用途与采用方式：** 只读参考 `Description.java`、`Parameterized.java`、`BlockJUnit4ClassRunner.java` 和 `BlockJUnit4ClassRunnerWithParameters.java`，核对真实参数化 case 的名称与 Description 身份，避免用源码名称代替 R8 后的 APK discovery；并以固定 JAR 只读核对分片工具所需的默认 Description 身份语义。未复制实现、未新增依赖；已使用的 JUnit 版本保持不变。
 
 **许可证、署名与证据：** EPL-1.0，保留 JUnit 原署名；[固定 Description 源码](https://github.com/junit-team/junit4/blob/05fe2a64f59127c02135be22f416e91260d6ede6/src/main/java/org/junit/runner/Description.java)、[固定参数化 Runner](https://github.com/junit-team/junit4/blob/05fe2a64f59127c02135be22f416e91260d6ede6/src/main/java/org/junit/runners/parameterized/BlockJUnit4ClassRunnerWithParameters.java)。
 
@@ -1105,6 +1113,22 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 **用途与采用方式：** Lite Android 内部联调使用固定 GeoSite 夹具。固定 Git tree / blob 与既有官方 Meow 检查的真实字节一致；CI 有界获取、核验后供给显式本地资源入口，不修改原分流规则，也不冒充原 HTTP provider 下载。数据不进入本仓库、APK 或新上传的 seed。
 
 **许可证、署名与证据：** 源码仓库许可元数据为 GPL-3.0，核对版本 `4178770badecb1b349fbcd62c737e0d7a2079729`、LICENSE blob `f288702d2fa16d3cdf0035b15a9fcbc552cd88e7`；固定数据树未含 LICENSE 文件，第三方数据仍保留各自来源、版权和许可约束，不推定新的再分发授权；[固定数据树](https://github.com/MetaCubeX/meta-rules-dat/tree/bfa68b978ec9c0494203d7c0d64e186640f7257b)、[源码 LICENSE](https://github.com/MetaCubeX/meta-rules-dat/blob/4178770badecb1b349fbcd62c737e0d7a2079729/LICENSE)。
+
+#### [opencv/opencv](https://github.com/opencv/opencv)
+
+**固定版本 / revision：** release `4.12.0`；官方 GitHub tag peel 至 commit `49486f61fb25722cbcf586b7f4320921d46fb38e`。
+
+**用途与采用方式：** 只读比较 `findTransformECC` 的 ECC 几何配准准则、初始变换与收敛边界；不作为独立验收标准。未复制代码、未增加库依赖，不声称本项目校准已通过或据此建立阈值。
+
+**许可证、署名与证据：** 固定 `tracking.hpp` 文件头保留 BSD-3-Clause 声明与版权；仓库根目录 [`LICENSE`](https://github.com/opencv/opencv/blob/49486f61fb25722cbcf586b7f4320921d46fb38e/LICENSE) 为 Apache-2.0，分别按文件声明与仓库许可范围记录，不将该文件头归为 Apache-2.0。[固定 `tracking.hpp`](https://github.com/opencv/opencv/blob/49486f61fb25722cbcf586b7f4320921d46fb38e/modules/video/include/opencv2/video/tracking.hpp)、[官方 release](https://github.com/opencv/opencv/releases/tag/4.12.0)。
+
+#### [scikit-image/scikit-image](https://github.com/scikit-image/scikit-image)
+
+**固定版本 / revision：** release `v0.26.0`；官方 GitHub tag peel 至 commit `ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8`。
+
+**用途与采用方式：** 只读参考 `phase_cross_correlation` 的亚像素平移与残差语义，以及归一化、噪声对适用性的影响；不是已证实的色散分类器。未复制代码、未增加库依赖、未从该来源推导验收阈值，也不声称本项目校准通过。
+
+**许可证、署名与证据：** BSD-3-Clause；保留 scikit-image 原署名；`LICENSE.txt` 还列有特定文件的其他许可说明。[固定实现](https://github.com/scikit-image/scikit-image/blob/ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8/src/skimage/registration/_phase_cross_correlation.py)、[0.26 API 文档](https://scikit-image.org/docs/0.26.x/api/skimage.registration.html)、[固定 `LICENSE.txt`](https://github.com/scikit-image/scikit-image/blob/ee0a7a3ebd9ac8c2602f40e55bc015a3c8a81ae8/LICENSE.txt)、[官方 release](https://github.com/scikit-image/scikit-image/releases/tag/v0.26.0)。
 
 #### [android.googlesource.com/platform/tools/base](https://android.googlesource.com/platform/tools/base)
 
