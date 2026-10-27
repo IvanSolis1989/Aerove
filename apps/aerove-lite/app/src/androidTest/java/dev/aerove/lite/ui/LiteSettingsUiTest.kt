@@ -132,7 +132,10 @@ class LiteSettingsUiTest {
         compose.onNodeWithContentDescription(text(R.string.lite_back)).performClick()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(R.string.lite_logs)) and hasClickAction())
         click(R.string.lite_logs)
-        compose.onNodeWithText(text(R.string.lite_no_logs)).assertExists()
+        compose.onNodeWithTag("history-log-export").assertExists()
+        compose.onNodeWithTag("history-log-clear").assertExists()
+        compose.onNodeWithText(text(R.string.history_empty)).assertExists()
+        compose.onNodeWithText(text(R.string.history_empty_detail)).assertExists()
         compose.runOnUiThread { state.value = state.value.copy(settings = state.value.settings.copy(openLogs = false)) }
         compose.waitForIdle()
         compose.onNodeWithContentDescription(text(R.string.lite_back)).assertDoesNotExist()
