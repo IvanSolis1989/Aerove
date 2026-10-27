@@ -129,6 +129,7 @@ class LiteSwitchRenderingTest(private val case: RenderCase) {
             val productionBaseline = compose.frame(state, baseline.copy(stage = FixtureStage.Production), capture, "production-without-marker")
             val controlBaseline = compose.frame(state, baseline.copy(stage = FixtureStage.NoLens), capture, "no-lens-without-marker")
             val metrics = JSONObject().put("case", case.toString())
+            var acceptanceFailure: Throwable? = null
             try {
                 val bounds = requireNotNull(probe.bounds["switch"])
                 val d = probe.density
@@ -161,20 +162,64 @@ class LiteSwitchRenderingTest(private val case: RenderCase) {
                         .put("source", original.json()).put("productionRaw", profile(actual).json()).put("noLensRaw", profile(control).json())
                         .put("markerIsolation", "Subtract each measured no-marker GPU frame so a stationary Full rim cannot masquerade as displaced source detail")
                         .put("productionWithoutGroupFade", withoutGroupFade.json()))
-                    assertTrue("Missing hardware marker for the ${if (thumb) "thumb" else "track"}", original.contrast > 80)
-                    if (case.tier == MaterialTier.Clear) {
-                        val outward = original.centroid - withoutGroupFade.centroid
-                        metrics.getJSONObject(if (thumb) "thumb" else "track").put("outwardDisplacementDp", outward)
-                        assertTrue("The resting ${if (thumb) "thumb" else "track"} must itself displace the marker, including after removing disabled group opacity (dp=$outward)", outward >= 0.5)
-                        assertTrue("The clear marker must remain visible after accounting for the intentional tint", withoutGroupFade.contrast >= original.contrast * 0.35)
-                        assertTrue("The non-refracting control must leave the marker in place", abs(noLensWithoutFade.centroid - original.centroid) <= 0.25)
-                        if (thumb) {
-                            val trackOnly = compose.frame(state, marker.copy(stage = FixtureStage.FlatThumb), capture, "thumb-flat-with-production-track")
-                            val difference = comparePixels(actual, trackOnly, Rect(x - 1.5f * d, top + 0.5f * d, x + 1.5f * d, end))
-                            metrics.getJSONObject("thumb").put("thumbVsUnrefractingThumbOnSameTrack", difference.json())
-                            assertTrue("Thumb must add its own optical displacement; inheriting the track's lens is insufficient", difference.maximum > 30)
+                    fun captureFailedFlatThumb(primary: AssertionError) {
+                        if (!thumb || case.tier != MaterialTier.Clear) return
+                        val receipt = JSONObject()
+                            .put("diagnosticOnly", true)
+                            .put("acceptancePassed", false)
+                            .put("primaryAssertion", primary.message ?: primary.javaClass.name)
+                            .put("captureLabel", "thumb-flat-with-production-track")
+                            .put("noMarkerBaselineStage", FixtureStage.FlatThumb.name)
+                        try {
+                            val flatBaseline = compose.frame(state, baseline.copy(stage = FixtureStage.FlatThumb), capture, "thumb-flat-with-production-track-no-marker")
+                            receipt.put("noMarkerBaseline", flatBaseline.evidence.optString("windowImage"))
+                                .put("noMarkerBaselineSha256", flatBaseline.evidence.optString("windowSha256"))
+                                .put("noMarkerBaselineMetadata", "thumb-flat-with-production-track-no-marker.json")
+                            val flatThumb = compose.frame(state, marker.copy(stage = FixtureStage.FlatThumb), capture, "thumb-flat-with-production-track")
+                            val flatMarker = markerOnly(flatThumb, flatBaseline)
+                            val sameTrackDifference = comparePixels(actual, flatThumb, Rect(x - 1.5f * d, top + 0.5f * d, x + 1.5f * d, end))
+                            receipt.put("captured", true)
+                                .put("windowImage", flatThumb.evidence.optString("windowImage"))
+                                .put("windowSha256", flatThumb.evidence.optString("windowSha256"))
+                                .put("flatThumbMarkerAgainstMatchingFlatTrackNoMarker", flatMarker.json())
+                                .put("productionThumbVsFlatThumbSameTrack", sameTrackDifference.json())
+                                .put("usedForAcceptance", false).put("originalAcceptanceRemainsFailed", true)
+                        } catch (diagnosticFailure: Throwable) {
+                            if (primary !== diagnosticFailure) primary.addSuppressed(diagnosticFailure)
+                            receipt.put("captured", false)
+                                .put("diagnosticFailureType", diagnosticFailure.javaClass.name)
+                                .put("diagnosticFailure", diagnosticFailure.message ?: "(no message)")
                         }
-                    } else {
+                        try {
+                            metrics.getJSONObject("thumb").put("failureOnlySameTrackFlatThumb", receipt)
+                        } catch (receiptFailure: Throwable) {
+                            if (primary !== receiptFailure) primary.addSuppressed(receiptFailure)
+                        }
+                    }
+                    try {
+                        assertTrue("Missing hardware marker for the ${if (thumb) "thumb" else "track"}", original.contrast > 80)
+                        if (case.tier == MaterialTier.Clear) {
+                            val outward = original.centroid - withoutGroupFade.centroid
+                            metrics.getJSONObject(if (thumb) "thumb" else "track").put("outwardDisplacementDp", outward)
+                            assertTrue("The resting ${if (thumb) "thumb" else "track"} must itself displace the marker, including after removing disabled group opacity (dp=$outward)", outward >= 0.5)
+                            assertTrue("The clear marker must remain visible after accounting for the intentional tint", withoutGroupFade.contrast >= original.contrast * 0.35)
+                            assertTrue("The non-refracting control must leave the marker in place", abs(noLensWithoutFade.centroid - original.centroid) <= 0.25)
+                        }
+                    } catch (failure: AssertionError) {
+                        try {
+                            captureFailedFlatThumb(failure)
+                        } catch (diagnosticFailure: Throwable) {
+                            if (failure !== diagnosticFailure) failure.addSuppressed(diagnosticFailure)
+                        }
+                        throw failure
+                    }
+                    if (case.tier == MaterialTier.Clear && thumb) {
+                        val trackOnly = compose.frame(state, marker.copy(stage = FixtureStage.FlatThumb), capture, "thumb-flat-with-production-track")
+                        val difference = comparePixels(actual, trackOnly, Rect(x - 1.5f * d, top + 0.5f * d, x + 1.5f * d, end))
+                        metrics.getJSONObject("thumb").put("thumbVsUnrefractingThumbOnSameTrack", difference.json())
+                        assertTrue("Thumb must add its own optical displacement; inheriting the track's lens is insufficient", difference.maximum > 30)
+                    }
+                    if (case.tier != MaterialTier.Clear) {
                         val region = Rect(x - 1.5f * d, top + 0.5f * d, x + 1.5f * d, end)
                         val difference = comparePixels(actual, control, region)
                         metrics.getJSONObject(if (thumb) "thumb" else "track").put("noLensChannelError", difference.json())
@@ -182,7 +227,18 @@ class LiteSwitchRenderingTest(private val case: RenderCase) {
                         if (case.tier == MaterialTier.Frosted) assertTrue("Frosted switch planes must blur the marker", withoutGroupFade.contrast < original.contrast * 0.25)
                     }
                 }
-            } finally { capture.metrics(metrics) }
+            } catch (failure: Throwable) {
+                acceptanceFailure = failure
+                throw failure
+            } finally {
+                try {
+                    capture.metrics(metrics)
+                } catch (metricsFailure: Throwable) {
+                    val primary = acceptanceFailure
+                    if (primary == null) throw metricsFailure
+                    if (primary !== metricsFailure) primary.addSuppressed(metricsFailure)
+                }
+            }
         }
     }
 
