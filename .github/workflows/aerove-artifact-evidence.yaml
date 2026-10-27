@@ -1,0 +1,42 @@
+name: AEROVE isolated artifact evidence reader
+
+on:
+  push:
+    branches: [codex/aerove-evidence-reader-34]
+    paths: [.github/workflows/aerove-artifact-evidence.yaml]
+  workflow_dispatch:
+    inputs:
+      request_json:
+        description: Exact original run/artifact identity and index or bounded selection JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+
+jobs:
+  evidence:
+    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/codex/aerove-evidence-reader-34' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Read original artifact without building or running applications
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_REQUEST: ${{ inputs.request_json }}
+        run: python3 tooling/artifact_evidence.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: Aerove-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/artifact-evidence-out/
+          if-no-files-found: error
+          retention-days: 7
