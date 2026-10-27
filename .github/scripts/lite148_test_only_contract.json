@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "diagnosticOnly": true,
+  "accepted": false,
+  "repository": "IvanSolis1989/Aerove",
+  "harnessRef": "refs/heads/codex/aerove-lite148-test-proof-34",
+  "appSource": "af2d7d947678d690cff696746d9600b353bef731",
+  "testSource": "dbe285c3bc09448807d462246fbda77cde3d2a8b",
+  "appRun": 40582071684,
+  "appAttempt": 1,
+  "signerSha256": "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8",
+  "testFiles": {
+    "apps/aerove-lite/app/src/androidTest/java/dev/aerove/lite/ui/LiteAppRenderingTest.kt": {
+      "oldSha256": "9fcdb2203b1d9cbdc55184eabb1709e135ed0b622c15fdb218fb20cc397af766",
+      "newSha256": "9a431aabf75e5fe53a3a8ab2ab26297659a57a5dff751c82aa1c827ad40bf543"
+    },
+    "apps/aerove-lite/app/src/androidTest/java/dev/aerove/lite/ui/OpticalFixture.kt": {
+      "oldSha256": "f59096848c30d7792b14c5fac309bddfecc9ca672c2fef66d93795c1cc6fc642",
+      "newSha256": "d273a6d21abf79590dc06171e28be059d6af272e510b1578b4c4898a1b75841b"
+    }
+  },
+  "diagnostics": {
+    "x86_64": {
+      "id": 12769673751,
+      "name": "AEROVE-Lite-package-diagnostics-x86_64-attempt-1",
+      "zipBytes": 84866,
+      "zipSha256": "37d5f7fc9a54b30ef3b958570b74543fd360e00a144b670078b442f7c1f5b5a7",
+      "entries": {
+        "rules.pro": {
+          "bytes": 245626,
+          "sha256": "946b5ea0d44ecce391fccd448509ab1a5b2f399f7665f1567d378dfb35ecbc12"
+        },
+        "inputs.json": {
+          "bytes": 106690,
+          "sha256": "d86b19b07d7352ab108601b9a76a7fec921303fdd29ad62cd19b67aea49343e7"
+        }
+      }
+    },
+    "arm64-v8a": {
+      "id": 12769984987,
+      "name": "AEROVE-Lite-package-diagnostics-arm64-v8a-attempt-1",
+      "zipBytes": 84864,
+      "zipSha256": "9256ad68e098fa432786d94048d224ab46514c1597cb4e02fde9a9d7c18dd120"
+    }
+  },
+  "originalRuntime": {
+    "id": 12769579051,
+    "name": "AEROVE-Lite-runtime-contract-attempt-1",
+    "zipBytes": 35667308,
+    "zipSha256": "60365689f53a8a9b49253e42e4359c87186253adfc297aea4e7b1f5af4bf9638",
+    "mappingActuallyIndexed": true,
+    "indexReaderRun": 40596338374,
+    "indexSha256": "9284712e49763f003484e03bba67b8e451ccb31f946a532247c6c52a176add98",
+    "readerReceiptSha256": "d8189746c545365bb08715ce2802ca3cbc5fb278858aff35ecdb362fffaa346a",
+    "entries": {
+      "BUILD_INFO.json": {
+        "bytes": 11203,
+        "sha256": "2c4259ae8ea83a83feed8379f2fbfe79a19be38e37335f469bd7c1ca892b67f9"
+      },
+      "SHA256SUMS": {
+        "bytes": 2048,
+        "sha256": "07b355cf0e09652b0edb8a6c81215c3fa357b43d4c970d0553d53805811c8366"
+      },
+      "apks/app-release-androidTest.apk": {
+        "bytes": 3566257,
+        "sha256": "8ca1b0b5abd0b00e5d0f1caaf0a69827291922cd59e1e6a3f5939d6c3db4bfbb"
+      },
+      "apks/app-release.apk": {
+        "bytes": 70440971,
+        "sha256": "aba9923b99968aa096cefe24ad625b2a9be71693ef1183710b1e2cef06f7c66c"
+      },
+      "client-helper-build-receipt.json": {
+        "bytes": 5049,
+        "sha256": "1c2bb67a0fecb519669428361cb89a6a211724843ea9489de72736011dfae7ce"
+      },
+      "dependencies/releaseAndroidTestRuntimeClasspath.exit.txt": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "dependencies/releaseAndroidTestRuntimeClasspath.stderr.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt": {
+        "bytes": 73390,
+        "sha256": "0beb48697a2214667e691bae34f3e783d54f3b2f2bcde263db953b49900e603d"
+      },
+      "dependencies/releaseRuntimeClasspath.exit.txt": {
+        "bytes": 2,
+        "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+      },
+      "dependencies/releaseRuntimeClasspath.stderr.txt": {
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "dependencies/releaseRuntimeClasspath.stdout.txt": {
+        "bytes": 79918,
+        "sha256": "24b3eec1c94ef484fc0e1586f8a581979923425735377f7ea10ec3fb5e823933"
+      },
+      "lite-badging.txt": {
+        "bytes": 6285,
+        "sha256": "b052cdc05719de08dda14f03e9cfe9a7b3b8abc61ae3313770370672753a9ffc"
+      },
+      "lite-signature.txt": {
+        "bytes": 1017,
+        "sha256": "c95138cabc6d1eac58090a2d8b2ff3ba6a6ab2cc187dfacbd605f5a89e56ee70"
+      },
+      "mapping/release/configuration.txt": {
+        "bytes": 411132,
+        "sha256": "e0310913967947a3794becf85de5d929ae7c215e0fdd4fe8ce62f01c5fa54f91"
+      },
+      "mapping/release/mapping.txt": {
+        "bytes": 81657636,
+        "sha256": "d7c518cafd738b44ac2aa15f9183f10b2b8f9c1ddc3918d33c47ea7997cfbe93"
+      },
+      "mapping/release/seeds.txt": {
+        "bytes": 2171573,
+        "sha256": "a0555c55aa2ce33fd77d3d4ec6d53c9cba5dd138617ea8d277fcd7e51d8b3a0c"
+      },
+      "mapping/release/usage.txt": {
+        "bytes": 4681789,
+        "sha256": "eb90dacb1a4e1f84d9667a640fa685eb9e514fda55bc44d27e26dd8e7c296a01"
+      },
+      "mapping/releaseAndroidTest/configuration.txt": {
+        "bytes": 5730,
+        "sha256": "438b7a7fc99ac0c5c08c8f7e104dfe1176459d223928d44da5b18ae805290be3"
+      },
+      "mapping/releaseAndroidTest/mapping.txt": {
+        "bytes": 6765659,
+        "sha256": "cd709e7baeeaf233da7e9fc354d603ba9ed583eb977c613bb1e6c9b84c1aafb9"
+      },
+      "mapping/releaseAndroidTest/seeds.txt": {
+        "bytes": 2446126,
+        "sha256": "39d10f0624132cf17666158cb974bc12044758b09e33d30eb9770ce35baf573e"
+      },
+      "mapping/releaseAndroidTest/usage.txt": {
+        "bytes": 14881,
+        "sha256": "99aa547fbfba45b5cac58f7979c41aa21b6ad4bd5b9c47694f9d7790f61e8e34"
+      },
+      "source-manifest.json": {
+        "bytes": 3719,
+        "sha256": "dc852fce3ccd4169d5fa0f8b660cd1e3815d38cfa1c30cc6112649e35f03f330"
+      }
+    }
+  },
+  "newTestApkStageImplemented": false
+}

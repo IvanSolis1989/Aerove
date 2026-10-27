@@ -1,0 +1,48 @@
+import groovy.json.JsonOutput
+
+def allowed = [
+    'preBuild', 'preReleaseBuild', 'preReleaseAndroidTestBuild',
+    'checkKotlinGradlePluginConfigurationErrors', 'checkReleaseAarMetadata',
+    'checkReleaseAndroidTestAarMetadata', 'generateReleaseBuildConfig',
+    'generateReleaseResValues', 'generateReleaseResources', 'mergeReleaseResources',
+    'packageReleaseResources', 'parseReleaseLocalResources', 'mapReleaseSourceSetPaths',
+    'createReleaseCompatibleScreenManifests', 'extractDeepLinksRelease',
+    'processReleaseMainManifest', 'processReleaseManifest', 'processReleaseManifestForPackage',
+    'processReleaseResources', 'javaPreCompileRelease', 'compileReleaseKotlin',
+    'compileReleaseJavaWithJavac', 'bundleReleaseClassesToCompileJar',
+    'generateReleaseAndroidTestBuildConfig', 'generateReleaseAndroidTestResValues',
+    'generateReleaseAndroidTestResources', 'mergeReleaseAndroidTestResources',
+    'mapReleaseAndroidTestSourceSetPaths', 'processReleaseAndroidTestManifest',
+    'processReleaseAndroidTestResources', 'javaPreCompileReleaseAndroidTest',
+    'compileReleaseAndroidTestKotlin', 'compileReleaseAndroidTestJavaWithJavac',
+    'generateReleaseAndroidTestAppKeepRules'
+] as Set
+
+gradle.taskGraph.whenReady { graph ->
+    def mode = System.getenv('LITE148_GRAPH_MODE')
+    def target = System.getenv('LITE148_GRAPH_TARGET')
+    def destination = System.getenv('LITE148_GRAPH_RECEIPT')
+    if (!(mode in ['admit', 'observe']) || !destination || !target) {
+        throw new GradleException('Missing fixed Lite148 proof admission context')
+    }
+    def tasks = graph.allTasks.collect { [path: it.path, type: it.class.name] }
+    def rejected = graph.allTasks.findAll { it.project.path != ':app' || !allowed.contains(it.name) }.collect { it.path }
+    def exclusions = gradle.startParameter.excludedTaskNames.toList().sort()
+    def requested = gradle.startParameter.taskNames.toList()
+    def validRequest = requested == [target] && exclusions.isEmpty()
+    def safe = validRequest && target == ':app:generateReleaseAndroidTestAppKeepRules' && rejected.isEmpty()
+    def out = new File(destination)
+    out.parentFile.mkdirs()
+    out.text = JsonOutput.prettyPrint(JsonOutput.toJson([
+        schema: 1, diagnosticOnly: true, accepted: false, mode: mode,
+        requested: requested, target: target, exclusions: exclusions,
+        graphPopulatedBeforeTaskActions: true, safe: safe,
+        rejected: rejected, tasks: tasks
+    ])) + '\n'
+    if (mode == 'observe') {
+        throw new GradleException('LITE148_OBSERVATION_ONLY_NO_TASK_ACTIONS')
+    }
+    if (!safe) {
+        throw new GradleException('LITE148_TASK_GRAPH_REJECTED_BEFORE_TASK_ACTIONS')
+    }
+}
