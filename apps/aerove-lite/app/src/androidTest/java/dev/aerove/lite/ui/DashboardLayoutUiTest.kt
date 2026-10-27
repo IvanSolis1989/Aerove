@@ -961,7 +961,7 @@ class DashboardLayoutUiTest {
         launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running), maxWidth = 412.dp, deviceDensity = 2.625f,
             language = "zh-CN", lookup = { IpQuality(it, IpQualitySource.IdentMe, IpType.Residential, asn = 64500) })
         awaitOrganization("${localized("zh-CN").getString(R.string.lite_organization)}\nAS64500")
-        compose.onNodeWithTag("dashboard-status-organization").assertTextEquals("AS64500")
+        compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true).assertTextEquals("AS64500")
     }
 
     @Test
@@ -1176,7 +1176,7 @@ class DashboardLayoutUiTest {
         launch(initial, fontScale = 2f, maxWidth = 328.dp, deviceDensity = 2.625f)
         addTrafficAndAssertOriginalForeground(expectedOverlay = null)
         val statusLabel = context.getString(R.string.lite_status)
-        val statusMatcher = compose.onNodeWithText(statusLabel)
+        val statusMatcher = compose.onNode(hasTestTag("dashboard-status-title-raw") and hasText(statusLabel), useUnmergedTree = true)
         try {
             statusMatcher.assertIsDisplayed()
         } catch (failure: AssertionError) {
