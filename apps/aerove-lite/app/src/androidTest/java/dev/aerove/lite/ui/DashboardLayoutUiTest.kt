@@ -797,10 +797,11 @@ class DashboardLayoutUiTest {
     fun chineseAtThirteenTenthsReadsFooterTrafficBeforeTheSummary() = assertStatusSpeech(360.dp, 1.3f, overlay = true, language = "zh-CN")
 
     @Test
-    fun stackedStatusCardReadsTitleOnceStateSummaryControlsThenTraffic() = withLayoutFailureScreenshot("status-stacked-reading-order") {
-        assertStatusSpeech(328.dp, 2f, overlay = false,
-            traffic = Traffic(Long.MAX_VALUE, Long.MAX_VALUE - 1L, 4096, 8192),
-            expectedSpeeds = listOf("8388608 TB/s", "8388608 TB/s"))
+    fun phone412AtFifteenPercentReadsFullRateOnceWithOriginalForeground() = withLayoutFailureScreenshot("status-phone-reading-order") {
+        assertStatusSpeech(412.dp, 1.15f, overlay = true,
+            traffic = Traffic(1_048_471_142L, 1_048_471_142L, 4096, 8192),
+            expectedSpeeds = listOf("999.9 MB/s", "999.9 MB/s"))
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
     }
 
     private fun assertStartControl(label: String, enabled: Boolean, measured: String) {
