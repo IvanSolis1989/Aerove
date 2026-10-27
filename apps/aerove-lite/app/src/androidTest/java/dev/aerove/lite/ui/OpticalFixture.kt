@@ -84,6 +84,11 @@ internal class SolidDemandEvidence {
     val observed = JSONObject()
 }
 
+internal enum class SdkChromaticStencil(val redBlueSpanPx: Float, val edgeChannel: Int? = null) {
+    Zero(0f), Subpixel(0.5f), OnePixel(1f), TwoPixels(2f), Reverse(-1f), ReverseSubpixel(-0.5f),
+    UniformRed(0f, 0), UniformBlue(0f, 2),
+}
+
 internal data class FixtureState(
     val stage: FixtureStage = FixtureStage.Source,
     val revision: Int = 0,
@@ -103,6 +108,8 @@ internal data class FixtureState(
     val inkContrastSource: Boolean = false,
     val inkContrastDrawReceipt: JSONObject? = null,
     val sceneDrawReceipt: JSONObject? = null,
+    val sdkChromaticStencil: SdkChromaticStencil? = null,
+    val sdkChromaticDrawReceipt: JSONObject? = null,
     val solidDemandPose: SolidDemandPose? = null,
     val solidDemandEvidence: SolidDemandEvidence? = null,
 )
@@ -117,6 +124,9 @@ internal fun FixtureState.opticalConfiguration(): JSONObject {
         .put("diagnosticOnly", lensControl != LensControl.None || plainInkControl || inkContrastSource)
         .put("fixtureGeometry", if (stage == FixtureStage.Source || stage == FixtureStage.InkMask) JSONObject.NULL else fixtureGeometry?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
         .put("sceneDrawReceipt", sceneDrawReceipt?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
+        .put("sdkChromaticStencil", sdkChromaticStencil?.name ?: JSONObject.NULL)
+        .put("sdkChromaticDrawReceipt", sdkChromaticDrawReceipt?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
+        .put("chromaticCalibrationOnly", sdkChromaticStencil != null)
         .put("solidDemandPose", solidDemandPose?.name ?: JSONObject.NULL)
         .put("solidDemandObserved", solidDemandEvidence?.let { JSONObject(it.observed.toString()) } ?: JSONObject.NULL)
         .put("inkContrastSource", inkContrastSource)
@@ -158,6 +168,7 @@ internal fun FixtureState.opticalConfiguration(): JSONObject {
 
 @Composable
 internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: RenderProbe) {
+    require(state.sdkChromaticStencil == null || (state.stage == FixtureStage.Production && state.lensControl == LensControl.None))
     require(state.sdkInkReference == null || (state.plainInkControl && state.stage == FixtureStage.Production))
     require(!state.plainInkControl || state.stage != FixtureStage.InkMask) { "Plain ink must retain the original backdrop and paint" }
     require(state.lensControl == LensControl.None || (case.tier == MaterialTier.Clear && state.stage == FixtureStage.Production && !state.regularPane && !state.pillPane))
@@ -220,7 +231,8 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
             }
             CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source) {
                 Box(Modifier.offset(24.dp, 32.dp).size(paneWidth, 176.dp).onGloballyPositioned { probe.bounds["pane"] = it.boundsInWindow() }) {
-                    when (state.stage) {
+                    if (state.sdkChromaticStencil != null) IndependentSdkChromaticStencil(state)
+                    else when (state.stage) {
                         FixtureStage.Production -> LitePane(Modifier.fillMaxSize(), corner = OpticalPaneShape.corner,
                             glassStyle = when {
                                 state.lensControl != LensControl.None -> dispersionOffStyle()
@@ -315,6 +327,41 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
     }
 }
 
+
+
+/** Independent SDK paint/geometry only: no lens, material, RuntimeShader or production dispersion path. */
+@Composable
+private fun IndependentSdkChromaticStencil(state: FixtureState) {
+    val pose = requireNotNull(state.sdkChromaticStencil)
+    Canvas(Modifier.fillMaxSize()) {
+        val outline = OpticalPaneShape.createOutline(size, layoutDirection, this) as Outline.Generic
+        clipPath(outline.path) {
+            drawRect(Color(0xFF172432))
+            val colors = listOf(Color(224f / 255f, 0f, 0f), Color(0f, 212f / 255f, 0f), Color(0f, 0f, 202f / 255f))
+            for ((bottom, y) in listOf(false to 8.dp.toPx(), true to 165.dp.toPx())) {
+                val shifts = listOf(pose.redBlueSpanPx / 2 * if (bottom) 1 else -1, 0f,
+                    pose.redBlueSpanPx / 2 * if (bottom) -1 else 1)
+                for (channel in 0..2) drawLine(colors[channel],
+                    Offset(0f, y - size.width / 2 + shifts[channel]),
+                    Offset(size.width, y + size.width / 2 + shifts[channel]),
+                    strokeWidth = 3.dp.toPx(), blendMode = BlendMode.Plus)
+            }
+            pose.edgeChannel?.let { channel ->
+                val edge = if (channel == 0) Color(180f / 255f, 0f, 0f) else Color(0f, 0f, 180f / 255f)
+                drawPath(outline.path, edge, style = Stroke(2 * LensControlEdgeWidthDp.dp.toPx()), blendMode = BlendMode.Plus)
+            }
+        }
+        state.sdkChromaticDrawReceipt?.put("drawExecuted", true)?.put("renderer", "Independent Compose SDK Canvas")
+            ?.put("pose", pose.name)?.put("redBlueSpanPx", pose.redBlueSpanPx)?.put("density", density)
+            ?.put("lineYDp", JSONArray(listOf(8, 165)))?.put("slope", 1)?.put("strokeWidthDp", 3)
+            ?.put("baseRgb8", JSONArray(listOf(23, 36, 50)))?.put("channelPaint8", JSONArray(listOf(224, 212, 202)))
+            ?.put("zeroFullCoverageRgb8Intent", JSONArray(listOf(247, 248, 252)))?.put("uniformEdgeChannelPaint8", 180)
+            ?.put("blendMode", "Plus")?.put("clip", "Original OpticalPaneShape")
+            ?.put("topShiftSigns", "R=-span/2; G=0; B=span/2; bottom reversed")
+            ?.put("innerOutlineWidthDp", if (pose.edgeChannel == null) 0 else LensControlEdgeWidthDp)
+            ?.put("panePx", JSONArray(listOf(size.width, size.height)))?.put("productionLensInvoked", false)
+    }
+}
 
 /** A bounded lifecycle control scene; the original optical scene above remains unchanged. */
 @Composable
