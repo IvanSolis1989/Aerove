@@ -35,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -64,7 +65,7 @@ internal fun rememberLiteMotionValue(target: Float, spec: FiniteAnimationSpec<Fl
     LaunchedEffect(target, moving, spec) {
         if (moving && value.value != target) value.animateTo(target, spec) else value.snapTo(target)
     }
-    return value.asState()
+    return if (moving) value.asState() else rememberUpdatedState(target)
 }
 
 @Composable

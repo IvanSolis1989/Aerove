@@ -76,12 +76,19 @@ class NavigationPresentationUiTest {
         val reduced = mutableStateOf(false)
         val active = mutableStateOf(true)
         var observed = 0f
+        var receipt = "not composed"
         compose.mainClock.autoAdvance = false
         compose.replaceAppContent {
             LiteTheme(LiteSettings()) {
                 CompositionLocalProvider(LocalLiteReducedMotion provides reduced.value, LocalLitePageActive provides active.value) {
-                    val value by rememberLiteMotionValue(target.value, tween(200))
-                    SideEffect { observed = value }
+                    val frameTarget = target.value
+                    val frameReduced = LocalLiteReducedMotion.current
+                    val frameActive = LocalLitePageActive.current
+                    val value by rememberLiteMotionValue(frameTarget, tween(200))
+                    SideEffect {
+                        observed = value
+                        receipt = "target=$frameTarget reduced=$frameReduced active=$frameActive value=$value"
+                    }
                     LiteText("motion:$value")
                 }
             }
@@ -92,13 +99,13 @@ class NavigationPresentationUiTest {
         compose.runOnIdle { assertTrue(observed > 0f && observed < 1f) }
         compose.runOnUiThread { reduced.value = true }
         compose.mainClock.advanceTimeByFrame()
-        compose.runOnIdle { assertEquals(1f, observed, 0f) }
+        compose.runOnIdle { assertEquals("reduced snap: $receipt", 1f, observed, 0f) }
         compose.runOnUiThread { reduced.value = false; target.value = 0f }
         compose.mainClock.advanceTimeByFrame()
         compose.mainClock.advanceTimeBy(64)
         compose.runOnUiThread { active.value = false }
         compose.mainClock.advanceTimeByFrame()
-        compose.runOnIdle { assertEquals(0f, observed, 0f) }
+        compose.runOnIdle { assertEquals("inactive snap: $receipt", 0f, observed, 0f) }
         compose.mainClock.advanceTimeBy(1000)
         compose.runOnIdle { assertEquals(0f, observed, 0f) }
     }
