@@ -92,6 +92,20 @@ ORIGINAL94 = dict(
     product=dict(applicationId='dev.aerove.lite', version='0.1.0-beta.12', versionCode='12',
                  signerSha256='09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'))
 
+LITE141_PREBUILT_SHARDS = dict(
+    identity=dict(sourceRevision='d139a59b13275c9c2b207d0dc936fd37d93249b3',
+                  sourceTree='84e394165682384167a55f1bed04f1c0bd47b648',
+                  workflowRun='40445440882', runNumber=141, runAttempt=1),
+    artifact=12708203167, artifactName='AEROVE-Lite-runtime-contract-attempt-1',
+    zipBytes=35580014,
+    zipSha256='757f26423d7671f450d6466b5c22386f393e644bd4a75a0c05215e63e9796e44',
+    manifestSha256='a19eaee061da26a1580337aeb6a80d48eac7c7bc6dab021fcb2715295040fd26',
+    apks={'app-release.apk': '6bef27a4f6e91c8ba69b85d2fac6191e763eda212780b692e1a3fa1502f916e5',
+          'app-release-androidTest.apk': 'c721f4b7e05a4b51c631732b97e8edcee8cfcada912bf65f690ba16782f833c2'},
+    product=dict(applicationId='dev.aerove.lite', version='0.1.0-beta.19', versionCode='19',
+                 signerSha256='09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'),
+    producerJob=121996423095)
+
 
 def runtime_spec(target='original84'):
     if target == 'original84':
@@ -99,6 +113,8 @@ def runtime_spec(target='original84'):
                     manifestSha256=MANIFEST_SHA256, apks=APKS, product=PRODUCT)
     if target == 'lite125-original-samples':
         return LITE125_ORIGINAL_SAMPLES
+    if target == 'lite141-prebuilt-shards':
+        return LITE141_PREBUILT_SHARDS
     if target == 'lite94':
         return ORIGINAL94
     if target == 'beta14':
@@ -115,7 +131,7 @@ def proof_context():
     if legacy:
         return legacy, 'original84'
     if neutral:
-        if release._json(neutral).get('runtimeTarget') not in ('lite94','beta14','lite125-original-samples'):
+        if release._json(neutral).get('runtimeTarget') not in ('lite94','beta14','lite125-original-samples','lite141-prebuilt-shards'):
             raise ValueError('Neutral proof requires approved lite94 target')
         return neutral, release._json(neutral)['runtimeTarget']
     raise ValueError('Original runtime identity is diagnostic opt-in only')
@@ -283,6 +299,8 @@ def verify_original_runtime(directory):
                     runtimeManifestSha256=spec['manifestSha256'], apks=spec['apks'])
     if target == 'lite125-original-samples':
         expected.update(diagnosticOnly=True, accepted=False)
+    if target == 'lite141-prebuilt-shards':
+        expected.update(diagnosticOnly=True, accepted=False, aggregateAcceptance=False)
     if any(proof.get(key) != value for key, value in expected.items()):
         raise ValueError('Original84 proof identity differs from fixed app or current harness')
     if Path(proof['runtimeDirectory']).resolve() != Path(directory).resolve():
@@ -335,12 +353,12 @@ def prepare(directory, evidence, target='original84'):
         from beta14_runtime import api_json
         reader = api_json
     row = reader(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}")
-    if (row.get('id') != spec['artifact'] or row.get('name') != 'AEROVE-Lite-runtime-contract-attempt-1'
+    if (row.get('id') != spec['artifact'] or row.get('name') != spec.get('artifactName', 'AEROVE-Lite-runtime-contract-attempt-1')
             or row.get('expired') or row.get('digest') != 'sha256:' + spec['zipSha256']
             or row.get('workflow_run', {}).get('id') != int(spec['identity']['workflowRun'])
             or row['workflow_run'].get('head_sha') != spec['identity']['sourceRevision']):
         raise ValueError('Original84 artifact API identity changed')
-    if target in ('beta14', 'lite125-original-samples'):
+    if target in ('beta14', 'lite125-original-samples', 'lite141-prebuilt-shards'):
         if row.get('size_in_bytes') != spec['zipBytes']:
             raise ValueError(f'{target} artifact API size differs')
         run=reader(f"repos/{release.REPO}/actions/runs/{spec['identity']['workflowRun']}")
@@ -349,9 +367,22 @@ def prepare(directory, evidence, target='original84'):
                 or run.get('run_number') != int(identity['runNumber'])
                 or run.get('run_attempt') != int(identity['runAttempt']) or run.get('status') != 'completed'):
             raise ValueError(f'{target} original run API identity differs')
+    if target == 'lite141-prebuilt-shards':
+        job = reader(f"repos/{release.REPO}/actions/jobs/{spec['producerJob']}")
+        if (job.get('id') != spec['producerJob'] or job.get('run_id') != int(spec['identity']['workflowRun'])
+                or job.get('status') != 'completed' or job.get('conclusion') != 'success'):
+            raise ValueError('lite141-prebuilt-shards producer job identity or result differs')
     evidence.mkdir(parents=True, exist_ok=True)
     if target == 'beta14': (evidence / 'original107-run-api.json').write_text(json.dumps(run,indent=2)+'\n')
-    (evidence / ('original84-artifact-api.json' if target == 'original84' else 'original107-artifact-api.json' if target == 'beta14' else 'lite125-original-artifact-api.json' if target == 'lite125-original-samples' else 'original94-artifact-api.json')).write_text(json.dumps(row, indent=2) + '\n')
+    artifact_record = ('original84-artifact-api.json' if target == 'original84' else
+                       'original107-artifact-api.json' if target == 'beta14' else
+                       'lite125-original-artifact-api.json' if target == 'lite125-original-samples' else
+                       'lite141-original-artifact-api.json' if target == 'lite141-prebuilt-shards' else
+                       'original94-artifact-api.json')
+    (evidence / artifact_record).write_text(json.dumps(row, indent=2) + '\n')
+    if target == 'lite141-prebuilt-shards':
+        (evidence / 'lite141-original-run-api.json').write_text(json.dumps(run, indent=2) + '\n')
+        (evidence / 'lite141-producer-job-api.json').write_text(json.dumps(job, indent=2) + '\n')
     if target == 'beta14':
         from beta14_runtime import download
         download(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}/zip",archive)
@@ -379,6 +410,8 @@ def prepare(directory, evidence, target='original84'):
         (evidence / 'BETA14-NATIVE-BUNDLE-PROOF.json').write_text(json.dumps(proof['nativeBundleProof'],indent=2)+'\n')
     if target == 'lite125-original-samples':
         proof.update(diagnosticOnly=True, accepted=False)
+    if target == 'lite141-prebuilt-shards':
+        proof.update(diagnosticOnly=True, accepted=False, aggregateAcceptance=False)
     path = evidence / ('ORIGINAL84-APP-PROOF.json' if target == 'original84' else 'ORIGINAL-RUNTIME-APP-PROOF.json')
     path.write_text(json.dumps(proof, indent=2) + '\n')
     return path
@@ -387,20 +420,30 @@ def prepare(directory, evidence, target='original84'):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--directory', type=Path, required=True)
-    parser.add_argument('--target', choices=['original84', 'lite94','beta14','lite125-original-samples'], default='original84')
+    parser.add_argument('--target', choices=['original84', 'lite94','beta14','lite125-original-samples','lite141-prebuilt-shards'], default='original84')
     parser.add_argument('--sample', choices=sorted(LITE125_SAMPLES))
+    parser.add_argument('--phase', choices=['matrix','remaining'])
+    parser.add_argument('--shard-index', type=int)
     args = parser.parse_args()
     if (args.target == 'lite125-original-samples') != (args.sample is not None):
         parser.error('--sample is required only for lite125-original-samples')
+    if args.target == 'lite141-prebuilt-shards':
+        if args.sample is not None or args.phase != 'remaining' or args.shard_index not in range(8):
+            parser.error('lite141-prebuilt-shards requires --phase remaining and one --shard-index 0..7')
+    elif args.phase is not None or args.shard_index is not None:
+        parser.error('--phase/--shard-index are valid only for lite141-prebuilt-shards')
     if os.environ.get('AEROVE_QA79_PROOF') or os.environ.get('AEROVE_CURRENT_RENDERER_PROOF') or os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
         raise ValueError('Original84 QA requires fresh unmixed proof')
     evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics/matrix'
     proof = prepare(args.directory, evidence, args.target)
     proof_variable = 'AEROVE_ORIGINAL84_PROOF' if args.target == 'original84' else 'AEROVE_ORIGINAL_RUNTIME_PROOF'
     environment = dict(os.environ, **{proof_variable: str(proof.resolve())})
-    phase = 'original-sample' if args.sample else 'matrix'
+    phase = 'original-sample' if args.sample else args.phase or 'matrix'
     command = [sys.executable, str(Path(__file__).with_name('emulator_current.py')), phase,
                '--runtime-directory', str(args.directory)]
+    if args.target == 'lite141-prebuilt-shards':
+        environment['AEROVE_REMAINING_SHARD_COUNT'] = '8'
+        environment['AEROVE_REMAINING_SHARD_INDEX'] = str(args.shard_index)
     if args.sample:
         command.extend(['--sample', args.sample])
         environment['AEROVE_ORIGINAL_SAMPLE'] = args.sample

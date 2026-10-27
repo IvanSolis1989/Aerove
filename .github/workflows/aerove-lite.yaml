@@ -37,7 +37,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite125_test_only:
@@ -80,6 +80,59 @@ jobs:
     with:
       exclusive_mode: true
       runtime_target: beta14
+  diagnostic_lite141_shards:
+    name: Lite141 original APK remaining shard ${{ matrix.shard_index }}/8 (diagnostic only)
+    needs: diagnostic_guard
+    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite141-prebuilt-shards' }}
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard_index: [0, 1, 2, 3, 4, 5, 6, 7]
+    uses: ./.github/workflows/aerove-lite-qa84.yaml
+    with:
+      exclusive_mode: true
+      runtime_target: lite141-prebuilt-shards
+      shard_index: ${{ matrix.shard_index }}
+  diagnostic_lite141_aggregate:
+    name: Lite141 diagnostic-only eight-shard aggregate
+    needs: [diagnostic_guard, diagnostic_lite141_shards]
+    if: ${{ always() && needs.diagnostic_guard.result == 'success' && needs.diagnostic_lite141_shards.result != 'skipped' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Download only current-attempt Lite141 diagnostic shards
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      continue-on-error: true
+      with:
+        pattern: AEROVE-Lite-original141-shard-*-of-8-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite141-shards
+    - name: Verify original-App and independent-harness identities and exact eight-shard union
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      env:
+        GITHUB_SHA: ${{ github.sha }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+        GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+      run: >-
+        python3 apps/aerove-lite/tool/lite141_shards_diagnostic.py aggregate
+        --directory "$RUNNER_TEMP/lite141-shards"
+        --output "$RUNNER_TEMP/lite141-diagnostic-aggregate.json"
+    - name: Preserve diagnostic-only aggregate
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-original141-diagnostic-aggregate-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite141-diagnostic-aggregate.json
+        if-no-files-found: warn
   qa84:
     if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only)) }}
     permissions:
@@ -968,7 +1021,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

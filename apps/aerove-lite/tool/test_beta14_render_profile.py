@@ -223,7 +223,7 @@ class RuntimeWorkflowTests(unittest.TestCase):
         workflow=(root/'.github/workflows/aerove-lite.yaml').read_text()
         job=re.search(r'\n  diagnostic_beta14_profile:\n(.*?)(?=\n  qa84:)',workflow,re.S).group(1)
         self.assertIn('runtime_target: beta14',job);self.assertIn('uses: ./.github/workflows/aerove-lite-qa84.yaml',job);self.assertIn("== 'beta14-profile-only'",job)
-        self.assertIn('options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples]',workflow)
+        self.assertIn('options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards]',workflow)
         shell=(root/'apps/aerove-lite/tool/emulator_acceptance.sh').read_text();self.assertIn('test_timeout_msec=600000',shell);self.assertIn('--command-timeout 660 --',shell)
         self.assertGreater(shell.index('beta14_render_profile.py qualify'),shell.index('Instrumentation did not report a complete passing test run'))
     @unittest.skipUnless(os.environ.get('AEROVE_PROFILE_RUNTIME107'),'explicit existing immutable run107 runtime required')

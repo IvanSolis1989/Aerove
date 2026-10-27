@@ -91,6 +91,52 @@ if original:
         source.update(diagnosticOriginalRuntime=True, runtimeTarget=current["runtimeTarget"],
                       sourceAppRevision=original["sourceRevision"],
                       harnessIdentity=current["harnessIdentity"])
+        if current["runtimeTarget"] == "lite141-prebuilt-shards":
+            if sys.argv[2] != "remaining":
+                raise SystemExit("The Lite141 prebuilt diagnostic only permits the original remaining shards")
+            harness_identity = dict(sourceRevision=os.environ["GITHUB_SHA"],
+                sourceTree=subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
+                workflowRun=os.environ["GITHUB_RUN_ID"], runNumber=int(os.environ["GITHUB_RUN_NUMBER"]),
+                runAttempt=int(os.environ["GITHUB_RUN_ATTEMPT"]))
+            proof_file = Path(os.environ["AEROVE_ORIGINAL_RUNTIME_PROOF"])
+            original_proof_bytes = proof_file.read_bytes()
+            original_proof = json.loads(original_proof_bytes)
+            expected_flags = dict(diagnosticOriginalRuntime=True, runtimeTarget="lite141-prebuilt-shards",
+                diagnosticOnly=True, accepted=False, promotionAccepted=False, aggregateAcceptance=False)
+            if (original_proof.get("originalAppIdentity") != original
+                    or original_proof.get("harnessIdentity") != harness_identity
+                    or any(original_proof.get(key) != value for key, value in expected_flags.items())):
+                raise SystemExit("Lite141 original runtime proof differs from this harness or diagnostic-only contract")
+            runtime_directory = Path(current["runtimeDirectory"])
+            manifest_path = runtime_directory / "source-manifest.json"
+            if manifest_path.is_symlink():
+                raise SystemExit("Refusing a symlinked original runtime source manifest")
+            manifest_bytes = manifest_path.read_bytes()
+            manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+            if manifest_sha != current["runtimeManifestSha256"]:
+                raise SystemExit("Original runtime manifest changed after renderer proof")
+            dependency_relative = "dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt"
+            dependency_path = runtime_directory / dependency_relative
+            if dependency_path.is_symlink():
+                raise SystemExit("Refusing a symlinked original AndroidTest dependency report")
+            dependency_bytes = dependency_path.read_bytes()
+            manifest = json.loads(manifest_bytes)
+            dependency_entries = [entry for entry in manifest["files"] if entry["path"] == dependency_relative]
+            dependency_sha = hashlib.sha256(dependency_bytes).hexdigest()
+            if len(dependency_entries) != 1 or dependency_entries[0]["sha256"] != dependency_sha:
+                raise SystemExit("Original AndroidTest dependency report differs from runtime manifest")
+            evidence_directory = Path(sys.argv[1]).parent
+            evidence_directory.joinpath("ORIGINAL-RUNTIME-APP-PROOF.json").write_bytes(original_proof_bytes)
+            evidence_directory.joinpath("runtime-source-manifest.json").write_bytes(manifest_bytes)
+            evidence_directory.joinpath("runtime-androidTest-dependencies.txt").write_bytes(dependency_bytes)
+            source.update(workflowRun=original["workflowRun"], runNumber=original["runNumber"],
+                runAttempt=original["runAttempt"], harnessIdentity=harness_identity,
+                originalRuntimeProofSha256=hashlib.sha256(original_proof_bytes).hexdigest(),
+                runtimeArtifactId=original_proof["artifactId"],
+                runtimeArtifactZipSha256=original_proof["artifactZipSha256"],
+                runtimeManifestSha256=manifest_sha, apks=original_proof["apks"],
+                androidTestDependencyReportSha256=dependency_sha,
+                diagnosticOnly=True, accepted=False, aggregateAcceptance=False)
 if sys.argv[2] == "original-sample":
     if original is None or current.get("runtimeTarget") != "lite125-original-samples":
         raise ValueError("Original sample requires the approved immutable run125 runtime")
@@ -110,9 +156,10 @@ fixture_args=()
 smart_fixture_args=()
 if [[ "$phase" != matrix && -n "${SMART_CONFIG_MEOW_FIXTURE_DIR:-}" ]]; then
     smart_fixture_tree=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["sourceTree"])' "$diagnostics/SOURCE.json")
+    smart_fixture_target=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtimeTarget", ""))' "$diagnostics/SOURCE.json")
     smart_fixture_owner=current
     smart_fixture_verifier=prepare_smart_config_meow_ci_fixture.py
-    if [[ -n "${AEROVE_ORIGINAL84_PROOF:-}${AEROVE_ORIGINAL_RUNTIME_PROOF:-}" ]]; then
+    if [[ -n "${AEROVE_ORIGINAL84_PROOF:-}${AEROVE_ORIGINAL_RUNTIME_PROOF:-}" && "$smart_fixture_target" != lite141-prebuilt-shards ]]; then
         smart_fixture_owner=legacy
         smart_fixture_verifier=prepare_smart_config_meow_legacy_ci_fixture.py
     fi

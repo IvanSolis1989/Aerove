@@ -12,12 +12,16 @@ defaults:
       exclusive_mode:
         type: boolean
         required: true
+      shard_index:
+        type: number
+        required: false
+        default: -1
 permissions:
   contents: read
   actions: read
 jobs:
   android-qa:
-    name: ${{ inputs.runtime_target == 'beta14' && 'diagnostic original run107 beta14 profile (matrix)' || inputs.runtime_target == 'lite94' && 'diagnostic original run94 (matrix)' || 'original run84 (matrix)' }}
+    name: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && format('original run141 remaining shard {0}/8', inputs.shard_index) || inputs.runtime_target == 'beta14' && 'diagnostic original run107 beta14 profile (matrix)' || inputs.runtime_target == 'lite94' && 'diagnostic original run94 (matrix)' || 'original run84 (matrix)' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -30,12 +34,54 @@ jobs:
       env:
         EXCLUSIVE: ${{ inputs.exclusive_mode }}
         RUNTIME_TARGET: ${{ inputs.runtime_target }}
+        SHARD_INDEX: ${{ inputs.shard_index }}
       run: |
         test "$EXCLUSIVE" = true
-        case "$RUNTIME_TARGET" in original84|lite94|beta14) ;; *) echo 'Unknown immutable runtime target' >&2; exit 2 ;; esac
+        case "$RUNTIME_TARGET" in original84|lite94|beta14|lite141-prebuilt-shards) ;; *) echo 'Unknown immutable runtime target' >&2; exit 2 ;; esac
+        if [[ "$RUNTIME_TARGET" == lite141-prebuilt-shards ]]; then
+          [[ "$SHARD_INDEX" =~ ^[0-7]$ ]] || { echo 'Lite141 diagnostic requires one shard index 0..7' >&2; exit 2; }
+        else
+          [[ "$SHARD_INDEX" == -1 ]] || { echo 'Shard index is only valid for Lite141 diagnostics' >&2; exit 2; }
+        fi
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         persist-credentials: false
+    - name: Checkout immutable Lite141 source for Smart fixture ownership
+      if: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' }}
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: d139a59b13275c9c2b207d0dc936fd37d93249b3
+        path: .ci-original-lite141-source
+        persist-credentials: false
+        sparse-checkout: apps/aerove/assets/data/ASN.mmdb
+        sparse-checkout-cone-mode: false
+    - name: Checkout fixed Smart fixture sources
+      if: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' }}
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: IvanSolis1989/Smart-Config-Kit
+        ref: dba12215fe8f8d139a94fbd2d5b981282fbcf9c7
+        path: .ci-fixture-sources/smart-config
+        persist-credentials: false
+        fetch-depth: 1
+        sparse-checkout: |
+          Meow内核系
+          rulesets/generated/fused
+          tools/lib
+    - name: Prepare and verify Smart fixture under original App identity
+      if: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' }}
+      timeout-minutes: 5
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      run: |
+        set -euo pipefail
+        python3 apps/aerove-lite/tool/prepare_lite141_smart_fixture.py \
+          --app-repository "$GITHUB_WORKSPACE/.ci-original-lite141-source" \
+          --smart-repository "$GITHUB_WORKSPACE/.ci-fixture-sources/smart-config" \
+          --geo-cache "$RUNNER_TEMP/lite-smart-geodata" --download \
+          --output "$RUNNER_TEMP/lite-smart-config-meow" \
+          --receipt "$RUNNER_TEMP/lite-diagnostics/remaining/smart-fixture-source.json"
+        echo "SMART_CONFIG_MEOW_FIXTURE_DIR=$RUNNER_TEMP/lite-smart-config-meow" >> "$GITHUB_ENV"
+        echo "SMART_CONFIG_MEOW_FIXTURE_RECEIPT=$RUNNER_TEMP/lite-diagnostics/remaining/smart-fixture-source.json" >> "$GITHUB_ENV"
     - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
       with:
         distribution: temurin
@@ -76,12 +122,18 @@ jobs:
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
         RUNTIME_TARGET: ${{ inputs.runtime_target }}
-        RUNTIME_DIRECTORY: ${{ inputs.runtime_target == 'beta14' && 'beta14-original-runtime' || inputs.runtime_target == 'lite94' && 'lite94-original-runtime' || 'qa84-original-runtime' }}
-      run: python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
+        RUNTIME_DIRECTORY: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && 'lite141-original-shards-runtime' || inputs.runtime_target == 'beta14' && 'beta14-original-runtime' || inputs.runtime_target == 'lite94' && 'lite94-original-runtime' || 'qa84-original-runtime' }}
+        SHARD_INDEX: ${{ inputs.shard_index }}
+      run: |
+        if [[ "$RUNTIME_TARGET" == lite141-prebuilt-shards ]]; then
+          python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase remaining --shard-index "$SHARD_INDEX" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
+        else
+          python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
+        fi
     - name: Preserve original84 identity and raw owned matrix evidence
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: ${{ inputs.runtime_target == 'beta14' && 'AEROVE-Lite-beta14-profile-matrix' || inputs.runtime_target == 'lite94' && 'AEROVE-Lite-diagnostic94-matrix' || 'AEROVE-Lite-QA84-matrix' }}-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-diagnostics/matrix/
+        name: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && format('AEROVE-Lite-original141-shard-{0}-of-8-attempt-{1}', inputs.shard_index, github.run_attempt) || inputs.runtime_target == 'beta14' && format('AEROVE-Lite-beta14-profile-matrix-{0}', github.run_attempt) || inputs.runtime_target == 'lite94' && format('AEROVE-Lite-diagnostic94-matrix-{0}', github.run_attempt) || format('AEROVE-Lite-QA84-matrix-{0}', github.run_attempt) }}
+        path: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && format('{0}/lite-diagnostics/', runner.temp) || format('{0}/lite-diagnostics/matrix/', runner.temp) }}
         if-no-files-found: error

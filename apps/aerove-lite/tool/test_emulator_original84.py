@@ -179,6 +179,57 @@ class Original84Tests(unittest.TestCase):
                 original.release._verify_matrix(self.root, self.runtime, identity['sourceRevision'],
                     identity['sourceTree'], identity['workflowRun'], identity['runAttempt'], identity['runNumber'])
 
+    def test_lite141_shell_snapshot_keeps_original_app_identity_and_current_harness_separate(self):
+        from emulator_original84 import LITE141_PREBUILT_SHARDS
+        spec = LITE141_PREBUILT_SHARDS
+        dependency_rel = 'dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt'
+        dependency = self.runtime / dependency_rel
+        dependency.parent.mkdir(parents=True, exist_ok=True)
+        dependency.write_text('androidx.test:runner:1.6.2 -> 1.7.0\njunit:junit:4.13.2\n')
+        dep_sha = hashlib.sha256(dependency.read_bytes()).hexdigest()
+        manifest = dict(schema=1, **spec['identity'], files=[dict(path=dependency_rel, sha256=dep_sha)])
+        manifest_bytes = json.dumps(manifest).encode()
+        manifest_sha = hashlib.sha256(manifest_bytes).hexdigest()
+        (self.runtime / 'source-manifest.json').write_bytes(manifest_bytes)
+        current_harness = dict(sourceRevision='a' * 40, sourceTree='b' * 40,
+            workflowRun='500', runNumber=200, runAttempt=2)
+        original_proof = dict(originalAppIdentity=spec['identity'], harnessIdentity=current_harness,
+            diagnosticOriginalRuntime=True, runtimeTarget='lite141-prebuilt-shards', diagnosticOnly=True,
+            accepted=False, promotionAccepted=False, aggregateAcceptance=False,
+            artifactId=spec['artifact'], artifactZipSha256=spec['zipSha256'],
+            runtimeManifestSha256=spec['manifestSha256'], apks=spec['apks'])
+        proof_path = self.root / 'original-proof.json'
+        proof_path.write_text(json.dumps(original_proof))
+        renderer_path = self.root / 'renderer.json'
+        renderer_path.write_text('{}')
+        renderer = dict(originalAppIdentity=spec['identity'], harnessIdentity=current_harness,
+            diagnosticOriginalRuntime=True, runtimeTarget='lite141-prebuilt-shards', runtimeManifestSha256=manifest_sha,
+            apks=spec['apks'], rendererBackend='SwANGLE (ANGLE + SwiftShader)',
+            runtimeDirectory=str(self.runtime))
+        shell = Path(__file__).with_name('emulator_acceptance.sh').read_text()
+        program = shell.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+        output = self.root / 'SOURCE.json'
+        env = dict(AEROVE_CURRENT_RENDERER_PROOF=str(renderer_path),
+            AEROVE_ORIGINAL_RUNTIME_PROOF=str(proof_path), RUNNER_TEMP=str(self.root),
+            GITHUB_SHA=current_harness['sourceRevision'], GITHUB_RUN_ID=current_harness['workflowRun'],
+            GITHUB_RUN_NUMBER=str(current_harness['runNumber']), GITHUB_RUN_ATTEMPT=str(current_harness['runAttempt']))
+        with mock.patch.dict(os.environ, env, clear=False), \
+                mock.patch.object(owner, 'validate_renderer_proof', return_value=renderer), \
+                mock.patch('subprocess.check_output', return_value=current_harness['sourceTree'] + '\n'), \
+                mock.patch.object(owner.sys, 'argv', ['snapshot', str(output), 'remaining', '120000',
+                    'emulator-5554', '8', '1', 'dev.aerove.lite.ui.LiteDashboardMatrixTest']):
+            exec(compile(program, 'lite141-source-snapshot', 'exec'), {})
+        source = json.loads(output.read_text())
+        self.assertEqual(spec['identity'], source['originalAppIdentity'])
+        self.assertEqual(spec['identity']['sourceRevision'], source['sourceRevision'])
+        self.assertEqual(spec['identity']['workflowRun'], source['workflowRun'])
+        self.assertEqual(current_harness, source['harnessIdentity'])
+        self.assertIs(source['diagnosticOnly'], True)
+        self.assertIs(source['accepted'], False)
+        self.assertIs(source['promotionAccepted'], False)
+        self.assertIs(source['aggregateAcceptance'], False)
+        self.assertEqual(manifest_sha, source['runtimeManifestSha256'])
+
     def _lite125_api_rows(self, spec, **run_changes):
         identity = spec['identity']
         artifact = dict(id=spec['artifact'], name='AEROVE-Lite-runtime-contract-attempt-1', expired=False,
@@ -228,6 +279,68 @@ class Original84Tests(unittest.TestCase):
                                      target='lite125-original-samples')
                 download.assert_not_called()
                 self.assertEqual(2, len(routes))
+
+    def test_lite141_prebuilt_prepare_checks_fixed_artifact_run_and_producer_before_download(self):
+        spec = original.runtime_spec('lite141-prebuilt-shards')
+        identity = spec['identity']
+        artifact = dict(id=spec['artifact'], name=spec['artifactName'], expired=False,
+            digest='sha256:' + spec['zipSha256'], size_in_bytes=spec['zipBytes'],
+            workflow_run=dict(id=int(identity['workflowRun']), head_sha=identity['sourceRevision']))
+        run = dict(id=int(identity['workflowRun']), head_sha=identity['sourceRevision'],
+            run_number=identity['runNumber'], run_attempt=identity['runAttempt'], status='completed')
+        job = dict(id=spec['producerJob'], run_id=int(identity['workflowRun']), status='completed', conclusion='success')
+        calls = []
+        class DownloadBoundary(Exception):
+            pass
+        def api(route):
+            calls.append(route)
+            if '/artifacts/' in route: return artifact
+            if '/runs/' in route: return run
+            return job
+        def stop(route, destination):
+            calls.append(route)
+            raise DownloadBoundary()
+        with mock.patch.object(original.release, '_gh_json', side_effect=api), \
+                mock.patch.object(original.release, '_gh_binary', side_effect=stop):
+            with self.assertRaises(DownloadBoundary):
+                original.prepare(self.root / 'lite141-runtime', self.root / 'lite141-evidence',
+                                 target='lite141-prebuilt-shards')
+        self.assertEqual(4, len(calls))
+        self.assertIn('/runs/40445440882', calls[1])
+        self.assertIn('/jobs/121996423095', calls[2])
+        self.assertIn('/artifacts/12708203167/zip', calls[3])
+        for changes in ({'run_number': 140}, {'run_attempt': 2}, {'head_sha': '0' * 40},
+                        {'id': 40445440883}, {'status': 'in_progress'}):
+            bad_run = dict(run, **changes)
+            routes = []
+            def changed_api(route):
+                routes.append(route)
+                if '/artifacts/' in route: return artifact
+                if '/runs/' in route: return bad_run
+                return job
+            with self.subTest(changes=changes), \
+                    mock.patch.object(original.release, '_gh_json', side_effect=changed_api), \
+                    mock.patch.object(original.release, '_gh_binary') as download, \
+                    self.assertRaisesRegex(ValueError, 'lite141-prebuilt-shards original run API identity'):
+                original.prepare(self.root / 'lite141-runtime', self.root / 'lite141-evidence',
+                                 target='lite141-prebuilt-shards')
+            download.assert_not_called()
+            self.assertEqual(2, len(routes))
+        bad_job = dict(job, conclusion='failure')
+        routes = []
+        with mock.patch.object(original.release, '_gh_json', side_effect=lambda route: (routes.append(route), artifact if '/artifacts/' in route else run if '/runs/' in route else bad_job)[1]), \
+                mock.patch.object(original.release, '_gh_binary') as download, \
+                self.assertRaisesRegex(ValueError, 'producer job identity or result'):
+            original.prepare(self.root / 'lite141-runtime', self.root / 'lite141-evidence',
+                             target='lite141-prebuilt-shards')
+        download.assert_not_called()
+
+    def test_lite141_target_rejects_other_phase_and_invalid_shard_index(self):
+        for argv in (['tool', '--target', 'lite141-prebuilt-shards', '--directory', 'x'],
+                     ['tool', '--target', 'lite141-prebuilt-shards', '--phase', 'matrix', '--shard-index', '1', '--directory', 'x'],
+                     ['tool', '--target', 'lite141-prebuilt-shards', '--phase', 'remaining', '--shard-index', '8', '--directory', 'x']):
+            with self.subTest(argv=argv), mock.patch.object(sys, 'argv', argv), self.assertRaises(SystemExit):
+                original.main()
 
     def test_beta14_prepare_keeps_fixed_run107_and_rejects_other_identity(self):
         beta_spec = dict(identity=dict(sourceRevision='e56b8a6299e5bde9e1d7e2199987a1690b2132ed',
