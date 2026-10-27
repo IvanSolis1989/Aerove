@@ -12,7 +12,7 @@ import tomllib
 from prepare import prepare
 from build_policy import load_policy, digest, feature_boundary_command, full_native_suite
 from clang_probe import probe as probe_libclang
-from core_tests import execute as execute_core_tests
+from core_tests import execute as execute_core_tests, run_logged
 from verify_source import ROOT, sha, verify
 import jni_abi
 
@@ -54,7 +54,12 @@ def added_native_test_proof(output):
 
 
 def run(command, environment, capture=False):
-    return subprocess.run(command,cwd=ROOT,env=environment,check=True,text=True,stdout=subprocess.PIPE if capture else None).stdout
+    stem='rustc-version' if command[0]=='rustc' else 'feature-boundary' if '--no-default-features' in command else 'native-tests' if command[1]=='test' else 'native-link'
+    result=run_logged(command,ROOT,environment,ROOT/'build'/(stem+'.stdout.log'),ROOT/'build'/(stem+'.stderr.log'),timeout=None)
+    output=result.stdout.decode('utf-8').replace('\r\n','\n').replace('\r','\n')
+    errors=result.stderr.decode('utf-8',errors='replace')
+    if result.returncode:raise subprocess.CalledProcessError(result.returncode,command,output=output,stderr=errors)
+    return output if capture else None
 
 def android_environment(ndk,target,environment):
     ndk=Path(ndk).resolve();abi,_=TARGETS[target]
@@ -137,9 +142,7 @@ def resolve_graph(environment, build, receipt):
         raise ValueError('Previous lock changed before explicit resolution')
     (build/'lock-before-resolution.lock').write_bytes(previous)
     receipt['metadataCommand']=['cargo','metadata','--format-version','1']
-    result=subprocess.run(receipt['metadataCommand'],cwd=ROOT,env=environment,capture_output=True)
-    (build/'metadata.stdout.json').write_bytes(result.stdout)
-    (build/'metadata.stderr.log').write_bytes(result.stderr)
+    result=run_logged(receipt['metadataCommand'],ROOT,environment,build/'metadata.stdout.json',build/'metadata.stderr.log',timeout=None)
     receipt['metadataExit']=result.returncode
     if result.returncode:raise subprocess.CalledProcessError(result.returncode,receipt['metadataCommand'])
     if sha(ROOT/'Cargo.toml')!=receipt['bridgeManifestSha256']:raise ValueError('Manifest changed during explicit graph resolution')
@@ -196,8 +199,6 @@ def main():
             command=['cargo','build','--locked','--release','--target',args.target]
         output=run(command,environment,capture=True) if not args.target and full_native_suite(policy) else run(command,environment)
         if not args.target and full_native_suite(policy):
-            print(output,end="",flush=True)
-            (build/"native-tests.stdout.log").write_text(output)
             receipt["addedNativeTests"]=added_native_test_proof(output)
         if sha(lock)!=resolved:raise ValueError('Locked build mutated Cargo.lock')
         if not args.target and feature_boundary_command(policy):
@@ -220,7 +221,6 @@ def main():
         receipt['commandExit']=0;receipt['acceptedLock']=True
     except BaseException as error:
         if isinstance(error,subprocess.CalledProcessError) and error.stdout is not None:
-            print(error.stdout,end='',flush=True)
             try:
                 failure_output=build/'command-failure.stdout.log';failure_output.write_text(error.stdout,encoding='utf-8',newline='')
                 receipt['failureStdoutSha256']=sha(failure_output)

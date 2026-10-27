@@ -1,6 +1,7 @@
 """Source/recipe tests only. These never invoke Rust, NDK, Gradle or network."""
 import importlib.util
 import io
+import os
 import json
 import re
 import textwrap
@@ -220,11 +221,12 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 policy=dict(resolveLock=True,expectedLockBeforeSha256=previous,targets=['lib','proxy_runtime','api_lifecycle'],policySha256='pinned policy')
                 def metadata(*args,**kwargs):
                     (root/'Cargo.lock').write_bytes(b'actually resolved fixture lock\n')
-                    return subprocess.CompletedProcess(args[0],0 if success else 42,b'{}',b'resolver diagnostic')
+                    result=subprocess.CompletedProcess(args[0],0 if success else 42,b'{}',b'resolver diagnostic')
+                    Path(args[3]).write_bytes(result.stdout);Path(args[4]).write_bytes(result.stderr);return result
                 def run(command,*args,**kwargs):
                     if command[0]=='rustc':return 'rustc 1.98.1 fixture'
                     self.assertIn('--locked',command);self.assertIn('api_lifecycle',command)
-                with mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build.subprocess,'run',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
+                with mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build,'run_logged',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
                     if success:build.main()
                     else:
                         with self.assertRaises(subprocess.CalledProcessError):build.main()
@@ -256,7 +258,8 @@ class OverlayAndResolutionTests(unittest.TestCase):
                 executed=[]
                 def metadata(*args,**kwargs):
                     (root/'Cargo.lock').write_bytes(b'resolved lock\n')
-                    return subprocess.CompletedProcess(args[0],0,b'{}',b'')
+                    result=subprocess.CompletedProcess(args[0],0,b'{}',b'')
+                    Path(args[3]).write_bytes(result.stdout);Path(args[4]).write_bytes(result.stderr);return result
                 def run(command,*args,**kwargs):
                     if command[0]=='rustc':return 'rustc 1.98.1 fixture'
                     executed.append(command)
@@ -264,7 +267,7 @@ class OverlayAndResolutionTests(unittest.TestCase):
                     if '--no-default-features' in command:
                         if outcome=='failure':raise subprocess.CalledProcessError(19,command)
                         if outcome=='mutated-lock':(root/'Cargo.lock').write_bytes(b'unexpected mutation\n')
-                with mock.patch.object(build,'execute_core_tests',side_effect=subprocess.CalledProcessError(23,['fixed-core-unit']) if outcome=='core-failure' else None),mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build.subprocess,'run',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
+                with mock.patch.object(build,'execute_core_tests',side_effect=subprocess.CalledProcessError(23,['fixed-core-unit']) if outcome=='core-failure' else None),mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch('builtins.print'),mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),mock.patch.object(build,'run',side_effect=run),mock.patch.object(build,'run_logged',side_effect=metadata),mock.patch.object(sys,'argv',['build.py','--resolve-lock']):
                     if outcome=='success':build.main()
                     else:
                         with self.assertRaises((subprocess.CalledProcessError,ValueError)):build.main()
@@ -579,6 +582,27 @@ class StrictJniAbiTests(unittest.TestCase):
             with self.subTest(label),tempfile.TemporaryDirectory() as classes:
                 compile_fixture(classes,approved,flip)
                 self.assertEqual(ok,not jni_abi.check(build.ROOT,self.APPROVED,classes_dir=classes),label)
+
+class BuildStreamingTests(unittest.TestCase):
+    def test_native_runner_tees_raw_output_and_retains_text_parser_contract(self):
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);command=[sys.executable,'-c','import sys;sys.stdout.buffer.write(b"native\\r\\n");sys.stderr.write("diagnostic")']
+            with mock.patch.object(build,'ROOT',root),mock.patch.object(sys,'stdout',io.StringIO()),mock.patch.object(sys,'stderr',io.StringIO()):
+                self.assertEqual('native\n',build.run(command,os.environ,capture=True))
+            self.assertEqual(b'native\r\n',(root/'build/native-link.stdout.log').read_bytes())
+            self.assertEqual(b'diagnostic',(root/'build/native-link.stderr.log').read_bytes())
+            progress=json.loads((root/'build/native-link.stdout.log.progress.json').read_bytes())
+            self.assertIsNone(progress['timeoutSeconds']);self.assertEqual(0,progress['exit'])
+
+    def test_native_nonzero_is_not_a_successful_capture(self):
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);command=[sys.executable,'-c','import sys;print("before-error");sys.exit(9)']
+            with mock.patch.object(build,'ROOT',root),mock.patch.object(sys,'stdout',io.StringIO()),mock.patch.object(sys,'stderr',io.StringIO()):
+                with self.assertRaises(subprocess.CalledProcessError) as caught:build.run(command,os.environ,capture=True)
+            self.assertEqual(9,caught.exception.returncode);self.assertIn('before-error',caught.exception.stdout)
+            self.assertIn(b'before-error',(root/'build/native-link.stdout.log').read_bytes())
 
 class BuildPyRequirementTests(unittest.TestCase):
     """Native mirror of core-provider-v3 build-py-requirements.json; test_core_tests.BuildContractTests stays authoritative."""

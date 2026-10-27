@@ -5,9 +5,103 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import io
+import os
+import time
+import signal
+import threading
 from unittest.mock import patch
 import build_policy
 import core_tests
+
+class StreamingCommandTests(unittest.TestCase):
+    def test_real_success_and_nonzero_preserve_exact_streams_and_progress(self):
+        for code in (0,7):
+            with self.subTest(code=code),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);out=root/'out';err=root/'err';entry={};console=io.StringIO()
+                args=[sys.executable,'-c',f'import sys;sys.stdout.buffer.write(b"ready\\r\\n\\x00");sys.stderr.buffer.write(b"error\\r\\n");sys.exit({code})']
+                with patch.object(sys,'stdout',console),patch.object(sys,'stderr',io.StringIO()):
+                    result=core_tests.run_logged(args,root,os.environ,out,err,entry=entry,timeout=3)
+                self.assertEqual((code,b'ready\r\n\x00',b'error\r\n'),(result.returncode,result.stdout,result.stderr))
+                self.assertEqual(result.stdout,out.read_bytes());self.assertEqual(result.stderr,err.read_bytes())
+                self.assertIn('ready',console.getvalue());self.assertEqual(code,entry['exit'])
+                self.assertNotEqual(os.getpid(),entry['pid']);self.assertTrue(entry['cleanupConfirmed']);self.assertIsNotNone(entry['endedAt'])
+                self.assertEqual(entry,json.loads(Path(str(out)+'.progress.json').read_bytes()))
+
+    def test_partial_stdout_and_stderr_are_visible_before_command_finishes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);out=root/'out';err=root/'err';release=root/'release';results=[]
+            script='import sys,time;from pathlib import Path;sys.stdout.write("ready");sys.stdout.flush();sys.stderr.write("early-error");sys.stderr.flush();p=Path(sys.argv[1]);\nwhile not p.exists():time.sleep(.01)\nprint("done")'
+            def invoke():results.append(core_tests.run_logged([sys.executable,'-c',script,str(release)],root,os.environ,out,err,timeout=4))
+            with patch.object(sys,'stdout',io.StringIO()),patch.object(sys,'stderr',io.StringIO()):
+                task=threading.Thread(target=invoke);task.start()
+                try:
+                    deadline=time.monotonic()+3
+                    while time.monotonic()<deadline and not (out.exists() and err.exists() and out.read_bytes()==b'ready' and err.read_bytes()==b'early-error'):time.sleep(.01)
+                    self.assertEqual(b'ready',out.read_bytes());self.assertEqual(b'early-error',err.read_bytes());self.assertTrue(task.is_alive())
+                finally:release.touch();task.join(5)
+            self.assertFalse(task.is_alive());self.assertEqual(b'readydone'+os.linesep.encode(),results[0].stdout)
+
+    def test_timeout_preserves_partial_streams_and_never_records_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);entry={};out=root/'out';err=root/'err'
+            args=[sys.executable,'-u','-c','import time,sys;print("partial",flush=True);print("partial-error",file=sys.stderr,flush=True);time.sleep(30)']
+            with patch.object(sys,'stdout',io.StringIO()),patch.object(sys,'stderr',io.StringIO()):
+                with self.assertRaises(subprocess.TimeoutExpired):core_tests.run_logged(args,root,os.environ,out,err,entry=entry,timeout=1,grace=.1)
+            self.assertIn(b'partial',out.read_bytes());self.assertIn(b'partial-error',err.read_bytes())
+            self.assertEqual('timed-out',entry['status']);self.assertNotEqual(0,entry['exit']);self.assertTrue(entry['cleanupConfirmed'])
+
+    def test_cancel_preserves_partial_output_and_restores_signal_handlers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);entry={};real_wait=subprocess.Popen.wait;interrupted=False
+            previous={sig:signal.getsignal(sig) for sig in (signal.SIGINT,signal.SIGTERM)}
+            def wait(process,*args,**kwargs):
+                nonlocal interrupted
+                if not interrupted:
+                    interrupted=True;deadline=time.monotonic()+3
+                    while time.monotonic()<deadline and not (root/'out').read_bytes():time.sleep(.01)
+                    raise KeyboardInterrupt('test cancellation after real output')
+                return real_wait(process,*args,**kwargs)
+            with patch.object(sys,'stdout',io.StringIO()),patch.object(sys,'stderr',io.StringIO()),patch.object(subprocess.Popen,'wait',wait):
+                with self.assertRaises(KeyboardInterrupt):core_tests.run_logged([sys.executable,'-u','-c','import time;print("before-cancel",flush=True);time.sleep(30)'],root,os.environ,root/'out',root/'err',entry=entry,timeout=4,grace=.1)
+            self.assertIn(b'before-cancel', (root/'out').read_bytes());self.assertEqual('cancelled',entry['status'])
+            self.assertTrue(entry['cleanupConfirmed']);self.assertEqual(previous,{sig:signal.getsignal(sig) for sig in previous})
+
+    def test_unconfirmed_or_zombie_group_never_becomes_success(self):
+        for status in ('unknown','zombie'):
+            with self.subTest(status=status),tempfile.TemporaryDirectory() as directory:
+                root=Path(directory);entry={}
+                with patch.object(sys,'stdout',io.StringIO()),patch.object(sys,'stderr',io.StringIO()),\
+                        patch.object(core_tests,'_group_outcome',return_value=dict(status=status,members=[])):
+                    with self.assertRaisesRegex(RuntimeError,'CleanupUnconfirmed'):
+                        core_tests.run_logged([sys.executable,'-c','print("output retained")'],root,os.environ,root/'out',root/'err',entry=entry,timeout=3)
+                self.assertEqual(0,entry['exit']);self.assertEqual('failed',entry['status']);self.assertFalse(entry['cleanupConfirmed'])
+                self.assertIn(b'output retained',(root/'out').read_bytes())
+
+    def test_group_cleanup_still_kills_owned_group_after_leader_exit(self):
+        from unittest.mock import Mock
+        process=Mock(pid=90909,returncode=-15);process.wait.return_value=-15;state=dict(processGroup=90909,signals=[])
+        with patch.object(core_tests.os,'name','posix'),patch.object(core_tests.os,'getpgrp',return_value=80808,create=True),\
+                patch.object(core_tests.os,'killpg',create=True) as killpg,patch.object(core_tests,'_process_identity',return_value=None),\
+                patch.object(core_tests,'_owned_alive',side_effect=[True,True,False,False]):
+            self.assertTrue(core_tests._stop_owned(process,state,0,threading.Event()))
+        self.assertEqual([(90909,signal.SIGTERM),(90909,getattr(signal,'SIGKILL',9))],[call.args for call in killpg.call_args_list])
+        process.wait.assert_called_once_with(timeout=2)
+
+    @unittest.skipUnless(os.name=='posix','real POSIX process-group integration requires a POSIX host')
+    def test_timeout_kills_grandchild_even_after_its_leader_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);pidfile=root/'grandchild';entry={}
+            grandchild='import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)'
+            script='import subprocess,sys,time;from pathlib import Path;p=subprocess.Popen([sys.executable,"-c",sys.argv[1]]);Path(sys.argv[2]).write_text(str(p.pid));print("spawned",flush=True);time.sleep(30)'
+            with patch.object(sys,'stdout',io.StringIO()),patch.object(sys,'stderr',io.StringIO()):
+                with self.assertRaises(subprocess.TimeoutExpired):core_tests.run_logged([sys.executable,'-u','-c',script,grandchild,str(pidfile)],root,os.environ,root/'out',root/'err',entry=entry,timeout=1,grace=.1)
+            self.assertIn('SIGKILL',entry['signals'])
+            self.assertIn(entry['groupOutcome']['status'],['absent','zombie'])
+            self.assertEqual(entry['groupOutcome']['status']=='absent',entry['cleanupConfirmed'])
+            if sys.platform.startswith('linux'):
+                identity=core_tests._process_identity(int(pidfile.read_text()))
+                self.assertTrue(identity is None or identity['state']=='Z','grandchild must no longer be running')
 
 # The files rustfmt reaches from the two provider-reader format gates, with the overlay's real module declarations.
 FORMAT_SOURCES={'crates/meow-rules/src/mrs_parser.rs':'mod tests {\n}\n','crates/meow-rules/src/rule_set.rs':'mod tests {\n}\n',
@@ -55,7 +149,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 with self.subTest(package=spec['package'],filter=spec['filter']):
                     with self.assertRaisesRegex(ValueError,'authored Core test feature'):core_tests.entry_command(spec,[])
 
-    def run_fixture(self,mode,contract=core_tests.MODE):
+    def run_fixture(self,mode,contract=core_tests.MODE,command_runner=None):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);up=root/'.upstream/meow-rs';up.mkdir(parents=True);(root/'build').mkdir()
             original=b'actual-upstream-lock';bridge=b'accepted-bridge-lock';resolved=b'actual-cargo-core-lock'
@@ -98,6 +192,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 spec=next(row for row in core_tests.entries(contract) if row['package']==package and core_tests.entry_command(row,next(node['features'] for node in nodes if node['id']==package))==args)
                 if mode=='nonzero':return subprocess.CompletedProcess(args,101,b'',b'actual command failure')
                 if mode=='raise':raise KeyboardInterrupt()
+                if mode=='timeout':raise subprocess.TimeoutExpired(args,900,output=b'partial core output',stderr=b'partial core error')
                 if mode=='mutate':(up/'Cargo.lock').write_bytes(b'mutated')
                 host_admission=spec['filter']=='mrs_parser::host_admission_index_tests::'
                 if host_admission and mode=='duplicate-host-admission':
@@ -107,7 +202,21 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 if host_admission and mode=='extra-host-admission':count=3
                 return subprocess.CompletedProcess(args,0,f'test result: ok. {count} passed; 0 failed;\n'.encode(),b'')
             error=None
-            with patch.object(core_tests.subprocess,'run',fake):
+            def logged(args,cwd,environment,out,err,*,entry=None,update=None,**kwargs):
+                active=json.loads((root/'build/core-tests/receipt.json').read_bytes())
+                self.assertEqual(args,active['activeCommand']['command'])
+                if args[1]=='test':self.assertEqual(len(receipt['coreTests']['commands'])-1,active['activeIndex'])
+                if command_runner is not None and args[1]=='test':
+                    commands.append(args)
+                    return command_runner(args,cwd,environment,out,err,entry,update)
+                try:result=fake(args)
+                except BaseException as error:
+                    Path(out).write_bytes(getattr(error,'output',None) or b'');Path(err).write_bytes(getattr(error,'stderr',None) or b'');raise
+                Path(out).write_bytes(result.stdout);Path(err).write_bytes(result.stderr)
+                if entry is not None:entry['exit']=result.returncode
+                if update is not None:update()
+                return result
+            with patch.object(core_tests,'run_logged',logged):
                 try:core_tests.execute(root,policy,{},receipt)
                 except BaseException as caught:error=caught
             self.assertEqual((up/'Cargo.lock').read_bytes(),original)
@@ -140,6 +249,14 @@ class CoreTestAdmissionTests(unittest.TestCase):
                         self.assertEqual(b'fixture format output',(root/'build/core-tests'/(stem+'.stdout.log')).read_bytes())
             else:
                 self.assertIsNotNone(error);self.assertFalse(receipt['coreTests']['accepted'])
+                if mode=='sink-failure':
+                    import errno
+                    self.assertIsInstance(error,OSError);self.assertEqual(errno.ENOSPC,error.errno)
+                if mode=='timeout':
+                    self.assertIsInstance(error,subprocess.TimeoutExpired)
+                    self.assertEqual(900,error.timeout)
+                    self.assertEqual(b'partial core output',next((root/'build/core-tests').glob('00-*.stdout.log')).read_bytes())
+                    self.assertNotIn('passed',receipt['coreTests']['commands'][0])
                 if provider and mode=='format-mutate':
                     # A rustfmt gate that touches the lock is rejected at once, before any Core test command.
                     self.assertIsInstance(error,ValueError);self.assertEqual(0,len(receipt['coreTests']['commands']))
@@ -167,6 +284,53 @@ class CoreTestAdmissionTests(unittest.TestCase):
                 else:
                     self.assertEqual(len(receipt['coreTests']['commands']),len(core_tests.entries(contract)) if mode in ['compile-fail','compile-mutate','format-fail','format-mutate'] else 1)
 
+            return receipt
+
+    def test_real_sink_write_failure_keeps_prefix_rejects_receipt_and_stops_only_owned_process(self):
+        import errno
+        original_open=Path.open;original_stop=core_tests._stop_owned;original_runner=core_tests.run_logged;evidence={};stopped=[]
+        prefix=b'kept-prefix\n';observed=bytearray();prefix_seen=threading.Event()
+        def actual_command(args,cwd,environment,out,err,entry,update):
+            release=Path(cwd)/'release-after-prefix'
+            class FailingSink:
+                def __init__(self,stream):self.stream=stream
+                def __enter__(self):self.stream.__enter__();return self
+                def __exit__(self,*error):return self.stream.__exit__(*error)
+                def flush(self):return self.stream.flush()
+                def write(self,chunk):
+                    if prefix_seen.is_set():raise OSError(errno.ENOSPC,'controlled sink failure after persisted prefix')
+                    written=self.stream.write(chunk);self.stream.flush();observed.extend(chunk)
+                    self_outer.assertTrue(prefix.startswith(observed))
+                    if bytes(observed)==prefix:prefix_seen.set();release.touch()
+                    return written
+            def opened(path,mode='r',*pos,**kwargs):
+                stream=original_open(path,mode,*pos,**kwargs)
+                return FailingSink(stream) if Path(path)==Path(out) and mode=='wb' else stream
+            def stop(process,state,grace,force):
+                stopped.append(dict(pid=process.pid,group=state['processGroup'],aliveBeforeStop=process.poll() is None))
+                self.assertEqual(entry['pid'],process.pid);self.assertNotEqual(os.getpid(),process.pid)
+                self.assertEqual(process.pid if os.name=='posix' else None,state['processGroup'])
+                return original_stop(process,state,grace,force)
+            self_outer=self
+            script='import sys,time;from pathlib import Path;sys.stdout.buffer.write(b"kept-prefix\\n");sys.stdout.buffer.flush();gate=Path(sys.argv[1]);\nwhile not gate.exists():time.sleep(.01)\nsys.stdout.buffer.write(b"rejected-chunk\\n");sys.stdout.buffer.flush();time.sleep(30)'
+            command=[sys.executable,'-u','-c',script,str(release)]
+            with patch.object(Path,'open',opened),patch.object(core_tests,'_stop_owned',stop),\
+                    patch.object(sys,'stdout',io.StringIO()),patch.object(sys,'stderr',io.StringIO()):
+                try:return original_runner(command,cwd,os.environ,out,err,entry=entry,update=update,timeout=4,grace=.1)
+                finally:
+                    evidence.update(entry=json.loads(json.dumps(entry)),stdoutHex=Path(out).read_bytes().hex(),
+                        progress=json.loads(Path(str(out)+'.progress.json').read_bytes()))
+        receipt=self.run_fixture('sink-failure',command_runner=actual_command)
+        self.assertTrue(prefix_seen.is_set());self.assertEqual(prefix.hex(),evidence['stdoutHex'])
+        self.assertEqual(1,len(stopped));self.assertTrue(stopped[0]['aliveBeforeStop'])
+        self.assertFalse(receipt['coreTests']['accepted']);self.assertTrue(receipt['coreTests']['upstreamLockRestored'])
+        entry=evidence['entry'];self.assertEqual('failed',entry['status']);self.assertEqual('OSError',entry['failureType'])
+        self.assertTrue(entry['cleanupConfirmed']);self.assertIsNotNone(entry['exit']);self.assertIsNotNone(entry['endedAt'])
+        self.assertEqual(len(prefix),entry['stdoutBytes']);self.assertEqual(entry,evidence['progress'])
+        self.assertNotIn('passed',receipt['coreTests']['commands'][0]);self.assertEqual(entry,receipt['coreTests']['lastCommand'])
+        self.assertIsNone(receipt['coreTests']['activeCommand'])
+        print('io-failure-evidence '+json.dumps(dict(testId=self.id(),platform=sys.platform,stopped=stopped,entry=entry,stdoutHex=evidence['stdoutHex']),sort_keys=True))
+
     def test_success_records_all_authored_counts_and_restores_original_lock(self):self.run_fixture('success')
 
     def test_accepted_core_seed_uses_locked_metadata_without_implicit_resolution(self):self.run_fixture('locked')
@@ -174,7 +338,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
     def test_wrong_accepted_core_seed_is_rejected_before_core_metadata(self):self.run_fixture('bad-seed')
 
     def test_failure_zero_matches_mutation_and_interrupt_cannot_accept_or_leak_test_lock(self):
-        for mode in ['nonzero','empty','mutate','raise']:
+        for mode in ['nonzero','empty','mutate','raise','timeout']:
             with self.subTest(mode=mode):self.run_fixture(mode)
 
     def test_v2_success_and_zero_match_preserve_separate_lock_contract(self):
@@ -361,7 +525,7 @@ class BuildContractTests(unittest.TestCase):
                 root=Path(directory);up=root/'.upstream/meow-rs';up.mkdir(parents=True);(up/'Cargo.lock').write_bytes(b'actual-upstream-lock')
                 receipt={} if proof is None else dict(addedNativeTests=proof);commands=[]
                 policy=dict(resolveLock=False,coreTests=core_tests.MODE_PROVIDER_READER,coreTestLockSha256='a'*64,targets=list(build_policy.RESOURCE_HEALTH_TARGETS))
-                with patch.object(core_tests.subprocess,'run',lambda args,**kwargs:commands.append(args)):
+                with patch.object(core_tests,'run_logged',lambda args,*a,**kwargs:commands.append(args)):
                     with self.assertRaisesRegex(ValueError,'full Native suite proof'):core_tests.execute(root,policy,{},receipt)
                 self.assertEqual([],commands);self.assertFalse(receipt['coreTests']['accepted'])
                 self.assertTrue(receipt['coreTests']['upstreamLockRestored']);self.assertEqual(b'actual-upstream-lock',(up/'Cargo.lock').read_bytes())

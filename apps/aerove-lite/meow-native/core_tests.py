@@ -4,6 +4,156 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import os
+import sys
+import signal
+import threading
+import time
+from datetime import datetime, timezone
+
+CORE_COMMAND_TIMEOUT=15*60
+COMMAND_TERM_GRACE=10
+
+class CommandCancelled(KeyboardInterrupt):
+    def __init__(self,signum):
+        super().__init__('Host command cancelled by signal '+str(signum));self.returncode=128+signum
+
+def write_progress(path,value):
+    path=Path(path);temporary=path.with_name(path.name+'.tmp')
+    temporary.write_bytes((json.dumps(value,indent=2)+'\n').encode());temporary.replace(path)
+
+def _owned_alive(process,state):
+    if os.name!='posix':return process.poll() is None
+    try:os.killpg(state['processGroup'],0);return True
+    except ProcessLookupError:return False
+
+def _process_identity(pid):
+    if not sys.platform.startswith('linux'):return None
+    try:
+        fields=Path('/proc',str(pid),'stat').read_text().rsplit(')',1)[1].split()
+        return dict(pid=pid,state=fields[0],group=int(fields[2]),session=int(fields[3]),startTicks=int(fields[19]))
+    except FileNotFoundError:return None
+
+
+def _group_outcome(process,state):
+    if os.name!='posix':return dict(status='direct-child-exited' if process.poll() is not None else 'running',members=[])
+    if not _owned_alive(process,state):return dict(status='absent',members=[])
+    if not sys.platform.startswith('linux'):return dict(status='unknown',members=[])
+    try:
+        members=[]
+        for item in Path('/proc').iterdir():
+            if item.name.isdecimal():
+                member=_process_identity(int(item.name))
+                if member is not None and member['group']==state['processGroup']:members.append(member)
+        if not members:return dict(status='absent' if not _owned_alive(process,state) else 'unknown',members=[])
+        return dict(status='zombie' if all(m['state']=='Z' for m in members) else 'running',members=members)
+    except OSError:return dict(status='unknown',members=[])
+
+
+def _stop_owned(process,state,grace,force):
+    def send(sig):
+        try:
+            if os.name=='posix':
+                group=state['processGroup']
+                if group!=process.pid or group==os.getpgrp():raise RuntimeError('hostCommandGroupOwnershipMismatch')
+                identity=_process_identity(process.pid)
+                if identity is not None and (identity['group']!=group or identity['session']!=group or state.get('leaderIdentity') not in (None,identity['startTicks'])):
+                    raise RuntimeError('hostCommandGroupIdentityChanged')
+                os.killpg(group,sig)
+            elif sig==signal.SIGTERM:process.terminate()
+            else:process.kill()
+            state['signals'].append('SIGTERM' if sig==signal.SIGTERM else 'SIGKILL')
+        except ProcessLookupError:pass
+    if _owned_alive(process,state):
+        send(signal.SIGTERM);deadline=time.monotonic()+grace
+        while time.monotonic()<deadline and not force.is_set():
+            process.poll()
+            if not _owned_alive(process,state):break
+            time.sleep(.02)
+        # The leader may already have exited while an inherited-group grandchild remains.
+        if _owned_alive(process,state):send(getattr(signal,'SIGKILL',9))
+    try:process.wait(timeout=2)
+    except subprocess.TimeoutExpired:return False
+    deadline=time.monotonic()+2
+    while _owned_alive(process,state) and time.monotonic()<deadline:time.sleep(.02)
+    return not _owned_alive(process,state)
+
+def run_logged(args,cwd,environment,stdout_path,stderr_path,*,entry=None,update=None,timeout=CORE_COMMAND_TIMEOUT,grace=COMMAND_TERM_GRACE):
+    """Keep raw streams and the owned process-group outcome even when a command is interrupted."""
+    cwd=Path(cwd);stdout_path=Path(stdout_path);stderr_path=Path(stderr_path)
+    stdout_path.parent.mkdir(parents=True,exist_ok=True);stderr_path.parent.mkdir(parents=True,exist_ok=True)
+    state=entry if entry is not None else {};progress=Path(str(stdout_path)+'.progress.json')
+    state.update(command=list(args),cwd=str(cwd.resolve()),stdoutPath=str(stdout_path.resolve()),stderrPath=str(stderr_path.resolve()),
+        startedAt=datetime.now(timezone.utc).isoformat(),endedAt=None,status='starting',pid=None,processGroup=None,
+        timeoutSeconds=timeout,exit=None,signals=[],cleanupConfirmed=False,stdoutBytes=0,stderrBytes=0)
+    def persist():
+        write_progress(progress,state)
+        if update is not None:update()
+    process=None;failure=None;readers=[];reader_errors=[];stopping=threading.Event();force=threading.Event();pending=[];handlers={}
+    def interrupted(signum,frame):
+        if stopping.is_set():force.set()
+        elif process is None or state['pid'] is None:pending.append(signum)
+        else:raise CommandCancelled(signum)
+    def pump(pipe,destination,console,key):
+        try:
+            while chunk:=pipe.read(65536):
+                destination.write(chunk);destination.flush();state[key]+=len(chunk)
+                binary=getattr(console,'buffer',None)
+                if binary is not None:binary.write(chunk);binary.flush()
+                else:console.write(chunk.decode('utf-8',errors='replace'));console.flush()
+        except BaseException as error:reader_errors.append(error)
+        finally:pipe.close()
+    with stdout_path.open('wb') as output,stderr_path.open('wb') as errors:
+        try:
+            persist()
+            if threading.current_thread() is threading.main_thread():
+                for sig in (signal.SIGINT,signal.SIGTERM):handlers[sig]=signal.signal(sig,interrupted)
+            options=dict(start_new_session=True) if os.name=='posix' else dict(creationflags=subprocess.IDLE_PRIORITY_CLASS|subprocess.CREATE_NO_WINDOW)
+            if os.name=='posix':os.setpriority(os.PRIO_PROCESS,0,19)
+            if pending:raise CommandCancelled(pending[0])
+            process=subprocess.Popen(args,cwd=cwd,env=environment,stdout=subprocess.PIPE,stderr=subprocess.PIPE,bufsize=0,**options)
+            state.update(pid=process.pid,processGroup=process.pid if os.name=='posix' else None,status='running')
+            identity=_process_identity(process.pid);state['leaderIdentity']=identity['startTicks'] if identity is not None else None
+            persist()
+            for pipe,destination,console,key in [(process.stdout,output,sys.stdout,'stdoutBytes'),(process.stderr,errors,sys.stderr,'stderrBytes')]:
+                reader=threading.Thread(target=pump,args=(pipe,destination,console,key),daemon=True);reader.start();readers.append(reader)
+            if pending:raise CommandCancelled(pending[0])
+            deadline=None if timeout is None else time.monotonic()+timeout
+            while True:
+                if reader_errors:raise reader_errors[0]
+                remaining=None if deadline is None else deadline-time.monotonic()
+                if remaining is not None and remaining<=0:raise subprocess.TimeoutExpired(args,timeout)
+                try:process.wait(timeout=.1 if remaining is None else min(.1,remaining));break
+                except subprocess.TimeoutExpired:pass
+            state['status']='completed' if process.returncode==0 else 'failed'
+        except BaseException as error:
+            failure=error;state['status']='timed-out' if isinstance(error,subprocess.TimeoutExpired) else 'cancelled' if isinstance(error,KeyboardInterrupt) else 'failed'
+            state['failureType']=type(error).__name__
+        finally:
+            stopping.set()
+            try:
+                try:state['cleanupConfirmed']=process is None or _stop_owned(process,state,grace,force)
+                except BaseException as error:
+                    state['cleanupError']=type(error).__name__+': '+str(error)
+                    if failure is None:failure=error;state['status']='failed'
+                if process is not None:
+                    try:state['groupOutcome']=_group_outcome(process,state)
+                    except OSError as error:state['groupOutcome']=dict(status='unknown',error=str(error))
+                    if state['groupOutcome']['status'] in ('running','zombie','unknown'):state['cleanupConfirmed']=False
+                for reader in readers:reader.join(2)
+                state['cleanupConfirmed'] &= not any(reader.is_alive() for reader in readers)
+                if reader_errors and failure is None:failure=reader_errors[0];state['status']='failed'
+                if not state['cleanupConfirmed'] and failure is None:failure=RuntimeError('hostCommandCleanupUnconfirmed');state['status']='failed'
+                if failure is not None:state['failureType']=type(failure).__name__
+                state.update(exit=process.returncode if process is not None else None,endedAt=datetime.now(timezone.utc).isoformat())
+                output.flush();errors.flush();persist()
+            finally:
+                for sig,handler in handlers.items():signal.signal(sig,handler)
+    stdout=stdout_path.read_bytes();stderr=stderr_path.read_bytes()
+    if failure is not None:
+        if isinstance(failure,subprocess.TimeoutExpired):failure.output=stdout;failure.stderr=stderr
+        raise failure
+    return subprocess.CompletedProcess(args,state['exit'],stdout,stderr)
 
 MODE='policy-runtime-v1'
 MODE_V2='policy-runtime-v2'
@@ -182,15 +332,21 @@ def execute(root,policy,environment,receipt):
     receipt['coreTests']=state
     source_lock=upstream/'Cargo.lock';original=source_lock.read_bytes()
     (directory/'upstream-before.lock').write_bytes(original);state['upstreamLockBeforeSha256']=digest(original)
+    def persist():write_progress(directory/'receipt.json',state)
+    def logged(args,stdout_path,stderr_path,entry=None,index=None):
+        entry=entry if entry is not None else dict(command=list(args),exit=None)
+        if index is not None:entry['index']=index
+        state.update(activeIndex=index,activeCommand=entry)
+        persist()
+        try:return run_logged(args,root,environment,stdout_path,stderr_path,entry=entry,update=persist)
+        finally:
+            state.update(lastCommand=entry,activeIndex=None,activeCommand=None)
+            persist()
     def format_check(key,command,stem,locked):
         args=list(command);entry=dict(command=args,exit=None);state[key]=entry
         entry['files']=format_files(root,args)
-        result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
-        (directory/(stem+'.stdout.log')).write_bytes(result.stdout)
-        (directory/(stem+'.stderr.log')).write_bytes(result.stderr)
+        result=logged(args,directory/(stem+'.stdout.log'),directory/(stem+'.stderr.log'),entry)
         entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
-        print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True)
-        print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
         if source_lock.read_bytes()!=locked:raise ValueError('Core format check changed its lock')
         return result.returncode
     try:
@@ -198,9 +354,8 @@ def execute(root,policy,environment,receipt):
             # build.py must have run its full-suite Native proof (and resource JNI source gate) for this mode first.
             raise ValueError('Provider reader admission requires the full Native suite proof before Core tests')
         bridge_command=['cargo','metadata','--locked','--format-version','1']
-        bridge=subprocess.run(bridge_command,cwd=root,env=environment,capture_output=True)
+        bridge=logged(bridge_command,directory/'bridge-metadata.stdout.json',directory/'bridge-metadata.stderr.log')
         state['bridgeMetadataCommand']=bridge_command;state['bridgeMetadataExit']=bridge.returncode
-        (directory/'bridge-metadata.stdout.json').write_bytes(bridge.stdout);(directory/'bridge-metadata.stderr.log').write_bytes(bridge.stderr)
         if bridge.returncode:raise subprocess.CalledProcessError(bridge.returncode,bridge_command)
         matrix=feature_matrix(json.loads(bridge.stdout),upstream,policy['coreTests'])
         expected=policy.get('coreTestLockSha256');seed=root/'core-tests.lock' if expected is not None else root/'Cargo.lock'
@@ -211,8 +366,7 @@ def execute(root,policy,environment,receipt):
         args=['cargo','metadata','--manifest-path',MANIFEST,'--format-version','1']
         if not policy['resolveLock']:args+=['--locked']
         state['metadataCommand']=args
-        result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
-        (directory/'metadata.stdout.json').write_bytes(result.stdout);(directory/'metadata.stderr.log').write_bytes(result.stderr)
+        result=logged(args,directory/'metadata.stdout.json',directory/'metadata.stderr.log')
         state['metadataExit']=result.returncode
         if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
         metadata=json.loads(result.stdout);members={p['name'] for p in metadata['packages'] if p['id'] in metadata['workspace_members']}
@@ -232,11 +386,10 @@ def execute(root,policy,environment,receipt):
             package=spec['package'];name=spec['filter'];args=entry_command(spec,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=spec['expectedPass']);state['commands'].append(entry)
             if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER):entry['target']=spec['target']
             if policy['coreTests'] in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER):entry['exact']=spec['exact']
-            result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
             label=re.sub('[^A-Za-z0-9_.-]','_',name if name is not None else spec['target'])
-            stem=f'{index:02d}-{package}-{label}';(directory/(stem+'.stdout.log')).write_bytes(result.stdout);(directory/(stem+'.stderr.log')).write_bytes(result.stderr)
+            stem=f'{index:02d}-{package}-{label}'
+            result=logged(args,directory/(stem+'.stdout.log'),directory/(stem+'.stderr.log'),entry,index)
             entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
-            print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True);print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
             if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
             count=re.findall(rb'test result: ok\. (\d+) passed; 0 failed;',result.stdout)
             if count!=[str(entry['expectedPass']).encode()]:raise ValueError('Core unit filter did not execute its exact authored test count')
@@ -245,22 +398,14 @@ def execute(root,policy,environment,receipt):
         if policy['coreTests'] in (MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER):
             args=list(COMPILE_COMMAND)
             entry=dict(command=args,exit=None);state['compileCheck']=entry
-            result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
-            (directory/'observability-compile.stdout.log').write_bytes(result.stdout)
-            (directory/'observability-compile.stderr.log').write_bytes(result.stderr)
+            result=logged(args,directory/'observability-compile.stdout.log',directory/'observability-compile.stderr.log',entry)
             entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
-            print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True)
-            print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
             if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
             if source_lock.read_bytes()!=locked:raise ValueError('Locked Core compile command changed its lock')
         if policy['coreTests']==MODE_MRS_READER:
             args=list(MRS_FORMAT_COMMAND);entry=dict(command=args,exit=None);state['formatCheck']=entry
-            result=subprocess.run(args,cwd=root,env=environment,capture_output=True)
-            (directory/'mrs-reader-format.stdout.log').write_bytes(result.stdout)
-            (directory/'mrs-reader-format.stderr.log').write_bytes(result.stderr)
+            result=logged(args,directory/'mrs-reader-format.stdout.log',directory/'mrs-reader-format.stderr.log',entry)
             entry.update(exit=result.returncode,stdoutSha256=digest(result.stdout),stderrSha256=digest(result.stderr))
-            print(result.stdout.decode('utf-8',errors='replace'),end='',flush=True)
-            print(result.stderr.decode('utf-8',errors='replace'),end='',flush=True)
             if result.returncode:raise subprocess.CalledProcessError(result.returncode,args)
             if source_lock.read_bytes()!=locked:raise ValueError('Core format check changed its lock')
         if format_failures:raise subprocess.CalledProcessError(format_failures[0][0],list(format_failures[0][1]))
@@ -269,5 +414,5 @@ def execute(root,policy,environment,receipt):
         source_lock.write_bytes(original)
         state['upstreamLockRestored']=source_lock.read_bytes()==original
         if not state['upstreamLockRestored']:state['accepted']=False
-        (directory/'receipt.json').write_bytes((json.dumps(state,indent=2)+'\n').encode())
+        persist()
         if not state['upstreamLockRestored']:raise ValueError('Core source lock restoration readback failed')
