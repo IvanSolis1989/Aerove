@@ -421,8 +421,78 @@ class ProductionNetworkFlowTest {
             try {
                 android.util.Log.e("NetworkPortRelease",
                     "stage=$stage expectedPorts=${ports.distinct()} lastPort=$lastPort " +
-                        "lastType=${lastFailure?.javaClass?.name} lastMessage=${lastFailure?.message}", lastFailure)
+                        "lastType=${lastFailure?.javaClass?.name} lastMessage=${lastFailure?.message} " +
+                        "portOwners=${portOwnerReceipt(ports)}", lastFailure)
             } finally { throw timeout }
         }
+    }
+    private fun portOwnerReceipt(ports: List<Int>): String {
+        val wanted = ports.toSet()
+        val separator = Regex("\\s+")
+        val rows = mutableListOf<String>()
+        val inodes = mutableSetOf<String>()
+        val tables = mutableListOf<String>()
+        var omittedRows = 0
+        for (family in listOf("tcp", "tcp6")) {
+            try {
+                val raw = ByteArray(64 * 1024)
+                var bytes = 0
+                var reads = 0
+                var eof = false
+                java.io.File("/proc/self/net/$family").inputStream().use { input ->
+                    while (bytes < raw.size && reads < 16) {
+                        val count = input.read(raw, bytes, raw.size - bytes)
+                        reads++
+                        if (count < 0) { eof = true; break }
+                        if (count == 0) break
+                        bytes += count
+                    }
+                }
+                val text = String(raw, 0, bytes, Charsets.US_ASCII)
+                val complete = if (eof || text.endsWith('\n')) text else text.substringBeforeLast('\n', "")
+                var lines = 0
+                for (line in complete.lineSequence().take(512)) {
+                    lines++
+                    val fields = line.trim().split(separator)
+                    if (fields.size >= 10) {
+                        val port = fields[1].substringAfterLast(':').toIntOrNull(16)
+                        if (port in wanted) {
+                            if (rows.size < 16) {
+                                rows += "family=$family localPort=$port state=${fields[3]} uid=${fields[7]} inode=${fields[9]}"
+                                if (fields[9] != "0") inodes += fields[9]
+                            } else omittedRows++
+                        }
+                    }
+                }
+                tables += "$family=read bytes=$bytes reads=$reads eof=$eof lines=$lines lineLimitHit=${lines == 512}"
+            } catch (failure: Exception) { tables += "$family=unavailable:${failure.javaClass.simpleName}" }
+        }
+        val owners = mutableListOf<String>()
+        var omittedOwners = 0
+        var scanned = 0
+        var linkFailures = 0
+        var lastLinkFailure: String? = null
+        val fdStatus = if (inodes.isEmpty()) "notScanned:noMatchedNonzeroTcpInode" else try {
+            java.nio.file.Files.newDirectoryStream(java.nio.file.Paths.get("/proc/self/fd")).use { entries ->
+                val iterator = entries.iterator()
+                while (scanned < 512 && iterator.hasNext()) {
+                    val entry = iterator.next()
+                    scanned++
+                    val link = try { android.system.Os.readlink(entry.toString()) }
+                    catch (failure: Exception) { linkFailures++; lastLinkFailure = failure.javaClass.simpleName; continue }
+                    if (link.startsWith("socket:[") && link.endsWith("]")) {
+                        val inode = link.removePrefix("socket:[").removeSuffix("]")
+                        if (inode in inodes) {
+                            if (owners.size < 32) owners += "inode=$inode fd=${entry.fileName}" else omittedOwners++
+                        }
+                    }
+                }
+            }
+            "read scanned=$scanned limitHit=${scanned == 512} linkFailures=$linkFailures lastUnavailable=$lastLinkFailure"
+        } catch (failure: Exception) { "unavailable:${failure.javaClass.simpleName} scanned=$scanned" }
+        val text = "pid=${android.os.Process.myPid()} uid=${android.os.Process.myUid()} " +
+            "tables=${tables.joinToString(";")} rows=${rows.joinToString(";")} omittedRows=$omittedRows " +
+            "fd=$fdStatus owners=${owners.joinToString(";")} omittedOwners=$omittedOwners"
+        return text.take(3000) + " receiptTextTruncated=${text.length > 3000}"
     }
 }
