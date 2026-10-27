@@ -5,7 +5,7 @@ import org.gradle.api.artifacts.component.ModuleComponentSelector
 import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
 
-final String uiVersion = '1.12.1'
+final String uiVersion = '1.13.0-beta01'
 final Set<String> uiConstraints = [
     'ui-geometry', 'ui-graphics', 'ui-graphics-lint', 'ui-lint', 'ui-test',
     'ui-test-accessibility', 'ui-test-junit4-accessibility', 'ui-test-junit4',
@@ -108,7 +108,7 @@ gradle.projectsEvaluated {
             }
             def proof = [schemaVersion: 1, gradleVersion: safeAtom(gradle.gradleVersion),
                 scope: 'resolution graph and version policy only; AAR metadata uses a separate Gradle task',
-                policy: [uiVersion: uiVersion, metadataSha256: '6429157dac41f36f6562878c54094b4f565f32b16dea36b2d901517d3695f994', metadataCoordinate: 'androidx.compose.ui:ui-android:1.12.1',
+                policy: [uiVersion: uiVersion, metadataSha256: 'f4fbb6cb90dce33b76f05e0ae1e8271c43fd7f8682b0e3dce6079a905925621a', metadataCoordinate: 'androidx.compose.ui:ui-android:1.13.0-beta01',
                     constrainedUiModules: uiConstraints.toList().sort(), androidVariantSuffix: '-android'],
                 status: failures.isEmpty() ? 'validated' : 'failed', configurations: graphs,
                 validationFailures: failures]
