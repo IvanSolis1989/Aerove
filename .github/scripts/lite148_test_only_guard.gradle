@@ -15,7 +15,16 @@ def allowed = [
     'mapReleaseAndroidTestSourceSetPaths', 'processReleaseAndroidTestManifest',
     'processReleaseAndroidTestResources', 'javaPreCompileReleaseAndroidTest',
     'compileReleaseAndroidTestKotlin', 'compileReleaseAndroidTestJavaWithJavac',
-    'generateReleaseAndroidTestAppKeepRules'
+    'generateReleaseAndroidTestAppKeepRules',
+    'processReleaseNavigationResources',
+    'generateReleaseRFile',
+    'compileReleaseNavigationResources',
+    'mergeReleaseAndroidTestManifest',
+    'packageReleaseAndroidTestResources',
+    'processReleaseAndroidTestNavigationResources',
+    'parseReleaseAndroidTestLocalResources',
+    'generateReleaseAndroidTestRFile',
+    'compileReleaseAndroidTestNavigationResources'
 ] as Set
 
 gradle.taskGraph.whenReady { graph ->
