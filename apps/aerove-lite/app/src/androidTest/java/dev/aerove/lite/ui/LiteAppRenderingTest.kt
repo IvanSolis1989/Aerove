@@ -18,6 +18,15 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.isDisplayed
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -39,7 +48,6 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import dev.aerove.lite.LiteFeatureHost
@@ -243,16 +251,40 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                 compose.onNode(tab).assertDoesNotExist()
                 fun importInput() = compose.onNode(hasAnyAncestor(hasTestTag("profile-import-input")) and hasSetTextAction() and
                     SemanticsMatcher.keyIsDefined(SemanticsActions.RequestFocus), useUnmergedTree = true)
+                val importScrollMatcher = hasScrollAction() and hasAnyDescendant(hasTestTag("profile-import-input"))
+                fun importScroller(): SemanticsNodeInteraction {
+                    val matches = compose.onAllNodes(importScrollMatcher, useUnmergedTree = true)
+                    matches.assertCountEquals(1)
+                    return matches[0]
+                }
+                fun scrollImportTargetIntoView(target: SemanticsNodeInteraction) {
+                    if (!target.isDisplayed()) {
+                        val scroller = importScroller().assertIsDisplayed()
+                        val targetBounds = target.getUnclippedBoundsInRoot()
+                        val viewport = scroller.getBoundsInRoot()
+                        scroller.performTouchInput {
+                            if (targetBounds.top < viewport.top) swipeDown(durationMillis = 400)
+                            else swipeUp(durationMillis = 400)
+                        }
+                        compose.mainClock.advanceTimeBy(400)
+                    }
+                    target.assertIsDisplayed()
+                }
                 compose.onNodeWithTag("profile-import-submit").assertIsNotEnabled()
                 for (invalidInput in listOf("proxies: [", "rules: [")) {
-                    importInput().performScrollTo().assertIsDisplayed().performTextReplacement(invalidInput)
+                    val input = importInput()
+                    scrollImportTargetIntoView(input)
+                    input.assertIsDisplayed().performTextReplacement(invalidInput)
                     compose.mainClock.advanceTimeByFrame()
-                    compose.onNodeWithTag("profile-import-submit").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+                    val submit = compose.onNodeWithTag("profile-import-submit")
+                    scrollImportTargetIntoView(submit)
+                    submit.assertIsDisplayed().assertIsEnabled().performClick()
                     compose.waitUntil(3000) { roots.rejectedInput(invalidInput) }
                     compose.mainClock.advanceTimeByFrame()
                     val importErrorNode = compose.onNodeWithTag("profile-import-error")
                     try {
-                        importErrorNode.performScrollTo().assertIsDisplayed().assertTextEquals(text(R.string.age_import_failed))
+                        scrollImportTargetIntoView(importErrorNode)
+                        importErrorNode.assertIsDisplayed().assertTextEquals(text(R.string.age_import_failed))
                     } catch (failure: AssertionError) {
                         recordImportErrorFailure(invalidInput, failure)
                         throw failure
@@ -261,7 +293,8 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                     compose.onNodeWithTag("profile-import-submit").assertIsEnabled()
                     roots.assertNothingImported()
                 }
-                compose.onNodeWithContentDescription(text(R.string.lite_close)).performScrollTo()
+                val closeButton = compose.onNodeWithContentDescription(text(R.string.lite_close))
+                scrollImportTargetIntoView(closeButton)
                 save("subscription-validation-modal")
                 compose.onNodeWithContentDescription(text(R.string.lite_close)).performClick()
                 compose.mainClock.advanceTimeByFrame()
