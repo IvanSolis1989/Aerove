@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
@@ -123,6 +124,8 @@ class OverrideInteractionsUiTest {
         compose.onNodeWithContentDescription(context.getString(R.string.override_match_source)).assertIsOn()
         compose.onNodeWithContentDescription(context.getString(R.string.override_content)).performTextReplacement("192.168.0.0/16")
         compose.onNodeWithTag("override-rule-action").performClick()
+        compose.onNode(SemanticsMatcher.expectValue(SemanticsProperties.PaneTitle,
+            context.getString(R.string.override_rule_type))).assertIsDisplayed()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("override-rule-save").performScrollTo().performClick()
         assertEquals("IP-CIDR,192.168.0.0/16,MATCH,src,no-resolve", snapshot().globalRules.single().value)

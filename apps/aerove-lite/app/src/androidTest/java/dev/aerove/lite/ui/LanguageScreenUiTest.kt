@@ -139,6 +139,7 @@ class LanguageScreenUiTest {
         compose.onNodeWithTag("language-menu").assertDoesNotExist()
         assertEquals(0, writes)
         compose.onNodeWithTag("language-preference-value").performClick()
+        compose.onNodeWithTag("language-menu").assertIsDisplayed()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("language-menu").assertDoesNotExist()
         compose.onNodeWithTag("language-preference-row").assertIsDisplayed()
