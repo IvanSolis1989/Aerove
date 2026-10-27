@@ -154,8 +154,50 @@ async fn provider_refresh_and_new_selection_fence_old_real_probe_without_retired
     let (api,_,scope) = fixture(&files,&yaml).await; let provider = api.state.proxy_providers.get("feed").unwrap().value().clone();
     let retired = provider.proxies()[0].clone(); retired.health().record_delay(0); let count = retired.health().delay_history().len();
     let groups = api.control.activate_groups(&scope).unwrap(); api.activate_providers().unwrap();
-    let control = api.control.clone(); let setter = tokio::spawn(async move { control.select("PICK","a").await });
-    let (mut socket,_) = timeout(Duration::from_secs(5),origin.accept()).await.unwrap().unwrap(); headers(&mut socket).await;
+    let admission_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut lease_attempts = 0_u64;
+    let held = tokio::time::timeout_at(admission_deadline, async {
+        loop {
+            lease_attempts += 1;
+            match api.control.plane.begin(provider.provider_identity()) {
+                Ok(lease) => return lease,
+                Err(error) if error == "providerBusy" => tokio::task::yield_now().await,
+                Err(error) => panic!("provider lease admission failed: {error:?}; lease_attempts={lease_attempts}"),
+            }
+        }
+    }).await.unwrap_or_else(|error| panic!("provider lease admission deadline: {error:?}; lease_attempts={lease_attempts}"));
+    let busy_seen = Arc::new(tokio::sync::Notify::new());
+    let retry_observed = busy_seen.clone();
+    let attempts = Arc::new(AtomicU64::new(0)); let attempt_count = attempts.clone();
+    let control = api.control.clone();
+    let mut setter = tokio::spawn(async move {
+        loop {
+            attempt_count.fetch_add(1, Ordering::AcqRel);
+            match control.select("PICK","a").await {
+                Err(ControlError::ProviderBusy) if tokio::time::Instant::now() < admission_deadline => {
+                    retry_observed.notify_one(); tokio::task::yield_now().await;
+                }
+                result => return result,
+            }
+        }
+    });
+    tokio::time::timeout_at(admission_deadline, async {
+        tokio::select! {
+            biased;
+            result = &mut setter => panic!("selection ended before controlled Busy admission: {result:?}; lease_attempts={lease_attempts} select_attempts={}", attempts.load(Ordering::Acquire)),
+            _ = busy_seen.notified() => {},
+        }
+    }).await.unwrap_or_else(|error| panic!("selection admission deadline: {error:?}; lease_attempts={lease_attempts} select_attempts={}", attempts.load(Ordering::Acquire)));
+    drop(held);
+    let (mut socket,_) = tokio::time::timeout_at(admission_deadline, async {
+        tokio::select! {
+            biased;
+            result = &mut setter => panic!("selection ended before the real HTTP probe: {result:?}; lease_attempts={lease_attempts} select_attempts={}", attempts.load(Ordering::Acquire)),
+            accepted = origin.accept() => accepted.unwrap(),
+        }
+    }).await.unwrap_or_else(|error| panic!("selection admission deadline: {error:?}; lease_attempts={lease_attempts} select_attempts={}", attempts.load(Ordering::Acquire)));
+    eprintln!("provider selection admission lease_attempts={lease_attempts} select_attempts={}", attempts.load(Ordering::Acquire));
+    headers(&mut socket).await;
     let mut committed_groups = api.control.subscribe_groups();
     let refresh_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     files.write("feed.yaml","# replace adapter while preserving display name\nproxies:\n - {name: a, type: direct}\n");
