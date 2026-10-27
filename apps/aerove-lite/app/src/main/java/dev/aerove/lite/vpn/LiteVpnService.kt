@@ -170,13 +170,14 @@ class LiteVpnService : VpnService() {
                     snapshot.initialNetwork, snapshot.initialIpv6, snapshot.appliedNetwork, snapshot.appliedIpv6)
                 graph.publishVpn(owner, snapshot)
                 traceLifecycle(VpnServiceLifecycleTrace.Event.StatePublished)
-                if (snapshot.phase == VpnPhase.Failed && lastPlan != null && !maintenanceHold) {
+                if (snapshot.phase == VpnPhase.Failed && lastPlan?.ownerIntentToken == intentGeneration && !maintenanceHold) {
+                    val startId = latestReceivedStartId
                     requested(false)
                     lastPlan = null
                     syncListenerPolicy()
                     removeNotification()
-                    traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfUnqualified)
-                    stopSelf()
+                    traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfById, startId)
+                    if (startId > 0) stopSelf(startId)
                     return@collect
                 }
                 syncNotification(snapshot)
@@ -184,11 +185,6 @@ class LiteVpnService : VpnService() {
                 if (policyObservedEndpoint !== endpoint) {
                     policyObservedEndpoint = endpoint
                     if (endpoint != null) syncListenerPolicy()
-                }
-                if (snapshot.phase == VpnPhase.Stopped && lastPlan == null && !maintenanceHold && intentGeneration > 0) {
-                    removeNotification()
-                    traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfUnqualified)
-                    stopSelf()
                 }
             }
         }
@@ -257,13 +253,13 @@ class LiteVpnService : VpnService() {
             lastPlan = null
             syncListenerPolicy()
             coordinator.stop()
-            finishStop(startId)
+            finishStop(startId, generation)
             return START_NOT_STICKY
         }
         if (intent == null && !wasRequested(this)) {
             lastPlan = null
             coordinator.stop()
-            finishStop(startId)
+            finishStop(startId, generation)
             return START_NOT_STICKY
         }
         val reconfigure = intent?.action == ACTION_RECONFIGURE
@@ -400,15 +396,15 @@ class LiteVpnService : VpnService() {
         updateUnderlying()
     }
 
-    private fun finishStop(startId: Int) {
-        traceLifecycle(VpnServiceLifecycleTrace.Event.StopJoinQueued, startId)
+    private fun finishStop(startId: Int, generation: Long) {
+        traceLifecycle(VpnServiceLifecycleTrace.Event.StopJoinQueued, startId, causeIntentGeneration = generation)
         scope.launch {
             coordinator.state.first { it.phase == VpnPhase.Stopped }
-            traceLifecycle(VpnServiceLifecycleTrace.Event.StopJoined, startId)
-            if (lastPlan == null && !maintenanceHold) {
+            traceLifecycle(VpnServiceLifecycleTrace.Event.StopJoined, startId, causeIntentGeneration = generation)
+            requestVpnServiceStop(startId, generation, intentGeneration, lastPlan != null, maintenanceHold) { capturedId ->
                 removeNotification()
-                traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfById, startId)
-                stopSelf(startId)
+                traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfById, capturedId, causeIntentGeneration = generation)
+                stopSelf(capturedId)
             }
         }
     }
@@ -419,13 +415,14 @@ class LiteVpnService : VpnService() {
             onMain = { action -> withContext(Dispatchers.Main.immediate) { action() } },
             stop = coordinator::stopIfCurrent,
             clear = {
+                val startId = latestReceivedStartId
                 ++intentGeneration
                 requested(false)
                 lastPlan = null
                 syncListenerPolicy()
                 removeNotification()
-                traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfUnqualified)
-                stopSelf()
+                traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfById, startId)
+                if (startId > 0) stopSelf(startId)
             })
 
     private suspend fun stopForMaintenance(): MaintenanceRuntimeContext = withContext(Dispatchers.Main.immediate) {
@@ -448,9 +445,10 @@ class LiteVpnService : VpnService() {
         maintenanceHold = false
         heldMaintenance = null
         if (!resume || !context.userRequested) {
+            val startId = latestReceivedStartId
             removeNotification()
-            traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfUnqualified)
-            stopSelf()
+            traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfById, startId)
+            if (startId > 0) stopSelf(startId)
             return@withContext
         }
         val baseline = context.builderSettings ?: checkNotNull(context.previousPlan).builderSettings()
@@ -482,17 +480,22 @@ class LiteVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        graph.invalidatePendingStarts()
-        if ((coordinator.requestedBuilderSettings()?.network?.vpnEnabled
-                ?: heldMaintenance?.builderSettings?.network?.vpnEnabled
-                ?: heldMaintenance?.previousPlan?.builderSettings()?.network?.vpnEnabled) != true) return
-        ++intentGeneration
-        maintenanceHold = false
-        heldMaintenance = null
-        requested(false)
-        lastPlan = null
-        coordinator.stop()
-        super.onRevoke()
+        val revokedGeneration = intentGeneration
+        scope.launch {
+            if (revokedGeneration != intentGeneration) return@launch
+            graph.invalidatePendingStarts()
+            if ((coordinator.requestedBuilderSettings()?.network?.vpnEnabled
+                    ?: heldMaintenance?.builderSettings?.network?.vpnEnabled
+                    ?: heldMaintenance?.previousPlan?.builderSettings()?.network?.vpnEnabled) != true) return@launch
+            val generation = ++intentGeneration
+            val startId = latestReceivedStartId
+            maintenanceHold = false
+            heldMaintenance = null
+            requested(false)
+            lastPlan = null
+            coordinator.stop()
+            finishStop(startId, generation)
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -664,6 +667,13 @@ class LiteVpnService : VpnService() {
             return failure
         }
     }
+}
+
+internal fun requestVpnServiceStop(startId: Int, commandGeneration: Long, currentGeneration: Long,
+    hasPlan: Boolean, maintenanceHold: Boolean, stop: (Int) -> Unit): Boolean {
+    if (startId <= 0 || commandGeneration != currentGeneration || hasPlan || maintenanceHold) return false
+    stop(startId)
+    return true
 }
 
 internal class VpnNotificationUpdates(
