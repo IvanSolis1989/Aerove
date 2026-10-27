@@ -306,10 +306,10 @@ private fun ServiceCell(service: ServiceCheckView, modifier: Modifier) {
             ServiceBadge(metadata, tone.ink, 36.dp, 9.dp)
             Column(Modifier.weight(1f)) {
                 LiteText(metadata.label, Modifier.testTag("dashboard-service-${service.id}-label"),
-                    style = LiteType.Footnote.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
+                    style = LiteType.Footnote.copy(fontWeight = FontWeight.SemiBold))
                 LiteText(label, Modifier.testTag("dashboard-service-${service.id}-status"),
                     style = LiteType.Caption.copy(fontWeight = FontWeight.SemiBold, fontFeatureSettings = "tnum"),
-                    color = if (service.status == "available") LocalLiteVisuals.current.secondaryInk else tone.ink, maxLines = 1)
+                    color = if (service.status == "available") LocalLiteVisuals.current.secondaryInk else tone.ink)
             }
         }
     }

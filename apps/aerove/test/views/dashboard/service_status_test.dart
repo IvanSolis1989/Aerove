@@ -21,6 +21,8 @@ import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/service_status.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -28,6 +30,7 @@ import 'package:mocktail/mocktail.dart';
 
 import '../../helpers/glyph_finders.dart';
 import '../../helpers/test_app.dart';
+import '../../helpers/system_test_font.dart';
 
 class _MockCore extends Mock implements CoreHandlerInterface {}
 
@@ -57,7 +60,8 @@ OutboundIpResult _address(String ip, String country) => OutboundIpResult(
 );
 
 void main() {
-  setUpAll(() {
+  setUpAll(() async {
+    await (FontLoader('ServiceRoboto')..addFont(loadSdkTestFont())).load();
     registerFallbackValue(const ServiceCheckParams(timeout: 0));
     registerFallbackValue(const OutboundIpParams(timeout: 0));
   });
@@ -253,6 +257,82 @@ void main() {
       tester.getTopLeft(tile(first)).dy,
       greaterThan(cell(first).center.dy),
     );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('mobile service text wraps and grows without truncation', (
+    tester,
+  ) async {
+    answer(
+      (params) => [
+        for (final name in params.names)
+          _item(name, ServiceProbeStatus.unsupportedRegion),
+      ],
+    );
+    Future<void> show(double scale) async {
+      await tester.pumpWidget(
+        app(
+          settings: only([ServiceTarget.netflix, ServiceTarget.youtube]),
+          width: 328,
+          body: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(scale)),
+              child: Theme(
+                data: Theme.of(context).copyWith(
+                  textTheme: Theme.of(
+                    context,
+                  ).textTheme.apply(fontFamily: 'ServiceRoboto'),
+                ),
+                child: const ServiceStatusCard(),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await show(1);
+    final normal = tester.getRect(
+      find.ancestor(
+        of: tile(ServiceTarget.netflix),
+        matching: find.byType(DashboardBlock),
+      ),
+    );
+    expect(normal.height, greaterThanOrEqualTo(50));
+    await show(1.4);
+    final cell = tester.getRect(
+      find.ancestor(
+        of: tile(ServiceTarget.netflix),
+        matching: find.byType(DashboardBlock),
+      ),
+    );
+    final statuses = find.descendant(
+      of: find.byType(ServiceStatusCard),
+      matching: find.text('Region not supported'),
+    );
+    expect(statuses, findsNWidgets(2));
+    for (final element in statuses.evaluate()) {
+      final paragraph = tester.renderObject<RenderParagraph>(
+        find.descendant(
+          of: find.byElementPredicate((candidate) => candidate == element),
+          matching: find.byType(RichText),
+        ),
+      );
+      expect(paragraph.didExceedMaxLines, isFalse);
+      final bounds = paragraph.localToGlobal(Offset.zero) & paragraph.size;
+      final owner = tester.getRect(
+        find.ancestor(
+          of: find.byElementPredicate((candidate) => candidate == element),
+          matching: find.byType(DashboardBlock),
+        ),
+      );
+      expect(bounds.top, greaterThanOrEqualTo(owner.top));
+      expect(bounds.bottom, lessThanOrEqualTo(owner.bottom));
+    }
+    expect(cell.height, greaterThan(normal.height));
     expect(tester.takeException(), isNull);
   });
 

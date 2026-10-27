@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -817,6 +816,9 @@ private val SuspendedWifiGlyph = LiteGlyph(listOf(
     glyphPolyline(listOf(vertex(4.5, 3), vertex(20.5, 19)), role = LiteGlyphRole.Line)))
 
 internal val DashboardModePillShape = LiteSuperellipse(LiteCorner.Full)
+private val DashboardControlIconSize = 18.dp
+private val DashboardControlLabelGap = 3.dp
+private val DashboardControlVerticalInset = 7.dp
 
 @Composable
 private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
@@ -832,7 +834,7 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
         val density = LocalDensity.current
         val style = LiteType.Footnote.copy(fontFamily = LocalLiteFontFamily.current)
         val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales.toLanguageTags()
-        val plan = remember(maxWidth, candidates, style, density, locale) {
+        val plan = remember(maxWidth, candidates, style, density, locale, measurer) {
             val forms = candidates.associateWith { label ->
                 val hinted = dashboardControlLabel(label)
                 fun width(value: String) = measurer.measure(AnnotatedString(value), style = style, softWrap = false).size.width.toFloat()
@@ -843,11 +845,23 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
             val inset = listOf(8.dp, 4.dp).firstOrNull { fit(cell - with(density) { 2 * it.toPx() }) >= 1f } ?: 4.dp
             val room = cell - with(density) { 2 * inset.toPx() }
             val scale = maxOf(minOf(1f, 11f / (style.fontSize.value * density.fontScale)), fit(room))
-            DashboardControlPlan(forms.mapValues { (_, form) ->
+            val shown = forms.mapValues { (_, form) ->
                 if (form.first * scale <= room + 0.01f || form.second == null) form.third else form.second!!.first
-            }, scale, inset)
+            }
+            val height = with(density) {
+                val labelWidth = ((maxWidth.roundToPx() - 2 * 3.dp.roundToPx()) / 3 - 2 * inset.roundToPx()).coerceAtLeast(0)
+                val textHeight = shown.values.maxOf { label ->
+                    val result = measurer.measure(AnnotatedString(label), style = dashboardControlStyle(style, scale),
+                        softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
+                        constraints = Constraints(maxWidth = labelWidth))
+                    maxOf(result.size.height, ceil(result.multiParagraph.height).toInt())
+                }
+                maxOf((52.dp * fontScale.coerceAtLeast(1f)).roundToPx(),
+                    textHeight + DashboardControlIconSize.roundToPx() + DashboardControlLabelGap.roundToPx() + 2 * DashboardControlVerticalInset.roundToPx()).toDp()
+            }
+            DashboardControlPlan(shown, scale, inset, height)
         }
-        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(Modifier.fillMaxWidth().height(plan.height), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             NetworkControlPill(proxyModeLabel(state.settings.mode), when (state.settings.mode) { ProxyMode.Rule -> FullGlyphs.rules; ProxyMode.Global -> FullGlyphs.proxies; ProxyMode.Direct -> FullGlyphs.target }, true, enabled,
                 Modifier.weight(1f).testTag("dashboard-mode-cycle"), plan = plan) {
                 val settings = current
@@ -870,7 +884,14 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
     }
 }
 
-private data class DashboardControlPlan(val shown: Map<String, String>, val scale: Float, val inset: androidx.compose.ui.unit.Dp)
+private data class DashboardControlPlan(val shown: Map<String, String>, val scale: Float,
+    val inset: androidx.compose.ui.unit.Dp, val height: androidx.compose.ui.unit.Dp)
+
+private fun dashboardControlStyle(base: TextStyle, scale: Float) = base.copy(
+    fontSize = base.fontSize * scale, lineHeight = base.lineHeight * scale,
+    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph,
+    hyphens = androidx.compose.ui.text.style.Hyphens.None)
 
 @Composable
 private fun NetworkControlPill(label: String, icon: LiteGlyph, selected: Boolean, enabled: Boolean,
@@ -884,15 +905,11 @@ private fun NetworkControlPill(label: String, icon: LiteGlyph, selected: Boolean
             if (toggle) toggleableState = if (selected) androidx.compose.ui.state.ToggleableState.On else androidx.compose.ui.state.ToggleableState.Off
         }, corner = LiteCorner.Full, customShape = DashboardModePillShape, selected = selected,
         interactionSource = interaction, solidColor = if (selected) lerp(dashboardTone(), visuals.primary, 0.13f) else dashboardTone()) {
-        Column(Modifier.align(Alignment.Center).padding(horizontal = plan.inset, vertical = 7.dp),
-            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            LiteIcon(icon, color = visuals.secondaryInk, size = 18.dp)
+        Column(Modifier.align(Alignment.Center).padding(horizontal = plan.inset, vertical = DashboardControlVerticalInset),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(DashboardControlLabelGap)) {
+            LiteIcon(icon, color = visuals.secondaryInk, size = DashboardControlIconSize)
             Text(shown, Modifier.fillMaxWidth().testTag("dashboard-control-label").semantics { hideFromAccessibility() },
-                color = visuals.ink, style = LiteType.Footnote.copy(fontFamily = LocalLiteFontFamily.current,
-                    fontSize = LiteType.Footnote.fontSize * plan.scale, lineHeight = LiteType.Footnote.lineHeight * plan.scale,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    lineBreak = androidx.compose.ui.text.style.LineBreak.Paragraph,
-                    hyphens = androidx.compose.ui.text.style.Hyphens.None), softWrap = false,
+                color = visuals.ink, style = dashboardControlStyle(LiteType.Footnote.copy(fontFamily = LocalLiteFontFamily.current), plan.scale), softWrap = false,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Visible)
         }
     }

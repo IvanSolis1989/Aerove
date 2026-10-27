@@ -415,7 +415,11 @@ class _ServiceGrid extends StatelessWidget {
             children: [
               for (final service in services.skip(start).take(_columns))
                 Expanded(
-                  child: _ServiceCell(service: service, height: cellHeight),
+                  child: _ServiceCell(
+                    service: service,
+                    height: cellHeight,
+                    naturalWrap: !fill,
+                  ),
                 ),
             ],
           ),
@@ -429,6 +433,7 @@ class _ServiceCell extends StatelessWidget {
     required this.service,
     required this.height,
     this.tile = false,
+    this.naturalWrap = false,
   });
 
   static const _inset = 7.0;
@@ -440,6 +445,7 @@ class _ServiceCell extends StatelessWidget {
   final double height;
 
   final bool tile;
+  final bool naturalWrap;
 
   @override
   Widget build(BuildContext context) {
@@ -463,8 +469,8 @@ class _ServiceCell extends StatelessWidget {
         children: [
           GlassText(
             service.target.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            maxLines: naturalWrap ? null : 1,
+            overflow: naturalWrap ? TextOverflow.clip : TextOverflow.ellipsis,
             style: AppTextStyle.footnote.of(context, emphasized: true),
           ),
           if (service.loading)
@@ -472,8 +478,8 @@ class _ServiceCell extends StatelessWidget {
           else
             GlassText(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              maxLines: naturalWrap ? null : 1,
+              overflow: naturalWrap ? TextOverflow.clip : TextOverflow.ellipsis,
               style: status,
             ),
         ],
@@ -496,8 +502,10 @@ class _ServiceCell extends StatelessWidget {
                 ],
               ),
             )
-          : SizedBox(
-              height: height,
+          : ConstrainedBox(
+              constraints: naturalWrap
+                  ? BoxConstraints(minHeight: height)
+                  : BoxConstraints.tightFor(height: height),
               child: DashboardBlock(
                 radius: DashboardCorner.tab,
                 padding: const EdgeInsetsDirectional.fromSTEB(_inset, 0, 12, 0),
