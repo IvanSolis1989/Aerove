@@ -21,8 +21,9 @@ shard_index="${AEROVE_REMAINING_SHARD_INDEX:-}"
 remaining_timeout=()
 if [[ "$phase" == original-sample ]]; then remaining_timeout=(timeout --signal=TERM --kill-after=20s 240s); fi
 if [[ -v AEROVE_REMAINING_SHARD_COUNT || -v AEROVE_REMAINING_SHARD_INDEX ]]; then
-    if [[ "$phase" != remaining || "$shard_count" != 8 || ! "$shard_index" =~ ^[0-7]$ ]]; then
-        echo 'Sharding requires remaining, count=8 and one index in 0..7; omit both variables for an unsharded run.' >&2
+    if [[ "$phase" != remaining || ! "$shard_count" =~ ^(8|16)$ || ! "$shard_index" =~ ^([0-9]|1[0-5])$ ]] ||
+            (( 10#$shard_index >= shard_count )); then
+        echo 'Sharding requires remaining, count=8 or 16 and one index in 0..count-1; omit both variables for an unsharded run.' >&2
         exit 2
     fi
     selection+=(-e numShards "$shard_count" -e shardIndex "$shard_index")
@@ -324,7 +325,7 @@ if [[ -n "$shard_count" ]]; then
     if [[ "${discovery_status[0]}" != 0 ]]; then exit "${discovery_status[0]}"; fi
     if [[ "${discovery_status[1]}" != 0 ]]; then exit "${discovery_status[1]}"; fi
     python3 apps/aerove-lite/tool/instrumentation_shards.py discover \
-        --log "$diagnostics/discovery.log" --source "$diagnostics/SOURCE.json" \
+        --shard-count "$shard_count" --log "$diagnostics/discovery.log" --source "$diagnostics/SOURCE.json" \
         --proof "${AEROVE_CURRENT_RENDERER_PROOF:?Current runtime proof required for sharded acceptance}" \
         --sums "$diagnostics/APK_SHA256SUMS" --output "$diagnostics/TEST-DISCOVERY.json"
 fi

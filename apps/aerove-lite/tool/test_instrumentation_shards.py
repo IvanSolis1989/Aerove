@@ -1,11 +1,16 @@
 """Synthetic protocol tests; no test APK, Android device or performance evidence."""
 import copy
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
 import unittest
 
 import instrumentation_shards as shards
+
+BASH = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe") if os.name == "nt" else shutil.which("bash")
 
 
 class ShardSelectionTests(unittest.TestCase):
@@ -33,15 +38,15 @@ class ShardSelectionTests(unittest.TestCase):
         path.write_text(self.log(descriptions, statuses))
         return path
 
-    def discovery(self, index):
-        return dict(numShards=shards.SHARD_COUNT, shardIndex=index, identity=self.identity, runner="androidx.test:runner:1.6.2",
-                    junit="junit:junit:4.13.2", algorithm=f"abs(Description.hashCode()) % {shards.SHARD_COUNT}", apkSha256={"app": "c" * 64},
+    def discovery(self, index, count=shards.SHARD_COUNT):
+        return dict(numShards=count, shardIndex=index, identity=self.identity, runner="androidx.test:runner:1.6.2",
+                    junit="junit:junit:4.13.2", algorithm=f"abs(Description.hashCode()) % {count}", apkSha256={"app": "c" * 64},
                     runtimeManifestSha256="d" * 64, dependencyReportSha256="e" * 64,
                     discoveryFingerprint=shards.fingerprint(sorted(self.descriptions)), discoveredDescriptions=sorted(self.descriptions),
                     discoveryCount=len(self.descriptions), excludedClass=shards.MATRIX_CLASS)
 
-    def expected(self, index):
-        return sorted(description for description in self.descriptions if shards.shard_for(description) == index)
+    def expected(self, index, count=shards.SHARD_COUNT):
+        return sorted(description for description in self.descriptions if shards.shard_for(description, count) == index)
 
     def artifact_receipts(self):
         for index in range(shards.SHARD_COUNT):
@@ -299,6 +304,136 @@ class ShardSelectionTests(unittest.TestCase):
             path.write_text(json.dumps(changed))
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "Mixed invocation"):
                 shards.aggregate(self.root, "a" * 40, "11", "2")
+
+    def test_explicit_sixteen_requires_full_unique_passing_inventory(self):
+        self.descriptions = [f"case{index}[Solid](a.b.Test)" for index in range(320)]
+        self.descriptions += [shards.SSID_DESCRIPTION]
+        self.assertEqual(8, shards.SHARD_COUNT)
+        for index in range(16):
+            expected = self.expected(index, 16)
+            ordinary = self.root / f"ordinary-{index}.log"
+            isolated = self.root / f"ssid-{index}.log"
+            ordinary.write_text(self.log([value for value in expected if value != shards.SSID_DESCRIPTION]))
+            isolated.write_text(self.log([shards.SSID_DESCRIPTION]))
+            receipt = shards.verify(self.discovery(index, 16), ordinary,
+                isolated if shards.SSID_DESCRIPTION in expected else None)
+            path = self.root / f"AEROVE-Lite-shard-selection-{index}-of-16-attempt-2/TEST-SELECTION.json"
+            path.parent.mkdir()
+            path.write_text(json.dumps(receipt))
+        result = shards.aggregate(self.root, "a" * 40, "11", "2", shard_count=16)
+        self.assertEqual(list(range(16)), result["shardIndices"])
+        self.assertEqual(len(self.descriptions), result["discoveredCount"])
+        self.assertEqual(len(self.descriptions), result["passedCount"])
+        self.assertTrue(result["allDiscoveredPassed"])
+        with self.assertRaisesRegex(ValueError, "8 unique"):
+            shards.aggregate(self.root, "a" * 40, "11", "2")
+        path = self.root / "AEROVE-Lite-shard-selection-0-of-16-attempt-2/TEST-SELECTION.json"
+        original = json.loads(path.read_text())
+        mutations = [
+            lambda x: x["discovery"].update(numShards=8),
+            lambda x: x["discovery"].update(shardIndex=1),
+            lambda x: x["discovery"].update(discoveryCount=1),
+            lambda x: x["discovery"].update(discoveryFingerprint="x"),
+            lambda x: x["discovery"]["identity"].update(sourceRevision="b" * 40),
+            lambda x: x["discovery"]["identity"].update(workflowRun="12"),
+            lambda x: x["discovery"]["identity"].update(runAttempt="1"),
+            lambda x: x["discovery"].update(apkSha256={"app": "f" * 64}),
+            lambda x: x.update(actualDescriptions=x["actualDescriptions"][:-1]),
+            lambda x: x.update(actualDescriptions=x["actualDescriptions"] + x["actualDescriptions"][:1]),
+            lambda x: x.update(allExpectedPassed=False),
+            lambda x: x.update(allExpectedPassed=1),
+            lambda x: x.update(instrumentationLogs=[]),
+        ]
+        for mutate in mutations:
+            changed = copy.deepcopy(original)
+            mutate(changed)
+            path.write_text(json.dumps(changed))
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                shards.aggregate(self.root, "a" * 40, "11", "2", shard_count=16)
+        for status in ("ignored", "assumptionFailed"):
+            changed = copy.deepcopy(original)
+            skipped = changed["terminalStatuses"]["passed"].pop()
+            changed["terminalStatuses"][status].append(skipped)
+            changed["allExpectedPassed"] = False
+            path.write_text(json.dumps(changed))
+            with self.subTest(status=status), self.assertRaisesRegex(ValueError, "pass"):
+                shards.aggregate(self.root, "a" * 40, "11", "2", shard_count=16)
+        path.write_text(json.dumps(original))
+        extra = self.root / "duplicate/TEST-SELECTION.json"
+        extra.parent.mkdir()
+        extra.write_text(path.read_text())
+        with self.assertRaisesRegex(ValueError, "16 unique"):
+            shards.aggregate(self.root, "a" * 40, "11", "2", shard_count=16)
+        extra.unlink()
+        path.unlink()
+        with self.assertRaisesRegex(ValueError, "16 unique"):
+            shards.aggregate(self.root, "a" * 40, "11", "2", shard_count=16)
+
+    def test_sixteen_hash_pairs_reconstruct_eight_and_other_counts_fail_closed(self):
+        for description in self.descriptions + [shards.SSID_DESCRIPTION, "emoji\U0001f600(a.b.Test)"]:
+            self.assertEqual(shards.shard_for(description), shards.shard_for(description, 16) % 8)
+        for count in (True, 0, 4, 12, 32, "16"):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                shards.shard_for(self.descriptions[0], count)
+
+    def test_full_workflow_uses_explicit_sixteen_without_changing_historical_diagnostics(self):
+        repository = Path(__file__).resolve().parents[3]
+        workflow = (repository / ".github/workflows/aerove-lite.yaml").read_text()
+        acceptance = workflow.split("  acceptance:\n", 1)[1].split("  accepted:\n", 1)[0]
+        self.assertNotIn("max-parallel:", acceptance)
+        self.assertEqual(16, acceptance.count("shard_count: 16\n"))
+        self.assertIn("-of-${{ matrix.shard_count }}-attempt-", acceptance)
+        self.assertIn("--shard-count 16", workflow.split("  accepted:\n", 1)[1])
+        self.assertIn("shard_index: [0, 1, 2, 3, 4, 5, 6, 7]", workflow)
+        self.assertIn("AEROVE-Lite-original141-shard-*-of-8-attempt-", workflow)
+        shell = (repository / "apps/aerove-lite/tool/emulator_acceptance.sh").read_text()
+        self.assertIn('--shard-count "$shard_count"', shell)
+        self.assertIn('instrumentation_deadline=$(( $(date +%s) + 1200 ))', shell)
+        self.assertIn('120s "${adb_device[@]}" shell am instrument', shell)
+        self.assertIn('test_timeout_msec=120000', shell)
+        self.assertIn('--deadline "$instrumentation_deadline"', shell)
+
+    def test_explicit_sixteen_discovery_still_binds_source_apks_and_log_only_identity(self):
+        runtime = self.root / "runtime"
+        (runtime / "dependencies").mkdir(parents=True)
+        graph = runtime / "dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt"
+        graph.write_text("+--- androidx.test:runner:1.7.0\n+--- junit:junit:4.13.2\n")
+        (runtime / "dependencies/releaseAndroidTestRuntimeClasspath.exit.txt").write_text("0\n")
+        (runtime / "source-manifest.json").write_text(json.dumps(dict(self.identity,
+            files=[dict(path="dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt", sha256=shards.sha(graph))])))
+        proof, source, sums = (self.root / name for name in ("proof.json", "SOURCE.json", "APK_SHA256SUMS"))
+        apks = {"app-release.apk": "c" * 64, "app-release-androidTest.apk": "d" * 64}
+        proof.write_text(json.dumps(dict(runtimeDirectory=str(runtime), apks=apks)))
+        source.write_text(json.dumps(dict(self.identity, phase="remaining", testShard=dict(numShards=16, shardIndex=15,
+            runner="androidx.test.runner.AndroidJUnitRunner", excludedClass=shards.MATRIX_CLASS))))
+        sums.write_text("".join(f"{value}  apks/{name}\n" for name, value in apks.items()))
+        log = self.write_log(self.descriptions)
+        found = shards.discover(log, proof, source, sums, shard_count=16)
+        self.assertEqual((16, 15, []), (found["numShards"], found["shardIndex"], found["passedTests"]))
+        self.assertEqual("logOnly-no-test-method-execution", found["discoveryMode"])
+        self.assertEqual(len(self.descriptions), found["discoveryCount"])
+        with self.assertRaisesRegex(ValueError, "source shard"):
+            shards.discover(log, proof, source, sums)
+        changed = json.loads(source.read_text())
+        changed["testShard"]["numShards"] = 8
+        source.write_text(json.dumps(changed))
+        with self.assertRaisesRegex(ValueError, "source shard"):
+            shards.discover(log, proof, source, sums, shard_count=16)
+
+    @unittest.skipUnless(BASH and Path(BASH).is_file(), "Bash is required for shell admission")
+    def test_shell_admission_allows_only_valid_eight_or_sixteen_remaining_indices(self):
+        repository = Path(__file__).resolve().parents[3]
+        shell = (repository / "apps/aerove-lite/tool/emulator_acceptance.sh").read_text()
+        guard = shell.split('diagnostics="$RUNNER_TEMP/lite-diagnostics/$phase"', 1)[0]
+        for count, index, phase, success in (("8", "7", "remaining", True), ("16", "15", "remaining", True),
+                ("8", "8", "remaining", False), ("16", "16", "remaining", False),
+                ("12", "0", "remaining", False), ("16", "01", "remaining", False),
+                ("16", "0", "matrix", False), ("", "0", "remaining", False), ("16", "", "remaining", False)):
+            with self.subTest(count=count, index=index, phase=phase):
+                env = dict(os.environ, AEROVE_REMAINING_SHARD_COUNT=count, AEROVE_REMAINING_SHARD_INDEX=index)
+                result = subprocess.run([BASH, "-c", guard, "shard-guard", phase], env=env,
+                    capture_output=True, creationflags=0x08000040 if os.name == "nt" else 0)
+                self.assertEqual(success, result.returncode == 0, result.stderr)
 
 
 if __name__ == "__main__":

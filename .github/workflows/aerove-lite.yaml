@@ -853,45 +853,85 @@ jobs:
           label: matrix
           artifact_suffix: matrix
         - phase: remaining
-          label: remaining shard 0/8
-          artifact_suffix: remaining-shard-0-of-8
-          shard_count: 8
+          label: remaining shard 0/16
+          artifact_suffix: remaining-shard-0-of-16
+          shard_count: 16
           shard_index: 0
         - phase: remaining
-          label: remaining shard 1/8
-          artifact_suffix: remaining-shard-1-of-8
-          shard_count: 8
+          label: remaining shard 1/16
+          artifact_suffix: remaining-shard-1-of-16
+          shard_count: 16
           shard_index: 1
         - phase: remaining
-          label: remaining shard 2/8
-          artifact_suffix: remaining-shard-2-of-8
-          shard_count: 8
+          label: remaining shard 2/16
+          artifact_suffix: remaining-shard-2-of-16
+          shard_count: 16
           shard_index: 2
         - phase: remaining
-          label: remaining shard 3/8
-          artifact_suffix: remaining-shard-3-of-8
-          shard_count: 8
+          label: remaining shard 3/16
+          artifact_suffix: remaining-shard-3-of-16
+          shard_count: 16
           shard_index: 3
         - phase: remaining
-          label: remaining shard 4/8
-          artifact_suffix: remaining-shard-4-of-8
-          shard_count: 8
+          label: remaining shard 4/16
+          artifact_suffix: remaining-shard-4-of-16
+          shard_count: 16
           shard_index: 4
         - phase: remaining
-          label: remaining shard 5/8
-          artifact_suffix: remaining-shard-5-of-8
-          shard_count: 8
+          label: remaining shard 5/16
+          artifact_suffix: remaining-shard-5-of-16
+          shard_count: 16
           shard_index: 5
         - phase: remaining
-          label: remaining shard 6/8
-          artifact_suffix: remaining-shard-6-of-8
-          shard_count: 8
+          label: remaining shard 6/16
+          artifact_suffix: remaining-shard-6-of-16
+          shard_count: 16
           shard_index: 6
         - phase: remaining
-          label: remaining shard 7/8
-          artifact_suffix: remaining-shard-7-of-8
-          shard_count: 8
+          label: remaining shard 7/16
+          artifact_suffix: remaining-shard-7-of-16
+          shard_count: 16
           shard_index: 7
+        - phase: remaining
+          label: remaining shard 8/16
+          artifact_suffix: remaining-shard-8-of-16
+          shard_count: 16
+          shard_index: 8
+        - phase: remaining
+          label: remaining shard 9/16
+          artifact_suffix: remaining-shard-9-of-16
+          shard_count: 16
+          shard_index: 9
+        - phase: remaining
+          label: remaining shard 10/16
+          artifact_suffix: remaining-shard-10-of-16
+          shard_count: 16
+          shard_index: 10
+        - phase: remaining
+          label: remaining shard 11/16
+          artifact_suffix: remaining-shard-11-of-16
+          shard_count: 16
+          shard_index: 11
+        - phase: remaining
+          label: remaining shard 12/16
+          artifact_suffix: remaining-shard-12-of-16
+          shard_count: 16
+          shard_index: 12
+        - phase: remaining
+          label: remaining shard 13/16
+          artifact_suffix: remaining-shard-13-of-16
+          shard_count: 16
+          shard_index: 13
+        - phase: remaining
+          label: remaining shard 14/16
+          artifact_suffix: remaining-shard-14-of-16
+          shard_count: 16
+          shard_index: 14
+        - phase: remaining
+          label: remaining shard 15/16
+          artifact_suffix: remaining-shard-15-of-16
+          shard_count: 16
+          shard_index: 15
     name: acceptance (${{ matrix.label }})
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -1016,7 +1056,7 @@ jobs:
       if: ${{ matrix.phase == 'remaining' && success() }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: AEROVE-Lite-shard-selection-${{ matrix.shard_index }}-of-8-attempt-${{ github.run_attempt }}
+        name: AEROVE-Lite-shard-selection-${{ matrix.shard_index }}-of-${{ matrix.shard_count }}-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/lite-diagnostics/remaining/TEST-SELECTION.json
         if-no-files-found: error
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1043,16 +1083,16 @@ jobs:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         persist-credentials: false
-    - name: Fetch the eight exact APK shard selection receipts
+    - name: Fetch the sixteen exact APK shard selection receipts
       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
       with:
-        pattern: AEROVE-Lite-shard-selection-*-of-8-attempt-${{ github.run_attempt }}
+        pattern: AEROVE-Lite-shard-selection-*-of-16-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/lite-shard-selection
         merge-multiple: false
-    - name: Verify the 8 runtime-discovered shard sets form one complete APK test selection
+    - name: Verify the 16 runtime-discovered shard sets form one complete APK test selection
       run: |
         python3 apps/aerove-lite/tool/instrumentation_shards.py aggregate \
-          --directory "$RUNNER_TEMP/lite-shard-selection" --source "$GITHUB_SHA" \
+          --shard-count 16 --directory "$RUNNER_TEMP/lite-shard-selection" --source "$GITHUB_SHA" \
           --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
           --output "$RUNNER_TEMP/lite-shard-selection/AGGREGATE.json"
     - name: Preserve the aggregate APK test selection proof

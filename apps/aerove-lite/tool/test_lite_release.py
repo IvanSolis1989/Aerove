@@ -203,10 +203,15 @@ class LitePromotionGateTests(unittest.TestCase):
             self.assertIn("already matches", (root / "summary.md").read_text(encoding="utf-8"))
 
     def test_parallel_jobs_require_every_producer_and_android_phase_in_same_attempt(self):
-        actual_aggregate_step = workflow_aggregate_step()
+        for count in (8, 16):
+            with self.subTest(count=count), mock.patch.object(release, "_source_shard_count", return_value=count):
+                self.check_parallel_jobs(count)
+
+    def check_parallel_jobs(self, count):
+        actual_aggregate_step = f"Verify the {count} runtime-discovered shard sets form one complete APK test selection"
         self.assertEqual(
-            f"Verify the {release.SHARD_COUNT} runtime-discovered shard sets form one complete APK test selection",
-            actual_aggregate_step,
+            "Verify the 16 runtime-discovered shard sets form one complete APK test selection",
+            workflow_aggregate_step(),
         )
         required = {
             "resolve": ["Stable lock and host production regression"],
@@ -214,8 +219,8 @@ class LitePromotionGateTests(unittest.TestCase):
             "accepted": ["All exact-source acceptance gates passed", actual_aggregate_step],
             "acceptance (matrix)": ["Real API 33 matrix verification"],
         }
-        for shard_index in range(release.SHARD_COUNT):
-            required[f"acceptance (remaining shard {shard_index}/{release.SHARD_COUNT})"] = ["Real API 33 remaining verification"]
+        for shard_index in range(count):
+            required[f"acceptance (remaining shard {shard_index}/{count})"] = ["Real API 33 remaining verification"]
         for abi in ("arm64-v8a", "x86_64"):
             prefix = f"build ({abi}) / "
             required[prefix+"rust"] = ["Build the pinned Rust Android bridge"]
@@ -234,26 +239,31 @@ class LitePromotionGateTests(unittest.TestCase):
                 with self.subTest(sourceMismatch=job["name"]), self.assertRaises(release.PromotionError):
                     release._candidate_jobs(11, 2, "a" * 40)
                 job["head_sha"] = "a" * 40
-        with mock.patch.object(release,"_gh_json",return_value={"jobs":jobs}):
-            self.assertEqual(len(required),len(release._candidate_jobs(11,2)))
+        with mock.patch.object(release,"_gh_items",return_value=jobs):
+            self.assertEqual(len(required),len(release._candidate_jobs(11,2,"a" * 40)))
             for target in range(len(jobs)):
                 removed = jobs.pop(target)
                 with self.subTest(missing=removed["name"]), self.assertRaises(release.PromotionError):
-                    release._candidate_jobs(11,2)
+                    release._candidate_jobs(11,2,"a" * 40)
                 jobs.insert(target, removed)
+            for job in list(jobs):
+                jobs.append(dict(job, conclusion="failure"))
+                with self.subTest(duplicateEvenFailed=job["name"]), self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11,2,"a" * 40)
+                jobs.pop()
             for job in list(jobs):
                 if not job["name"].startswith("acceptance ("):
                     continue
                 jobs.append(dict(job, conclusion="failure"))
                 with self.subTest(duplicate=job["name"]), self.assertRaises(release.PromotionError):
-                    release._candidate_jobs(11,2)
+                    release._candidate_jobs(11,2,"a" * 40)
                 jobs.pop()
             for unexpected in ("acceptance (remaining)", "acceptance (remaining shard 8/8)",
                                "acceptance (remaining shard 0/7)", "acceptance (remaining shard 0/8) extra",
                                "acceptance (remaining shard 0/4)"):
                 jobs.append(dict(jobs[0], name=unexpected))
                 with self.subTest(mixed=unexpected), self.assertRaises(release.PromotionError):
-                    release._candidate_jobs(11,2)
+                    release._candidate_jobs(11,2,"a" * 40)
                 jobs.pop()
             for target, job in enumerate(jobs):
                 if not job["name"].startswith("acceptance ("):
@@ -261,23 +271,53 @@ class LitePromotionGateTests(unittest.TestCase):
                 original_steps = jobs[target]["steps"]
                 jobs[target]["steps"] = []
                 with self.subTest(missingVerification=job["name"]), self.assertRaises(release.PromotionError):
-                    release._candidate_jobs(11,2)
+                    release._candidate_jobs(11,2,"a" * 40)
                 jobs[target]["steps"] = original_steps
                 for field, invalid in (("run_attempt", 1), ("run_id", 12)):
                     original = jobs[target][field]
                     jobs[target][field] = invalid
                     with self.subTest(shard=job["name"], field=field), self.assertRaises(release.PromotionError):
-                        release._candidate_jobs(11,2)
+                        release._candidate_jobs(11,2,"a" * 40)
                     jobs[target][field] = original
             for target in range(len(jobs)):
                 jobs[target]["conclusion"]="failure"
-                with self.assertRaises(release.PromotionError):release._candidate_jobs(11,2)
+                with self.assertRaises(release.PromotionError):release._candidate_jobs(11,2,"a" * 40)
                 jobs[target]["conclusion"]="success"
             jobs[-1]["run_attempt"]=1
-            with self.assertRaises(release.PromotionError):release._candidate_jobs(11,2)
+            with self.assertRaises(release.PromotionError):release._candidate_jobs(11,2,"a" * 40)
             jobs[-1]["run_attempt"]=2
             jobs.append(dict(jobs[-1]))
-            with self.assertRaises(release.PromotionError):release._candidate_jobs(11,2)
+            with self.assertRaises(release.PromotionError):release._candidate_jobs(11,2,"a" * 40)
+
+
+    def test_original_source_plan_is_read_from_git_and_not_artifact_claims(self):
+        root = Path(__file__).resolve().parents[3]
+        workflow = (root / ".github/workflows/aerove-lite.yaml").read_text()
+        for count in (8, 16):
+            candidate = workflow
+            if count == 8:
+                for index in range(8, 16):
+                    candidate = candidate.replace(
+                        f"        - phase: remaining\n          label: remaining shard {index}/16\n"
+                        f"          artifact_suffix: remaining-shard-{index}-of-16\n"
+                        f"          shard_count: 16\n          shard_index: {index}\n", "")
+                candidate = candidate.replace("/16", "/8").replace("-of-16", "-of-8").replace("shard_count: 16", "shard_count: 8")
+                candidate = candidate.replace("Verify the 16 runtime-discovered", "Verify the 8 runtime-discovered")
+                candidate = candidate.replace("--shard-count 16 ", "")
+            with self.subTest(count=count), mock.patch.object(release.subprocess, "check_output", return_value=candidate.encode()) as git:
+                self.assertEqual(count, release._source_shard_count(root, "a" * 40))
+                git.assert_called_once_with(["git", "show", "a" * 40 + ":.github/workflows/aerove-lite.yaml"], cwd=root)
+        invalid = [workflow.replace("shard_count: 16", "shard_count: 8", 1),
+                   workflow.replace("shard_index: 15", "shard_index: 14", 1),
+                   workflow.replace("Verify the 16 runtime-discovered", "Verify the 8 runtime-discovered"),
+                   workflow.replace("--shard-count 16 ", ""),
+                   workflow.replace("-of-16-attempt-${{ github.run_attempt }}", "-of-8-attempt-${{ github.run_attempt }}")]
+        for text in invalid:
+            with self.subTest(invalid=text[-100:]), mock.patch.object(release.subprocess, "check_output", return_value=text.encode()):
+                with self.assertRaises(release.PromotionError):
+                    release._source_shard_count(root, "a" * 40)
+        with self.assertRaises(release.PromotionError):
+            release._source_shard_count(root, "main")
 
     def test_required_build_steps_must_all_pass(self):
         job = {"status": "completed", "conclusion": "success", "steps": [
@@ -582,7 +622,7 @@ class ExplicitBuildPromotionTest(unittest.TestCase):
                 mock.patch.object(release, "_candidate_jobs") as jobs, \
                 mock.patch.object(release.product_source, "equivalent", return_value=self.projection):
             result = release.accepted_build(Path("unused"), self.target, 123, 456)
-            jobs.assert_called_once_with(123, 2, self.source)
+            jobs.assert_called_once_with(123, 2, self.source, Path("unused"))
             return result
 
     def test_explicit_original_run_keeps_build_identity_separate_from_release(self):

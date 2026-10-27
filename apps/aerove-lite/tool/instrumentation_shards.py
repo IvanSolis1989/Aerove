@@ -1,4 +1,4 @@
-"""Bind eight verified instrumentation shards to APK log-only discovery and terminal statuses."""
+"""Bind verified 8/16 instrumentation shards to APK log-only discovery and terminal statuses."""
 import argparse
 from collections import Counter
 import hashlib
@@ -14,6 +14,7 @@ SSID_DESCRIPTION = SSID_METHOD + "(" + SSID_CLASS + ")"
 STATUSES = {0: "passed", -3: "ignored", -4: "assumptionFailed"}
 IDENTITY = ("sourceRevision", "sourceTree", "workflowRun", "runAttempt", "runNumber")
 SHARD_COUNT = 8
+SUPPORTED_SHARD_COUNTS = (8, 16)
 
 
 def require(condition, message):
@@ -61,10 +62,16 @@ def java_hash(value):
     return result if result < 2**31 else result - 2**32
 
 
-def shard_for(description):
+def validate_shard_count(shard_count):
+    require(type(shard_count) is int and shard_count in SUPPORTED_SHARD_COUNTS, "Unsupported shard count")
+    return shard_count
+
+
+def shard_for(description, shard_count=SHARD_COUNT):
+    validate_shard_count(shard_count)
     value = java_hash(description)
     require(value != -(2**31), "Runner Math.abs MIN_VALUE description requires explicit review")
-    return abs(value) % SHARD_COUNT
+    return abs(value) % shard_count
 
 
 def parse_log(path):
@@ -102,10 +109,11 @@ def parse_log(path):
     return records
 
 
-def discover(log, proof_path, source_path, sums_path):
+def discover(log, proof_path, source_path, sums_path, shard_count=SHARD_COUNT):
+    validate_shard_count(shard_count)
     source = json.loads(Path(source_path).read_text())
     shard = source.get("testShard") or {}
-    require(shard.get("numShards") == SHARD_COUNT and type(shard.get("shardIndex")) is int and shard["shardIndex"] in range(SHARD_COUNT), "Invalid source shard")
+    require(shard.get("numShards") == shard_count and type(shard.get("shardIndex")) is int and shard["shardIndex"] in range(shard_count), "Invalid source shard")
     require(source.get("phase") == "remaining" and shard.get("excludedClass") == MATRIX_CLASS
             and shard.get("runner") == "androidx.test.runner.AndroidJUnitRunner", "Invalid source selection")
     proof = json.loads(Path(proof_path).read_text())
@@ -129,7 +137,7 @@ def discover(log, proof_path, source_path, sums_path):
     # Log-only reports synthetic success: these identities are discovered, never passed tests.
     descriptions = sorted(record["description"] for record in records)
     for description in descriptions:
-        shard_for(description)
+        shard_for(description, shard_count)
     sums = Path(sums_path).read_text()
     apk_hashes = {}
     for digest, path in re.findall(r"^([0-9a-f]{64})\s+(.+)$", sums, re.M):
@@ -137,9 +145,9 @@ def discover(log, proof_path, source_path, sums_path):
         require(name not in apk_hashes, "Duplicate APK checksum")
         apk_hashes[name] = digest
     require(apk_hashes == proof.get("apks"), "Discovery APKs differ from renderer proof")
-    return dict(schema=1, phase="remaining", numShards=SHARD_COUNT, shardIndex=shard["shardIndex"], identity=identity,
+    return dict(schema=1, phase="remaining", numShards=shard_count, shardIndex=shard["shardIndex"], identity=identity,
                 runner=f"androidx.test:runner:{resolved_versions['androidx.test:runner']}",
-                junit=f"junit:junit:{resolved_versions['junit:junit']}", algorithm=f"abs(Description.hashCode()) % {SHARD_COUNT}",
+                junit=f"junit:junit:{resolved_versions['junit:junit']}", algorithm=f"abs(Description.hashCode()) % {shard_count}",
                 apkSha256=apk_hashes, runtimeManifestSha256=sha(manifest_path), dependencyReportSha256=sha(report),
                 discoveryLogSha256=sha(log), discoveryMode="logOnly-no-test-method-execution",
                 discoveredDescriptions=descriptions, discoveryFingerprint=fingerprint(descriptions),
@@ -147,10 +155,14 @@ def discover(log, proof_path, source_path, sums_path):
 
 
 def split_plan(discovery):
-    require(discovery.get("numShards") == SHARD_COUNT and type(discovery.get("shardIndex")) is int and discovery["shardIndex"] in range(SHARD_COUNT), "Invalid discovery shard")
+    shard_count = validate_shard_count(discovery.get("numShards"))
+    require(discovery.get("numShards") == shard_count and type(discovery.get("shardIndex")) is int and discovery["shardIndex"] in range(shard_count), "Invalid discovery shard")
     descriptions = discovery["discoveredDescriptions"]
     require(descriptions == sorted(set(descriptions)) and discovery["discoveryFingerprint"] == fingerprint(descriptions), "Invalid discovery fingerprint")
-    expected = sorted(value for value in descriptions if shard_for(value) == discovery["shardIndex"])
+    if shard_count == 16:
+        require(type(discovery.get("discoveryCount")) is int and discovery["discoveryCount"] == len(descriptions)
+                and discovery.get("algorithm") == f"abs(Description.hashCode()) % {shard_count}", "Invalid discovery count/algorithm")
+    expected = sorted(value for value in descriptions if shard_for(value, shard_count) == discovery["shardIndex"])
     isolated = [value for value in expected if value == SSID_DESCRIPTION]
     ordinary = [value for value in expected if value != SSID_DESCRIPTION]
     require(bool(ordinary), "A shard requires an ordinary invocation")
@@ -196,10 +208,11 @@ def verify(discovery, log, isolated_log=None):
                 allExpectedAccounted=True, allExpectedPassed=len(statuses["passed"]) == len(expected), aggregateAcceptance=False)
 
 
-def aggregate(directory, source, run, attempt):
+def aggregate(directory, source, run, attempt, shard_count=SHARD_COUNT):
+    validate_shard_count(shard_count)
     root = Path(directory)
-    expected_paths = [root / f"AEROVE-Lite-shard-selection-{i}-of-{SHARD_COUNT}-attempt-{attempt}" / "TEST-SELECTION.json" for i in range(SHARD_COUNT)]
-    require(set(root.rglob("TEST-SELECTION.json")) == set(expected_paths), f"{SHARD_COUNT} unique shard artifacts are required")
+    expected_paths = [root / f"AEROVE-Lite-shard-selection-{i}-of-{shard_count}-attempt-{attempt}" / "TEST-SELECTION.json" for i in range(shard_count)]
+    require(set(root.rglob("TEST-SELECTION.json")) == set(expected_paths), f"{shard_count} unique shard artifacts are required")
     receipts = [json.loads(path.read_text()) for path in expected_paths]
     first = receipts[0]["discovery"]
     comparison = ("identity", "runner", "junit", "algorithm", "apkSha256", "runtimeManifestSha256",
@@ -207,13 +220,13 @@ def aggregate(directory, source, run, attempt):
     combined, passed, ignored, assumptions = [], [], [], []
     for index, receipt in enumerate(receipts):
         discovery = receipt["discovery"]
-        require(discovery["numShards"] == SHARD_COUNT and discovery["shardIndex"] == index, "Wrong shard artifact identity")
+        require(discovery["numShards"] == shard_count and discovery["shardIndex"] == index, "Wrong shard artifact identity")
         require(all(discovery[key] == first[key] for key in comparison), "Mixed APK/source/discovery across shards")
         require(discovery["identity"]["sourceRevision"] == source and discovery["identity"]["workflowRun"] == str(run)
                 and discovery["identity"]["runAttempt"] == str(attempt), "Shard belongs to another source/run/attempt")
         descriptions = discovery["discoveredDescriptions"]
         require(descriptions == sorted(set(descriptions)) and discovery["discoveryFingerprint"] == fingerprint(descriptions), "Invalid discovery set")
-        expected = sorted(description for description in descriptions if shard_for(description) == index)
+        expected = sorted(description for description in descriptions if shard_for(description, shard_count) == index)
         require(receipt["allExpectedAccounted"] is True and receipt["expectedDescriptions"] == expected
                 and receipt["actualDescriptions"] == expected, "Incomplete shard receipt")
         plan = split_plan(discovery)
@@ -226,14 +239,18 @@ def aggregate(directory, source, run, attempt):
         require(set(statuses) == set(STATUSES.values()), "Unknown terminal classification")
         require(Counter(item for items in statuses.values() for item in items) == Counter(expected), "Terminal accounting is incomplete or duplicated")
         require(receipt["allExpectedPassed"] == (len(statuses["passed"]) == len(expected)), "Skipped test represented as passed")
+        if shard_count == 16:
+            require(receipt["allExpectedPassed"] is True, "Each of the sixteen shards must pass")
         combined.extend(receipt["actualDescriptions"])
         passed.extend(statuses["passed"])
         ignored.extend(statuses["ignored"])
         assumptions.extend(statuses["assumptionFailed"])
     require(Counter(combined) == Counter(first["discoveredDescriptions"]), "Shard union differs from complete APK discovery")
+    if shard_count == 16:
+        require(not ignored and not assumptions and len(passed) == len(combined), "All sixteen shards must pass every discovered test")
     return dict(schema=1, identity=first["identity"], apkSha256=first["apkSha256"], discoveryFingerprint=first["discoveryFingerprint"],
                 discoveredCount=len(combined), passedCount=len(passed), ignoredTests=sorted(ignored), assumptionFailedTests=sorted(assumptions),
-                allDiscoveredAccounted=True, allDiscoveredPassed=not ignored and not assumptions, shardIndices=list(range(SHARD_COUNT)),
+                allDiscoveredAccounted=True, allDiscoveredPassed=not ignored and not assumptions, shardIndices=list(range(shard_count)),
                 matrixGate="separately required by accepted.needs.acceptance", performanceEvidence=False)
 
 
@@ -243,6 +260,7 @@ def main():
     discovery = commands.add_parser("discover")
     for name in ("log", "proof", "source", "sums", "output"):
         discovery.add_argument("--" + name, type=Path, required=True)
+    discovery.add_argument("--shard-count", type=int, choices=SUPPORTED_SHARD_COUNTS, default=SHARD_COUNT)
     verification = commands.add_parser("verify")
     for name in ("discovery", "log", "output"):
         verification.add_argument("--" + name, type=Path, required=True)
@@ -255,15 +273,16 @@ def main():
         aggregation.add_argument("--" + name, type=Path, required=True)
     for name in ("source", "run", "attempt"):
         aggregation.add_argument("--" + name, required=True)
+    aggregation.add_argument("--shard-count", type=int, choices=SUPPORTED_SHARD_COUNTS, default=SHARD_COUNT)
     args = parser.parse_args()
     if args.command == "discover":
-        result = discover(args.log, args.proof, args.source, args.sums)
+        result = discover(args.log, args.proof, args.source, args.sums, args.shard_count)
     elif args.command == "verify":
         result = verify(json.loads(args.discovery.read_text()), args.log, args.isolated_log)
     elif args.command == "plan":
         result = split_plan(json.loads(args.discovery.read_text()))
     else:
-        result = aggregate(args.directory, args.source, args.run, args.attempt)
+        result = aggregate(args.directory, args.source, args.run, args.attempt, args.shard_count)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
 

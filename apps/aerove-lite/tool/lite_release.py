@@ -81,22 +81,61 @@ def _successful_steps(job, required):
     return all(steps.get(name) == "success" for name in required)
 
 
-def _candidate_jobs(run, attempt, source=None):
+def _source_shard_count(root, source):
+    """Read the original producer's fixed Git plan, never an artifact-supplied count."""
+    if not re.fullmatch(r"[0-9a-f]{40}", str(source)):
+        raise PromotionError("Original source SHA is required for the shard plan")
+    try:
+        workflow = subprocess.check_output(["git", "show", source + ":.github/workflows/" + WORKFLOW], cwd=root).decode("utf-8")
+    except (OSError, subprocess.CalledProcessError, UnicodeError) as error:
+        raise PromotionError("Original Git workflow shard plan is unavailable") from error
+    sections = {}
+    for job in ("acceptance", "accepted"):
+        matches = re.findall(r"(?ms)^  " + job + r":\n(.*?)(?=^  [A-Za-z0-9_-]+:|^'on':|\Z)", workflow)
+        if len(matches) != 1:
+            raise PromotionError("Original workflow has no unique shard producer/aggregate")
+        sections[job] = matches[0]
+    matrices = re.findall(r"(?ms)^      matrix:\n        include:\n(.*?)^    name: acceptance \(\$\{\{ matrix.label \}\}\)\n", sections["acceptance"])
+    counts = []
+    for count in instrumentation_shards.SUPPORTED_SHARD_COUNTS:
+        expected = "        - phase: matrix\n          label: matrix\n          artifact_suffix: matrix\n"
+        for index in range(count):
+            expected += (f"        - phase: remaining\n          label: remaining shard {index}/{count}\n"
+                         f"          artifact_suffix: remaining-shard-{index}-of-{count}\n"
+                         f"          shard_count: {count}\n          shard_index: {index}\n")
+        if matrices == [expected]:
+            counts.append(count)
+    if len(counts) != 1:
+        raise PromotionError("Original workflow must declare exactly eight or sixteen unique APK shards")
+    count = counts[0]
+    aggregate = sections["accepted"]
+    names = re.findall(r"(?m)^    - name: (.*runtime-discovered shard sets form one complete APK test selection)$", aggregate)
+    command = re.findall(r"(?m)^          (.*--directory \"\$RUNNER_TEMP/lite-shard-selection\" --source \"\$GITHUB_SHA\" \\)$", aggregate)
+    expected_command = ('--shard-count 16 ' if count == 16 else '') + '--directory "$RUNNER_TEMP/lite-shard-selection" --source "$GITHUB_SHA" \\'
+    if (names != [f"Verify the {count} runtime-discovered shard sets form one complete APK test selection"]
+            or command != [expected_command]
+            or aggregate.count(f"pattern: AEROVE-Lite-shard-selection-*-of-{count}-attempt-${{{{ github.run_attempt }}}}") != 1):
+        raise PromotionError("Original aggregate does not enforce its declared shard plan")
+    return count
+
+
+def _candidate_jobs(run, attempt, source=None, root=None):
+    shard_count = _source_shard_count(root or TOOL_DIR.parents[2], source)
     route = f"repos/{REPO}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100"
-    jobs = _gh_items(route, "jobs") if source is not None else _gh_json(route).get("jobs", [])
+    jobs = _gh_items(route, "jobs")
     expected = {
         "resolve": ("Stable lock and host production regression",),
         "verify": ("Kotlin data, lifecycle and UI compilation checks",),
         "accepted": ("All exact-source acceptance gates passed",
-                     f"Verify the {SHARD_COUNT} runtime-discovered shard sets form one complete APK test selection"),
+                     f"Verify the {shard_count} runtime-discovered shard sets form one complete APK test selection"),
         "acceptance (matrix)": ("Real API 33 matrix verification",),
     }
-    for shard_index in range(SHARD_COUNT):
-        expected[f"acceptance (remaining shard {shard_index}/{SHARD_COUNT})"] = ("Real API 33 remaining verification",)
+    for shard_index in range(shard_count):
+        expected[f"acceptance (remaining shard {shard_index}/{shard_count})"] = ("Real API 33 remaining verification",)
     acceptance_names = [job.get("name") for job in jobs if str(job.get("name", "")).startswith("acceptance (")]
     expected_acceptance = [name for name in expected if name.startswith("acceptance (")]
     if sorted(acceptance_names) != sorted(expected_acceptance):
-        raise PromotionError(f"Acceptance run requires exactly the matrix and {SHARD_COUNT} unique remaining shards 0..{SHARD_COUNT - 1}/{SHARD_COUNT}")
+        raise PromotionError(f"Acceptance run requires exactly the matrix and {shard_count} unique remaining shards 0..{shard_count - 1}/{shard_count}")
     for abi in ("arm64-v8a", "x86_64"):
         prefix = f"build ({abi}) / "
         expected[prefix + "rust"] = ("Build the pinned Rust Android bridge",)
@@ -108,8 +147,8 @@ def _candidate_jobs(run, attempt, source=None):
         )
     found = {}
     for key, steps in expected.items():
-        matches = [job for job in jobs if job.get("name") == key and _successful_steps(job, steps)]
-        if len(matches) != 1 or matches[0].get("run_id") != run or matches[0].get("run_attempt") != attempt or (source is not None and matches[0].get("head_sha") != source):
+        matches = [job for job in jobs if job.get("name") == key]
+        if len(matches) != 1 or not _successful_steps(matches[0], steps) or matches[0].get("run_id") != run or matches[0].get("run_attempt") != attempt or matches[0].get("head_sha") != source:
             raise PromotionError(f"Acceptance run has no unique successful {key} job")
         found[key] = matches[0]
     return found
@@ -165,7 +204,7 @@ def accepted_build(root, source, build_run, current_run):
     _run_identity(run, build_run)
     projection = product_source.equivalent(root=root, product="aerove-lite",
         build_source=run["head_sha"], release_source=source)
-    _candidate_jobs(build_run, run["run_attempt"], run["head_sha"])
+    _candidate_jobs(build_run, run["run_attempt"], run["head_sha"], root)
     artifacts = _gh_items(f"repos/{REPO}/actions/runs/{build_run}/artifacts?per_page=100", "artifacts")
     selected = {}
     for key, prefix in ARTIFACT_PREFIXES.items():
@@ -229,7 +268,7 @@ def select_acceptance(source, current_run, outputs, root=None, build_run=None):
                 or run.get("event") not in {"push", "workflow_dispatch"}):
             continue
         try:
-            _candidate_jobs(run["id"], run["run_attempt"])
+            _candidate_jobs(run["id"], run["run_attempt"], source, root)
             artifacts = _gh_json(f"repos/{REPO}/actions/runs/{run['id']}/artifacts?per_page=100").get("artifacts", [])
             wanted = {key: prefix + str(run["run_attempt"]) for key, prefix in ARTIFACT_PREFIXES.items()}
             picked = {}
