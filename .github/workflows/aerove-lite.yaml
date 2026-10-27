@@ -968,7 +968,9 @@ jobs:
           if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
             exit "$sdkmanager_rc"
           fi
-          if (( sdk_attempt == 1 )) && grep -Eiq 'Failed to download package archive for emulator: (closed|.*connection reset|.*read (timed out|timeout))' "$sdk_install_log"; then
+          if (( sdk_attempt == 1 )) &&
+              grep -Eiq 'Failed to download package archive for (emulator|system-images/android-33/google_apis/x86_64): (closed|.*connection reset|.*read (timed out|timeout)|.*EOF(Exception)?|.*unexpected end of (file|stream))([[:space:]:.]|$)' "$sdk_install_log" &&
+              ! grep -Eiq 'LicenseNotAccepted|license.*(not accepted|not been accepted)|no space left on device|insufficient.*(space|storage)|not enough.*space|failed to find package|unknown package|package .*not (found|available)|UnsupportedClassVersionError|requires? (Java|JDK)' "$sdk_install_log"; then
             printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
             continue
           fi
