@@ -1386,6 +1386,36 @@ def observer_target(pid, sdk):
     return dict(identity, executable=str(executable))
 
 
+def observer_file_identity(info):
+    return dict(device=info.st_dev, inode=info.st_ino, bytes=info.st_size, modifiedNs=info.st_mtime_ns)
+
+
+def observer_target_binaries(sdk):
+    root = sdk.resolve(strict=True) / 'emulator'
+    paths = dict(launcher=root / 'emulator', engine=root / 'qemu/linux-x86_64/qemu-system-x86_64-headless')
+    binaries = {}
+    for role, path in paths.items():
+        resolved = path.resolve(strict=True)
+        info = resolved.stat()
+        if resolved != path or not resolved.is_relative_to(root) or not resolved.is_file():
+            raise ValueError('Observer requires the exact SDK launcher and headless x86_64 engine files')
+        binaries[role] = dict(executable=str(resolved), file=observer_file_identity(info))
+    return binaries
+
+
+def observer_target_matches(expected, actual, actual_file, binaries):
+    if any(actual[key] != expected[key] for key in ('pid', 'parent', 'startTicks')):
+        return False
+    launcher, engine = binaries['launcher'], binaries['engine']
+    source, destination = expected['executable'], actual['executable']
+    if source not in (launcher['executable'], engine['executable']):
+        return False
+    if destination != source and (source, destination) != (launcher['executable'], engine['executable']):
+        return False
+    selected = launcher if destination == launcher['executable'] else engine
+    return destination == selected['executable'] and actual_file == selected['file']
+
+
 def observer_debugger(pid, environment, elevated):
     if type(pid) is not int or pid <= 0:
         raise ValueError('Debugger PID must be a positive integer')
@@ -1460,7 +1490,8 @@ try:
         raise RuntimeError('Startup was not admitted before its deadline or stdin EOF')
     marker('admitted')
     actual_target = target_identity()
-    if actual_target != config['target']:
+    actual_file = observer_file_identity(os.stat('/proc/%d/exe' % config['target']['pid']))
+    if not observer_target_matches(config['target'], actual_target, actual_file, config['binaries']):
         failure_context = dict(phase='before-attach',
             expected={key: (config['target'][key][:4096] if key == 'executable' else config['target'][key])
                       for key in ('pid', 'parent', 'startTicks', 'executable')},
@@ -1469,10 +1500,13 @@ try:
         raise RuntimeError('Owned target identity changed before attach')
     gdb.execute('attach %d' % config['target']['pid'], to_string=True)
     attached = True
-    if target_identity() != config['target']:
+    attached_target = target_identity()
+    attached_file = observer_file_identity(os.stat('/proc/%d/exe' % config['target']['pid']))
+    if (not observer_target_matches(config['target'], attached_target, attached_file, config['binaries'])
+            or not observer_target_matches(actual_target, attached_target, attached_file, config['binaries'])):
         raise RuntimeError('Owned target identity changed at attach')
     marker('ready', debugger=dict(stat_identity(os.getpid()), executable=os.readlink('/proc/self/exe')),
-           target=target_identity())
+           target=attached_target, targetFile=attached_file)
     while gdb.selected_inferior().pid:
         last_signal = None
         gdb.execute('continue', to_string=True)
@@ -1666,8 +1700,14 @@ class HostCrashObserver:
                 if row['kind'] == 'admitted': self.record['startupAdmitted'] = True
                 if row['kind'] == 'ready':
                     actual = observer_debugger(row['debugger']['pid'], self.environment, bool(self.prefix))
+                    target = observer_target(self.target['pid'], self.sdk)
+                    target_file = observer_file_identity((PROC / str(self.target['pid']) / 'exe').stat())
                     self.record['attachActuallySucceeded'] = (self.debugger == row['debugger'] == actual
-                                                               and row['target'] == self.target)
+                        and observer_target_matches(self.target, row['target'], row.get('targetFile'), self.binaries)
+                        and observer_target_matches(row['target'], target, target_file, self.binaries))
+                    if self.record['attachActuallySucceeded']:
+                        self.record['attachedTarget'] = target
+                        self.record['attachedTargetFile'] = target_file
                     self.ready.set()
                 if row['kind'] == 'capture-start':
                     self.timer = threading.Timer(5, self.capture_timeout)
@@ -1711,10 +1751,16 @@ class HostCrashObserver:
 
     def start(self, emulator, sdk):
         startup_deadline = time.monotonic() + 5
+        self.sdk = sdk
+        self.binaries = observer_target_binaries(sdk)
         self.target = observer_target(emulator.pid, sdk)
+        initial_file = observer_file_identity((PROC / str(emulator.pid) / 'exe').stat())
+        if not observer_target_matches(self.target, self.target, initial_file, self.binaries):
+            raise ValueError('Initial emulator identity differs from the exact recorded SDK files')
         if self.target['parent'] != os.getpid():
             raise ValueError('Observer target is not the emulator child of this owner')
         self.record['target'] = self.target
+        self.record['targetBinaries'] = self.binaries
         self.launcher_executables = {str(self.tool)}
         if self.prefix:
             self.launcher_executables.add(str(Path(shutil.which('sudo', path=self.environment['PATH'])).resolve(strict=True)))
@@ -1722,8 +1768,9 @@ class HostCrashObserver:
         self.stop = stop
         import inspect
         code = ('import time\n' + inspect.getsource(observer_signal_action).replace(
-            'observer_signal_action', 'signal_action') + '\nCONFIG_JSON = ' + repr(json.dumps(dict(
-                target=self.target, stop=str(stop), startupDeadline=startup_deadline))) + '\n' + HOST_GDB_SCRIPT)
+            'observer_signal_action', 'signal_action') + '\n' + inspect.getsource(observer_file_identity) + '\n'
+            + inspect.getsource(observer_target_matches) + '\nCONFIG_JSON = ' + repr(json.dumps(dict(
+                target=self.target, binaries=self.binaries, stop=str(stop), startupDeadline=startup_deadline))) + '\n' + HOST_GDB_SCRIPT)
         script = self.directory / 'observer.gdb'
         script.write_text('python\n' + code + '\nend\n', encoding='utf-8')
         self.process = subprocess.Popen([*self.prefix, str(self.tool), '-nx', '-nh', '--quiet', '--batch',
