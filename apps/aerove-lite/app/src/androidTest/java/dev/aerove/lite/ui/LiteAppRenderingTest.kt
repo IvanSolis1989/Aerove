@@ -265,6 +265,8 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                 save("subscription-validation-modal")
                 compose.onNodeWithContentDescription(text(R.string.lite_close)).performClick()
                 compose.mainClock.advanceTimeByFrame()
+                // The production sheet keeps its modal owner until the finite 260 ms exit completes.
+                compose.mainClock.advanceTimeBy(400)
                 navigate(R.string.lite_tab_tools)
                 save("tools")
                 openTool(R.string.lite_tab_connections)
