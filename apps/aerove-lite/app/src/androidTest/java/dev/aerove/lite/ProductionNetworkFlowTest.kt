@@ -94,7 +94,7 @@ class ProductionNetworkFlowTest {
             } finally { blocker.close() }
             // The saved intent remains authoritative: recovery starts that exact now-available port.
             session.activity.onActivity { session.controller.dismissMessage(); session.controller.connect() }
-            val recovered = session.running(after = original.runningSinceNanos)
+            val recovered = session.running(after = checkNotNull(original.endpoint))
             assertNotSame(original.endpoint, recovered.endpoint)
             assertEquals(occupied, recovered.initialNetwork?.ports?.mixed)
             desired = graph.settings.read().network
@@ -124,7 +124,7 @@ class ProductionNetworkFlowTest {
             assertEquals("Saving VPN-only settings must not reconstruct TUN", 1, beforeTapCount)
 
             clickRestart()
-            val withProxy = session.running(after = original.runningSinceNanos)
+            val withProxy = session.running(after = checkNotNull(original.endpoint))
             assertNotSame(original.endpoint, withProxy.endpoint)
             assertEquals(desired, withProxy.initialNetwork)
             val installed = awaitVpnProxy("127.0.0.1", desired.ports.mixed)
@@ -144,7 +144,7 @@ class ProductionNetworkFlowTest {
                 session.runningIdentities().size)
             assertProxyFixture("127.0.0.1", authenticated.ports.mixed, session.fixture, authenticated.authentication)
             clickRestart()
-            val withoutProxy = session.running(after = withProxy.runningSinceNanos)
+            val withoutProxy = session.running(after = checkNotNull(withProxy.endpoint))
             assertNotSame(withProxy.endpoint, withoutProxy.endpoint)
             assertTrue("Do not erase the dormant systemProxy preference", graph.settings.read().network.systemProxy)
             assertTrue(checkNotNull(withoutProxy.initialNetwork).authentication.enabled)
@@ -159,10 +159,10 @@ class ProductionNetworkFlowTest {
 
     private inner class Session(val fixture: String, val activity: ActivityScenario<MainActivity>,
         val controller: LiteController, val snapshots: CopyOnWriteArrayList<VpnSnapshot>) {
-        suspend fun running(after: Long? = null): VpnSnapshot {
+        suspend fun running(after: CoreEndpoint? = null): VpnSnapshot {
             val snapshot = withTimeout(60_000) { graph.vpn.first {
                 it.phase == VpnPhase.Failed || (it.phase == VpnPhase.Running &&
-                    (after == null || it.runningSinceNanos != after))
+                    (it.endpoint != null && (after == null || it.endpoint !== after)))
             } }
             assertEquals(snapshot.error ?: "The actual service must become ready", VpnPhase.Running, snapshot.phase)
             return snapshot
@@ -185,9 +185,9 @@ class ProductionNetworkFlowTest {
                 VpnPhase.Running, snapshot.phase)
             assertNull("Native POST and GET readback must succeed", snapshot.networkError)
         }
-        fun runningIdentities(): Set<Long> = snapshots.filter { it.phase == VpnPhase.Running }
-            .map { it.runningSinceNanos }.toSet() + graph.vpn.value.let {
-                if (it.phase == VpnPhase.Running) setOf(it.runningSinceNanos) else emptySet()
+        fun runningIdentities(): Set<CoreEndpoint> = snapshots.filter { it.phase == VpnPhase.Running }
+            .map { checkNotNull(it.endpoint) }.toSet() + graph.vpn.value.let {
+                if (it.phase == VpnPhase.Running) setOf(checkNotNull(it.endpoint)) else emptySet()
             }
     }
 
