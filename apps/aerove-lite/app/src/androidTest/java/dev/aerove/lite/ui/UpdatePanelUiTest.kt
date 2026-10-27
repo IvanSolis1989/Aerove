@@ -119,6 +119,7 @@ class UpdatePanelUiTest {
         compose.waitUntil { !automatic && !feature.state.value.shouldShowPrompt }
         compose.onNodeWithText(context.getString(R.string.lite_tab_tools)).performClick()
         compose.onNodeWithText(context.getString(R.string.lite_about)).performScrollTo().performClick()
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(context.getString(R.string.lite_license_aerove)))
         compose.onNodeWithText(context.getString(R.string.lite_license_aerove)).assertExists()
         compose.onNodeWithText(context.getString(R.string.update_check)).performScrollTo().performClick()
         compose.waitUntil { checks == 2 && feature.state.value.shouldShowPrompt }

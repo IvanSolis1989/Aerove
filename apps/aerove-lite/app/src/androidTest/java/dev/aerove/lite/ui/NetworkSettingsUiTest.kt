@@ -35,6 +35,8 @@ class NetworkSettingsUiTest {
 
     @Test fun rootPortEditorValidatesDuplicatesAndWaitsForAuthoritativeSavedReadback() {
         open()
+        compose.onNodeWithTag("network-settings").performScrollToNode(
+            hasText(context.getString(R.string.network_ports)) and hasClickAction())
         compose.onNodeWithText(context.getString(R.string.network_ports)).performScrollTo().performClick()
         compose.onNodeWithContentDescription(context.getString(R.string.network_http_port)).performTextReplacement("7890")
         compose.onNodeWithTag("network-save").performScrollTo().performClick()
@@ -50,6 +52,8 @@ class NetworkSettingsUiTest {
 
     @Test fun rootFailedSaveRetainsDraftAndCancelDoesNotSave() {
         open()
+        compose.onNodeWithTag("network-settings").performScrollToNode(
+            hasText(context.getString(R.string.network_ports)) and hasClickAction())
         compose.onNodeWithText(context.getString(R.string.network_ports)).performScrollTo().performClick()
         compose.onNodeWithContentDescription(context.getString(R.string.network_http_port)).performTextReplacement("7891")
         compose.onNodeWithTag("network-save").performScrollTo().performClick()
@@ -68,6 +72,8 @@ class NetworkSettingsUiTest {
             authentication = ProxyAuthentication(true, "alice", "private-password")))) }
         open()
         compose.onNodeWithText(context.getString(R.string.network_authenticated_proxy_detail)).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("network-settings").performScrollToNode(
+            hasText(context.getString(R.string.network_credentials)) and hasClickAction())
         compose.onNodeWithText(context.getString(R.string.network_credentials)).performScrollTo().performClick()
         compose.onNodeWithContentDescription(context.getString(R.string.network_password)).assert(
             SemanticsMatcher.keyIsDefined(SemanticsProperties.Password))

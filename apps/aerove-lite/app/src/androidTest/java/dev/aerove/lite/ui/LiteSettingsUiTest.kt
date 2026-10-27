@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -125,6 +126,7 @@ class LiteSettingsUiTest {
         compose.onNodeWithText(text(R.string.lite_logs)).assertDoesNotExist()
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text(R.string.lite_general)) and hasClickAction())
         click(R.string.lite_general)
+        compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription(text(R.string.lite_open_logs)))
         compose.onNodeWithContentDescription(text(R.string.lite_open_logs)).performClick()
         compose.runOnUiThread { assertEquals(listOf(LiteSettings(openLogs = true)), actions.settings) }
         compose.onNodeWithContentDescription(text(R.string.lite_back)).performClick()

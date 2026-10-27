@@ -15,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
@@ -139,8 +140,10 @@ class ObservationHistoryUiTest {
         compose.runOnUiThread { feature.acceptWindow(1, ObservationWindow(runtime, 1u, 1u, 0u, listOf(ObservationEvent.Dns(1u, query)))) }
         compose.waitUntil { compose.onAllNodesWithTag("history-dns-$runtime:1:1").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("history-dns-$runtime:1:1").performClick()
-        compose.onNodeWithText("resolver refused").assertExists()
-        compose.onNodeWithText("udp://1.1.1.1:53").assertExists()
+        val details = SemanticsMatcher.expectValue(SemanticsProperties.PaneTitle, context.getString(R.string.history_dns_details))
+        compose.onNode(details).assertExists()
+        compose.onNode(hasText("resolver refused") and hasAnyAncestor(details)).assertExists()
+        compose.onNode(hasText("udp://1.1.1.1:53") and hasAnyAncestor(details)).assertExists()
         compose.onNodeWithContentDescription(context.getString(R.string.lite_close)).performClick()
         compose.onNodeWithTag("history-dns-flush").performClick()
         compose.waitUntil { feature.state.value.notice == HistoryNotice.DnsCacheCleared }
