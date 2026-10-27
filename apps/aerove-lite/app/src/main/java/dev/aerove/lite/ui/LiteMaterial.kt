@@ -214,12 +214,15 @@ internal fun LitePane(
     rim: LiteGlassRim? = null,
     shadows: List<LiteShadow> = emptyList(),
     explicitGlow: dev.aerove.lite.optics.AeroveGlassGlow? = null,
+    // The owner declares mounted, visible glass descendants; clear it when that demand ends.
+    exportForGlassDescendants: Boolean = false,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val visuals = LocalLiteVisuals.current
     val source = LocalLiteBackdrop.current
-    val exported = rememberLayerBackdrop()
-    val nestedSource = rememberCombinedBackdrop(source, exported)
+    val exportBackground = visuals.material != MaterialTier.Solid || exportForGlassDescendants
+    val exported = if (exportBackground) rememberLayerBackdrop() else null
+    val nestedSource = if (exported != null) rememberCombinedBackdrop(source, exported) else source
     val shape = customShape ?: rememberLiteShape(corner)
     val bufferShape = rememberLiteShape(LiteCorner.None)
     val glow = rememberLitePressGlow(interactionSource)
@@ -242,7 +245,7 @@ internal fun LitePane(
             MaterialTier.Clear -> Modifier.liteGlassBackdrop(source, shape, style, glow, resolvedRim, explicitGlow)
         }
         // A sibling plane exports before foreground children draw, so nested sampling is acyclic on the first frame.
-        Box(Modifier.matchParentSize().then(if (visuals.material == MaterialTier.Solid) Modifier else Modifier.layerBackdrop(exported)).clip(shape).then(background))
+        Box(Modifier.matchParentSize().then(if (exported != null) Modifier.layerBackdrop(exported) else Modifier).clip(shape).then(background))
         Box(if (clipContent) Modifier.clip(shape) else Modifier, propagateMinConstraints = true) {
             CompositionLocalProvider(LocalLiteBackdrop provides nestedSource) { content() }
         }

@@ -75,6 +75,15 @@ private fun LensControl.edgeColor(): Color? = when (this) {
     LensControl.DispersionOffBlueEdge -> Color(0f, 0f, 180f / 255f, 1f)
     else -> null
 }
+internal enum class SolidDemandPose { DefaultNoGlass, Mounted, VisibleExit, Unmounted, Remounted }
+
+internal class SolidDemandEvidence {
+    var ancestor: com.kyant.backdrop.Backdrop? = null
+    var nested: com.kyant.backdrop.Backdrop? = null
+    var ink: com.kyant.backdrop.Backdrop? = null
+    val observed = JSONObject()
+}
+
 internal data class FixtureState(
     val stage: FixtureStage = FixtureStage.Source,
     val revision: Int = 0,
@@ -94,6 +103,8 @@ internal data class FixtureState(
     val inkContrastSource: Boolean = false,
     val inkContrastDrawReceipt: JSONObject? = null,
     val sceneDrawReceipt: JSONObject? = null,
+    val solidDemandPose: SolidDemandPose? = null,
+    val solidDemandEvidence: SolidDemandEvidence? = null,
 )
 
 internal fun FixtureState.opticalConfiguration(): JSONObject {
@@ -106,6 +117,8 @@ internal fun FixtureState.opticalConfiguration(): JSONObject {
         .put("diagnosticOnly", lensControl != LensControl.None || plainInkControl || inkContrastSource)
         .put("fixtureGeometry", if (stage == FixtureStage.Source || stage == FixtureStage.InkMask) JSONObject.NULL else fixtureGeometry?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
         .put("sceneDrawReceipt", sceneDrawReceipt?.let { JSONObject(it.toString()) } ?: JSONObject.NULL)
+        .put("solidDemandPose", solidDemandPose?.name ?: JSONObject.NULL)
+        .put("solidDemandObserved", solidDemandEvidence?.let { JSONObject(it.observed.toString()) } ?: JSONObject.NULL)
         .put("inkContrastSource", inkContrastSource)
         .put("samplingSourceMode", if (inkContrastSource) "wallpaper+independent-test-contrast" else "original-wallpaper-and-bench-markers")
         .put("pureAuroraLocalMotionEvidence", false)
@@ -261,10 +274,13 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                     }
                 }
                 }
-                if (state.stage != FixtureStage.Source && state.stage != FixtureStage.InkMask) LitePane(
+                if (state.solidDemandPose != null && state.stage == FixtureStage.Production) {
+                    SolidDemandFixture(state, probe, paneWidth)
+                } else if (state.stage != FixtureStage.Source && state.stage != FixtureStage.InkMask) LitePane(
                     Modifier.offset(24.dp, 366.dp).size(paneWidth, 128.dp).onGloballyPositioned { probe.bounds["parent"] = it.boundsInWindow(clipBounds = false) },
                     selected = state.parentSelected,
                     clipContent = false,
+                    exportForGlassDescendants = true,
                 ) {
                     FixtureLooseContent("parent-content", state.fixtureGeometry) {
                     CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(material = MaterialTier.Clear)) {
@@ -295,6 +311,70 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                     }
                 }
             }
+        }
+    }
+}
+
+
+/** A bounded lifecycle control scene; the original optical scene above remains unchanged. */
+@Composable
+private fun SolidDemandFixture(state: FixtureState, probe: RenderProbe, paneWidth: Dp) {
+    val pose = requireNotNull(state.solidDemandPose)
+    val evidence = requireNotNull(state.solidDemandEvidence)
+    val ancestor = LocalLiteBackdrop.current
+    val ink = LocalLiteInkBackdrop.current
+    val visuals = LocalLiteVisuals.current
+    val mounted = pose != SolidDemandPose.DefaultNoGlass && pose != SolidDemandPose.Unmounted
+    val parentModifier = Modifier.offset(24.dp, 366.dp).size(paneWidth, 128.dp)
+        .onGloballyPositioned { probe.bounds["parent"] = it.boundsInWindow(clipBounds = false) }
+    val content: @Composable BoxScope.() -> Unit = {
+        val nested = LocalLiteBackdrop.current
+        val nestedInk = LocalLiteInkBackdrop.current
+        val logicalActive = LocalLitePageActive.current
+        SideEffect {
+            evidence.ancestor = ancestor
+            evidence.nested = nested
+            evidence.ink = nestedInk
+        }
+        FixtureLooseContent("parent-content", state.fixtureGeometry) {
+            val corner = Modifier.offset((-20).dp, (-20).dp).size(140.dp, 72.dp)
+                .onGloballyPositioned { probe.bounds["cornerProbe"] = it.boundsInWindow(clipBounds = false) }
+                .drawWithContent {
+                    drawContent()
+                    val draw = JSONObject().put("pose", pose.name).put("glassMounted", mounted)
+                        .put("logicalPageActive", logicalActive).put("sourceIsAncestor", nested === ancestor)
+                        .put("ancestorIdentity", System.identityHashCode(ancestor)).put("nestedIdentity", System.identityHashCode(nested))
+                        .put("inkIdentity", System.identityHashCode(nestedInk)).put("inkIsAncestor", nestedInk === ink)
+                        .put("parentSelected", state.parentSelected)
+                    if (!evidence.observed.has("firstDraw")) evidence.observed.put("firstDraw", JSONObject(draw.toString()))
+                    evidence.observed.put("lastDraw", draw).put("draws", evidence.observed.optInt("draws") + 1)
+                        .put("gpuRecordCounterAvailable", false).put("firstPresentedPixelsObserved", false)
+                }
+            if (mounted) {
+                CompositionLocalProvider(LocalLiteVisuals provides visuals.copy(material = MaterialTier.Clear)) {
+                    LitePane(corner, glassStyle = AeroveGlassStyle(blur = 0f, refraction = 0f, bevel = 0f, rim = 0f)) {}
+                }
+            } else {
+                // Non-optical readback probe: inspect inherited source without declaring glass demand.
+                Box(corner.drawPlainBackdrop(backdrop = nested, shape = { OpticalPaneShape }, effects = {}))
+            }
+            LitePane(Modifier.align(Alignment.Center).size(140.dp, 72.dp)
+                .onGloballyPositioned { probe.bounds["child"] = it.boundsInWindow(clipBounds = false) }, corner = LiteCorner.Control) {
+                FixtureLooseContent("child-content", state.fixtureGeometry) {
+                    LiteText("MMMM", Modifier.align(Alignment.Center)
+                        .onGloballyPositioned { probe.bounds["front"] = it.boundsInWindow(clipBounds = false) },
+                        style = LiteType.Headline, color = if (state.frontHue) Color.Cyan else Color.Magenta)
+                }
+            }
+        }
+    }
+    CompositionLocalProvider(LocalLitePageActive provides (pose != SolidDemandPose.VisibleExit)) {
+        if (pose == SolidDemandPose.DefaultNoGlass) {
+            // Deliberately omit the API argument: this is the real production default.
+            LitePane(parentModifier, selected = state.parentSelected, clipContent = false, content = content)
+        } else {
+            LitePane(parentModifier, selected = state.parentSelected, clipContent = false,
+                exportForGlassDescendants = mounted, content = content)
         }
     }
 }
