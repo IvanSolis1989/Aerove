@@ -156,14 +156,17 @@ class ObservationHistoryUiTest {
         compose.waitForIdle(); assertEquals(1, registry.requests.size)
         compose.runOnUiThread { registry.cancel() }
         compose.waitUntil { feature.state.value.notice == HistoryNotice.Cancelled }
+        compose.waitUntil { feature.state.value.snapshot.logs.size == 2 }
         assertEquals(2, feature.state.value.snapshot.logs.size)
     }
 
     @Test fun inactiveRetainedPageCannotLaunchNewPickerAndDoesNotClearCollectedHistory() {
         active.value = false; open(HistoryKind.Logs)
-        compose.runOnUiThread {
-            feature.acceptLog(1, LogLine(0, "info", "kept")); feature.requestLogExport()
+        feature.lease(HistoryKind.Logs).use {
+            compose.runOnUiThread { feature.acceptLog(1, LogLine(0, "info", "kept")) }
+            compose.waitUntil { feature.state.value.snapshot.logs.size == 1 }
         }
+        compose.runOnUiThread { feature.requestLogExport() }
         compose.waitUntil { feature.state.value.document == null }
         assertTrue(registry.requests.isEmpty())
         assertEquals(1, feature.state.value.snapshot.logs.size)

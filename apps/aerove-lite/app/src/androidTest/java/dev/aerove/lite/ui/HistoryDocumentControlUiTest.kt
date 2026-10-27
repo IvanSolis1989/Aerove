@@ -86,8 +86,11 @@ class HistoryDocumentControlUiTest {
     @Test fun inactiveLateExportIsCancelledWithoutResumingHistoryPresentation() {
         mount()
         repeat(2) { attempt ->
+            feature.lease(HistoryKind.Logs).use {
+                compose.runOnUiThread { feature.acceptLog(1, LogLine(attempt.toLong(), "info", "retained-$attempt")) }
+                compose.waitUntil { feature.state.value.snapshot.logs.size == attempt + 1 }
+            }
             compose.runOnUiThread {
-                feature.acceptLog(1, LogLine(attempt.toLong(), "info", "retained-$attempt"))
                 feature.requestLogExport()
                 assertNotNull(feature.state.value.document)
             }
@@ -147,8 +150,10 @@ class HistoryDocumentControlUiTest {
         additionalFeatures += replacement
         compose.runOnUiThread {
             replacement.bindSession(2); replacement.setForeground(true); replacement.lease(HistoryKind.Requests)
-            replacement.acceptLog(2, LogLine(0, "info", "replacement")); replacement.requestLogExport()
-            assertEquals(originalId, replacement.state.value.document!!.id)
+            replacement.lease(HistoryKind.Logs).use {
+                replacement.acceptLog(2, LogLine(0, "info", "replacement")); replacement.requestLogExport()
+                assertEquals(originalId, replacement.state.value.document!!.id)
+            }
             currentFeature.value = replacement
         }
         compose.waitForIdle()
