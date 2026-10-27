@@ -5,6 +5,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -29,6 +33,60 @@ class ScriptPropertiesSaveUiTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val directory = File(context.cacheDir, "script-properties-${UUID.randomUUID()}")
     @After fun clean() { directory.deleteRecursively() }
+    @Test fun menuPaneTitleStaysSeparateFromDismissAndKeepsRowsBackAndOutsideTaps() {
+        val shown = mutableStateOf(true)
+        var dismissals = 0; var actions = 0
+        val title = "Original"
+        val actionLabel = context.getString(R.string.override_properties)
+        val closeLabel = context.getString(R.string.lite_close)
+        compose.replaceAppContent {
+            LiteTheme(LiteSettings(material = MaterialTier.Solid, aurora = false)) {
+                val backdrop = rememberLayerBackdrop()
+                Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().layerBackdrop(backdrop))
+                    CompositionLocalProvider(LocalLiteBackdrop provides backdrop, LocalLiteInkBackdrop provides backdrop) {
+                        if (shown.value) OverrideContextMenu(Rect(40f, 80f, 200f, 140f), title,
+                            { dismissals++; shown.value = false }) {
+                            SettingsRow(actionLabel, onClick = { actions++ })
+                        }
+                    }
+                }
+            }
+        }
+        val pane = SemanticsMatcher.expectValue(SemanticsProperties.PaneTitle, title)
+        fun scrim(): SemanticsNodeInteraction {
+            val window = compose.onRoot().fetchSemanticsNode().boundsInRoot
+            return compose.onNode(SemanticsMatcher("full window dismiss sibling without pane title") { node ->
+                node.boundsInRoot == window && !node.config.contains(SemanticsProperties.PaneTitle) &&
+                    node.config.contains(SemanticsActions.OnClick)
+            })
+        }
+        fun readable() {
+            compose.onNode(pane).assertExists()
+            compose.onNodeWithText(actionLabel).assertHasClickAction()
+                .assert(SemanticsMatcher.keyIsDefined(SemanticsActions.RequestFocus))
+            scrim().assertHasClickAction().assertContentDescriptionEquals(closeLabel)
+            assertEquals(closeLabel, scrim().fetchSemanticsNode().config[SemanticsActions.OnClick].label)
+        }
+        readable()
+        compose.onNodeWithText(actionLabel).performClick()
+        assertEquals(1, actions); assertEquals(0, dismissals)
+        compose.onNode(pane).assertExists()
+        compose.onRoot().performTouchInput { click(Offset(width / 2f, height * 0.8f)) }
+        compose.onNode(pane).assertDoesNotExist()
+        assertEquals(1, dismissals)
+        compose.runOnUiThread { shown.value = true }
+        readable()
+        compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
+        compose.onNode(pane).assertDoesNotExist()
+        assertEquals(2, dismissals)
+        compose.runOnUiThread { shown.value = true }
+        readable()
+        scrim().performSemanticsAction(SemanticsActions.OnClick)
+        compose.onNode(pane).assertDoesNotExist()
+        assertEquals(3, dismissals); assertEquals(1, actions)
+    }
+
     @Test fun failedReceiptRetainsInputAndOnlySavedReadbackDismisses() {
         val repository = OverrideRepository(directory)
         val old = ScriptResource("script", "Original", content = "old")

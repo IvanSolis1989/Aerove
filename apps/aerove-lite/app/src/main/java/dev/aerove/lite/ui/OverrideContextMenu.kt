@@ -12,9 +12,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import dev.aerove.lite.R
 
 /** Same anchored menu surface, scrim and one-scroll-owner policy as ProfileContextMenu. */
 @Composable
@@ -23,7 +26,10 @@ internal fun OverrideContextMenu(anchor: Rect, title: String, dismiss: () -> Uni
     val density = LocalDensity.current
     val visuals = LocalLiteVisuals.current
     val colors = androidx.compose.material3.MaterialTheme.colorScheme
-    BoxWithConstraints(Modifier.fillMaxSize().background(colors.scrim.copy(alpha = 0.32f)).clickable(onClick = dismiss)) {
+    val closeLabel = stringResource(R.string.lite_close)
+    BoxWithConstraints(Modifier.fillMaxSize().background(colors.scrim.copy(alpha = 0.32f))) {
+        Box(Modifier.matchParentSize().clickable(onClickLabel = closeLabel, onClick = dismiss)
+            .semantics { contentDescription = closeLabel })
         val width = minOf(300.dp, maxWidth - 32.dp)
         val left = with(density) { anchor.left.toDp() }.coerceIn(16.dp, maxOf(16.dp, maxWidth - width - 16.dp))
         val top = with(density) { anchor.top.toDp() }.coerceIn(16.dp, maxOf(16.dp, maxHeight - 480.dp))
