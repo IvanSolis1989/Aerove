@@ -238,14 +238,16 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                 save("profiles-empty")
                 compose.onNodeWithContentDescription(text(R.string.lite_add_subscription)).performClick()
                 compose.mainClock.advanceTimeByFrame()
+                // The clock is paused for captures; finish the real 260 ms sheet entry before scroll/IME interaction.
+                compose.mainClock.advanceTimeBy(400)
                 compose.onNode(tab).assertDoesNotExist()
                 fun importInput() = compose.onNode(hasAnyAncestor(hasTestTag("profile-import-input")) and hasSetTextAction() and
                     SemanticsMatcher.keyIsDefined(SemanticsActions.RequestFocus), useUnmergedTree = true)
                 compose.onNodeWithTag("profile-import-submit").assertIsNotEnabled()
                 for (invalidInput in listOf("proxies: [", "rules: [")) {
-                    importInput().performScrollTo().performTextReplacement(invalidInput)
+                    importInput().performScrollTo().assertIsDisplayed().performTextReplacement(invalidInput)
                     compose.mainClock.advanceTimeByFrame()
-                    compose.onNodeWithTag("profile-import-submit").performScrollTo().assertIsEnabled().performClick()
+                    compose.onNodeWithTag("profile-import-submit").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
                     compose.waitUntil(3000) { roots.rejectedInput(invalidInput) }
                     compose.mainClock.advanceTimeByFrame()
                     val importErrorNode = compose.onNodeWithTag("profile-import-error")
