@@ -754,18 +754,31 @@ class DashboardLayoutUiTest {
     private fun convergedStatusSpeech(reader: ScreenReader) = reader.stops.map { reader.tags[it] to reader.speech.getValue(it) }
         .filter { it.first !in setOf("ip-quality-summary", "dashboard-status-listener-error", "dashboard-status-outbound-error") }
 
-    private fun assertStatusSpeech(maxWidth: Dp, fontScale: Float, overlay: Boolean, language: String = "zh-CN") {
+    private fun assertStatusSpeech(maxWidth: Dp, fontScale: Float, overlay: Boolean, language: String = "zh-CN",
+        traffic: Traffic? = null, expectedSpeeds: List<String>? = null) {
         val initial = fixture(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed)).copy(phase = VpnPhase.Running)
+            .let { if (traffic == null) it else it.copy(traffic = traffic) }
         launch(initial, fontScale = fontScale, maxWidth = maxWidth, deviceDensity = 2.625f, language = language)
         val strings = localized(language)
         awaitOrganization("${strings.getString(R.string.lite_organization)}\nExample ISP")
+        if (!overlay) {
+            android.util.Log.i("DashboardAppendPlan", "expectedOverlay=$overlay maxWidth=$maxWidth requestedFontScale=$fontScale " +
+                "effectiveFontScale=$effectiveFontScale density=$density rates=${state.value.traffic} " +
+                "body=${statusRect("dashboard-status-body")} traffic=${statusRect("dashboard-status-traffic")} " +
+                "foreground=${statusForegroundRects()} footerInk=${footerInkRects()} trafficPaintedParts=${metricElementRects()}")
+            addTrafficAndAssertOriginalForeground(expectedOverlay = false)
+        }
         assertStatusReadingOrder(overlay, traffic = true)
         val stops = screenReaderStops("dashboard-status")
         val title = strings.getString(R.string.lite_status)
         assertEquals("$stops", listOf(title, strings.getString(R.string.lite_running)), stops.take(2).map { it.second })
         assertEquals("$stops", 1, stops.count { it.second.startsWith(title) })
         val figures = stops.filter { it.first?.let { tag -> tag.startsWith("dashboard-upload") || tag.startsWith("dashboard-download") } == true }
-        assertEquals("$stops", trafficSpeech(language), figures.map { it.second })
+        val expected = expectedSpeeds?.let { rates ->
+            assertEquals(2, rates.size)
+            listOf(R.string.lite_upload, R.string.lite_download).zip(rates).map { (label, rate) -> "${strings.getString(label)}\n$rate" }
+        } ?: trafficSpeech(language)
+        assertEquals("$stops", expected, figures.map { it.second })
         val detail = strings.getString(R.string.lite_details, strings.getString(R.string.lite_outbound_ip))
         assertEquals("$stops", listOf("${strings.getString(R.string.lite_uptime)}\n00:00:00", "${strings.getString(R.string.lite_organization)}\nExample ISP",
             button("${strings.getString(R.string.lite_outbound_retry)}\nSG"), "198.51.100.8, $detail", button(strings.getString(R.string.lite_stop))),
@@ -785,7 +798,9 @@ class DashboardLayoutUiTest {
 
     @Test
     fun stackedStatusCardReadsTitleOnceStateSummaryControlsThenTraffic() = withLayoutFailureScreenshot("status-stacked-reading-order") {
-        assertStatusSpeech(328.dp, 2f, overlay = false)
+        assertStatusSpeech(328.dp, 2f, overlay = false,
+            traffic = Traffic(Long.MAX_VALUE, Long.MAX_VALUE - 1L, 4096, 8192),
+            expectedSpeeds = listOf("8388608 TB/s", "8388608 TB/s"))
     }
 
     private fun assertStartControl(label: String, enabled: Boolean, measured: String) {
