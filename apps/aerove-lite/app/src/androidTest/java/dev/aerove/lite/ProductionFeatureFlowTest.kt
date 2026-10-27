@@ -116,13 +116,13 @@ class ProductionFeatureFlowTest {
             compose.onNodeWithTag("diagnostics-memory").performClick()
             compose.onNodeWithText(context.getString(R.string.diag_memory_in_use)).assertIsDisplayed()
             compose.waitUntil(20_000) {
-                controller.state.value.diagnostics.let { it.memoryScope == "process-rss" &&
+                controller.display.diagnostics.value.let { it.memoryScope == "process-rss" &&
                     (it.memoryInUseBytes ?: 0) > 0 && it.memoryError == null }
             }
             compose.onAllNodesWithTag("diagnostics-memory-scope").onLast().assertTextEquals(
                 context.getString(R.string.diag_memory_process_rss))
             assertTrue("Detail must observe the actual production controller sample",
-                checkNotNull(controller.state.value.diagnostics.memoryInUseBytes) > 0)
+                checkNotNull(controller.display.diagnostics.value.memoryInUseBytes) > 0)
         } catch (failure: Throwable) {
             primaryFailure = failure
             throw failure
