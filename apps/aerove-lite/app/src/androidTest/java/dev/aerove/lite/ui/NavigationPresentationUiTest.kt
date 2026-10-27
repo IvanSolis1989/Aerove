@@ -78,10 +78,12 @@ class NavigationPresentationUiTest {
         var observed = 0f
         compose.mainClock.autoAdvance = false
         compose.replaceAppContent {
-            CompositionLocalProvider(LocalLiteReducedMotion provides reduced.value, LocalLitePageActive provides active.value) {
-                val value by rememberLiteMotionValue(target.value, tween(200))
-                SideEffect { observed = value }
-                LiteText("motion:$value")
+            LiteTheme(LiteSettings()) {
+                CompositionLocalProvider(LocalLiteReducedMotion provides reduced.value, LocalLitePageActive provides active.value) {
+                    val value by rememberLiteMotionValue(target.value, tween(200))
+                    SideEffect { observed = value }
+                    LiteText("motion:$value")
+                }
             }
         }
         compose.runOnUiThread { target.value = 1f }
