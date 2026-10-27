@@ -840,18 +840,18 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
                 fun width(value: String) = measurer.measure(AnnotatedString(value), style = style, softWrap = false).size.width.toFloat()
                 Triple(width(label), dashboardBalancedLabel(hinted, ::width), label)
             }
-            val cell = with(density) { (maxWidth.toPx() - 6.dp.toPx()) / 3 }
-            fun fit(room: Float) = forms.values.minOf { (single, split) -> minOf(1f, room / (split?.second ?: single).coerceAtLeast(1f)) }
-            val inset = listOf(8.dp, 4.dp).firstOrNull { fit(cell - with(density) { 2 * it.toPx() }) >= 1f } ?: 4.dp
-            val room = cell - with(density) { 2 * inset.toPx() }
+            val cell = with(density) { (maxWidth.roundToPx() - 2 * 3.dp.roundToPx()) / 3 }
+            fun fit(room: Int) = forms.values.minOf { (single, split) -> minOf(1f, room / (split?.second ?: single).coerceAtLeast(1f)) }
+            val inset = listOf(8.dp, 4.dp).firstOrNull { fit(cell - with(density) { 2 * it.roundToPx() }) >= 1f } ?: 4.dp
+            val room = (cell - with(density) { 2 * inset.roundToPx() }).coerceAtLeast(0)
             val scale = maxOf(minOf(1f, 11f / (style.fontSize.value * density.fontScale)), fit(room))
             val shown = forms.mapValues { (_, form) ->
-                if (form.first * scale <= room + 0.01f || form.second == null) form.third else form.second!!.first
+                AnnotatedString(if (form.first * scale <= room + 0.01f || form.second == null) form.third else form.second!!.first)
             }
             val height = with(density) {
-                val labelWidth = ((maxWidth.roundToPx() - 2 * 3.dp.roundToPx()) / 3 - 2 * inset.roundToPx()).coerceAtLeast(0)
+                val labelWidth = room
                 val textHeight = shown.values.maxOf { label ->
-                    val result = measurer.measure(AnnotatedString(label), style = dashboardControlStyle(style, scale),
+                    val result = measurer.measure(label, style = dashboardControlStyle(style, scale),
                         softWrap = false, overflow = androidx.compose.ui.text.style.TextOverflow.Visible,
                         constraints = Constraints(maxWidth = labelWidth))
                     maxOf(result.size.height, ceil(result.multiParagraph.height).toInt())
@@ -884,7 +884,7 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
     }
 }
 
-private data class DashboardControlPlan(val shown: Map<String, String>, val scale: Float,
+private data class DashboardControlPlan(val shown: Map<String, AnnotatedString>, val scale: Float,
     val inset: androidx.compose.ui.unit.Dp, val height: androidx.compose.ui.unit.Dp)
 
 private fun dashboardControlStyle(base: TextStyle, scale: Float) = base.copy(
