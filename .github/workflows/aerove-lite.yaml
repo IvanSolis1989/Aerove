@@ -349,6 +349,7 @@ jobs:
         NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
       run: |-
         set -euo pipefail
+        python3 apps/aerove-lite/meow-native/test_core_tests.py
         pending=false
         if [[ "$MEOW_HOST_ONLY" == true ]]; then
           pending=$(python3 -c 'import json; print(str(json.load(open("apps/aerove-lite/meow-native/build-policy.json"))["resolveLock"] is True).lower())')
