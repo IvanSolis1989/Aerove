@@ -3,7 +3,7 @@ run-name: ${{ github.event_name == 'workflow_dispatch' && format('AEROVE Standar
 
 on:
   push:
-    branches: [codex/aerove-lite-meow-app]
+    branches: [codex/aerove-lite-meow-app, codex/aerove-standard-host-crash-31]
     paths: [.github/workflows/aerove-standard-x86-qa-probe.yaml]
   workflow_dispatch:
     inputs:
@@ -20,6 +20,11 @@ on:
         type: string
         required: true
 
+      host_crash_observer:
+        description: Observe only the owned emulator host in the isolated diagnostic controller; never acceptance
+        type: boolean
+        default: false
+
 permissions:
   contents: read
   actions: read
@@ -34,10 +39,11 @@ defaults:
 
 jobs:
   probe_existing_qa:
-    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/codex/aerove-lite-meow-app' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'IvanSolis1989/Aerove' && github.event_name == 'workflow_dispatch' && ((!inputs.host_crash_observer && github.ref == 'refs/heads/codex/aerove-lite-meow-app') || (inputs.host_crash_observer && github.ref == 'refs/heads/codex/aerove-standard-host-crash-31'))
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
+      HOST_CRASH_OBSERVER: ${{ inputs.host_crash_observer }}
       FORMAL_RUN_ID: ${{ inputs.formal_run_id }}
       QA_RUN_ID: ${{ inputs.qa_run_id }}
       QA_ARTIFACT_ID: ${{ inputs.qa_artifact_id }}
@@ -87,7 +93,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          observer=()
+          if [[ "$HOST_CRASH_OBSERVER" == true ]]; then observer=(--host-crash-observer); fi
           python3 tooling/standard_x86_qa.py reuse \
+            "${observer[@]}" \
             --directory "$RUNNER_TEMP/standard-x86-qa-input" --evidence "$RUNNER_TEMP/standard-x86-qa-render/reuse" \
             --run-id "$FORMAL_RUN_ID" --qa-run-id "$QA_RUN_ID" --qa-artifact-id "$QA_ARTIFACT_ID" \
             --build-tools "$ANDROID_HOME/build-tools/35.0.0"
@@ -95,13 +104,16 @@ jobs:
         id: primary
         timeout-minutes: 18
         run: |
+          observer=()
+          if [[ "$HOST_CRASH_OBSERVER" == true ]]; then observer=(--host-crash-observer); fi
           python3 tooling/standard_x86_qa.py capture \
+            "${observer[@]}" \
             --directory "$RUNNER_TEMP/standard-x86-qa-input" \
             --evidence "$RUNNER_TEMP/standard-x86-qa-render/runtime" \
             --package-receipt "$RUNNER_TEMP/standard-x86-qa-render/reuse/QA_PACKAGE_REUSE.json" \
             --harness "$GITHUB_WORKSPACE" --build-tools "$ANDROID_HOME/build-tools/35.0.0"
       - name: Non-production Skia fallback only after a primary emulator host exit
-        if: failure() && steps.primary.outcome == 'failure'
+        if: failure() && steps.primary.outcome == 'failure' && !inputs.host_crash_observer
         timeout-minutes: 18
         run: |
           python3 tooling/standard_x86_qa.py capture \

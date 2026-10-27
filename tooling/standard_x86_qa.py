@@ -5,10 +5,12 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 import xml.etree.ElementTree as ET
 import zipfile
@@ -17,6 +19,8 @@ REPOSITORY = 'IvanSolis1989/Aerove'
 WORKFLOW_PATH = '.github/workflows/aerove-standard-x86-qa.yaml'
 HARNESS_BRANCH = 'codex/aerove-lite-meow-app'
 HARNESS_REF = 'refs/heads/' + HARNESS_BRANCH
+HOST_OBSERVER_BRANCH = 'codex/aerove-standard-host-crash-31'
+HOST_OBSERVER_REF = 'refs/heads/' + HOST_OBSERVER_BRANCH
 RUN_TITLE = 'AEROVE Standard internal x86 QA for formal run '
 REGISTRATION_TITLE = 'AEROVE Standard internal x86 QA registration push '
 READBACK_BUILD_TOOLS = '35.0.0'
@@ -778,18 +782,21 @@ def extract_package(archive, directory):
 def reuse_package(args):
     if os.environ.get('GITHUB_RUN_ATTEMPT') != '1':
         raise ValueError('Do not rerun a package probe; dispatch a new probe instead')
-    if os.environ.get('GITHUB_REF') != HARNESS_REF:
+    controller = HOST_OBSERVER_BRANCH if host_observer_enabled(args) else HARNESS_BRANCH
+    if os.environ.get('GITHUB_REF') != 'refs/heads/' + controller:
         raise ValueError('The QA package probe runs only from the locked harness branch')
     formal_id = requested_run(args.run_id)
     qa_run = requested_id(args.qa_run_id, 'qa_run_id')
     artifact_id = requested_id(args.qa_artifact_id, 'qa_artifact_id')
+    if controller == HOST_OBSERVER_BRANCH and (formal_id, qa_run, artifact_id) != (40531629533, 40536314613, 12747833792):
+        raise ValueError('Host observer is fixed to formal58/QA5 and its original artifact')
     if str(qa_run) == os.environ.get('GITHUB_RUN_ID') or qa_run == formal_id:
         raise ValueError('The QA package must come from an earlier internal QA run, not the probe or formal run')
     args.evidence.mkdir(parents=True, exist_ok=False)
     read = api_reader(args.evidence)
     current = read('current-run', 'runs/' + os.environ['GITHUB_RUN_ID'])
     if (current.get('path') != PROBE_WORKFLOW_PATH or current.get('event') != 'workflow_dispatch'
-            or current.get('head_branch') != HARNESS_BRANCH or current.get('run_attempt') != 1
+            or current.get('head_branch') != controller or current.get('run_attempt') != 1
             or current.get('display_title') != PROBE_TITLE.format(artifact=artifact_id, run=qa_run, formal=formal_id)):
         raise ValueError('Current probe run identity does not match its dispatched QA package')
     formal, build, job, meta = package_run(read, formal_id, qa_run, artifact_id)
@@ -1351,6 +1358,441 @@ def fallback_decision(path, package):
     return decision
 
 
+def host_observer_enabled(args):
+    if not getattr(args, 'host_crash_observer', False):
+        return False
+    if (sys.platform != 'linux' or os.environ.get('GITHUB_ACTIONS') != 'true'
+            or os.environ.get('GITHUB_REPOSITORY') != REPOSITORY
+            or os.environ.get('GITHUB_REF') != HOST_OBSERVER_REF
+            or os.environ.get('GITHUB_EVENT_NAME') != 'workflow_dispatch'
+            or os.environ.get('GITHUB_RUN_ATTEMPT') != '1'
+            or args.phase not in ('reuse', 'capture')
+            or getattr(args, 'fallback_after', None) is not None):
+        raise ValueError('Host crash observation requires the isolated first-attempt Impeller probe controller')
+    return True
+
+
+def observer_process(pid):
+    text = (PROC / str(pid) / 'stat').read_text()
+    fields = text[text.rindex(')') + 2:].split()
+    return dict(pid=pid, parent=int(fields[1]), startTicks=int(fields[19]))
+
+
+def observer_target(pid, sdk):
+    identity = observer_process(pid)
+    executable = (PROC / str(pid) / 'exe').resolve(strict=True)
+    if not executable.is_relative_to(sdk.resolve() / 'emulator'):
+        raise ValueError('Owned emulator executable is outside the recorded SDK emulator directory')
+    return dict(identity, executable=str(executable))
+
+
+def observer_debugger(pid, environment, elevated):
+    if type(pid) is not int or pid <= 0:
+        raise ValueError('Debugger PID must be a positive integer')
+    before = observer_process(pid)
+    path = PROC / str(pid) / 'exe'
+    try:
+        executable = os.readlink(path)
+    except PermissionError:
+        if not elevated:
+            raise
+        result = subprocess.run(['sudo', '-n', '--', '/usr/bin/readlink', '-e', str(path)],
+                                env=environment, capture_output=True, timeout=2, check=True)
+        if len(result.stdout) > 4096:
+            raise ValueError('Debugger executable readback exceeds limit')
+        executable = result.stdout.decode().strip()
+    executable = str(Path(executable).resolve(strict=True))
+    if observer_process(pid) != before:
+        raise RuntimeError('Debugger process identity changed during executable readback')
+    return dict(before, executable=executable)
+
+
+def observer_environment(directory):
+    return dict(PATH='/usr/bin:/bin', HOME=str(directory), TMPDIR=str(directory),
+                LANG='C.UTF-8', LC_ALL='C.UTF-8', DEBUGINFOD_URLS='')
+
+
+def observer_signal_action(name, stopping, captured):
+    if name == 'SIGILL':
+        return 'capture' if captured < 4 else 'continue'
+    return 'detach' if stopping else 'continue'
+
+
+HOST_GDB_SCRIPT = r'''
+import gdb, os, json, time, hashlib, select, stat
+config = json.loads(CONFIG_JSON)
+last_signal = None
+captured = 0
+def marker(kind, **values):
+    print('AEROVE_HOST_OBSERVER ' + json.dumps(dict(kind=kind, **values)), flush=True)
+def stopped(event):
+    global last_signal
+    last_signal = getattr(event, 'stop_signal', None)
+def stat_identity(pid):
+    text = open('/proc/%d/stat' % pid).read()
+    fields = text[text.rindex(')') + 2:].split()
+    return dict(pid=pid, parent=int(fields[1]), startTicks=int(fields[19]))
+def target_identity():
+    return dict(stat_identity(config['target']['pid']),
+                executable=os.readlink('/proc/%d/exe' % config['target']['pid']))
+def detail(command):
+    try: print(gdb.execute(command, to_string=True), flush=True)
+    except gdb.error as error: print('unavailable: ' + str(error), flush=True)
+gdb.events.stop.connect(stopped)
+attached = False
+try:
+    marker('started', debugger=dict(stat_identity(os.getpid()), executable=os.readlink('/proc/self/exe')))
+    for command in ['set pagination off', 'set confirm off', 'set auto-load off',
+                    'set debuginfod enabled off', 'set print frame-arguments none',
+                    'set print elements 32', 'handle SIGILL stop print pass']:
+        gdb.execute(command, to_string=True)
+    if os.isatty(0) or not stat.S_ISFIFO(os.fstat(0).st_mode):
+        raise RuntimeError('Startup permission requires the owned stdin pipe, not a terminal')
+    permission = b''
+    while len(permission) < 3:
+        remaining = config['startupDeadline'] - time.monotonic()
+        if remaining <= 0 or not select.select([0], [], [], remaining)[0]: break
+        part = os.read(0, 3 - len(permission))
+        if not part: break
+        permission += part
+    if permission != b'GO\n' or time.monotonic() > config['startupDeadline']:
+        raise RuntimeError('Startup was not admitted before its deadline or stdin EOF')
+    marker('admitted')
+    if target_identity() != config['target']:
+        raise RuntimeError('Owned target identity changed before attach')
+    gdb.execute('attach %d' % config['target']['pid'], to_string=True)
+    attached = True
+    if target_identity() != config['target']:
+        raise RuntimeError('Owned target identity changed at attach')
+    marker('ready', debugger=dict(stat_identity(os.getpid()), executable=os.readlink('/proc/self/exe')),
+           target=target_identity())
+    while gdb.selected_inferior().pid:
+        last_signal = None
+        gdb.execute('continue', to_string=True)
+        if not gdb.selected_inferior().pid:
+            break
+        action = signal_action(last_signal, os.path.exists(config['stop']), captured)
+        if action == 'detach':
+            break
+        if last_signal == 'SIGILL':
+            marker('signal', signal='SIGILL', captured=captured, signalPassedOnContinue=True)
+        if action == 'capture':
+            captured += 1
+            marker('capture-start', event=captured)
+            fault_thread = gdb.selected_thread()
+            try:
+                started = time.monotonic()
+                for command in ['p $_siginfo', 'info registers', 'x/32bx $pc', 'x/16i $pc',
+                                'info sharedlibrary', 'info proc mappings']:
+                    if time.monotonic() - started >= 5: break
+                    detail(command)
+                threads = gdb.selected_inferior().threads()
+                print('threads=%d; at most 64 threads, 32 frames, no arguments/locals' % len(threads), flush=True)
+                for thread in threads[:64]:
+                    if time.monotonic() - started >= 5: break
+                    thread.switch()
+                    frame = gdb.newest_frame()
+                    for index in range(32):
+                        if frame is None or time.monotonic() - started >= 5: break
+                        print('thread=%d frame=%d pc=%#x function=%s' %
+                              (thread.num, index, frame.pc(), frame.name()), flush=True)
+                        frame = frame.older()
+                print('ELF objects/build IDs: ' + json.dumps([
+                    dict(path=obj.filename, buildId=getattr(obj, 'build_id', None)) for obj in gdb.objfiles()]), flush=True)
+            except BaseException as error:
+                marker('capture-error', errorType=type(error).__name__)
+            finally:
+                fault_thread.switch()
+            marker('capture-end', event=captured, seconds=time.monotonic() - started)
+except BaseException as error:
+    if isinstance(error, KeyboardInterrupt) and os.path.exists(config['stop']):
+        marker('stop-interrupt')
+    else:
+        marker('error', errorType=type(error).__name__, error=str(error))
+finally:
+    if attached and gdb.selected_inferior().pid:
+        try:
+            gdb.execute('detach', to_string=True)
+            marker('detached')
+        except BaseException as error: marker('detach-error', errorType=type(error).__name__)
+    marker('finished')
+'''
+
+
+class HostCrashObserver:
+    def __init__(self, directory, environment):
+        self.directory, self.environment = directory, observer_environment(directory)
+        self.process = self.debugger = self.timer = self.reader = None
+        self.ready = threading.Event()
+        self.started = threading.Event()
+        self.stop = directory / 'STOP-REQUESTED'
+        self.record = dict(diagnosticOnly=True, accepted=False, compiled=False, timingPerturbed=True,
+                           status='HOST_CRASH_CAPTURE_UNAVAILABLE', events=[], outputLimitBytes=2 * 1024 * 1024,
+                           launcher=None, launcherExecutable=None, startupAdmitted=False, readerStarted=False,
+                           startedIdentityValidated=False)
+        self.directory.mkdir()
+        try:
+            self.prepare(self.environment)
+        except Exception as error:
+            self.record['preflightError'] = type(error).__name__
+            self.persist()
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: existing debugger preflight failed') from error
+
+    def prepare(self, environment):
+        tool = shutil.which('gdb', path=self.environment['PATH'])
+        if tool is None:
+            self.persist()
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: existing GDB not found; no installation allowed')
+        tool = Path(tool).resolve(strict=True)
+        self.prefix = []
+        self.record['debuggerTool'] = dict(path=str(tool), sha256=sha(tool))
+        # Elevated attach is confined to this isolated runner and the recorded owned PID, never global ptrace policy.
+        if (tool.stat().st_uid == 0 and not tool.stat().st_mode & 0o022
+                and shutil.which('sudo') is not None):
+            result = subprocess.run(['sudo', '-n', '--', str(tool), '-nx', '-nh', '--batch', '--version'],
+                                    env=environment, capture_output=True, timeout=5)
+            if result.returncode == 0:
+                self.prefix = ['sudo', '-n', '--']
+        result = subprocess.run([*self.prefix, str(tool), '-nx', '-nh', '--batch',
+                                 '-ex', 'set debuginfod enabled off', '-ex', 'python import gdb',
+                                 '-ex', 'show version'],
+                                env=environment, capture_output=True, timeout=5)
+        if result.returncode:
+            self.persist()
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: existing GDB cannot execute')
+        self.tool = tool
+        self.record.update(debuggerVersion=result.stdout[:4096].decode(errors='replace'),
+                           sudoNonInteractive=bool(self.prefix))
+        import resource
+        self.record['coreLimits'] = list(resource.getrlimit(resource.RLIMIT_CORE))
+        for name, file in [('corePattern', '/proc/sys/kernel/core_pattern'),
+                           ('ptraceScope', '/proc/sys/kernel/yama/ptrace_scope')]:
+            try: self.record[name] = Path(file).read_text()[:4096]
+            except OSError as error: self.record[name] = dict(unavailable=type(error).__name__)
+        self.persist()
+
+    def persist(self):
+        save(self.directory / 'HOST-OBSERVER.json', dict(self.record, events=list(self.record['events'])))
+
+    def register_launcher(self):
+        if self.process.poll() is not None: return None
+        actual = observer_debugger(self.process.pid, self.environment, bool(self.prefix))
+        identity = {key: actual[key] for key in ('pid', 'parent', 'startTicks')}
+        if (actual['parent'] != os.getpid() or actual['executable'] not in self.launcher_executables
+                or self.record.get('launcher') not in (None, identity)):
+            raise RuntimeError('Observer launcher is not the live owned child with its expected executable')
+        self.record.update(launcher=identity, launcherExecutable=actual['executable'])
+        return actual
+
+    def signal_debugger(self, sig):
+        deadline = time.monotonic() + 2
+        if self.process is None:
+            return
+        if self.debugger is None:
+            if self.process.poll() is not None: return
+            actual = (self.register_launcher() if self.record.get('launcherExecutable') is None
+                      else observer_debugger(self.process.pid, self.environment, bool(self.prefix)))
+            if actual is None: return
+            if ({key: actual[key] for key in ('pid', 'parent', 'startTicks')} != self.record['launcher']
+                    or actual['executable'] != self.record['launcherExecutable']
+                    or os.getpgid(self.process.pid) != self.process.pid):
+                raise RuntimeError('Observer launcher identity changed')
+            if self.prefix:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0: raise TimeoutError('Debugger identity read exhausted signal budget')
+                subprocess.run(['sudo', '-n', '--', '/bin/kill', '-' + signal.Signals(sig).name,
+                                '--', '-' + str(self.process.pid)], check=True, capture_output=True,
+                               timeout=remaining, env=self.environment)
+            else:
+                os.killpg(self.process.pid, sig)
+            return
+        actual = observer_debugger(self.debugger['pid'], self.environment, bool(self.prefix))
+        if any(actual[key] != self.debugger[key] for key in ('pid', 'startTicks', 'executable')):
+            raise RuntimeError('Observer debugger identity is unavailable or changed')
+        if self.prefix:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0: raise TimeoutError('Debugger identity read exhausted signal budget')
+            subprocess.run(['sudo', '-n', '--', '/bin/kill', '-' + signal.Signals(sig).name,
+                            str(self.debugger['pid'])], check=True, capture_output=True, timeout=remaining,
+                           env=self.environment)
+        else:
+            os.kill(self.debugger['pid'], sig)
+
+    def read_output(self):
+        try:
+            self.read_output_stream()
+        except BaseException as error:
+            self.record['readerError'] = type(error).__name__
+        finally:
+            self.ready.set()
+            if getattr(self, 'started', None) is not None: self.started.set()
+
+    def read_output_stream(self):
+        written = 0
+        with (self.directory / 'gdb.txt').open('xb') as output:
+            while True:
+                line = self.process.stdout.readline(65536)
+                if not line: break
+                remaining = max(0, self.record['outputLimitBytes'] - written)
+                output.write(line[:remaining]); written += min(len(line), remaining)
+                if len(line) > remaining: self.record['outputTruncated'] = True
+                if not line.startswith(b'AEROVE_HOST_OBSERVER '): continue
+                try: row = json.loads(line[len(b'AEROVE_HOST_OBSERVER '):])
+                except ValueError: continue
+                row['observedAt'] = utc_now()
+                if len(self.record['events']) < 64: self.record['events'].append(row)
+                else: self.record['eventsTruncated'] = True
+                if row['kind'] == 'started':
+                    debugger = row['debugger']
+                    actual = observer_debugger(debugger['pid'], self.environment, bool(self.prefix))
+                    ancestor = observer_process(debugger['pid'])
+                    for _ in range(8):
+                        if ancestor['pid'] == self.process.pid: break
+                        ancestor = observer_process(ancestor['parent'])
+                    if (ancestor != self.record['launcher'] or debugger['executable'] != str(self.tool)
+                            or actual != debugger):
+                        self.record['debuggerIdentityRejected'] = True
+                    else:
+                        self.debugger = debugger
+                        self.record['startedIdentityValidated'] = True
+                    self.started.set()
+                if row['kind'] == 'admitted': self.record['startupAdmitted'] = True
+                if row['kind'] == 'ready':
+                    actual = observer_debugger(row['debugger']['pid'], self.environment, bool(self.prefix))
+                    self.record['attachActuallySucceeded'] = (self.debugger == row['debugger'] == actual
+                                                               and row['target'] == self.target)
+                    self.ready.set()
+                if row['kind'] == 'capture-start':
+                    self.timer = threading.Timer(5, self.capture_timeout)
+                    self.timer.daemon = True; self.timer.start()
+                if row['kind'] == 'capture-end' and self.timer is not None:
+                    self.timer.cancel()
+        self.record['outputBytes'] = written
+        self.ready.set()
+
+    def capture_timeout(self):
+        self.record['captureTimedOut'] = True
+        try: self.signal_debugger(signal.SIGINT)
+        except Exception as error: self.record['interruptError'] = type(error).__name__
+
+    def grant_startup_permission(self, deadline):
+        def prerequisites():
+            failures = ('readerError', 'debuggerIdentityRejected', 'cleanupError', 'cleanupTimedOut',
+                        'startupIdentityError', 'startupPipeCloseError', 'stopRequestError', 'pollError',
+                        'stopSignalError', 'interruptError', 'captureTimedOut', 'outputTruncated', 'eventsTruncated')
+            return (not any(self.record.get(key) for key in failures)
+                    and len(self.record['events']) == 1 and self.record['events'][0]['kind'] == 'started'
+                    and not self.record.get('closed') and not self.record.get('childReaped')
+                    and self.record.get('status') == 'HOST_CRASH_CAPTURE_UNAVAILABLE'
+                    and self.record.get('debuggerReturnCode') is None
+                    and self.record.get('readerStarted') is True
+                    and self.record.get('startedIdentityValidated') is True and self.started.is_set()
+                    and self.reader is not None and self.reader.ident is not None and self.reader.is_alive()
+                    and self.process is not None and self.process.poll() is None
+                    and self.process.stdin is not None and self.process.stdin.closed is False
+                    and self.debugger is not None and not self.ready.is_set()
+                    and not self.record.get('startupPermissionSent') and not self.record.get('startupAdmitted')
+                    and not self.record.get('attachActuallySucceeded') and not self.stop.exists()
+                    and time.monotonic() < deadline)
+        if not prerequisites():
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: startup permission prerequisites are invalid')
+        actual = observer_debugger(self.debugger['pid'], self.environment, bool(self.prefix))
+        if actual != self.debugger or actual['executable'] != str(self.tool) or not prerequisites():
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: startup identity or reader changed before permission')
+        self.process.stdin.write(b'GO\n'); self.process.stdin.flush()
+        self.record['startupPermissionSent'] = True
+
+    def start(self, emulator, sdk):
+        startup_deadline = time.monotonic() + 5
+        self.target = observer_target(emulator.pid, sdk)
+        if self.target['parent'] != os.getpid():
+            raise ValueError('Observer target is not the emulator child of this owner')
+        self.record['target'] = self.target
+        self.launcher_executables = {str(self.tool)}
+        if self.prefix:
+            self.launcher_executables.add(str(Path(shutil.which('sudo', path=self.environment['PATH'])).resolve(strict=True)))
+        stop = self.directory / 'STOP-REQUESTED'
+        self.stop = stop
+        import inspect
+        code = ('import time\n' + inspect.getsource(observer_signal_action).replace(
+            'observer_signal_action', 'signal_action') + '\nCONFIG_JSON = ' + repr(json.dumps(dict(
+                target=self.target, stop=str(stop), startupDeadline=startup_deadline))) + '\n' + HOST_GDB_SCRIPT)
+        script = self.directory / 'observer.gdb'
+        script.write_text('python\n' + code + '\nend\n', encoding='utf-8')
+        self.process = subprocess.Popen([*self.prefix, str(self.tool), '-nx', '-nh', '--quiet', '--batch',
+                                         '-x', str(script)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT, start_new_session=True, env=self.environment)
+        self.record['launcher'] = observer_process(self.process.pid)
+        self.register_launcher()
+        self.reader = threading.Thread(target=self.read_output, daemon=True); self.reader.start()
+        self.record['readerStarted'] = True
+        if not self.started.wait(max(0, startup_deadline - time.monotonic())) or self.debugger is None:
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: debugger startup identity was not admitted')
+        self.grant_startup_permission(startup_deadline)
+        if not self.ready.wait(max(0, startup_deadline - time.monotonic())) or not self.record.get('attachActuallySucceeded'):
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: owned-PID attach failed or timed out')
+        actual = observer_debugger(self.debugger['pid'], self.environment, bool(self.prefix))
+        if self.debugger != actual or actual['executable'] != str(self.tool):
+            raise RuntimeError('HOST_CRASH_CAPTURE_UNAVAILABLE: debugger executable/start identity mismatch')
+        self.record.update(status='ATTACHED', debugger=self.debugger)
+        self.persist()
+
+    def close(self):
+        if self.record.get('closed'): return
+        try:
+            if self.timer is not None: self.timer.cancel()
+            if self.process is not None:
+                try: self.stop.touch(exist_ok=True)
+                except OSError as error: self.record['stopRequestError'] = type(error).__name__
+                try: self.process.stdin.close()
+                except (OSError, ValueError) as error: self.record['startupPipeCloseError'] = type(error).__name__
+                if self.process.poll() is None:
+                    if not self.record.get('startupAdmitted'):
+                        try: self.register_launcher()
+                        except Exception as error: self.record['startupIdentityError'] = type(error).__name__
+                    else:
+                        try: self.signal_debugger(signal.SIGINT)
+                        except Exception as error: self.record['stopSignalError'] = type(error).__name__
+                    try: self.process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        self.record['cleanupTimedOut'] = True
+                        for sig in (signal.SIGTERM, signal.SIGKILL):
+                            try:
+                                self.signal_debugger(sig); self.process.wait(timeout=2)
+                                break
+                            except Exception as error: self.record['cleanupError'] = type(error).__name__
+        except BaseException as error:
+            self.record['cleanupError'] = type(error).__name__
+        finally:
+            reader = getattr(self, 'reader', None)
+            reader_alive = False
+            try:
+                if reader is not None and reader.ident is not None: reader.join(timeout=1)
+                reader_alive = reader is not None and reader.is_alive()
+                self.record['outputReaderJoined'] = reader is not None and reader.ident is not None and not reader_alive
+            except BaseException as error:
+                self.record['readerError'] = type(error).__name__
+                self.record['outputReaderJoined'] = False
+                reader_alive = True
+            try: code = None if self.process is None else self.process.poll()
+            except BaseException as error:
+                self.record['pollError'] = type(error).__name__
+                code = None
+            self.record.update(debuggerReturnCode=code, childReaped=self.process is None or code is not None)
+            incomplete = (code != 0 or not self.record['outputReaderJoined']
+                          or not self.record['childReaped']
+                          or not any(row['kind'] == 'finished' for row in self.record['events'])
+                          or any(row['kind'] in ('error', 'detach-error', 'capture-error')
+                                 for row in self.record['events'])
+                          or any(self.record.get(key) for key in ('cleanupTimedOut', 'cleanupError', 'captureTimedOut',
+                                 'stopSignalError', 'interruptError', 'outputTruncated', 'readerError',
+                                 'startupIdentityError', 'startupPipeCloseError')))
+            self.record['status'] = ('DIAGNOSTIC_INCOMPLETE' if incomplete else 'FINISHED') if self.record.get(
+                'attachActuallySucceeded') else 'HOST_CRASH_CAPTURE_UNAVAILABLE'
+            self.record['closed'] = self.record['childReaped'] and not reader_alive
+            self.persist()
+
+
 def host_diagnostics(directory):
     directory.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -1373,6 +1815,12 @@ def capture(args):
         raise ValueError('Only a fresh isolated GitHub Linux/KVM runner is allowed')
     qa = validate_identity(load(args.directory / 'QA_BUILD_INFO.json'))
     package = package_origin(qa, args.package_receipt)
+    observe_host = host_observer_enabled(args)
+    if observe_host and (args.package_receipt is None or package.get('packageRun') != '40536314613'
+                         or package.get('qaArtifactId') != '12747833792'
+                         or qa['formalArmBuild']['runId'] != 40531629533
+                         or qa['apk']['sha256'] != 'b3185647274c76254e023ded2224785d7e1cd0c50600a0f83c464fbabb0d541e'):
+        raise ValueError('Host observer may only reuse the immutable QA5 package of formal58')
     attempt = 'primary' if args.fallback_after is None else 'fallback'
     setup = ATTEMPTS[attempt]
     args.evidence.mkdir(parents=True, exist_ok=False)
@@ -1417,12 +1865,13 @@ def capture(args):
             finally:
                 raise SystemExit(receipt['primaryResult'])
     previous = {s: signal.signal(s, interrupt) for s in (signal.SIGTERM, signal.SIGINT)}
-    emulator = live = None
+    emulator = live = observer = None
     owned = []
     before = None
-    deadline = time.monotonic() + OWNER_DEADLINE_SECONDS - ATTRIBUTION_SECONDS
-    receipt['ownerBudget'] = dict(runtimeSeconds=OWNER_DEADLINE_SECONDS - ATTRIBUTION_SECONDS,
-                                  attributionSeconds=ATTRIBUTION_SECONDS, ownedStopSeconds=OWNED_STOP_SECONDS,
+    observer_stop_budget = 16 if observe_host else 0
+    deadline = time.monotonic() + OWNER_DEADLINE_SECONDS - ATTRIBUTION_SECONDS - observer_stop_budget
+    receipt['ownerBudget'] = dict(runtimeSeconds=OWNER_DEADLINE_SECONDS - ATTRIBUTION_SECONDS - observer_stop_budget,
+                                  attributionSeconds=ATTRIBUTION_SECONDS + observer_stop_budget, ownedStopSeconds=OWNED_STOP_SECONDS,
                                   worstCaseSeconds=OWNER_DEADLINE_SECONDS + 2 * OWNED_STOP_SECONDS)
     env = emulator_environment(dict(os.environ, ANDROID_SERIAL='emulator-5554'))
     def stream():
@@ -1439,6 +1888,9 @@ def capture(args):
         return row.get('appFailure')
     checkpoint()
     try:
+        if observe_host:
+            observer = HostCrashObserver(args.evidence / 'host-observer', env)
+            receipt['hostCrashObserver'] = observer.record
         before = crash_inventory()
         command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), *setup['flags']]
         receipt['command'] = command
@@ -1446,6 +1898,8 @@ def capture(args):
             emulator = ExitWatch(subprocess.Popen(command, stdout=out, stderr=err, stdin=subprocess.DEVNULL,
                                                   start_new_session=True, env=env), receipt)
             receipt['emulatorPid'] = emulator.pid
+            if observer is not None:
+                observer.start(emulator, Path(os.environ['ANDROID_HOME']))
             checkpoint()
             wait_ready(emulator, args.evidence, receipt, check)
             receipt['readyAt'] = utc_now()
@@ -1489,6 +1943,15 @@ def capture(args):
             except Exception as error:
                 record_failure(receipt, 'first-screen-progress', error)
         if emulator is not None:
+            if observer is not None:
+                try:
+                    observer.close()
+                    if (observer.record['status'] != 'FINISHED' or not observer.record.get('outputReaderJoined')
+                            or any(row['kind'] in ('error', 'detach-error', 'capture-error')
+                                   for row in observer.record['events'])):
+                        raise RuntimeError('Host debugger diagnostic/cleanup failed; see HOST-OBSERVER.json')
+                except BaseException as error:
+                    record_failure(receipt, 'host-observer', error)
             try:
                 finish_emulator(emulator, receipt, receipt['primaryResult'])
                 if not receipt['cleanup']['terminationInitiated'] and 'emulatorHostExit' not in receipt:
@@ -1540,9 +2003,11 @@ def main():
     parser.add_argument('--package-receipt', type=Path)
     parser.add_argument('--fallback-after', type=Path)
     parser.add_argument('--app-renderer', choices=['impeller', 'skia'], default='impeller')
+    parser.add_argument('--host-crash-observer', action='store_true')
     args = parser.parse_args()
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise ValueError('QA commands require an isolated GitHub Actions runner')
+    host_observer_enabled(args)
     if args.phase == 'formal-run':
         return formal_run(args)
     if args.phase == 'guard':
