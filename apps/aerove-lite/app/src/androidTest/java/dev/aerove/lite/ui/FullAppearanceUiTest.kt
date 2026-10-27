@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LongState
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -15,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.platform.testTag
@@ -50,6 +52,7 @@ import dev.aerove.lite.LiteState
 import dev.aerove.lite.MainActivity
 import dev.aerove.lite.MaterialTier
 import dev.aerove.lite.R
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -376,33 +379,94 @@ class FullAppearanceUiTest {
 
     @Test
     fun wallpaperShowsTheRestPoseWheneverReducedMotionIsOn() {
-        for (reducedAtStart in listOf(true, false)) {
-            val reduced = mutableStateOf(reducedAtStart)
-            compose.mainClock.autoAdvance = false
-            compose.replaceAppContent {
-                CompositionLocalProvider(LocalLiteMotionOverride provides reduced.value) {
-                    LiteTheme(LiteSettings(colorMode = ColorMode.Dark)) {
-                        val clock = rememberAuroraTime(true)
-                        val rest = remember { mutableLongStateOf(0L) }
-                        Column {
-                            Box(Modifier.size(160.dp, 320.dp).testTag("running")) { AuroraWallpaper(clock, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
-                            Box(Modifier.size(160.dp, 320.dp).testTag("rest")) { AuroraWallpaper(rest, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
+        appearanceReceipts("wallpaperShowsTheRestPoseWheneverReducedMotionIsOn") { step ->
+            for (reducedAtStart in listOf(true, false)) {
+                val reduced = mutableStateOf(reducedAtStart)
+                val probe = RenderProbe()
+                val clock = java.util.concurrent.atomic.AtomicReference<LongState>()
+                val gate = java.util.concurrent.atomic.AtomicReference<Boolean>()
+                val restClock = java.util.concurrent.atomic.AtomicReference<LongState>()
+                var runningImage: androidx.compose.ui.graphics.ImageBitmap? = null
+                var restImage: androidx.compose.ui.graphics.ImageBitmap? = null
+                var pair = 0
+                val stamp = System.nanoTime()
+                var originalFailure: Throwable? = null
+                var safeToExport = true
+                try {
+                    compose.mainClock.autoAdvance = false
+                    compose.replaceAppContent {
+                        CompositionLocalProvider(LocalLiteMotionOverride provides reduced.value) {
+                            LiteTheme(LiteSettings(colorMode = ColorMode.Dark)) {
+                                val time = rememberAuroraTime(true)
+                                val rest = remember { mutableLongStateOf(0L) }
+                                val density = LocalDensity.current
+                                val resolvedReduced = LocalLiteReducedMotion.current
+                                SideEffect { clock.set(time); restClock.set(rest); gate.set(resolvedReduced); probe.density = density.density; probe.fontScale = density.fontScale }
+                                Column {
+                                    Box(Modifier.size(160.dp, 320.dp).testTag("running").onGloballyPositioned { probe.bounds["running"] = it.boundsInWindow() }) { AuroraWallpaper(time, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
+                                    Box(Modifier.size(160.dp, 320.dp).testTag("rest").onGloballyPositioned { probe.bounds["rest"] = it.boundsInWindow() }) { AuroraWallpaper(rest, FullAuroraColors, FullAuroraSeed, true, Modifier.fillMaxSize()) }
+                                }
+                            }
+                        }
+                    }
+                    fun atRest(): Boolean {
+                        pair++
+                        runningImage = null; restImage = null
+                        step("reduced.running.capture.before", "start=$reducedAtStart; pair=$pair; reduced=${gate.get()}; rawClockMicros=${clock.get()?.longValue}; bounds=${probe.bounds}")
+                        val running = compose.onNodeWithTag("running").captureToImage().also { runningImage = it }.toPixelMap()
+                        step("reduced.running.capture.after", "start=$reducedAtStart; pair=$pair; size=${running.width}x${running.height}; buffer=${running.buffer.size}; rawClockMicros=${clock.get()?.longValue}")
+                        step("reduced.rest.capture.before", "start=$reducedAtStart; pair=$pair; reduced=${gate.get()}; restClockMicros=${restClock.get()?.longValue}; bounds=${probe.bounds}")
+                        val resting = compose.onNodeWithTag("rest").captureToImage().also { restImage = it }.toPixelMap()
+                        val equal = running.buffer.contentEquals(resting.buffer)
+                        step("reduced.rest.capture.after", "start=$reducedAtStart; pair=$pair; size=${resting.width}x${resting.height}; buffer=${resting.buffer.size}; rawClockMicros=${clock.get()?.longValue}; equal=$equal")
+                        return equal
+                    }
+                    compose.mainClock.advanceTimeBy(5_000)
+                    assertEquals("reduced from the start: $reducedAtStart", reducedAtStart, atRest())
+                    compose.runOnUiThread { reduced.value = true }
+                    compose.mainClock.advanceTimeByFrame()
+                    assertTrue("switching reduced motion on mid-run must show the rest pose", atRest())
+                    compose.mainClock.advanceTimeBy(1_000)
+                    assertTrue(atRest())
+                    compose.runOnUiThread { reduced.value = false }
+                    compose.mainClock.advanceTimeBy(5_000)
+                    assertTrue("motion resumes from the rest pose", !atRest())
+                } catch (failure: Throwable) {
+                    safeToExport = false
+                    rethrowMatrixCancellation(failure)
+                    safeToExport = true
+                    originalFailure = failure
+                    throw failure
+                } finally {
+                    if (safeToExport) {
+                        if (Thread.currentThread().isInterrupted) rethrowMatrixCancellation(InterruptedException("Interrupted before diagnostic export"), originalFailure)
+                        try {
+                            val root = java.io.File(requireNotNull(context.getExternalFilesDir(null)),
+                                "captures/full-appearance-reduced/diagnostic/start-$reducedAtStart-$stamp")
+                            check(root.mkdirs() || root.isDirectory)
+                            val images = JSONObject()
+                            listOf("running" to runningImage, "rest" to restImage).forEach { (name, image) -> if (image != null) {
+                                val source = image.asAndroidBitmap()
+                                val target = java.io.File(root, "$name.png")
+                                target.outputStream().use { check(source.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) { "PNG encode failed" } }
+                                val hash = java.security.MessageDigest.getInstance("SHA-256").digest(target.readBytes()).joinToString("") { "%02x".format(it.toInt() and 255) }
+                                java.io.File(root, "$name.png.sha256").writeText("$hash  $name.png\n")
+                                images.put(name, JSONObject().put("file", target.name).put("sha256", hash).put("width", image.width).put("height", image.height))
+                            } }
+                            java.io.File(root, "capture-pair.json").writeText(JSONObject().put("diagnosticOnly", true).put("reducedAtStart", reducedAtStart).put("pair", pair)
+                                .put("sourceRevision", InstrumentationRegistry.getArguments().getString("sourceRevision", "not supplied"))
+                                .put("captureApi", "original Compose captureToImage; latest original pair exported after original assertions")
+                                .put("density", probe.density).put("fontScale", probe.fontScale).put("boundsInWindow", JSONObject(probe.bounds.mapValues { (_, rect) -> JSONArray(listOf(rect.left, rect.top, rect.right, rect.bottom)) }))
+                                .put("inputKey", JSONObject().put("seed", FullAuroraSeed).put("colors", JSONArray(FullAuroraColors)).put("dark", true))
+                                .put("privateLayerKeyAndOriginObserved", false).put("phaseAndGateReceipt", "LiteUiStep before/after capture; composition gate snapshot is not a renderer trace")
+                                .put("images", images).put("originalFailure", originalFailure?.let { "${it.javaClass.name}: ${it.message}" } ?: JSONObject.NULL).toString(2))
+                        } catch (diagnosticFailure: Throwable) {
+                            rethrowMatrixCancellation(diagnosticFailure, originalFailure)
+                            if (originalFailure == null) throw diagnosticFailure else originalFailure!!.addSuppressed(diagnosticFailure)
                         }
                     }
                 }
             }
-            fun atRest() = compose.onNodeWithTag("running").captureToImage().toPixelMap().buffer
-                .contentEquals(compose.onNodeWithTag("rest").captureToImage().toPixelMap().buffer)
-            compose.mainClock.advanceTimeBy(5_000)
-            assertEquals("reduced from the start: $reducedAtStart", reducedAtStart, atRest())
-            compose.runOnUiThread { reduced.value = true }
-            compose.mainClock.advanceTimeByFrame()
-            assertTrue("switching reduced motion on mid-run must show the rest pose", atRest())
-            compose.mainClock.advanceTimeBy(1_000)
-            assertTrue(atRest())
-            compose.runOnUiThread { reduced.value = false }
-            compose.mainClock.advanceTimeBy(5_000)
-            assertTrue("motion resumes from the rest pose", !atRest())
         }
     }
 }
