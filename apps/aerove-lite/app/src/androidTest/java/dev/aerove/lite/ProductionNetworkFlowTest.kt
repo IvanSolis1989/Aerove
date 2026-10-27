@@ -293,12 +293,12 @@ class ProductionNetworkFlowTest {
         compose.onNodeWithContentDescription(description).performClick()
     }
     private fun assertSingleRestartNotice() {
-        compose.onNodeWithTag("network-settings").performScrollToNode(hasTestTag("network-restart"))
-        compose.onAllNodesWithTag("network-restart").assertCountEquals(1)
+        compose.onAllNodesWithTag("global-network-restart").assertCountEquals(1)
+        compose.onAllNodesWithTag("global-network-restart-action").assertCountEquals(1)
     }
     private fun clickRestart() {
         assertSingleRestartNotice()
-        compose.onNodeWithTag("network-restart").performClick()
+        compose.onNodeWithTag("global-network-restart-action").performClick()
     }
     private fun assertSameSession(expected: VpnSnapshot) {
         val actual = graph.vpn.value
