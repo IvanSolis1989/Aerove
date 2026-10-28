@@ -142,9 +142,12 @@ class Lite141DiagnosticTests(unittest.TestCase):
         self.assertEqual(153, len(result["providers"]))
         verify.assert_called_once_with(args.receipt, app["identity"]["sourceRevision"], app["identity"]["sourceTree"])
 
-    def test_only_lite141_original_uses_the_current_dba5_fixture_owner(self):
+    def test_only_lite141_original_uses_the_frozen_dba5_fixture_owner(self):
         shell = Path(__file__).with_name("emulator_acceptance.sh").read_text()
-        self.assertIn('"$smart_fixture_target" != lite141-prebuilt-shards', shell)
+        self.assertIn('"$smart_fixture_target" == lite141-prebuilt-shards', shell)
+        self.assertIn('smart_fixture_owner=dba5', shell)
+        self.assertIn('smart_fixture_verifier=prepare_smart_config_meow_dba5_ci_fixture.py', shell)
+        self.assertEqual('prepare_smart_config_meow_dba5_ci_fixture', smart_adapter.fixture.__name__)
         self.assertIn('smart_fixture_verifier=prepare_smart_config_meow_ci_fixture.py', shell)
         self.assertIn('smart_fixture_owner=current', shell)
         self.assertIn('smart_fixture_owner=legacy', shell)
@@ -153,7 +156,14 @@ class Lite141DiagnosticTests(unittest.TestCase):
         self.assertEqual("234442db6cd3be995e4d5b323f50a360ff2c846b37e9cbd1e742b3f7833ab108",
                          smart_adapter.SMART_MANIFEST_SHA256)
 
-    def test_actual_current_smart_receipt_verifier_accepts_dba5_153_and_rejects_legacy_149(self):
+    def test_frozen_dba5_adapter_rejects_the_current_397_producer(self):
+        import prepare_smart_config_meow_ci_fixture as current
+        args = type("Args", (), dict(app_repository=self.root, smart_repository=self.root))()
+        self.assertNotEqual(smart_adapter.SMART_COMMIT, current.COMMIT)
+        with mock.patch.object(smart_adapter, "fixture", current), self.assertRaisesRegex(ValueError, "fixed dba5 contract"):
+            smart_adapter.prepare(args)
+
+    def test_actual_frozen_smart_receipt_verifier_accepts_dba5_153_and_rejects_legacy_149(self):
         fixture = smart_adapter.fixture
         source = "d139a59b13275c9c2b207d0dc936fd37d93249b3"
         tree = "84e394165682384167a55f1bed04f1c0bd47b648"

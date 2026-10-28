@@ -8,8 +8,8 @@ from urllib.parse import unquote, urlsplit
 
 from prepare_smart_config_meow_fixture import SCRIPT, MAX_FILE, MAX_TOTAL, sha, mmdb_metadata
 
-COMMIT = "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7"
-SCRIPT_SHA = "c80118f8fad6f86ab17a6e2b2ecd9ed8dfe5e15ea27ab6f6d72e8a1b6b9a71a8"
+COMMIT = "3971964b4089b38c6a1233537e1cf2e44bf2be4d"
+SCRIPT_SHA = "33f727336ec761744e3f38c583da1d32eb7dcbdf54fe683a3503d6a6e601e93e"
 NODE_PROJECTION = r"""
 const vm=require('node:vm'),assert=require('node:assert/strict');
 let text='';process.stdin.on('data',b=>text+=b);process.stdin.on('end',()=>{

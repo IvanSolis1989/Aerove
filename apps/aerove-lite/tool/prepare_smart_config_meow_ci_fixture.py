@@ -16,7 +16,7 @@ import urllib.request
 
 from prepare_smart_config_meow_current_fixture import COMMIT, SCRIPT, SCRIPT_SHA, prepare
 
-MANIFEST_SHA = "234442db6cd3be995e4d5b323f50a360ff2c846b37e9cbd1e742b3f7833ab108"
+MANIFEST_SHA = "5a8081f376143e23a8eab6e60bdb4cffd6a663ce67134eddbd27d66e6b1d018f"
 PINNED_GEO = {
     "mmdb": dict(file="Country.mmdb", repository="Loyalsoldier/geoip",
         commit="7ae41d7f3d4e7acc37acd1b02e554b7bb85f3a8d",
@@ -33,7 +33,7 @@ ASN = dict(file="ASN.mmdb", bytes=10789175,
            gitBlobSha1="c654595f1ba22d31396dbd8f7ce731ae0b6a298c",
            sha256="c0507cfb091f42ac525f4eb8a0051a7897f5fac72e852799e01096583566033b")
 ASN_PATH = "apps/aerove/assets/data/ASN.mmdb"
-SMART_TREE = "d7ba10c398eaf3789aff605ad8a6e418cbf67707"
+SMART_TREE = "bb822a54a5e71348114cf8e700e0fb72e8204a1f"
 
 
 def sha(data):

@@ -19,7 +19,7 @@ export 'xclash_script_url.dart' show xclashDefaultScriptUrl;
 
 const xclashDefaultScriptAsset = 'assets/data/smart-config-kit-flclash.js';
 const xclashDefaultScriptSha256 =
-    '0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec';
+    '8bbbe11ca809c1c49e56919e4aef4d4480683a7c9d843bd8875947d6c4cd9d9e';
 
 XClashDefaults? xclashDefaults;
 

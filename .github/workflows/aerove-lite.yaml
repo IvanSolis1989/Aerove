@@ -961,7 +961,7 @@ jobs:
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         repository: IvanSolis1989/Smart-Config-Kit
-        ref: dba12215fe8f8d139a94fbd2d5b981282fbcf9c7
+        ref: 3971964b4089b38c6a1233537e1cf2e44bf2be4d
         path: .ci-fixture-sources/smart-config
         persist-credentials: false
         fetch-depth: 1

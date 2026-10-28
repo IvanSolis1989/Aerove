@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 import emulator_original84 as original
-import prepare_smart_config_meow_ci_fixture as fixture
+import prepare_smart_config_meow_dba5_ci_fixture as fixture
 
 SMART_COMMIT = "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7"
 SMART_TREE = "d7ba10c398eaf3789aff605ad8a6e418cbf67707"

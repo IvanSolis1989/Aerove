@@ -8,10 +8,10 @@ object BundledMeowScript {
     const val ID = "smart-config-kit-aerove-lite"
     const val NAME = "Smart-Config-Kit (AEROVE Lite)"
     const val ASSET = "scripts/smart-config-kit-meow.js"
-    const val VERSION = "v6.0.20-meow.5"
-    const val COMMIT = "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7"
-    const val SHA256 = "c80118f8fad6f86ab17a6e2b2ecd9ed8dfe5e15ea27ab6f6d72e8a1b6b9a71a8"
-    const val BYTES = 116534
+    const val VERSION = "v6.0.21-meow.6"
+    const val COMMIT = "3971964b4089b38c6a1233537e1cf2e44bf2be4d"
+    const val SHA256 = "33f727336ec761744e3f38c583da1d32eb7dcbdf54fe683a3503d6a6e601e93e"
+    const val BYTES = 116527
     const val UPDATE_URL = "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js"
 
     fun resource(bytes: ByteArray): ScriptResource {

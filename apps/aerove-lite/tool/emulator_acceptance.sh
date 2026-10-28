@@ -173,7 +173,10 @@ if [[ "$phase" != matrix && -n "${SMART_CONFIG_MEOW_FIXTURE_DIR:-}" ]]; then
     smart_fixture_target=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("runtimeTarget", ""))' "$diagnostics/SOURCE.json")
     smart_fixture_owner=current
     smart_fixture_verifier=prepare_smart_config_meow_ci_fixture.py
-    if [[ -n "${AEROVE_ORIGINAL84_PROOF:-}${AEROVE_ORIGINAL_RUNTIME_PROOF:-}" && "$smart_fixture_target" != lite141-prebuilt-shards ]]; then
+    if [[ "$smart_fixture_target" == lite141-prebuilt-shards ]]; then
+        smart_fixture_owner=dba5
+        smart_fixture_verifier=prepare_smart_config_meow_dba5_ci_fixture.py
+    elif [[ -n "${AEROVE_ORIGINAL84_PROOF:-}${AEROVE_ORIGINAL_RUNTIME_PROOF:-}" ]]; then
         smart_fixture_owner=legacy
         smart_fixture_verifier=prepare_smart_config_meow_legacy_ci_fixture.py
     fi

@@ -1,19 +1,19 @@
 {
   "repository": "IvanSolis1989/Smart-Config-Kit",
-  "commit": "dba12215fe8f8d139a94fbd2d5b981282fbcf9c7",
+  "commit": "3971964b4089b38c6a1233537e1cf2e44bf2be4d",
   "requestedRef": "main",
   "path": "Meow内核系/Aerove Lite/AeroveLite(meow).js",
-  "blobSha": "94d1508a455997437635b641a7e04c528e596bd0",
-  "bytes": 116534,
-  "sha256": "c80118f8fad6f86ab17a6e2b2ecd9ed8dfe5e15ea27ab6f6d72e8a1b6b9a71a8",
-  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/dba12215fe8f8d139a94fbd2d5b981282fbcf9c7/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
-  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/dba12215fe8f8d139a94fbd2d5b981282fbcf9c7/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
+  "blobSha": "cfa9c270cc451f1aa0e71efbeb040be810e20c6c",
+  "bytes": 116527,
+  "sha256": "33f727336ec761744e3f38c583da1d32eb7dcbdf54fe683a3503d6a6e601e93e",
+  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/3971964b4089b38c6a1233537e1cf2e44bf2be4d/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
+  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/3971964b4089b38c6a1233537e1cf2e44bf2be4d/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
   "updateUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
   "versionHeader": [
     "// AEROVE Lite / meow-rs 分流覆写候选（共享 Meow 分流实现）",
-    "// 版本：v6.0.20-meow.5 | Build：2026-10-27",
+    "// 版本：v6.0.21-meow.6 | Build：2026-10-28",
     "// 架构：最多 22 个 url-test 区域组 + 33 业务组；融合 MRS / residual YAML",
-    "// 规则源：rulesets/source/routing-graph.js v6.0.20",
+    "// 规则源：rulesets/source/routing-graph.js v6.0.21",
     "// 生成：node tools/generate-meow.js；运行时输入：Mihomo内核系/FlClash/FlClash(mihomo).js",
     "// 变更历史：Meow内核系/Aerove Lite/CHANGELOG.md；状态：docs/support-queue.md#aerove-lite-meow",
     "// 只维护节点清洗、分组、rule-providers、rules；DNS / TUN / 端口 / 嗅探由 App 管理。",
@@ -24,7 +24,7 @@
     "// 客户端联调和真实连接验收状态见支持队列。",
     ""
   ],
-  "readmeSha256": "d2dee136f53dfbfc9b68db0c348cb3bdb089c61ce88ae814169ad42b249d8598",
+  "readmeSha256": "4943bd37395c5bd854c4e2feaf9ce6cae36c993cedcf837aae25e2ec1d727c3d",
   "licenseEvidence": {
     "rootNames": [
       ".github",
@@ -53,6 +53,7 @@
     ],
     "originalLicenseFetch": "Fresh fixed-commit root inventory; no tracked independent root license text"
   },
-  "fetchedBy": "read-only local Git fixed commit; remote main identity independently verified",
-  "scriptExecuted": false
+  "fetchedBy": "Read-only fixed Git commit; bytes independently match verified remote snapshot",
+  "scriptExecuted": true,
+  "scriptExecutionRuntime": "Offline Node vm main(config); Android QuickJS/JNI pending CI"
 }

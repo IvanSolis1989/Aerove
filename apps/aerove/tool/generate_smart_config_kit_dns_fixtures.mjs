@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 export const fixedSource = Object.freeze({
-  revision: '70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd',
-  gitBlob: '65beff76d400f51d21686b04b09ccc40df6e620e',
-  scriptSha256: '0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec',
+  revision: '3971964b4089b38c6a1233537e1cf2e44bf2be4d',
+  gitBlob: '9dc3bb723779f835f94d0267aac401c735a2ac71',
+  scriptSha256: '8bbbe11ca809c1c49e56919e4aef4d4480683a7c9d843bd8875947d6c4cd9d9e',
 });
 
 export function syntheticInput(kind) {
@@ -64,15 +64,15 @@ export function runDns(source, input) {
 export function fixtureSource() {
   return {
     ...fixedSource,
-    generation: 'Restored fixed synthetic Node vm main(config) runner; DNS extracted from the result. Both legacy fixtures were reproduced before validating this source.',
+    generation: 'Fixed synthetic Node vm main(config) execution; DNS extracted from the current source result and checked against the saved fixtures.',
     generator: 'tool/generate_smart_config_kit_dns_fixtures.mjs',
     syntheticOnly: true,
     networkRequests: 0,
     baseline: 'Two synthetic FQDN nodes; no source DNS.',
     private: 'Same nodes; exact node resolver hints, an unused node hint and unrelated global DNS. Only active-node proxy-server-nameserver-policy survives.',
-    previousRevision: '6847cd225d70bc9eb6fdd9311d50ff53bc91981c',
-    previousGitBlob: 'b92cdae0b826e43e6fc0237ec739d3d5bec134c2',
-    previousScriptSha256: 'd962c99703ca0c4fb0649541b81a7d24d94f2737ad3d83937a85a42e07f4ccc5',
+    previousRevision: '70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd',
+    previousGitBlob: '65beff76d400f51d21686b04b09ccc40df6e620e',
+    previousScriptSha256: '0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec',
   };
 }
 
@@ -93,7 +93,7 @@ function main() {
   assert.equal(metadata.revision, fixedSource.revision);
   assert.equal(metadata.gitBlob, fixedSource.gitBlob);
   assert.equal(metadata.sha256, fixedSource.scriptSha256);
-  assert.equal(metadata.version, 'v6.0.20-flclash.23');
+  assert.equal(metadata.version, 'v6.0.21-flclash.24');
   const outputs = new Map();
   for (const kind of ['baseline', 'private']) {
     outputs.set(`dns-${kind}.json`, runDns(source.toString('utf8'), syntheticInput(kind)));
