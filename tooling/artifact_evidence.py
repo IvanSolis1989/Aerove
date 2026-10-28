@@ -129,19 +129,31 @@ def validate_png(data):
     require(data.startswith(b"\x89PNG\r\n\x1a\n"), "Invalid PNG signature")
     position, count, ended = 8, 0, False
     seen_srgb, seen_palette_or_data = False, False
+    seen_sbit = False
     while position < len(data):
         require(position + 12 <= len(data), "Truncated PNG chunk")
         size = struct.unpack(">I", data[position:position + 4])[0]
         kind = data[position + 4:position + 8]
         end = position + 12 + size
         require(end <= len(data) and count < 10000, "PNG chunk limit exceeded")
-        require(kind in (b"IHDR", b"PLTE", b"IDAT", b"IEND", b"sRGB"),
+        require(kind in (b"IHDR", b"PLTE", b"IDAT", b"IEND", b"sRGB", b"sBIT"),
                 f"Unsupported evidence PNG chunk; no image emitted (chunkHex={kind.hex()})")
         require(binascii.crc32(data[position + 4:end - 4]) & 0xffffffff == struct.unpack(">I", data[end - 4:end])[0], "PNG CRC mismatch")
         if count == 0:
             require(kind == b"IHDR" and size == 13, "PNG IHDR missing")
             width, height = struct.unpack(">II", data[position + 8:position + 16])
             require(0 < width <= 16384 and 0 < height <= 16384 and width * height <= 64000000, "PNG dimensions exceeded")
+            png_bit_depth, png_color_type = data[position + 16:position + 18]
+        if kind == b"sBIT":
+            channels, depths = {0: (1, (1, 2, 4, 8, 16)), 2: (3, (8, 16)),
+                                3: (3, (1, 2, 4, 8)), 4: (2, (8, 16)),
+                                6: (4, (8, 16))}.get(png_color_type, (0, ()))
+            require(png_bit_depth in depths, "Invalid PNG IHDR for sBIT")
+            sample_depth = 8 if png_color_type == 3 else png_bit_depth
+            require(size == channels and all(0 < value <= sample_depth
+                    for value in data[position + 8:end - 4]), "Invalid PNG sBIT significant bits")
+            require(not seen_sbit and not seen_palette_or_data, "Duplicate or out-of-order PNG sBIT")
+            seen_sbit = True
         if kind == b"sRGB":
             require(size == 1 and data[position + 8] <= 3, "Invalid PNG sRGB rendering intent")
             require(not seen_srgb and not seen_palette_or_data, "Duplicate or out-of-order PNG sRGB")
