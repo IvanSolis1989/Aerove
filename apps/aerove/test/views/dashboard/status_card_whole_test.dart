@@ -100,8 +100,9 @@ Future<void> _pumpDashboard(
           theme: ThemeData(fontFamily: _font, fontFamilyFallback: _fallback),
           child: Builder(
             builder: (context) => MediaQuery(
-              data: MediaQuery.of(context)
-                  .copyWith(textScaler: TextScaler.linear(scale)),
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(scale)),
               child: DashboardView(platform: platform),
             ),
           ),

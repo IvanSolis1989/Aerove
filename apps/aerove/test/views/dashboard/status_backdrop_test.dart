@@ -166,9 +166,9 @@ Future<(List<List<Color>>, Size)> _pixels(WidgetTester tester) async {
   final bytes = (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
-      return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
-          .buffer
-          .asUint8List();
+      return (await image.toByteData(
+        format: ui.ImageByteFormat.rawRgba,
+      ))!.buffer.asUint8List();
     } finally {
       image.dispose();
     }

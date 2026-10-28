@@ -99,8 +99,9 @@ Future<({ByteData rgba, Uint8List png, int width, int height})> _capture(
   try {
     return (
       rgba: (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!,
-      png: (await image.toByteData(format: ui.ImageByteFormat.png))!.buffer
-          .asUint8List(),
+      png: (await image.toByteData(
+        format: ui.ImageByteFormat.png,
+      ))!.buffer.asUint8List(),
       width: image.width,
       height: image.height,
     );
@@ -316,12 +317,15 @@ Future<List<Map<String, Object?>>> _measure(
   }
   if (output != null) {
     final directory = Directory(output)..createSync(recursive: true);
-    File('${directory.path}/dashboard-bounds-$name.png')
-        .writeAsBytesSync(painted.png);
-    File('${directory.path}/dashboard-bounds-$name-background.png')
-        .writeAsBytesSync(blank.png);
-    File('${directory.path}/dashboard-bounds-$name-mask.png')
-        .writeAsBytesSync(maskPng!);
+    File(
+      '${directory.path}/dashboard-bounds-$name.png',
+    ).writeAsBytesSync(painted.png);
+    File(
+      '${directory.path}/dashboard-bounds-$name-background.png',
+    ).writeAsBytesSync(blank.png);
+    File(
+      '${directory.path}/dashboard-bounds-$name-mask.png',
+    ).writeAsBytesSync(maskPng!);
     File(
       '${directory.path}/dashboard-bounds-$name.json',
     ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(geometry));
