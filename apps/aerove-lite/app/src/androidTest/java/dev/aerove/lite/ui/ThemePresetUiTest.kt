@@ -77,7 +77,12 @@ class ThemePresetUiTest {
         compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription(label))
     }
     private fun hex(value: String) = compose.onNode(hasContentDescription(text(R.string.lite_hex)) and hasSetTextAction()).performTextReplacement(value)
-    private fun confirm() = compose.onNodeWithContentDescription(text(R.string.lite_confirm)).performClick()
+    private fun confirm() {
+        val sheet = compose.onNode(hasText(text(R.string.lite_custom_color)))
+        sheet.assertExists()
+        compose.onNodeWithContentDescription(text(R.string.lite_confirm)).performClick()
+        sheet.assertDoesNotExist()
+    }
 
     @Test
     fun theFullEightPresetsAndFourStylesSelectRealPersistedSettings() {
@@ -110,7 +115,10 @@ class ThemePresetUiTest {
         compose.onNodeWithContentDescription(text(R.string.lite_add_color)).performClick()
         hex("123456")
         assertEquals(0, writes)
+        val sheet = compose.onNode(hasText(text(R.string.lite_custom_color)))
+        sheet.assertExists()
         compose.onNodeWithContentDescription(text(R.string.lite_cancel)).performClick()
+        sheet.assertDoesNotExist()
         assertEquals(initial, read())
         swatch(text(R.string.lite_add_color))
         compose.onNodeWithContentDescription(text(R.string.lite_add_color)).performClick()
