@@ -11,6 +11,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'fusion.dart';
 import 'layout.dart';
 import 'style.dart';
 import 'widget_registry.dart';
@@ -59,13 +60,13 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
   late final _sway = AnimationController(vsync: this, duration: _swayLoop);
 
   /// The saved cards and any removed one still on its way out.
-  late var _cards = widget.widgets;
+  late var _cards = fuseDashboard(widget.widgets);
   final _leaving = <DashboardWidget>{};
   final _entering = <DashboardWidget>{};
 
-  List<DashboardWidget> get _shown => [
+  List<DashboardFusion> get _shown => [
     for (final card in _cards)
-      if (!_leaving.contains(card)) card,
+      if (!_leaving.contains(card.identity)) card,
   ];
 
   @override
@@ -81,8 +82,18 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
   @override
   void didUpdateWidget(DashboardEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!listEquals(widget.widgets, _shown)) {
-      _cards = widget.widgets;
+    final next = fuseDashboard(widget.widgets);
+    final shown = _shown;
+    if (next.length != shown.length ||
+        [
+          for (var index = 0; index < next.length; index++)
+            next[index].identity != shown[index].identity ||
+                !listEquals(
+                  next[index].members.toList(),
+                  shown[index].members.toList(),
+                ),
+        ].any((changed) => changed)) {
+      _cards = next;
       _leaving.clear();
       _entering.clear();
     }
@@ -94,62 +105,58 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
     super.dispose();
   }
 
-  void _save() {
-    final shown = _shown;
-    ref
-        .read(appSettingProvider.notifier)
-        .update(
-          (state) => state.copyWith(
-            dashboardWidgets: _keepingOtherPlatforms(
-              state.dashboardWidgets,
-              shown,
-            ),
-          ),
-        );
+  void _save(List<DashboardWidget> Function(List<DashboardWidget>) change) {
+    ref.read(appSettingProvider.notifier).update((state) {
+      final next = change(state.dashboardWidgets);
+      return listEquals(next, state.dashboardWidgets)
+          ? state
+          : state.copyWith(dashboardWidgets: next);
+    });
   }
 
-  /// Cards this platform cannot show stay where they were among the rest.
-  List<DashboardWidget> _keepingOtherPlatforms(
-    List<DashboardWidget> saved,
-    List<DashboardWidget> shown,
-  ) {
-    final result = [...shown];
-    var at = 0;
-    for (final card in saved) {
-      if (card.platforms.contains(widget.platform)) {
-        final index = result.indexOf(card);
-        if (index != -1) at = index + 1;
-      } else {
-        result.insert(at++, card);
-      }
-    }
-    return result;
+  void _remove(DashboardFusion card) {
+    setState(() => _leaving.add(card.identity));
+    _save(
+      (saved) => hideDashboardFusion(saved, widget.platform, card.identity),
+    );
   }
 
-  void _remove(DashboardWidget card) {
-    setState(() => _leaving.add(card));
-    _save();
-  }
-
-  void _add(DashboardWidget card) {
+  void _add(DashboardFusion card) {
     setState(() {
-      if (!_leaving.remove(card)) {
-        _entering.add(card);
-        _cards = [..._cards, card];
+      final index = _cards.indexWhere((item) => item.identity == card.identity);
+      if (!_leaving.remove(card.identity)) _entering.add(card.identity);
+      _cards = [..._cards];
+      if (index < 0) {
+        _cards.add(card);
+      } else {
+        _cards[index] = card;
       }
     });
-    _save();
+    _save(
+      (saved) => restoreDashboardFusion(saved, widget.platform, card.identity),
+    );
   }
 
   void _reorder(int from, int to) {
+    if (from == to) return;
+    final moved = _cards[from].identity;
     setState(() => _cards = _cards.copyAndReorder(from, to));
-    _save();
+    final shown = _shown;
+    final index = shown.indexWhere((card) => card.identity == moved);
+    if (index < 0) return;
+    final next = index + 1 < shown.length ? shown[index + 1].identity : null;
+    _save((saved) => moveDashboardFusion(saved, widget.platform, moved, next));
   }
 
-  void _settle(DashboardWidget card) {
-    _entering.remove(card);
-    if (mounted && _leaving.remove(card)) {
-      setState(() => _cards = [..._cards]..remove(card));
+  void _settle(DashboardWidget identity) {
+    _entering.remove(identity);
+    if (mounted && _leaving.remove(identity)) {
+      setState(
+        () => _cards = [
+          for (final card in _cards)
+            if (card.identity != identity) card,
+        ],
+      );
     }
   }
 
@@ -157,11 +164,9 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
   Widget build(BuildContext context) {
     final cards = _cards;
     final shown = _shown;
-    final addable = [
-      for (final card in DashboardWidget.values)
-        if (card.platforms.contains(widget.platform) && !shown.contains(card))
-          card,
-    ];
+    final addable = addableDashboardFusions([
+      for (final card in shown) ...card.members,
+    ], widget.platform);
     final scale = DashboardDensityScope.scaleOf(context);
     final sway = context.disableAnimations ? null : _sway;
     final appLocalizations = context.appLocalizations;
@@ -187,15 +192,15 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
               itemBuilder: (_, index) {
                 final card = cards[index];
                 return _Presence(
-                  key: ValueKey(card),
-                  entering: _entering.contains(card),
-                  leaving: _leaving.contains(card),
+                  key: ValueKey(card.identity),
+                  entering: _entering.contains(card.identity),
+                  leaving: _leaving.contains(card.identity),
                   revealPadding: revealPadding,
-                  onSettled: () => _settle(card),
+                  onSettled: () => _settle(card.identity),
                   child: spaced(
                     _EditableCard(
                       item: card,
-                      cardKey: widget.cardKeyOf(card),
+                      cardKey: widget.cardKeyOf(card.identity),
                       index: index,
                       sway: sway,
                       onRemove: card.removable ? () => _remove(card) : null,
@@ -211,11 +216,10 @@ class _DashboardEditorState extends ConsumerState<DashboardEditor>
                 child: spaced(
                   _LiftedCard(
                     animation: animation,
-                    child: AbsorbPointer(
-                      child: RepaintBoundary(
-                        key: widget.cardKeyOf(cards[index]),
-                        child: cards[index].card,
-                      ),
+                    child: cards[index].preview(
+                      context,
+                      cardKey: widget.cardKeyOf(cards[index].identity),
+                      editing: true,
                     ),
                   ),
                 ),
@@ -410,7 +414,7 @@ class _EditableCard extends StatelessWidget {
     required this.onRemove,
   });
 
-  final DashboardWidget item;
+  final DashboardFusion item;
   final GlobalKey cardKey;
   final int index;
   final Animation<double>? sway;
@@ -419,9 +423,7 @@ class _EditableCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
-    final card = AbsorbPointer(
-      child: RepaintBoundary(key: cardKey, child: item.card),
-    );
+    final card = item.preview(context, cardKey: cardKey, editing: true);
     final onRemove = this.onRemove;
     final content = Stack(
       fit: StackFit.passthrough,
@@ -447,7 +449,7 @@ class _EditableCard extends StatelessWidget {
     return RepaintBoundary(
       child: sway == null
           ? content
-          : _Sway(sway: sway, seed: item.index, child: content),
+          : _Sway(sway: sway, seed: item.identity.index, child: content),
     );
   }
 }
@@ -613,7 +615,7 @@ class _SectionLabel extends StatelessWidget {
 class _AddRow extends StatelessWidget {
   const _AddRow({required this.item, required this.onAdd});
 
-  final DashboardWidget item;
+  final DashboardFusion item;
   final VoidCallback onAdd;
 
   @override

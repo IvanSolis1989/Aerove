@@ -2,6 +2,8 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/widgets/widgets.dart';
+import 'widgets/fused_controls.dart';
+import 'fusion.dart';
 import 'package:material_ui/material_ui.dart';
 
 extension DashboardWidgetView on DashboardWidget {
@@ -59,4 +61,48 @@ extension DashboardWidgetView on DashboardWidget {
 
   /// It holds the start button, which has nowhere else to go.
   bool get removable => this != DashboardWidget.currentOutbound;
+}
+
+extension DashboardFusionView on DashboardFusion {
+  Widget preview(
+    BuildContext context, {
+    required GlobalKey cardKey,
+    bool editing = false,
+  }) => RepaintBoundary(
+    key: cardKey,
+    child: Semantics(
+      label: editing ? label(context) : null,
+      excludeSemantics: editing,
+      child: ExcludeFocus(
+        excluding: editing,
+        child: AbsorbPointer(absorbing: editing, child: card),
+      ),
+    ),
+  );
+
+  Widget get card => switch (identity) {
+    DashboardWidget.outboundMode => FusedNetworkControls(members: members),
+    DashboardWidget.serviceStatus
+        when members.contains(DashboardWidget.serviceStatus) =>
+      ServiceStatusCard(
+        includeStats: members.contains(DashboardWidget.connectionStats),
+      ),
+    _ => anchor.card,
+  };
+
+  String label(BuildContext context) => switch (identity) {
+    DashboardWidget.outboundMode =>
+      context.appLocalizations.dashboardNetworkControl,
+    DashboardWidget.serviceStatus =>
+      context.appLocalizations.dashboardNetworkOverview,
+    _ => identity.label(context),
+  };
+
+  String? description(BuildContext context) => switch (identity) {
+    DashboardWidget.outboundMode || DashboardWidget.serviceStatus => null,
+    _ => identity.description(context),
+  };
+
+  Glyph get glyph => identity.glyph;
+  bool get removable => identity.removable;
 }
