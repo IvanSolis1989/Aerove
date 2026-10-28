@@ -9,7 +9,7 @@ on:
       phase:
         description: graph first; keep-proof only after reviewing actual graph admission
         type: choice
-        options: [graph, keep-proof]
+        options: [graph, keep-proof, baseline-transport]
         default: graph
         required: true
 permissions:
@@ -23,7 +23,7 @@ defaults:
     shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 jobs:
   proof:
-    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/codex/aerove-lite148-test-proof-34' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/codex/aerove-lite148-test-proof-34' && github.event_name == 'workflow_dispatch' && inputs.phase != 'baseline-transport'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     strategy:
@@ -31,6 +31,11 @@ jobs:
       matrix:
         abi: [arm64-v8a, x86_64]
     steps:
+      - name: Reject unknown diagnostic phase before any setup
+        env:
+          PROOF_PHASE: ${{ inputs.phase }}
+        run: |
+          case "$PROOF_PHASE" in graph|keep-proof) ;; *) exit 2 ;; esac
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
@@ -79,5 +84,45 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: Lite148-test-proof-${{ matrix.abi }}-${{ inputs.phase }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lite148-test-proof-${{ matrix.abi }}/
+          if-no-files-found: error
+  baseline_transport:
+    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/codex/aerove-lite148-test-proof-34' && github.event_name == 'workflow_dispatch' && inputs.phase == 'baseline-transport'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, x86_64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: af2d7d947678d690cff696746d9600b353bef731
+          path: original
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: dbe285c3bc09448807d462246fbda77cde3d2a8b
+          path: corrected-test
+          persist-credentials: false
+      - name: Baseline transport only; no toolchain setup or task actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROOF_ABI: ${{ matrix.abi }}
+        run: |
+          timeout --signal=TERM --kill-after=5s 95s \
+            python3 .github/scripts/lite148_test_only_proof.py \
+            --app-root "$GITHUB_WORKSPACE/original" --test-root "$GITHUB_WORKSPACE/corrected-test" \
+            --output "$RUNNER_TEMP/lite148-test-proof-$PROOF_ABI" \
+            --abi "$PROOF_ABI" --phase baseline-transport
+      - name: Preserve baseline request stages without acceptance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Lite148-baseline-transport-${{ matrix.abi }}-${{ github.run_id }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/lite148-test-proof-${{ matrix.abi }}/
           if-no-files-found: error

@@ -1,5 +1,7 @@
 """Frozen Lite148 graph/keep proof. Never produce or replace an APK."""
 import argparse
+import datetime
+import re
 import hashlib
 import json
 import os
@@ -66,19 +68,76 @@ def source_contract(app, corrected, contract):
         changedPaths=changed, unchangedProductionGitClosureSha256=sha(protected))
 
 
-def gh(route, binary=False):
-    args = ['gh', 'api', '--method', 'GET', route]
-    if binary:
-        args += ['-H', 'Accept: application/octet-stream']
-    result = subprocess.run(args, capture_output=True, timeout=120)
-    require(result.returncode == 0, 'GitHub evidence read failed; raw stderr/URLs are not persisted')
-    return result.stdout if binary else json.loads(result.stdout)
+REQUEST_STAGES = frozenset(('run', 'metadata', 'zip', *(f'jobs_page_{i}' for i in range(1, 6))))
+HTTP_ERRORS = frozenset((400, 401, 403, 404, 408, 409, 410, 413, 422, 429, 500, 502, 503, 504))
 
 
-def baseline(out, abi, contract):
+def error_category(stderr):
+    text = stderr.decode('utf-8', errors='replace')
+    match = re.search(r'\bHTTP\s+([0-9]{3})\b', text, re.IGNORECASE)
+    if match and int(match[1]) in HTTP_ERRORS:
+        return 'http', int(match[1])
+    if re.search(r'\b(?:TLS|SSL|x509)\b|certificate verify failed', text, re.IGNORECASE):
+        return 'tls', None
+    if re.search(r'\bEOF\b|unexpected end of file', text, re.IGNORECASE):
+        return 'eof', None
+    if re.search(r'timed? ?out|timeout|deadline exceeded', text, re.IGNORECASE):
+        return 'timeout', None
+    return 'unknown', None
+
+
+def request_journal(path, records):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.with_name(path.name + '.tmp')
+    staged.write_text(json.dumps(records, ensure_ascii=True, indent=2) + '\n', encoding='utf-8')
+    staged.replace(path)
+
+
+def gh(route, binary=False, *, stage, journal, deadline=None):
+    require(stage in REQUEST_STAGES, 'Unknown evidence request stage')
+    records = json.loads(journal.read_text()) if journal.exists() else []
+    record = dict(stage=stage, startedUtc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        endedUtc=None, state='started', exitCode=None, errorClass=None, httpStatus=None,
+        stdoutBytes=None, stderrBytes=None, requestTimeoutSeconds=None)
+    records.append(record)
+    request_journal(journal, records)
+    started = time.monotonic()
+    try:
+        remaining = 120 if deadline is None else min(120, deadline - time.monotonic())
+        if remaining <= 0:
+            raise TimeoutError('Evidence transport owner deadline')
+        record['requestTimeoutSeconds'] = round(remaining, 3)
+        request_journal(journal, records)
+        args = ['gh', 'api', '--method', 'GET', route]
+        if binary:
+            args += ['-H', 'Accept: application/octet-stream']
+        result = subprocess.run(args, capture_output=True, timeout=remaining)
+        record.update(exitCode=result.returncode, stdoutBytes=len(result.stdout), stderrBytes=len(result.stderr))
+        if result.returncode:
+            record['errorClass'], record['httpStatus'] = error_category(result.stderr)
+            record['state'] = 'failed'
+        else:
+            record['state'] = 'success'
+        require(result.returncode == 0, 'GitHub evidence read failed; raw stderr/URLs are not persisted')
+        return result.stdout if binary else json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, TimeoutError):
+        record.update(state='failed', errorClass='timeout', httpStatus=None)
+        raise
+    except BaseException:
+        if record['state'] == 'started':
+            record.update(state='failed', errorClass='unknown', httpStatus=None)
+        raise
+    finally:
+        record.update(endedUtc=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            elapsedSeconds=round(time.monotonic() - started, 3))
+        request_journal(journal, records)
+
+
+def baseline(out, abi, contract, deadline=None):
+    journal = out / 'REQUESTS.json'
     fixed = contract['diagnostics'][abi]
     prefix = 'repos/' + contract['repository'] + '/actions/'
-    run = gh(prefix + 'runs/' + str(contract['appRun']) + '/attempts/1')
+    run = gh(prefix + 'runs/' + str(contract['appRun']) + '/attempts/1', stage='run', journal=journal, deadline=deadline)
     require(run.get('id') == contract['appRun'] and run.get('head_sha') == contract['appSource']
             and run.get('run_attempt') == 1 and run.get('status') == 'completed'
             and run.get('path') == '.github/workflows/aerove-lite.yaml'
@@ -87,7 +146,7 @@ def baseline(out, abi, contract):
     jobs = []
     page = 1
     while True:
-        response = gh(prefix + f"runs/{contract['appRun']}/attempts/1/jobs?per_page=100&page={page}")
+        response = gh(prefix + f"runs/{contract['appRun']}/attempts/1/jobs?per_page=100&page={page}", stage=f'jobs_page_{page}', journal=journal, deadline=deadline)
         rows = response.get('jobs')
         require(isinstance(rows, list), 'Original jobs response invalid')
         jobs.extend(rows)
@@ -100,12 +159,12 @@ def baseline(out, abi, contract):
     require(len(selected) == 1 and selected[0].get('conclusion') == 'success'
             and selected[0].get('head_sha') == contract['appSource'] and selected[0].get('run_id') == contract['appRun']
             and selected[0].get('run_attempt') == 1, 'Original ABI package did not succeed in its original attempt')
-    meta = gh(prefix + 'artifacts/' + str(fixed['id']))
+    meta = gh(prefix + 'artifacts/' + str(fixed['id']), stage='metadata', journal=journal, deadline=deadline)
     origin = meta.get('workflow_run') or {}
     require(meta.get('id') == fixed['id'] and meta.get('name') == fixed['name'] and meta.get('expired') is False
             and meta.get('digest') == 'sha256:' + fixed['zipSha256'] and meta.get('size_in_bytes') == fixed['zipBytes']
             and origin.get('id') == contract['appRun'] and origin.get('head_sha') == contract['appSource'], 'Original diagnostics identity mismatch')
-    raw = gh(prefix + 'artifacts/' + str(fixed['id']) + '/zip', binary=True)
+    raw = gh(prefix + 'artifacts/' + str(fixed['id']) + '/zip', binary=True, stage='zip', journal=journal, deadline=deadline)
     require(len(raw) == fixed['zipBytes'] and sha(raw) == fixed['zipSha256'], 'Original diagnostics ZIP changed')
     archive = out / 'baseline.zip'
     archive.write_bytes(raw)
@@ -207,7 +266,8 @@ def compare_reports(old, new, *, original_reproduction=False):
     require(old['rulesSha256'] == new['rulesSha256'], 'Test correction changes original App keep rules')
 
 
-def proof(app, corrected, out, abi, contract, phase):
+def proof(app, corrected, out, abi, contract, phase, transport_deadline=None):
+    require(phase in ('graph', 'keep-proof', 'baseline-transport'), 'Unknown proof phase')
     require(os.environ.get('GITHUB_REPOSITORY') == contract['repository']
             and os.environ.get('GITHUB_REF') == contract['harnessRef']
             and os.environ.get('GITHUB_RUN_ATTEMPT') == '1', 'Only fixed first-attempt isolated diagnostic workflow is allowed')
@@ -221,6 +281,16 @@ def proof(app, corrected, out, abi, contract, phase):
         phase=phase, keepProofPassed=False, completed=False)
     try:
         receipt['sourceClosure'] = source_contract(app, corrected, contract)
+        if phase == 'baseline-transport':
+            receipt.update(transportOnly=True, baselineTransportPassed=False, ownerBudgetSeconds=90,
+                graphExecuted=False, taskActionsExecuted=False, testOverlayExecuted=False)
+            base = out / 'baseline'
+            base.mkdir()
+            baseline(base, abi, contract, deadline=transport_deadline)
+            receipt.update(baselineTransportPassed=True, completed=True,
+                nextStageBlocked=['Transport only; no original or corrected keep compiled',
+                    'No Test APK producer or Android/release acceptance'])
+            return 0
         receipt['keepGraph'] = gradle(app, out, 'keep-dry', KEEP_TASK, 'admit', abi, contract, True)
         receipt['testPackageObservation'] = gradle(app, out, 'test-package-observe', APK_TASK, 'observe', abi, contract, True)
         if phase == 'keep-proof':
@@ -273,7 +343,7 @@ def main():
     parser.add_argument('--test-root', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--abi', choices=('arm64-v8a', 'x86_64'), required=True)
-    parser.add_argument('--phase', choices=('graph', 'keep-proof'), required=True)
+    parser.add_argument('--phase', choices=('graph', 'keep-proof', 'baseline-transport'), required=True)
     args = parser.parse_args()
     require(sys.platform == 'linux' and os.environ.get('GITHUB_ACTIONS') == 'true',
             'Actual graph/keep proof requires the isolated Linux CI job')
@@ -281,6 +351,16 @@ def main():
         raise InterruptedError('Diagnostic cancellation')
     signal.signal(signal.SIGTERM, cancelled)
     contract = json.loads((HERE / 'lite148_test_only_contract.json').read_text())
+    if args.phase == 'baseline-transport':
+        def transport_timeout(signum, frame):
+            raise TimeoutError('Evidence transport owner deadline')
+        signal.signal(signal.SIGALRM, transport_timeout)
+        signal.setitimer(signal.ITIMER_REAL, 90)
+        try:
+            return proof(args.app_root.resolve(), args.test_root.resolve(), args.output.resolve(), args.abi,
+                contract, args.phase, transport_deadline=time.monotonic() + 90)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
     return proof(args.app_root.resolve(), args.test_root.resolve(), args.output.resolve(), args.abi, contract, args.phase)
 
 
