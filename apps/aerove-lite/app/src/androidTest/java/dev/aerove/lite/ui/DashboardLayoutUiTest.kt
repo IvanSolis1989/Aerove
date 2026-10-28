@@ -70,6 +70,7 @@ import androidx.compose.ui.test.printToString
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -659,7 +660,8 @@ class DashboardLayoutUiTest {
         val node = compose.onNodeWithTag("$tag-raw", useUnmergedTree = true)
         val results = mutableListOf<TextLayoutResult>()
         node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
-        val text = results.single()
+        val text = if (tag == "dashboard-status-organization-value")
+            fittedOrganizationLayout(results.single()) else results.single()
         val origin = node.fetchSemanticsNode().boundsInRoot.topLeft
         if (text.isLineEllipsized(0)) rasterParagraphInk(text).map { it.translate(origin) }
         else measuredWordInk(text, origin)
@@ -1132,16 +1134,53 @@ class DashboardLayoutUiTest {
     fun normal360ChineseRetainsFullHighRateAtFifteenPercentAndRecoversFooter() =
         assertFullHighRateAtFifteenPercentAndFooterRecovery("zh-CN")
 
+    private fun organizationTextLayout(): TextLayoutResult {
+        val results = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        return fittedOrganizationLayout(results.single())
+    }
+
+    private fun fittedOrganizationLayout(actual: TextLayoutResult): TextLayoutResult {
+        val input = actual.layoutInput
+        val measurer = androidx.compose.ui.text.TextMeasurer(input.fontFamilyResolver, input.density,
+            input.layoutDirection, cacheSize = 0)
+        // BasicText semantics replace the fitted style, but retain the actual paragraph and its full glyph advance.
+        val matches = (22..30).map { halfSp ->
+            measurer.measure(input.text, style = input.style.copy(fontSize = (halfSp / 2f).sp),
+                overflow = input.overflow, softWrap = input.softWrap, maxLines = input.maxLines,
+                constraints = input.constraints)
+        }.filter { candidate ->
+            kotlin.math.abs(candidate.multiParagraph.intrinsics.maxIntrinsicWidth -
+                actual.multiParagraph.intrinsics.maxIntrinsicWidth) < 0.01f
+        }
+        assertEquals("actual glyph advance must uniquely identify a bounded fitted size", 1, matches.size)
+        val fitted = matches.single()
+        assertEquals(actual.size, fitted.size)
+        assertEquals(actual.lineCount, fitted.lineCount)
+        for (line in 0 until actual.lineCount) {
+            assertEquals(actual.getLineBaseline(line), fitted.getLineBaseline(line), 0.01f)
+            assertEquals(actual.getLineLeft(line), fitted.getLineLeft(line), 0.01f)
+            assertEquals(actual.getLineRight(line), fitted.getLineRight(line), 0.01f)
+            assertEquals(actual.isLineEllipsized(line), fitted.isLineEllipsized(line))
+            val end = actual.getLineEnd(line, visibleEnd = true)
+            assertEquals(end, fitted.getLineEnd(line, visibleEnd = true))
+            for (offset in actual.getLineStart(line) until end)
+                assertEquals("actual glyph $offset", actual.getBoundingBox(offset), fitted.getBoundingBox(offset))
+        }
+        android.util.Log.i("DashboardOrganizationFit", "input=${input.style.fontSize} " +
+            "fitted=${fitted.layoutInput.style.fontSize} actualAdvance=${actual.multiParagraph.intrinsics.maxIntrinsicWidth} " +
+            "lines=${actual.lineCount} ellipsized=${actual.isLineEllipsized(0)}")
+        return actual.copy(layoutInput = fitted.layoutInput)
+    }
+
     @Test fun generatedEllipsisInkRejectsASpeedProbeInBothParagraphDirections() {
         val organization = "PT. Telekomunikasi Selular (Telkomsel) Indonesia"
         launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running),
             maxWidth = 360.dp, deviceDensity = 2.625f, language = "en",
             lookup = { IpQuality(it, IpQualitySource.IdentMe, IpType.Residential, organization = organization) })
         awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n$organization")
-        val layouts = mutableListOf<TextLayoutResult>()
-        compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true)
-            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-        val fitted = layouts.single().layoutInput
+        val fitted = organizationTextLayout().layoutInput
         assertEquals(11f, fitted.style.fontSize.value, 0.01f)
         val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             textSize = with(fitted.density) { fitted.style.fontSize.toPx() }
@@ -1221,10 +1260,9 @@ class DashboardLayoutUiTest {
             }
             awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n$organization")
             compose.waitForIdle()
-            val layouts = mutableListOf<TextLayoutResult>()
             compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true)
-                .assertTextEquals(organization).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
-            val text = layouts.single()
+                .assertTextEquals(organization)
+            val text = organizationTextLayout()
             assertEquals(1, text.lineCount)
             assertTrue("bounded autosize ${text.layoutInput.style}", text.layoutInput.style.fontSize.value in 11f..15f)
             if (index > 0) {
