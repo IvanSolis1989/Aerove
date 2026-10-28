@@ -659,7 +659,7 @@ void main() {
     expect(tester.takeException(), null);
   });
 
-  testWidgets('foreground gaps do not connect old and resumed samples', (
+  testWidgets('foreground gaps retain curves and resume at the latest sample', (
     tester,
   ) async {
     final container = await pump(
@@ -673,24 +673,47 @@ void main() {
         .read(trafficsProvider.notifier)
         .addTraffic(const Traffic(up: 1024, down: 4096));
     await tester.pump();
+    await tester.pump(fadeTabDuration);
     expect(find.byType(LineChart), findsNWidgets(4));
+    List<List<double>> values() => [
+      for (final chart in tester.widgetList<LineChart>(find.byType(LineChart)))
+        List<double>.of(chart.values),
+    ];
+    final held = values();
+    expect(
+      held,
+      unorderedEquals([
+        [1024.0],
+        [1024.0],
+        [4096.0],
+        [4096.0],
+      ]),
+    );
     container.read(appVisibleProvider.notifier).value = false;
     await tester.pump();
+    container
+        .read(trafficsProvider.notifier)
+        .addTraffic(const Traffic(up: 2048, down: 8192));
+    await tester.pump();
+    expect(values(), held);
+    expect(tester.binding.transientCallbackCount, 0);
     container.read(appVisibleProvider.notifier).value = true;
     await tester.pump();
-    // The lines come back flat at once, without the samples from before.
     expect(find.byType(LineChart), findsNWidgets(4));
+    final resumed = [
+      for (final series in held) [...series, series.single * 2],
+    ];
+    expect(values(), resumed);
     for (final chart in tester.widgetList<LineChart>(find.byType(LineChart))) {
-      expect(chart.values, isEmpty);
-      expect(chart.lift!.value, 0);
+      expect(chart.lift!.value, 1);
     }
     expect(tester.binding.transientCallbackCount, 0);
     container.read(trafficsProvider.notifier).addTraffic(const Traffic());
     await tester.pump();
-    expect(container.read(trafficsProvider).list.length, 2);
-    for (final chart in tester.widgetList<LineChart>(find.byType(LineChart))) {
-      expect(chart.values, [0]);
-    }
+    expect(container.read(trafficsProvider).list.length, 3);
+    expect(values(), [
+      for (final series in resumed) [...series, 0.0],
+    ]);
     expect(tester.takeException(), null);
   });
 
