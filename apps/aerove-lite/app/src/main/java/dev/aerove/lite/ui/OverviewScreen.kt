@@ -3,6 +3,8 @@ package dev.aerove.lite.ui
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -542,7 +544,7 @@ private fun StatusMetricText(text: String, tag: String, part: StatusMetricPart, 
 
 private val statusWordPattern = Regex("\\S+")
 
-private fun statusWordInk(text: String, paragraph: androidx.compose.ui.text.TextLayoutResult,
+internal fun statusWordInk(text: String, paragraph: androidx.compose.ui.text.TextLayoutResult,
     paint: android.graphics.Paint): List<Rect> = buildList {
     for (line in 0 until paragraph.lineCount) {
         val start = paragraph.getLineStart(line)
@@ -561,6 +563,16 @@ private fun statusWordInk(text: String, paragraph: androidx.compose.ui.text.Text
             val baseline = paragraph.getLineBaseline(line)
             add(Rect(minOf(left, left + ink.left), baseline + ink.top,
                 maxOf(right, left + ink.right), baseline + ink.bottom))
+        }
+        if (paragraph.isLineEllipsized(line)) {
+            // The generated end marker has no source substring; use its fitted glyph at the actual line edge.
+            val marker = "\u2026"
+            val markerInk = android.graphics.Rect().also { paint.getTextBounds(marker, 0, marker.length, it) }
+            val x = if (paragraph.getParagraphDirection(start) == androidx.compose.ui.text.style.ResolvedTextDirection.Rtl)
+                paragraph.getLineLeft(line) else paragraph.getLineRight(line) - paint.measureText(marker)
+            val baseline = paragraph.getLineBaseline(line)
+            if (!markerInk.isEmpty) add(Rect(x + markerInk.left, baseline + markerInk.top,
+                x + markerInk.right, baseline + markerInk.bottom))
         }
     }
 }
@@ -581,17 +593,30 @@ private fun StatusFooterText(text: String, part: StatusMetricPart, modifier: Mod
         }
     }
     val result = remember { arrayOfNulls<androidx.compose.ui.text.TextLayoutResult>(1) }
+    val organizationValue = part == StatusMetricPart.OrganizationValueInk
+    val textInk = if (text.codePoints().anyMatch { it in 0x1F000..0x1FAFF || it in 0x2600..0x27BF }) Modifier
+        else Modifier.liteInk(color, if (organizationValue) dev.aerove.lite.optics.AeroveInkRole.Section else dev.aerove.lite.optics.AeroveInkRole.Small)
     val tag = if (part == StatusMetricPart.OrganizationLabelInk) "dashboard-status-organization-label" else "dashboard-status-organization-value"
-    Layout(modifier = modifier.testTag(tag), content = { LiteText(text, Modifier.testTag("$tag-raw"), style = style, color = color, onTextLayout = { result[0] = it }) },
+    Layout(modifier = modifier.testTag(tag), content = {
+        BasicText(text, Modifier.testTag("$tag-raw").then(textInk),
+            style = style.copy(color = color, fontFamily = family), maxLines = 1, softWrap = false,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            autoSize = if (organizationValue) TextAutoSize.StepBased(minFontSize = 11.sp,
+                maxFontSize = style.fontSize, stepSize = 0.5.sp) else null,
+            onTextLayout = { result[0] = it })
+    },
         measurePolicy = object : MeasurePolicy {
         override fun MeasureScope.measure(measurables: List<Measurable>, constraints: Constraints): MeasureResult {
             val child = measurables.single().measure(constraints)
             val paragraph = checkNotNull(result[0])
-            ink[part] = statusWordInk(text, paragraph, paint)
+            paint.textSize = with(density) { paragraph.layoutInput.style.fontSize.toPx() }
+            ink[part] = statusWordInk(text, paragraph, paint).mapNotNull { word ->
+                word.intersect(Rect(0f, 0f, child.width.toFloat(), child.height.toFloat())).takeUnless { it.isEmpty }
+            }
             return layout(child.width, child.height, mapOf(part.bounds.left to 0, part.bounds.top to 0,
                 part.bounds.right to child.width, part.bounds.bottom to child.height)) { child.place(0, 0) }
         }
-        override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = measurables.single().minIntrinsicWidth(height)
+        override fun IntrinsicMeasureScope.minIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = if (organizationValue) 0 else measurables.single().minIntrinsicWidth(height)
         override fun IntrinsicMeasureScope.maxIntrinsicWidth(measurables: List<IntrinsicMeasurable>, height: Int) = measurables.single().maxIntrinsicWidth(height)
         override fun IntrinsicMeasureScope.minIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) = measurables.single().minIntrinsicHeight(width)
         override fun IntrinsicMeasureScope.maxIntrinsicHeight(measurables: List<IntrinsicMeasurable>, width: Int) = measurables.single().maxIntrinsicHeight(width)

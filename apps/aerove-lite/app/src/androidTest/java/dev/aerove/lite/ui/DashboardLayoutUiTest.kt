@@ -35,6 +35,8 @@ import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.graphics.toPixelMap
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
@@ -659,8 +661,32 @@ class DashboardLayoutUiTest {
         node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
         val text = results.single()
         val origin = node.fetchSemanticsNode().boundsInRoot.topLeft
-        measuredWordInk(text, origin)
+        if (text.isLineEllipsized(0)) rasterParagraphInk(text).map { it.translate(origin) }
+        else measuredWordInk(text, origin)
 
+    }
+
+    private fun rasterParagraphInk(text: TextLayoutResult): List<Rect> {
+        val input = text.layoutInput
+        val rendered = androidx.compose.ui.text.TextMeasurer(input.fontFamilyResolver, input.density,
+            input.layoutDirection, cacheSize = 0).measure(input.text, style = input.style,
+            overflow = input.overflow, softWrap = input.softWrap, maxLines = input.maxLines,
+            constraints = input.constraints)
+        val bitmap = Bitmap.createBitmap(rendered.size.width.coerceAtLeast(1), rendered.size.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        return try {
+            rendered.multiParagraph.paint(androidx.compose.ui.graphics.Canvas(android.graphics.Canvas(bitmap)), androidx.compose.ui.graphics.Color.Black)
+            buildList {
+                for (y in 0 until bitmap.height) {
+                    var x = 0
+                    while (x < bitmap.width) {
+                        while (x < bitmap.width && android.graphics.Color.alpha(bitmap.getPixel(x, y)) == 0) x++
+                        val start = x
+                        while (x < bitmap.width && android.graphics.Color.alpha(bitmap.getPixel(x, y)) != 0) x++
+                        if (x > start) add(Rect(start.toFloat(), y.toFloat(), x.toFloat(), y + 1f))
+                    }
+                }
+            }
+        } finally { bitmap.recycle() }
     }
 
     private fun trafficMeasurements(): String {
@@ -1106,15 +1132,108 @@ class DashboardLayoutUiTest {
     fun normal360ChineseRetainsFullHighRateAtFifteenPercentAndRecoversFooter() =
         assertFullHighRateAtFifteenPercentAndFooterRecovery("zh-CN")
 
-    @Test
-    fun normal360WrappedOrganizationRetainsOriginalTextAndIntrinsicBody() {
-        val organization = "Example International Telecommunications Organization"
-        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
+    @Test fun generatedEllipsisInkRejectsASpeedProbeInBothParagraphDirections() {
+        val organization = "PT. Telekomunikasi Selular (Telkomsel) Indonesia"
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running),
             maxWidth = 360.dp, deviceDensity = 2.625f, language = "en",
             lookup = { IpQuality(it, IpQualitySource.IdentMe, IpType.Residential, organization = organization) })
         awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n$organization")
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true)
+            .performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+        val fitted = layouts.single().layoutInput
+        assertEquals(11f, fitted.style.fontSize.value, 0.01f)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = with(fitted.density) { fitted.style.fontSize.toPx() }
+            typeface = fitted.fontFamilyResolver.resolve(fitted.style.fontFamily, fitted.style.fontWeight ?: FontWeight.Normal,
+                fitted.style.fontStyle ?: FontStyle.Normal, fitted.style.fontSynthesis ?: FontSynthesis.All).value as android.graphics.Typeface
+            fitted.style.localeList?.firstOrNull()?.let { textLocale = Locale.forLanguageTag(it.toLanguageTag()) }
+        }
+        val narrowWidth = ceil(paint.measureText("\u2026").toDouble()).toInt()
+        for (rtl in listOf(false, true)) {
+            val direction = if (rtl) androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr
+            val source = if (rtl) "חברת תקשורת בינלאומית ארוכה" else organization
+            val paragraph = androidx.compose.ui.text.TextMeasurer(fitted.fontFamilyResolver, fitted.density, direction, cacheSize = 0)
+                .measure(source, style = fitted.style.copy(textDirection = if (rtl) androidx.compose.ui.text.style.TextDirection.Rtl
+                    else androidx.compose.ui.text.style.TextDirection.Ltr), maxLines = 1, softWrap = false,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    constraints = androidx.compose.ui.unit.Constraints(maxWidth = narrowWidth))
+            assertTrue(paragraph.isLineEllipsized(0))
+            assertEquals("only the generated marker is visible", 0, paragraph.getLineEnd(0, visibleEnd = true))
+            val actualPixels = rasterParagraphInk(paragraph)
+            assertTrue("native paragraph must actually draw its marker", actualPixels.isNotEmpty())
+            val protected = statusWordInk(source, paragraph, paint)
+            actualPixels.forEach { row ->
+                for (x in row.left.toInt() until row.right.toInt()) assertTrue("rtl=$rtl marker pixel $x,$row lacks clearance: $protected",
+                    protected.any { it.contains(Offset(x + 0.5f, row.top + 0.5f)) })
+            }
+            val point = actualPixels.first().center
+            val speedProbe = Rect(point.x - 0.25f, point.y - 0.25f, point.x + 0.25f, point.y + 0.25f)
+            assertEquals("an actual marker pixel cannot be offered as an empty speed slot", null,
+                dashboardFooterOffsetX(0, 0, listOf(speedProbe), protected.map { DashboardClearance(it) }))
+        }
+    }
+
+    @Test fun actualStatusCardClipsBothChannelsAtItsBottomCornersAndFillsToTheBottom() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running,
+            trafficHistory = emptyList(), trafficHistoryRevision = 0),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en")
+        awaitOrganization("${localized("en").getString(R.string.lite_organization)}\nExample ISP")
+        compose.waitForIdle()
+        val host = compose.onRoot()
+        val hostBounds = host.fetchSemanticsNode().boundsInRoot
+        val card = statusRect("dashboard-status")
+        val before = host.captureToImage().toPixelMap()
+        compose.runOnUiThread {
+            state.value = state.value.copy(trafficHistory = List(30) { Traffic(8192, 4096) }, trafficHistoryRevision = 30)
+        }
+        compose.waitForIdle()
+        val after = host.captureToImage().toPixelMap()
+        val left = (card.left - hostBounds.left).roundToInt()
+        val right = (card.right - hostBounds.left).roundToInt() - 1
+        val bottom = (card.bottom - hostBounds.top).roundToInt() - 1
+        for (dx in 0..2) for (dy in 0..2) {
+            assertEquals("upload/download must leave the lower left outside the actual card unchanged",
+                before[left + dx, bottom - dy], after[left + dx, bottom - dy])
+            assertEquals("upload/download must leave the lower right outside the actual card unchanged",
+                before[right - dx, bottom - dy], after[right - dx, bottom - dy])
+        }
+        val center = (left + right) / 2
+        assertTrue("the real fill must reach the physical bottom behind the footer",
+            (1..3).any { before[center, bottom - it] != after[center, bottom - it] })
+    }
+
+    @Test
+    fun normal360LongOrganizationsStaySingleLineWithoutMovingFooterOrSpeed() {
+        val names = listOf("Example ISP", "PT. Telekomunikasi Selular (Telkomsel) Indonesia", "LEASEWEB SINGAPORE PTE. LTD.")
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en",
+            lookup = { address -> IpQuality(address, IpQualitySource.IdentMe, IpType.Residential,
+                organization = names[address.substringAfterLast('.').toInt() - 8]) })
+        awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n${names.first()}")
         addTrafficAndAssertOriginalForeground(expectedOverlay = true)
-        compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true).assertTextEquals(organization)
+        val anchored = listOf("dashboard-status", "dashboard-status-body", "dashboard-status-button",
+            "dashboard-status-uptime", "dashboard-status-traffic", "dashboard-upload-speed", "dashboard-download-speed")
+            .associateWith(::statusRect)
+        for ((index, organization) in names.withIndex()) {
+            if (index > 0) compose.runOnUiThread {
+                state.value = state.value.copy(outboundIdentity = state.value.outboundIdentity!!.copy(address = "198.51.100.${index + 8}"))
+            }
+            awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n$organization")
+            compose.waitForIdle()
+            val layouts = mutableListOf<TextLayoutResult>()
+            compose.onNodeWithTag("dashboard-status-organization-value-raw", useUnmergedTree = true)
+                .assertTextEquals(organization).performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val text = layouts.single()
+            assertEquals(1, text.lineCount)
+            assertTrue("bounded autosize ${text.layoutInput.style}", text.layoutInput.style.fontSize.value in 11f..15f)
+            if (index > 0) {
+                assertEquals(11f, text.layoutInput.style.fontSize.value, 0.01f)
+                assertTrue("long organization must ellipsize at the shared floor", text.isLineEllipsized(0))
+            }
+            anchored.forEach { (tag, rect) -> assertEquals("$organization $tag", rect, statusRect(tag)) }
+            addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+        }
     }
 
     @Test
