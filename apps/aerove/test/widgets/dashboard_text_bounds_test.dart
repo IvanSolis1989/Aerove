@@ -20,6 +20,7 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/dashboard/dashboard.dart';
+import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
@@ -98,9 +99,8 @@ Future<({ByteData rgba, Uint8List png, int width, int height})> _capture(
   try {
     return (
       rgba: (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!,
-      png: (await image.toByteData(
-        format: ui.ImageByteFormat.png,
-      ))!.buffer.asUint8List(),
+      png: (await image.toByteData(format: ui.ImageByteFormat.png))!.buffer
+          .asUint8List(),
       width: image.width,
       height: image.height,
     );
@@ -316,15 +316,12 @@ Future<List<Map<String, Object?>>> _measure(
   }
   if (output != null) {
     final directory = Directory(output)..createSync(recursive: true);
-    File(
-      '${directory.path}/dashboard-bounds-$name.png',
-    ).writeAsBytesSync(painted.png);
-    File(
-      '${directory.path}/dashboard-bounds-$name-background.png',
-    ).writeAsBytesSync(blank.png);
-    File(
-      '${directory.path}/dashboard-bounds-$name-mask.png',
-    ).writeAsBytesSync(maskPng!);
+    File('${directory.path}/dashboard-bounds-$name.png')
+        .writeAsBytesSync(painted.png);
+    File('${directory.path}/dashboard-bounds-$name-background.png')
+        .writeAsBytesSync(blank.png);
+    File('${directory.path}/dashboard-bounds-$name-mask.png')
+        .writeAsBytesSync(maskPng!);
     File(
       '${directory.path}/dashboard-bounds-$name.json',
     ).writeAsStringSync(const JsonEncoder.withIndent('  ').convert(geometry));
@@ -638,81 +635,128 @@ void main() {
       'DashboardBounds',
       if (_androidFontPath != null) _androidFont,
     ]) {
-      testWidgets('wrapped organization keeps descenders at DPR3 '
+      testWidgets('single-line organization keeps descenders at DPR3 '
           '${brightness.name} $family', (tester) async {
-        const organization = 'Telekomunikasi gjpqy Indonesia long organization';
+        const organization = 'gjpqy Telekomunikasi Indonesia long organization';
         Map<String, Object?>? nativeLayout;
         final samples = <Map<String, Object?>>[];
         final firstBaselines = <LiquidGlassMode, List<double>>{};
         for (final phase in [0.0, 1 / 3, 2 / 3]) {
           for (final mode in LiquidGlassMode.values) {
-            final capture = await _mountDashboard(
-              tester,
-              brightness: brightness,
-              mode: mode,
-              scale: 1,
-              width: 430,
-              pixelRatio: 3,
-              organization: organization,
-              fontFamily: family,
-              paintShift: Offset(0, phase / 3),
-            );
-            final paragraphFinder = _paragraphs(organization);
-            expect(paragraphFinder, findsOneWidget);
-            await tester.ensureVisible(paragraphFinder);
-            await tester.pumpAndSettle();
-            final paragraph = tester.renderObject<RenderParagraph>(
-              paragraphFinder,
-            );
-            final style = paragraph.text.style;
-            final layout = <String, Object?>{
-              'size': paragraph.size,
-              'fontFamily': style?.fontFamily,
-              'fontSize': style?.fontSize,
-              'height': style?.height,
-              'weight': style?.fontWeight,
-              'letterSpacing': style?.letterSpacing,
-              'maxLines': paragraph.maxLines,
-              'overflow': paragraph.overflow,
-            };
-            if (nativeLayout == null) {
-              nativeLayout = layout;
-            } else {
-              expect(
-                layout,
-                nativeLayout,
-                reason: 'Ink must preserve text layout',
+            Size? shortCard;
+            double? shortLineHeight;
+            for (final (name, value) in const [
+              ('short', 'gjpqy'),
+              ('shrink', 'gjpqy Telekomunikasi Selular'),
+              ('ellipsis', organization),
+            ]) {
+              final capture = await _mountDashboard(
+                tester,
+                brightness: brightness,
+                mode: mode,
+                scale: 1,
+                width: 430,
+                pixelRatio: 3,
+                organization: value,
+                fontFamily: family,
+                paintShift: Offset(0, phase / 3),
               );
-            }
-            final rows = await _measure(
-              tester,
-              capture.currentContext!.findRenderObject()!
-                  as RenderRepaintBoundary,
-              [paragraph],
-              'organization-descenders-${brightness.name}-${mode.name}-'
-              '$family-phase${phase.toStringAsFixed(3)}-dpr3',
-              pixelRatio: 3,
-            );
-            final baselines = rows.single['baselinesPhysical']! as List<double>;
-            expect(paragraph.maxLines, isNull);
-            expect(baselines.length, greaterThan(1));
-            if (phase == 0) {
-              firstBaselines[mode] = baselines;
-            } else {
-              final first = firstBaselines[mode]!;
-              expect(baselines, hasLength(first.length));
-              for (var line = 0; line < baselines.length; line++) {
-                expect(baselines[line], closeTo(first[line] + phase, 1e-6));
+              final valueFinder = _paragraphs(value);
+              expect(valueFinder, findsOneWidget);
+              await tester.ensureVisible(valueFinder);
+              await tester.pumpAndSettle();
+              final valueParagraph = tester.renderObject<RenderParagraph>(
+                valueFinder,
+              );
+              final card = tester.getSize(find.byType(CurrentOutboundCard));
+              shortCard ??= card;
+              shortLineHeight ??= valueParagraph.size.height;
+              expect(
+                card,
+                shortCard,
+                reason: '$name must not increase card height',
+              );
+              expect(
+                valueParagraph.size.height,
+                shortLineHeight,
+                reason: '$name must keep the original value line height',
+              );
+              expect(valueParagraph.maxLines, 1);
+              expect(valueParagraph.softWrap, isFalse);
+              expect(valueParagraph.overflow, TextOverflow.ellipsis);
+              final fontSize = valueParagraph.text.style!.fontSize!;
+              expect(fontSize, inInclusiveRange(11, 15));
+              expect(valueParagraph.didExceedMaxLines, name == 'ellipsis');
+              if (name == 'short') {
+                expect(fontSize, 15);
+              } else if (name == 'shrink') {
+                expect(fontSize, lessThan(15));
+              } else {
+                expect(fontSize, 11);
               }
+              if (name != 'ellipsis') {
+                await tester.pumpWidget(const SizedBox.shrink());
+                await tester.pump();
+                continue;
+              }
+              final paragraphFinder = _paragraphs(organization);
+              expect(paragraphFinder, findsOneWidget);
+              await tester.ensureVisible(paragraphFinder);
+              await tester.pumpAndSettle();
+              final paragraph = tester.renderObject<RenderParagraph>(
+                paragraphFinder,
+              );
+              final style = paragraph.text.style;
+              final layout = <String, Object?>{
+                'size': paragraph.size,
+                'fontFamily': style?.fontFamily,
+                'fontSize': style?.fontSize,
+                'height': style?.height,
+                'weight': style?.fontWeight,
+                'letterSpacing': style?.letterSpacing,
+                'maxLines': paragraph.maxLines,
+                'overflow': paragraph.overflow,
+              };
+              if (nativeLayout == null) {
+                nativeLayout = layout;
+              } else {
+                expect(
+                  layout,
+                  nativeLayout,
+                  reason: 'Ink must preserve text layout',
+                );
+              }
+              final rows = await _measure(
+                tester,
+                capture.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary,
+                [paragraph],
+                'organization-descenders-${brightness.name}-${mode.name}-'
+                '$family-phase${phase.toStringAsFixed(3)}-dpr3',
+                pixelRatio: 3,
+              );
+              final baselines =
+                  rows.single['baselinesPhysical']! as List<double>;
+              expect(paragraph.maxLines, 1);
+              expect(baselines, hasLength(1));
+              if (phase == 0) {
+                firstBaselines[mode] = baselines;
+              } else {
+                final first = firstBaselines[mode]!;
+                expect(baselines, hasLength(first.length));
+                for (var line = 0; line < baselines.length; line++) {
+                  expect(baselines[line], closeTo(first[line] + phase, 1e-6));
+                }
+              }
+              samples.add({'mode': mode.name, ...rows.single});
+              expect(tester.takeException(), isNull);
+              await tester.pumpWidget(const SizedBox.shrink());
+              await tester.pump();
             }
-            samples.add({'mode': mode.name, ...rows.single});
-            expect(tester.takeException(), isNull);
-            await tester.pumpWidget(const SizedBox.shrink());
-            await tester.pump();
           }
         }
         for (final sample in samples) {
-          expect(sample['ellipsis'], isFalse);
+          expect(sample['ellipsis'], isTrue);
           expect(sample['inkRows'], isNotEmpty);
           expect(sample['missingRows'], isEmpty, reason: '$sample');
           expect(sample['missingPoints'], isEmpty, reason: '$sample');
