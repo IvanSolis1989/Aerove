@@ -267,15 +267,16 @@ fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.int
                 LiteWallpaper(auroraTime, Modifier.fillMaxSize(), state.settings.auroraColors, state.settings.auroraSeed)
             }
             CompositionLocalProvider(LocalLiteDisplayStreams provides display, LocalLiteMotionActivity provides motionActivity, LocalLiteBackdrop provides wallpaper, LocalLiteInkBackdrop provides wallpaper, LocalLiteListState provides scroll, LocalLiteOverlay provides appearanceOverlay) {
-                val cardContent: @Composable (DashboardWidget) -> Unit = { widget ->
-                    DashboardCard(widget, state, actions, { tab = MainTab.Profiles },
+                val renderCard: @Composable (DashboardWidget, LiteState) -> Unit = { widget, cardState ->
+                    DashboardCard(widget, cardState, actions, { tab = MainTab.Profiles },
                         { detail = DetailPage.Connections }, { tab = MainTab.Proxies },
-                        serviceStatusContent = { DiagnosticsLeaf(state) { ServiceStatusPanel(it, actions) } },
-                        memoryInfoContent = { DiagnosticsLeaf(state) { MemoryInfoPanel(it, actions) } }, openProfileDetails = {
+                        serviceStatusContent = { DiagnosticsLeaf(cardState) { ServiceStatusPanel(it, actions) } },
+                        memoryInfoContent = { DiagnosticsLeaf(cardState) { MemoryInfoPanel(it, actions) } }, openProfileDetails = {
                             val selected = state.profiles.firstOrNull { it.id == state.selectedProfile }
                             if (selected?.custom == true) builderProfile = selected.id else if (selected != null) profileDetailOpen = true
                         }, openRequests = { detail = DetailPage.Requests }, openDns = { detail = DetailPage.DnsQueries })
                 }
+                val cardContent: @Composable (DashboardWidget) -> Unit = { widget -> renderCard(widget, state) }
                 CompositionLocalProvider(LocalDiagnosticsForeground provides
                     (resumed && windowFocused && !covered && !scanMounted && editorProfile == null && builderProfile == null && scriptEditing == null && !dashboardEditing),
                     LocalIpQualityRootForeground provides (resumed && windowFocused && !profileDetailOpen && !rootCovered && !scanMounted &&
@@ -355,7 +356,8 @@ fun LiteApp(state: LiteState, actions: LiteActions, display: dev.aerove.lite.int
                         }
                         if (dashboardEditing) {
                             Box(Modifier.fillMaxSize().safeDrawingPadding()) {
-                                DashboardEditor(state.settings, actions::changeSettings, { dashboardEditing = false }, cardContent = cardContent)
+                                DashboardEditor(state.settings, actions::changeSettings, { dashboardEditing = false },
+                                    draftCardContent = { widget, draft -> renderCard(widget, state.copy(settings = draft)) })
                             }
                         } else if (builderProfile != null) {
                             val id = builderProfile!!

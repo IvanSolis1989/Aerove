@@ -7,17 +7,50 @@ internal val DashboardStatusMembers = setOf(DashboardWidget.CurrentOutbound, Das
 internal val DashboardControlMembers = setOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp)
 internal val DashboardOverviewMembers = setOf(DashboardWidget.ServiceStatus, DashboardWidget.ConnectionStats)
 
-internal fun dashboardPresentationWidgets(saved: List<DashboardWidget>): List<DashboardWidget> {
-    val seen = mutableSetOf<Set<DashboardWidget>>()
-    return saved.distinct().filter { it != DashboardWidget.NetworkSpeed }.filter { widget ->
-        val group = when (widget) {
-            in DashboardStatusMembers -> DashboardStatusMembers
-            in DashboardControlMembers -> DashboardControlMembers
-            in DashboardOverviewMembers -> DashboardOverviewMembers
-            else -> setOf(widget)
-        }
-        seen.add(group)
+internal enum class DashboardFamily(val identity: DashboardWidget, val supported: Set<DashboardWidget>) {
+    Status(DashboardWidget.CurrentOutbound, setOf(DashboardWidget.CurrentOutbound)),
+    Controls(DashboardWidget.OutboundMode, DashboardControlMembers),
+    Overview(DashboardWidget.ServiceStatus, DashboardOverviewMembers),
+    Profiles(DashboardWidget.Profiles, setOf(DashboardWidget.Profiles)),
+    ProxyGroups(DashboardWidget.ProxyGroups, setOf(DashboardWidget.ProxyGroups)),
+    Memory(DashboardWidget.MemoryInfo, setOf(DashboardWidget.MemoryInfo)),
+}
+
+internal data class DashboardPresentationGroup(val family: DashboardFamily, val members: List<DashboardWidget>) {
+    val anchor get() = members.first()
+    val identity get() = family.identity
+}
+
+internal fun dashboardPresentationGroups(saved: List<DashboardWidget>): List<DashboardPresentationGroup> {
+    val groups = linkedMapOf<DashboardFamily, MutableList<DashboardWidget>>()
+    saved.distinct().forEach { widget ->
+        val family = DashboardFamily.entries.firstOrNull { widget in it.supported } ?: return@forEach
+        groups.getOrPut(family) { mutableListOf() }.add(widget)
     }
+    return groups.map { (family, members) -> DashboardPresentationGroup(family, members.toList()) }
+}
+
+internal fun dashboardPresentationWidgets(saved: List<DashboardWidget>): List<DashboardWidget> =
+    dashboardPresentationGroups(saved).map { it.anchor }
+
+internal fun dashboardAddableFamilies(saved: List<DashboardWidget>): List<DashboardFamily> =
+    DashboardFamily.entries.filter { family -> saved.none { it in family.supported } }
+
+internal fun dashboardHideFamily(saved: List<DashboardWidget>, family: DashboardFamily): List<DashboardWidget> =
+    if (family == DashboardFamily.Status) saved else saved.filterNot { it in family.supported }
+
+internal fun dashboardRestoreFamily(saved: List<DashboardWidget>, family: DashboardFamily): List<DashboardWidget> =
+    if (saved.any { it in family.supported }) saved else saved + family.supported
+
+internal fun dashboardMoveFamily(saved: List<DashboardWidget>, family: DashboardFamily,
+    target: DashboardFamily, after: Boolean): List<DashboardWidget> {
+    if (family == target) return saved
+    val members = saved.filter { it in family.supported }
+    if (members.isEmpty()) return saved
+    val remaining = saved.filterNot { it in family.supported }
+    val anchor = remaining.indexOfFirst { it in target.supported }
+    if (anchor < 0) return saved
+    return remaining.toMutableList().apply { addAll(anchor + if (after) 1 else 0, members) }
 }
 
 internal fun dashboardLanAddress(ip: String?, port: Int, allowLan: Boolean): String? {

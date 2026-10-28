@@ -8,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,9 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -68,12 +72,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
-private fun editorWidgets(items: List<DashboardWidget>): List<DashboardWidget> =
-    if (DashboardWidget.CurrentOutbound in items) items.distinct().filter { it != DashboardWidget.NetworkSpeed } else listOf(DashboardWidget.CurrentOutbound) + items.distinct().filter { it != DashboardWidget.NetworkSpeed }
-
-private fun List<DashboardWidget>.move(from: Int, to: Int): List<DashboardWidget> = toMutableList().apply {
-    if (from in indices && to in indices && from != to) add(to, removeAt(from))
-}
+private fun editorWidgets(items: List<DashboardWidget>): List<DashboardWidget> = items.toList()
 
 private val DashboardEditorBadgeCorner = 14.dp
 
@@ -84,13 +83,21 @@ fun DashboardEditor(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
     cardContent: (@Composable (DashboardWidget) -> Unit)? = null,
+    draftCardContent: (@Composable (DashboardWidget, LiteSettings) -> Unit)? = null,
 ) {
+    val focusManager = LocalFocusManager.current
+    DisposableEffect(focusManager) {
+        focusManager.clearFocus(force = true)
+        onDispose {}
+    }
     val current by rememberUpdatedState(settings)
     var names by rememberSaveable { mutableStateOf(editorWidgets(settings.dashboardWidgets).map { it.wireName }.toTypedArray()) }
-    val shown = names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } }
-    val addable = DashboardWidget.entries.filter { it !in shown && it != DashboardWidget.NetworkSpeed }
+    val raw = names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } }
+    val shown = dashboardPresentationGroups(raw)
+    val addable = dashboardAddableFamilies(raw)
+    val draft = current.copy(dashboardWidgets = raw)
     val list = rememberLazyListState()
-    var dragging by remember { mutableStateOf<DashboardWidget?>(null) }
+    var dragging by remember { mutableStateOf<DashboardFamily?>(null) }
     var origin by remember { mutableFloatStateOf(0f) }
     var distance by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
@@ -104,18 +111,26 @@ fun DashboardEditor(
         0f, 1f, infiniteRepeatable(tween(3600, easing = LinearEasing), RepeatMode.Restart), label = "dashboardSway",
     ) else remember { mutableStateOf(0f) }
 
-    fun update(items: List<DashboardWidget>) { names = editorWidgets(items).map { it.wireName }.toTypedArray() }
+    fun update(items: List<DashboardWidget>) {
+        if (items == names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } }) return
+        names = editorWidgets(items).map { it.wireName }.toTypedArray()
+        onChanged(current.copy(dashboardWidgets = items))
+    }
+    fun move(family: DashboardFamily, target: DashboardFamily, after: Boolean) {
+        update(dashboardMoveFamily(names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } }, family, target, after))
+    }
     fun stopDrag() { dragging = null; distance = 0f }
     fun reorderHeld() {
         val held = dragging ?: return
+        val groups = dashboardPresentationGroups(names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } })
         val visible = list.layoutInfo.visibleItemsInfo
-        val info = visible.find { it.key == held.wireName } ?: return
+        val info = visible.find { it.key == held.identity.wireName } ?: return
         val center = origin + distance + info.size / 2f
-        val target = visible.filter { candidate -> names.any { it == candidate.key } }
+        val target = visible.filter { candidate -> groups.any { it.identity.wireName == candidate.key } }
             .minByOrNull { abs(center - it.offset - it.size / 2f) } ?: return
-        val from = names.indexOf(held.wireName)
-        val to = names.indexOf(target.key)
-        if (from >= 0 && to >= 0 && from != to) update(names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } }.move(from, to))
+        val from = groups.indexOfFirst { it.family == held }
+        val to = groups.indexOfFirst { it.identity.wireName == target.key }
+        if (from >= 0 && to >= 0 && from != to) move(held, groups[to].family, to > from)
     }
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, _ ->
@@ -127,7 +142,7 @@ fun DashboardEditor(
     }
     LaunchedEffect(dragging) {
         if (dragging != null) snapshotFlow {
-            list.layoutInfo.visibleItemsInfo.find { it.key == dragging?.wireName }?.let { held ->
+            list.layoutInfo.visibleItemsInfo.find { it.key == dragging?.identity?.wireName }?.let { held ->
                 val top = origin + distance
                 val bottom = top + held.size
                 when {
@@ -148,24 +163,21 @@ fun DashboardEditor(
     Column(modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            LiteIconButton(stringResource(R.string.lite_cancel), FullGlyphs.close, onClose)
+            LiteIconButton(stringResource(R.string.lite_back), FullGlyphs.close, onClose)
             LiteText(stringResource(R.string.lite_dashboard_edit), Modifier.weight(1f), style = LiteType.Title)
-            LiteIconButton(stringResource(R.string.lite_confirm), FullGlyphs.check, {
-                val selected = editorWidgets(names.mapNotNull { name -> DashboardWidget.entries.find { it.wireName == name } })
-                if (selected != current.dashboardWidgets) onChanged(current.copy(dashboardWidgets = selected))
-                onClose()
-            })
+            LiteIconButton(stringResource(R.string.lite_confirm), FullGlyphs.check, onClose)
         }
         LazyColumn(Modifier.weight(1f).testTag("dashboard-editor"), state = list,
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
             userScrollEnabled = dragging == null) {
-            itemsIndexed(shown, key = { _, item -> item.wireName }) { index, item ->
+            itemsIndexed(shown, key = { _, group -> group.identity.wireName }) { index, group ->
+                val item = group.identity
                 val title = dashboardEditorLabel(item)
                 val position = stringResource(R.string.lite_dashboard_position, index + 1, shown.size)
                 val required = stringResource(R.string.lite_dashboard_required)
                 val up = stringResource(R.string.lite_dashboard_move_up)
                 val down = stringResource(R.string.lite_dashboard_move_down)
-                val held = dragging == item
+                val held = dragging == group.family
                 val turn = item.ordinal * 1.7
                 val swings = when (item.ordinal % 3) { 0 -> 6; 1 -> 7; else -> 5 }
                 val motion = Modifier.graphicsLayer {
@@ -184,11 +196,18 @@ fun DashboardEditor(
                         contentDescription = title
                         stateDescription = if (item == DashboardWidget.CurrentOutbound) "$required; $position" else position
                         customActions = buildList {
-                            if (index > 0) add(CustomAccessibilityAction(up) { update(shown.move(index, index - 1)); true })
-                            if (index < shown.lastIndex) add(CustomAccessibilityAction(down) { update(shown.move(index, index + 1)); true })
+                            if (index > 0) add(CustomAccessibilityAction(up) { move(group.family, shown[index - 1].family, false); true })
+                            if (index < shown.lastIndex) add(CustomAccessibilityAction(down) { move(group.family, shown[index + 1].family, true); true })
                         }
                     }) {
-                    if (cardContent != null) Box(Modifier.fillMaxWidth().clearAndSetSemantics {}) { CompositionLocalProvider(LocalDashboardFusion provides false) { cardContent(item) } }
+                    if (cardContent != null || draftCardContent != null) Box(Modifier.fillMaxWidth().clearAndSetSemantics {}
+                        .onPreviewKeyEvent { true }
+                        .focusProperties { onEnter = { cancelFocusChange() } }.focusGroup()) {
+                        CompositionLocalProvider(LocalDashboardFusion provides true, LocalDiagnosticsForeground provides false,
+                            LocalIpQualityRootForeground provides false) {
+                            if (draftCardContent != null) draftCardContent(group.anchor, draft) else cardContent?.invoke(group.anchor)
+                        }
+                    }
                     else LitePane(Modifier.fillMaxWidth()) {
                         Row(Modifier.fillMaxWidth().defaultMinSize(minHeight = 64.dp).padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -201,7 +220,7 @@ fun DashboardEditor(
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 val info = list.layoutInfo.visibleItemsInfo.find { it.key == item.wireName }
-                                if (info != null) { origin = info.offset.toFloat(); distance = 0f; dragging = item }
+                                if (info != null) { origin = info.offset.toFloat(); distance = 0f; dragging = group.family }
                             }, onDragEnd = ::stopDrag, onDragCancel = ::stopDrag,
                             onDrag = { change, delta -> change.consume(); distance += delta.y; reorderHeld() },
                         )
@@ -209,7 +228,7 @@ fun DashboardEditor(
                     if (item != DashboardWidget.CurrentOutbound) {
                         val remove = stringResource(R.string.lite_dashboard_remove, title)
                         LitePane(Modifier.align(Alignment.TopEnd).size(28.dp)
-                            .semantics { contentDescription = remove }.clickable(role = Role.Button) { update(shown - item) },
+                            .semantics { contentDescription = remove }.clickable(role = Role.Button) { update(dashboardHideFamily(raw, group.family)) },
                             corner = LiteCorner.Full, solidColor = androidx.compose.material3.MaterialTheme.colorScheme.errorContainer) {
                             LiteIcon(DashboardEditorGlyphs.remove, Modifier.align(Alignment.Center), androidx.compose.material3.MaterialTheme.colorScheme.onErrorContainer, size = 16.dp)
                         }
@@ -221,7 +240,8 @@ fun DashboardEditor(
                     LiteText(stringResource(R.string.lite_dashboard_addable), Modifier.padding(start = 8.dp, end = 8.dp, top = 18.dp, bottom = 10.dp),
                         style = LiteType.Footnote.copy(fontWeight = FontWeight.SemiBold), color = LocalLiteVisuals.current.secondaryInk)
                 }
-                itemsIndexed(addable, key = { _, item -> "add-${item.wireName}" }) { _, item ->
+                itemsIndexed(addable, key = { _, family -> "add-${family.identity.wireName}" }) { _, family ->
+                    val item = family.identity
                     val title = dashboardEditorLabel(item)
                     val description = when (item) {
                         DashboardWidget.ConnectionStats -> stringResource(R.string.lite_dashboard_connection_stats_description)
@@ -235,7 +255,7 @@ fun DashboardEditor(
                         Row(Modifier.fillMaxWidth().height(64.dp).padding(start = 12.dp, end = 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             LitePane(Modifier.size(28.dp).semantics { contentDescription = add }
-                                .clickable(role = Role.Button) { update(shown + item) }, corner = LiteCorner.Full, solidColor = colors.primary) {
+                                .clickable(role = Role.Button) { update(dashboardRestoreFamily(raw, family)) }, corner = LiteCorner.Full, solidColor = colors.primary) {
                                 LiteIcon(FullGlyphs.add, Modifier.align(Alignment.Center), colors.onPrimary, size = 16.dp)
                             }
                             LitePane(Modifier.size(40.dp), corner = DashboardEditorBadgeCorner) {

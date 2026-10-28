@@ -104,18 +104,18 @@ class DashboardEditorTest {
         compose.onNodeWithTag("dashboard-layout").assertIsDisplayed()
         compose.onNodeWithTag("dashboard-card-networkSpeed").assertDoesNotExist()
         compose.onNodeWithTag("dashboard-upload-speed").assertIsDisplayed()
-        assertEquals(listOf(DashboardWidget.CurrentOutbound), root.value.settings.dashboardWidgets)
-        assertEquals(1, actions.settings.size)
+        assertEquals(listOf(DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed), root.value.settings.dashboardWidgets)
+        assertEquals(0, actions.settings.size)
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_edit)).performClick()
         compose.onNodeWithTag("dashboard-editor").assertIsDisplayed()
         compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }
         compose.onNodeWithTag("dashboard-layout").assertIsDisplayed()
-        assertEquals(1, actions.settings.size)
+        assertEquals(0, actions.settings.size)
         assertTrue(actions.events.none { it == "connect" || it == "disconnect" })
     }
 
     @Test
-    fun legacySpeedTypeIsExcludedAndOnlyConfirmedLayoutChangesSurviveRecreation() {
+    fun legacySpeedIsExcludedAndEachGroupOperationSurvivesRecreation() {
         val original = LiteSettings(aurora = false)
         runBlocking(Dispatchers.IO) { store.save(original) }
         assertEquals(10, DashboardWidget.entries.size)
@@ -126,35 +126,35 @@ class DashboardEditorTest {
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_add, context.getString(R.string.lite_dashboard_memory))).performClick()
         scroll("dashboard-row-memoryInfo")
         moveUp("dashboard-row-memoryInfo")
-        assertEquals(0, writes)
-        assertEquals(original, read())
+        assertEquals(2, writes)
+        assertEquals(settings.value, read())
         compose.runOnUiThread { settings.value = settings.value.copy(auroraSeed = 812893891) }
+        moveUp("dashboard-row-memoryInfo")
         confirm()
-        val expected = (original.dashboardWidgets - DashboardWidget.NetworkSpeed).toMutableList().apply {
-            add(size - 1, DashboardWidget.MemoryInfo)
-        }
+        val expected = dashboardMoveFamily(original.dashboardWidgets + DashboardWidget.MemoryInfo,
+            DashboardFamily.Memory, DashboardFamily.Profiles, after = false)
         assertEquals(expected, read().dashboardWidgets)
         assertEquals(812893891L, read().auroraSeed)
-        assertEquals(1, writes)
+        assertEquals(3, writes)
         compose.activityRule.scenario.recreate()
         launch(read(), "recreated")
         scroll("dashboard-row-memoryInfo")
         compose.onNodeWithTag("dashboard-row-memoryInfo").assertIsDisplayed()
         compose.onNodeWithTag("dashboard-add-networkSpeed").assertDoesNotExist()
         assertEquals(expected, read().dashboardWidgets)
-        assertEquals(1, writes)
+        assertEquals(3, writes)
     }
 
     @Test
-    fun cancelDiscardsTheDraftWithoutWritingTheSettings() {
+    fun backKeepsTheImmediatelySavedGroupOperation() {
         val original = LiteSettings(aurora = false)
         runBlocking(Dispatchers.IO) { store.save(original) }
         launch(original, "cancel")
         scroll("dashboard-add-memoryInfo")
         compose.onNodeWithContentDescription(context.getString(R.string.lite_dashboard_add, context.getString(R.string.lite_dashboard_memory))).performClick()
-        compose.onNodeWithContentDescription(context.getString(R.string.lite_cancel)).performClick()
-        assertEquals(original, read())
-        assertEquals(0, writes)
+        compose.onNodeWithContentDescription(context.getString(R.string.lite_back)).performClick()
+        assertEquals(original.copy(dashboardWidgets = original.dashboardWidgets + DashboardWidget.MemoryInfo), read())
+        assertEquals(1, writes)
     }
 
     @Test
@@ -167,7 +167,7 @@ class DashboardEditorTest {
     }
 
     @Test
-    fun longPressDragChangesOrderBeforeOneConfirmationWrite() {
+    fun longPressDragSavesTheWholeGroupBeforeDone() {
         val legacy = LiteSettings(aurora = false, dashboardWidgets = listOf(
             DashboardWidget.CurrentOutbound, DashboardWidget.NetworkSpeed, DashboardWidget.OutboundMode,
             DashboardWidget.ServiceStatus, DashboardWidget.ConnectionStats,
@@ -187,8 +187,7 @@ class DashboardEditorTest {
         val moved = compose.onNodeWithTag("dashboard-row-outboundMode").fetchSemanticsNode().boundsInRoot
         val current = compose.onNodeWithTag("dashboard-row-currentOutbound").fetchSemanticsNode().boundsInRoot
         assertTrue("The actual long-pressed row must move above the status row", moved.top < current.top)
-        assertEquals(0, writes)
-        assertEquals(initialSnapshot.dashboardWidgets, read().dashboardWidgets)
+        assertTrue(writes > 0)
         confirm()
         val expectedWidgets = listOf(DashboardWidget.OutboundMode, DashboardWidget.CurrentOutbound,
             DashboardWidget.ServiceStatus, DashboardWidget.ConnectionStats)

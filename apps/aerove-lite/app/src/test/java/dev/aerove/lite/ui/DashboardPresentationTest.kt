@@ -58,4 +58,39 @@ class DashboardPresentationTest {
         assertTrue((current.upload + current.download).all { it.y in 0f..1f })
     }
 
-}
+    @Test fun fusedFamiliesKeepStableIdentityAndOrderedPartialMembers() {
+        val raw = listOf(DashboardWidget.IntranetIp, DashboardWidget.Profiles, DashboardWidget.ConnectionStats,
+            DashboardWidget.VpnButton, DashboardWidget.MemoryInfo, DashboardWidget.ServiceStatus)
+        val groups = dashboardPresentationGroups(raw)
+        assertEquals(listOf(DashboardFamily.Controls, DashboardFamily.Profiles, DashboardFamily.Overview, DashboardFamily.Memory), groups.map { it.family })
+        assertEquals(DashboardWidget.OutboundMode, groups.first().identity)
+        assertEquals(DashboardWidget.IntranetIp, groups.first().anchor)
+        assertEquals(listOf(DashboardWidget.IntranetIp, DashboardWidget.VpnButton), groups.first().members)
+        assertEquals(listOf(DashboardWidget.ConnectionStats, DashboardWidget.ServiceStatus), groups[2].members)
+        assertEquals(groups.map { it.anchor }, dashboardPresentationWidgets(raw))
+        assertFalse(DashboardFamily.Controls in dashboardAddableFamilies(raw))
+        assertFalse(DashboardFamily.Overview in dashboardAddableFamilies(raw))
+    }
+    @Test fun movingOneFamilyPreservesOtherRawOrderingAndDoesNotFillPartialGroups() {
+        val raw = listOf(DashboardWidget.IntranetIp, DashboardWidget.Profiles, DashboardWidget.VpnButton,
+            DashboardWidget.ConnectionStats, DashboardWidget.MemoryInfo, DashboardWidget.ServiceStatus)
+        assertEquals(listOf(DashboardWidget.Profiles, DashboardWidget.ConnectionStats, DashboardWidget.IntranetIp,
+            DashboardWidget.VpnButton, DashboardWidget.MemoryInfo, DashboardWidget.ServiceStatus),
+            dashboardMoveFamily(raw, DashboardFamily.Controls, DashboardFamily.Overview, after = true))
+        assertEquals(raw, dashboardMoveFamily(raw, DashboardFamily.Controls, DashboardFamily.Controls, after = true))
+        assertEquals(raw, dashboardMoveFamily(raw, DashboardFamily.Controls, DashboardFamily.Status, after = true))
+        assertFalse(DashboardWidget.OutboundMode in dashboardMoveFamily(raw, DashboardFamily.Controls, DashboardFamily.Memory, after = true))
+    }
+    @Test fun explicitRestoreAddsCompleteFamilyWhileUntouchedPartialGroupsStayPartial() {
+        val raw = listOf(DashboardWidget.IntranetIp, DashboardWidget.MemoryInfo, DashboardWidget.ConnectionStats)
+        val hidden = dashboardHideFamily(raw, DashboardFamily.Controls)
+        assertEquals(listOf(DashboardWidget.MemoryInfo, DashboardWidget.ConnectionStats), hidden)
+        assertEquals(1, dashboardAddableFamilies(hidden).count { it == DashboardFamily.Controls })
+        assertEquals(hidden + listOf(DashboardWidget.OutboundMode, DashboardWidget.VpnButton, DashboardWidget.IntranetIp),
+            dashboardRestoreFamily(hidden, DashboardFamily.Controls))
+        assertEquals(raw, dashboardRestoreFamily(raw, DashboardFamily.Controls))
+        assertEquals(raw, dashboardHideFamily(raw, DashboardFamily.Status))
+        assertEquals(emptyList<DashboardWidget>(), dashboardPresentationWidgets(emptyList()))
+        assertTrue(DashboardFamily.entries.none { DashboardWidget.NetworkSpeed in it.supported })
+        assertEquals(listOf(DashboardWidget.ConnectionStats), dashboardPresentationGroups(raw).first { it.family == DashboardFamily.Overview }.members)
+    }}
