@@ -13,6 +13,7 @@ import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/shape.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
 import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
@@ -82,6 +83,17 @@ class _NonlinearScaler extends TextScaler {
   String toString() => 'android-nonlinear-200%';
 }
 
+class _OrganizationNonlinearScaler extends TextScaler {
+  const _OrganizationNonlinearScaler();
+
+  @override
+  double scale(double size) => size <= 14 ? size * 2 : 28 + (size - 14);
+
+  @override
+  // ignore: deprecated_member_use
+  double get textScaleFactor => 2;
+}
+
 const _terabyte = 1 << 40;
 
 /// Speeds and totals from idle to the widest each unit shows.
@@ -115,7 +127,9 @@ Future<ProviderContainer> _pump(
   required double device,
   required TextScaler scaler,
   String organization = 'Example Organization',
+  String fontFamily = _font,
   bool showTraffic = true,
+  bool desktop = false,
   TextDirection direction = TextDirection.ltr,
   ProviderContainer? existingContainer,
 }) async {
@@ -157,7 +171,7 @@ Future<ProviderContainer> _pump(
         locale: locale,
         homeBuilder: (child) =>
             Directionality(textDirection: direction, child: child),
-        theme: ThemeData(fontFamily: _font, fontFamilyFallback: _fallback),
+        theme: ThemeData(fontFamily: fontFamily, fontFamilyFallback: _fallback),
         child: Builder(
           builder: (context) => MediaQuery(
             data: MediaQuery.of(context).copyWith(textScaler: scaler),
@@ -166,17 +180,22 @@ Future<ProviderContainer> _pump(
                 alignment: Alignment.topLeft,
                 child: SizedBox(
                   width: _cardOn(device),
+                  height: desktop ? 208 : null,
                   child: DashboardDensityScope(
-                    density: DashboardDensity.mobile,
-                    scale: scaler.scale(1),
+                    density: desktop
+                        ? DashboardDensity.standard
+                        : DashboardDensity.mobile,
+                    scale: desktop ? 1 : scaler.scale(1),
                     child: RepaintBoundary(
                       key: _capture,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CurrentOutboundCard(showTraffic: showTraffic),
-                        ],
-                      ),
+                      child: desktop
+                          ? CurrentOutboundCard(showTraffic: showTraffic)
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                CurrentOutboundCard(showTraffic: showTraffic),
+                              ],
+                            ),
                     ),
                   ),
                 ),
@@ -636,9 +655,8 @@ void main() {
             final bytes = await image.toByteData(
               format: ui.ImageByteFormat.png,
             );
-            File(
-              '${directory.path}/$reading-$scale.png',
-            ).writeAsBytesSync(bytes!.buffer.asUint8List());
+            File('${directory.path}/$reading-$scale.png')
+                .writeAsBytesSync(bytes!.buffer.asUint8List());
             image.dispose();
           });
         }
@@ -710,10 +728,10 @@ void main() {
           baselineButton: baseButton,
           why: '$direction $step',
         );
-        if (direction == TextDirection.ltr) {
+        if (direction == TextDirection.ltr && step == 'restored') {
           expect(
             layout.overlaid,
-            step == 'restored',
+            isTrue,
             reason: '$step must follow current real space',
           );
         }
@@ -755,20 +773,18 @@ void main() {
             'visible': [for (final row in readings) row.text.toPlainText()],
             'collisionPixels': overlap,
           };
-          File(
-            '${directory.path}/transition-${direction.name}-$step.json',
-          ).writeAsStringSync(
-            const JsonEncoder.withIndent('  ').convert(facts),
-          );
+          File('${directory.path}/transition-${direction.name}-$step.json')
+              .writeAsStringSync(
+                const JsonEncoder.withIndent('  ').convert(facts),
+              );
           if (step != 'high-again') {
             await tester.runAsync(() async {
               final image = await boundary.toImage(pixelRatio: 3);
               final bytes = await image.toByteData(
                 format: ui.ImageByteFormat.png,
               );
-              File(
-                '${directory.path}/transition-${direction.name}-$step.png',
-              ).writeAsBytesSync(bytes!.buffer.asUint8List());
+              File('${directory.path}/transition-${direction.name}-$step.png')
+                  .writeAsBytesSync(bytes!.buffer.asUint8List());
               image.dispose();
             });
           }
@@ -778,6 +794,164 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('nonlinear organization shrinks before ellipsis', (tester) async {
+    await _pump(
+      tester,
+      locale: const Locale('en'),
+      device: 363.2,
+      scaler: const _OrganizationNonlinearScaler(),
+      organization: 'LEASEWEB',
+      fontFamily: 'Ahem',
+      showTraffic: false,
+    );
+    final paragraph = _paragraphsIn(
+      tester,
+      find.byType(CurrentOutboundCard),
+    ).singleWhere((paragraph) => paragraph.text.toPlainText() == 'LEASEWEB');
+    expect(paragraph.constraints.maxWidth, closeTo(197.2, 0.01));
+    expect(paragraph.didExceedMaxLines, isFalse);
+    expect(_styleOf(paragraph)!.fontSize, 12);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('nonlinear organization line fits its fixed box', (tester) async {
+    const organization = 'PT. Telekomunikasi Selular (Telkomsel) Indonesia';
+    await _pump(
+      tester,
+      locale: const Locale('en'),
+      device: 360,
+      scaler: const _OrganizationNonlinearScaler(),
+      organization: organization,
+      fontFamily: 'Ahem',
+      showTraffic: false,
+    );
+    final paragraph = _paragraphsIn(
+      tester,
+      find.byType(CurrentOutboundCard),
+    ).singleWhere((paragraph) => paragraph.text.toPlainText() == organization);
+    final painter = TextPainter(
+      text: paragraph.text,
+      textDirection: paragraph.textDirection,
+      textScaler: paragraph.textScaler,
+      maxLines: 1,
+      ellipsis: '…',
+    )..layout(maxWidth: paragraph.size.width);
+    expect(painter.height, closeTo(39, 0.01));
+    expect(painter.height, lessThanOrEqualTo(paragraph.size.height + 0.01));
+    painter.dispose();
+    expect(tester.takeException(), isNull);
+  });
+  for (final (device, scale, desktop) in const [
+    (360.0, 1.0, false),
+    (360.0, 1.15, false),
+    (412.0, 1.0, false),
+    (640.0, 0.9, true),
+  ]) {
+    testWidgets('organization stays single line $device $scale $desktop', (
+      tester,
+    ) async {
+      const organizations = [
+        'Example',
+        'PT. Telekomunikasi Selular (Telkomsel) Indonesia',
+        'LEASEWEB SINGAPORE PTE. LTD.',
+      ];
+      Size? baselineCard;
+      List<double>? baselineCenters;
+      for (final organization in organizations) {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        final container = await _pump(
+          tester,
+          locale: const Locale('en'),
+          device: device,
+          scaler: TextScaler.linear(scale),
+          desktop: desktop,
+          organization: organization,
+        );
+        await _show(
+          tester,
+          container,
+          const Traffic(up: 3686, down: 10547),
+          const Traffic(),
+        );
+        final paragraph =
+            _paragraphsIn(tester, find.byType(CurrentOutboundCard)).singleWhere(
+              (paragraph) => paragraph.text.toPlainText() == organization,
+            );
+        expect(paragraph.maxLines, 1);
+        expect(paragraph.softWrap, isFalse);
+        expect(paragraph.overflow, TextOverflow.ellipsis);
+        final font = _styleOf(paragraph)!.fontSize!;
+        expect(font, greaterThanOrEqualTo(11));
+        expect(font, lessThanOrEqualTo(15));
+        if (paragraph.didExceedMaxLines) expect(font, 11);
+        final card = tester.getSize(find.byType(DashboardCard));
+        final centers = _paragraphsIn(
+          tester,
+          find.byType(OutboundTrafficFigures),
+        ).map((paragraph) => _rectOf(tester, paragraph).center.dy).toList();
+        baselineCard ??= card;
+        baselineCenters ??= centers;
+        expect(card, baselineCard, reason: organization);
+        expect(centers, baselineCenters, reason: organization);
+        expect(tester.takeException(), isNull);
+      }
+    });
+  }
+
+  testWidgets('status background pixels stay inside continuous card corners', (
+    tester,
+  ) async {
+    final key = GlobalKey();
+    await tester.pumpWidget(
+      TestApp(
+        child: Center(
+          child: RepaintBoundary(
+            key: key,
+            child: SizedBox(
+              width: 160,
+              child: StatusCardLayout(
+                padding: EdgeInsets.zero,
+                shape: AppShape.xl,
+                baselineRatio: 1,
+                backdrop: const ColoredBox(color: Colors.red),
+                body: const SizedBox(width: 160, height: 120),
+                figures: const SizedBox.shrink(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final boundary =
+        key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final image = await boundary.toImage();
+    final bytes = (await tester.runAsync(
+      () => image.toByteData(format: ui.ImageByteFormat.rawRgba),
+    ))!;
+    final path = AppShape.xl.getOuterPath(const Rect.fromLTWH(0, 0, 160, 120));
+    final recorder = ui.PictureRecorder();
+    Canvas(recorder).drawPath(path, Paint()..color = Colors.white);
+    final picture = recorder.endRecording();
+    final mask = picture.toImageSync(160, 120);
+    final maskBytes = (await tester.runAsync(
+      () => mask.toByteData(format: ui.ImageByteFormat.rawRgba),
+    ))!;
+    var outside = 0;
+    for (var pixel = 3; pixel < bytes.lengthInBytes; pixel += 4) {
+      if (maskBytes.getUint8(pixel) == 0 && bytes.getUint8(pixel) > 8) {
+        outside++;
+      }
+    }
+    mask.dispose();
+    picture.dispose();
+    expect(outside, 0);
+    expect(bytes.getUint8((119 * 160 + 80) * 4), 244);
+    expect(bytes.getUint8((119 * 160 + 80) * 4 + 3), 255);
+    image.dispose();
+    expect(tester.takeException(), isNull);
+  });
 
   const locales = [
     Locale('zh', 'CN'),

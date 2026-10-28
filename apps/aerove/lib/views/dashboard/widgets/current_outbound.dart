@@ -873,9 +873,7 @@ class _Cells extends StatelessWidget {
   }
 }
 
-/// The run time and the organization side by side while the run time and
-/// the organization's longest word fit, one under the other otherwise or
-/// when [stacked]; neither is ever squeezed or cut.
+/// Keeps the footer geometry independent of the organization's length.
 class _CellLine extends MultiChildRenderObjectWidget {
   const _CellLine({
     required this.gap,
@@ -955,9 +953,7 @@ class _RenderCellLine extends RenderBox
     }
     final width = constraints.maxWidth;
     final start = first.getMaxIntrinsicWidth(double.infinity);
-    final beside =
-        !_stacked &&
-        start + _gap + second.getMinIntrinsicWidth(double.infinity) <= width;
+    final beside = !_stacked && start + _gap < width;
     if (beside) {
       first.layout(BoxConstraints(maxWidth: start), parentUsesSize: true);
       second.layout(
@@ -1020,7 +1016,44 @@ class _CellText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GlassText(text, style: _cellStyle(context));
+    final style = _cellStyle(context);
+    final size = style.fontSize!;
+    final scaler = MediaQuery.textScalerOf(context);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: scaler,
+          maxLines: 1,
+        )..layout();
+        final lineHeight = painter.height;
+        var fitted = size;
+        for (var candidate = size; candidate >= 11; candidate -= 0.5) {
+          painter.text = TextSpan(
+            text: text,
+            style: style.withFontSize(candidate),
+          );
+          painter.layout();
+          fitted = candidate;
+          if (painter.width <= constraints.maxWidth) break;
+        }
+        painter.dispose();
+        return SizedBox(
+          height: lineHeight,
+          child: GlassText(
+            text,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: style.copyWith(
+              fontSize: fitted,
+              height: lineHeight / scaler.scale(fitted),
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
@@ -262,7 +263,7 @@ class RenderStatusCardLayout extends RenderBox
       figures.layout(BoxConstraints.tight(_padding.deflateSize(size)));
       _parentDataOf(body).offset = _padding.topLeft;
       _parentDataOf(figures).offset = _padding.topLeft;
-      final baseline = math.max(0.0, size.height - 1);
+      final baseline = size.height;
       _baseline = baseline;
       const bandTop = 0.0;
       _bandTop = bandTop;
@@ -428,7 +429,15 @@ class RenderStatusCardLayout extends RenderBox
   void paint(PaintingContext context, Offset offset) {
     final backdrop = _backdrop;
     if (backdrop == null) return;
-    context.paintChild(backdrop, _parentDataOf(backdrop).offset + offset);
+    layer = context.pushClipPath(
+      needsCompositing,
+      offset,
+      Offset.zero & size,
+      _shape.getOuterPath(Offset.zero & size, textDirection: _textDirection),
+      (context, offset) =>
+          context.paintChild(backdrop, _parentDataOf(backdrop).offset + offset),
+      oldLayer: layer as ClipPathLayer?,
+    );
     for (
       var child = childAfter(backdrop);
       child != null;
