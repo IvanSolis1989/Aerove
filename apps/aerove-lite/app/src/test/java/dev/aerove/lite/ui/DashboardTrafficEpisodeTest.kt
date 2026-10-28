@@ -5,7 +5,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DashboardTrafficEpisodeTest {
-    @Test fun pauseResumeCutsTheViewWithoutClearingTheSharedWindow() {
+    @Test fun coreStopStartsAFreshTraceWithoutClearingTheSharedWindow() {
         val trace = DashboardTrafficEpisode()
         val before = Traffic(11, 21)
         val during = Traffic(12, 22)
@@ -33,7 +33,7 @@ class DashboardTrafficEpisodeTest {
             assertEquals(30, shared.size)
         }
     }
-    @Test fun inactiveFirstMountAndRuntimeCursorResetDoNotReplayOldSamples() {
+    @Test fun stoppedFirstMountAndRuntimeCursorResetDoNotReplayOldSamples() {
         val trace = DashboardTrafficEpisode()
         assertTrue(trace.samples(listOf(Traffic(1)), 9, false).isEmpty())
         assertEquals(listOf(Traffic(1)), trace.samples(listOf(Traffic(1)), 10, true))

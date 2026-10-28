@@ -7,6 +7,7 @@ import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/update_download.dart';
+import 'package:fl_clash/common/update_feed.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/changelog.dart';
 import 'package:fl_clash/plugins/app.dart';
@@ -17,6 +18,7 @@ class Request {
   late final Dio dio;
   late final Dio _clashDio;
   String? userAgent;
+  Future<Map<String, dynamic>?>? _pendingUpdateCheck;
 
   ProviderReader? _read;
 
@@ -88,15 +90,30 @@ class Request {
     }
   }
 
-  /// Null when this build is current; throws when GitHub cannot be asked.
-  Future<Map<String, dynamic>?> checkForUpdate() async {
+  Future<Map<String, dynamic>?> checkForUpdate() {
+    return _pendingUpdateCheck ??= _checkForUpdate().whenComplete(() {
+      _pendingUpdateCheck = null;
+    });
+  }
+
+  Future<Map<String, dynamic>?> _checkForUpdate() async {
     final packageInfo = globalState.packageInfo;
     final buildNumber = int.tryParse(packageInfo.buildNumber) ?? 0;
+    final androidAbis = Platform.isAndroid
+        ? await app!.getSupportedAbis()
+        : null;
     final release = selectStandardUpdate(
-      await publishedReleases(),
+      await publishedReleases(
+        coversInstalledRelease: (release) => standardReleaseCoversInstalled(
+          release,
+          installedTag: 'v${packageInfo.version}+$buildNumber',
+          androidAbis: androidAbis,
+          desktopPlatform: Platform.isAndroid ? null : Platform.operatingSystem,
+        ),
+      ),
       version: packageInfo.version,
       buildNumber: buildNumber,
-      androidAbis: Platform.isAndroid ? await app!.getSupportedAbis() : null,
+      androidAbis: androidAbis,
     );
     return release == null ? null : await _withReleaseNotes(release);
   }
@@ -143,27 +160,13 @@ class Request {
 
   /// A failed or incomplete list cannot establish that this build is current.
   @visibleForTesting
-  Future<List<Map<String, dynamic>>> publishedReleases() async {
-    final releases = <Map<String, dynamic>>[];
-    for (var page = 1; page <= 5; page++) {
-      final response = await dio.get<List<dynamic>>(
-        'https://api.github.com/repos/$repository/releases',
-        queryParameters: {'per_page': 100, 'page': page},
-        options: Options(
-          responseType: ResponseType.json,
-          receiveTimeout: const Duration(seconds: 20),
-          headers: {'Accept': 'application/vnd.github+json'},
-        ),
-      );
-      final rows = response.data;
-      if (rows == null || rows.length > 100) {
-        throw const FormatException('Invalid release list');
-      }
-      releases.addAll(rows.whereType<Map<String, dynamic>>());
-      if (rows.length < 100) return releases;
-    }
-    throw StateError('Release feed scan limit reached');
-  }
+  Future<List<Map<String, dynamic>>> publishedReleases({
+    bool Function(Map<String, dynamic>)? coversInstalledRelease,
+    CancelToken? cancelToken,
+  }) => PublishedReleaseFeed(dio).fetch(
+    coversInstalledRelease: coversInstalledRelease,
+    cancelToken: cancelToken,
+  );
 }
 
 final request = Request();
@@ -194,26 +197,7 @@ Map<String, dynamic>? selectStandardUpdate(
           continue;
         }
       }
-      final assets = release['assets'];
-      if (assets is! List) continue;
-      final trusted = assets.whereType<Map>().where((asset) {
-        final name = asset['name'];
-        final url = Uri.tryParse('${asset['browser_download_url']}');
-        return name is String &&
-            RegExp(
-              r'^(?:Aerove|XClash)-(?:android-[\w-]+\.apk|windows-[\w.-]+\.(?:exe|zip|msix)|linux-[\w.-]+\.(?:deb|rpm|AppImage|tar\.gz)|macos-[\w.-]+\.(?:dmg|zip))$',
-              caseSensitive: false,
-            ).hasMatch(name) &&
-            url != null &&
-            url.scheme == 'https' &&
-            url.host == 'github.com' &&
-            url.port == 443 &&
-            url.userInfo.isEmpty &&
-            !url.hasQuery &&
-            !url.hasFragment &&
-            url.pathSegments.join('/') ==
-                '$repository/releases/download/$tag/$name';
-      }).toList();
+      final trusted = _trustedStandardAssets(release, tag);
       if (trusted.isEmpty ||
           (androidAbis != null &&
               selectAndroidUpdateAsset({'assets': trusted}, androidAbis) ==
@@ -230,6 +214,52 @@ Map<String, dynamic>? selectStandardUpdate(
     }
   }
   return selected;
+}
+
+List<Map> _trustedStandardAssets(Map<String, dynamic> release, String tag) {
+  final assets = release['assets'];
+  if (assets is! List) return [];
+  return assets.whereType<Map>().where((asset) {
+    final name = asset['name'];
+    final url = Uri.tryParse('${asset['browser_download_url']}');
+    return name is String &&
+        RegExp(
+          r'^(?:Aerove|XClash)-(?:android-[\w-]+\.apk|windows-[\w.-]+\.(?:exe|zip|msix)|linux-[\w.-]+\.(?:deb|rpm|AppImage|tar\.gz)|macos-[\w.-]+\.(?:dmg|zip))$',
+          caseSensitive: false,
+        ).hasMatch(name) &&
+        url != null &&
+        url.scheme == 'https' &&
+        url.host == 'github.com' &&
+        url.port == 443 &&
+        url.userInfo.isEmpty &&
+        !url.hasQuery &&
+        !url.hasFragment &&
+        url.pathSegments.join('/') ==
+            '$repository/releases/download/$tag/$name';
+  }).toList();
+}
+
+@visibleForTesting
+bool standardReleaseCoversInstalled(
+  Map<String, dynamic> release, {
+  required String installedTag,
+  List<String>? androidAbis,
+  String? desktopPlatform,
+}) {
+  if (release['draft'] == true || release['tag_name'] != installedTag) {
+    return false;
+  }
+  final trusted = _trustedStandardAssets(release, installedTag);
+  if (androidAbis != null) {
+    return selectAndroidUpdateAsset({'assets': trusted}, androidAbis) != null;
+  }
+  if (!{'windows', 'linux', 'macos'}.contains(desktopPlatform)) return false;
+  return trusted.any(
+    (asset) => RegExp(
+      '^(?:Aerove|XClash)-$desktopPlatform-',
+      caseSensitive: false,
+    ).hasMatch(asset['name'] as String),
+  );
 }
 
 Uri standardReleasePage(Map<String, dynamic> release) {

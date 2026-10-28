@@ -604,23 +604,29 @@ class _FlagSkinState extends State<_FlagSkin> {
     final ratio = MediaQuery.devicePixelRatioOf(context);
     final key = (widget.flag, widget.size, ratio);
     if (!_resting || (_pictureKey != null && _pictureKey != key)) _drop();
-    return _RestingPicture(
-      picture: _picture,
-      scale: ratio,
-      onPainted: _resting && _picture == null
-          ? () => _capture(key, ratio)
-          : null,
-      child: RepaintBoundary(
-        key: _boundary,
-        child: ClipPath(
-          clipper: OutboundDropletClipper(
-            skin: widget.skin,
-            irregularity: null,
-          ),
-          clipBehavior: Clip.antiAliasWithSaveLayer,
-          child: CustomPaint(
-            foregroundPainter: OutboundDropletFeather(skin: widget.skin),
-            child: widget.child,
+    return NotificationListener<EmojiInkReadyNotification>(
+      onNotification: (_) {
+        setState(_drop);
+        return true;
+      },
+      child: _RestingPicture(
+        picture: _picture,
+        scale: ratio,
+        onPainted: _resting && _picture == null
+            ? () => _capture(key, ratio)
+            : null,
+        child: RepaintBoundary(
+          key: _boundary,
+          child: ClipPath(
+            clipper: OutboundDropletClipper(
+              skin: widget.skin,
+              irregularity: null,
+            ),
+            clipBehavior: Clip.antiAliasWithSaveLayer,
+            child: CustomPaint(
+              foregroundPainter: OutboundDropletFeather(skin: widget.skin),
+              child: widget.child,
+            ),
           ),
         ),
       ),

@@ -140,7 +140,7 @@ class _TrafficTrace extends StatefulWidget {
   const _TrafficTrace({
     required this.samples,
     required this.latest,
-    required this.active,
+    required this.running,
     required this.builder,
   });
 
@@ -148,7 +148,7 @@ class _TrafficTrace extends StatefulWidget {
 
   /// The samples as they stand now, which [samples] may hold back.
   final FixedList<Traffic> latest;
-  final bool active;
+  final bool running;
   final Widget Function(BuildContext context, _TrafficWindow window) builder;
 
   @override
@@ -169,7 +169,7 @@ class _TrafficTraceState extends State<_TrafficTrace> {
     // A list changed without growing was cleared; all it holds came after.
     // A sample arriving with the start belongs to the new run.
     final cleared = latest != before && latest.revision <= before.revision;
-    if (cleared || (!oldWidget.active && widget.active)) {
+    if (cleared || (!oldWidget.running && widget.running)) {
       _afterRevision = cleared ? 0 : before.revision;
       _epoch++;
     }
@@ -226,9 +226,7 @@ class OutboundTrafficBackground extends ConsumerWidget {
       builder: (context, samples) => _TrafficTrace(
         samples: samples,
         latest: latest,
-        // Scrolling the card away holds the curve and catches up on return;
-        // leaving the page stops the samples, so what follows starts over.
-        active: shown && running,
+        running: running,
         // Paced ahead of the swell, which then grows only what is drawn: a
         // window held back while it lifts would appear at full height.
         builder: (context, window) => InteractionPaced(

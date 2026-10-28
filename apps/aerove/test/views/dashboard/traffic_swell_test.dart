@@ -285,6 +285,48 @@ void main() {
     });
   }
 
+  testWidgets('a running page keeps its curve across a paused presentation', (
+    tester,
+  ) async {
+    setRunning(true);
+    sample(1024, 4096);
+    sample(2048, 8192);
+    await pump(tester);
+    final shown = values(tester).toList();
+    await pump(tester, ticker: false);
+    expect(values(tester), shown);
+    expectIdle(tester);
+    await pump(tester);
+    await tester.pump(fadeTabDuration);
+    expect(values(tester), shown);
+    expect(lift(tester), 1);
+    expectIdle(tester);
+    sample(3072, 12288);
+    await tester.pump();
+    expect(values(tester), [1024, 2048, 3072]);
+    expect(lift(tester), 1);
+  });
+
+  testWidgets(
+    'a returning page appends the latest sample to retained history',
+    (tester) async {
+      setRunning(true);
+      sample(1024, 4096);
+      sample(2048, 8192);
+      await pump(tester);
+      final shown = values(tester).toList();
+      await pump(tester, ticker: false);
+      sample(3072, 12288);
+      await tester.pump();
+      expect(values(tester), shown);
+      await pump(tester);
+      await tester.pump(fadeTabDuration);
+      expect(values(tester), [1024, 2048, 3072]);
+      expect(lift(tester), 1);
+      expectIdle(tester);
+    },
+  );
+
   testWidgets('a page that comes back shows the end state at once', (
     tester,
   ) async {

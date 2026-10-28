@@ -81,23 +81,22 @@ internal fun dashboardTrafficCurves(history: List<Traffic>): DashboardTrafficCur
 /** A card-local view boundary, never an owner or mutator of shared traffic history. */
 internal class DashboardTrafficEpisode {
     private var initialized = false
-    private var wasActive = false
+    private var wasRunning = false
     private var lastRevision = 0L
     private var baseline = 0L
     private var result: List<Traffic> = emptyList()
 
-    fun samples(history: List<Traffic>, revision: Long, active: Boolean): List<Traffic> {
+    fun samples(history: List<Traffic>, revision: Long, running: Boolean): List<Traffic> {
         require(revision >= 0) { "Invalid traffic history revision" }
-        if (initialized && revision == lastRevision && active == wasActive) return result
+        if (initialized && revision == lastRevision && running == wasRunning) return result
         if (!initialized) {
             initialized = true
-            // Initial active mount may show the actual retained window. Reactivation may not.
-            baseline = if (active) revision - history.size else revision
-        } else if (!active || revision < lastRevision) baseline = revision
-        else if (!wasActive) baseline = lastRevision
-        wasActive = active
+            baseline = if (running) revision - history.size else revision
+        } else if (!running || revision < lastRevision) baseline = revision
+        else if (!wasRunning) baseline = lastRevision
+        wasRunning = running
         lastRevision = revision
-        if (!active) { result = emptyList(); return result }
+        if (!running) { result = emptyList(); return result }
         val available = if (baseline < 0 && revision > Long.MAX_VALUE + baseline) history.size.toLong()
             else (revision - baseline).coerceAtLeast(0)
         result = history.takeLast(minOf(available, history.size.toLong()).toInt())

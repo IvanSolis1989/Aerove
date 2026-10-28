@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -56,7 +57,7 @@ internal fun AboutScreen(padding: PaddingValues, onDeveloperUnlocked: () -> Unit
     AboutTelegramContent(telegramConfirmation, uriHandler::openUri) {
     if (entry != null) {
         LicenseBody(entry, padding) { selected = null }
-    } else LazyColumn(state = LocalLiteListState.current, contentPadding = padding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    } else LazyColumn(modifier = Modifier.testTag("about-content"), state = LocalLiteListState.current, contentPadding = padding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             LitePane(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

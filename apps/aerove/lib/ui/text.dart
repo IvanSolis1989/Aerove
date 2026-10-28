@@ -5,6 +5,9 @@ import 'package:fl_clash/ui/measure.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'font.dart';
+import 'native_emoji_cover.dart';
+
+export 'native_emoji_cover.dart' show EmojiInkReadyNotification;
 
 final _emojiPattern = emojiRegex();
 
@@ -146,22 +149,23 @@ class EmojiCover extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (useDesktopEmojiFont(platform ?? defaultTargetPlatform)) {
+    final target = platform ?? defaultTargetPlatform;
+    if (useDesktopEmojiFont(target)) {
       return _DesktopEmojiCover(emoji, size: size);
     }
-    return SizedBox.square(
-      dimension: size,
-      child: FittedBox(
-        fit: BoxFit.cover,
-        child: MediaQuery.withNoTextScaling(
-          child: EmojiText(
-            emoji,
-            maxLines: 1,
-            style: const TextStyle(inherit: false, fontSize: 32, height: 1),
-          ),
+    final fallback = FittedBox(
+      fit: BoxFit.cover,
+      child: MediaQuery.withNoTextScaling(
+        child: EmojiText(
+          emoji,
+          maxLines: 1,
+          style: const TextStyle(inherit: false, fontSize: 32, height: 1),
         ),
       ),
     );
+    return target == TargetPlatform.android
+        ? NativeEmojiCover(emoji, size: size, fallback: fallback)
+        : SizedBox.square(dimension: size, child: fallback);
   }
 }
 

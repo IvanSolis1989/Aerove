@@ -712,6 +712,12 @@ private fun CountryBubble(code: String?, loading: Boolean, running: Boolean, tim
     val normalized = code?.trim()?.uppercase(Locale.ROOT)
     val valid = normalized != null && normalized.length == 2 && normalized.all { it in 'A'..'Z' } && normalized !in setOf("XX", "ZZ")
     val flag = if (valid) normalized!!.map { String(Character.toChars(0x1F1E6 + it.code - 'A'.code)) }.joinToString("") else null
+    val side = with(LocalDensity.current) { 48.dp.roundToPx() }
+    val fontConfiguration = androidx.compose.ui.platform.LocalConfiguration.current.toString()
+    var ink by remember(flag, side, fontConfiguration) { mutableStateOf<CountryFlagInk?>(null) }
+    LaunchedEffect(flag, side, fontConfiguration) {
+        if (flag != null) ink = CountryFlagInkCache.load(flag, side, fontConfiguration)
+    }
     val phase = if (loading) time.value else 0f
     val shape = remember(loading, phase) { DashboardBubbleOutline(0f, phase, if (loading) 0.55f else 0f, irregularity = 0f) }
     val retry = stringResource(R.string.lite_outbound_retry)
@@ -735,7 +741,9 @@ private fun CountryBubble(code: String?, loading: Boolean, running: Boolean, tim
             paint.getTextBounds(flag, 0, flag.length, bounds)
             val x = size.width / 2 - bounds.exactCenterX()
             val y = size.height / 2 - bounds.exactCenterY()
-            val radius = hypot(bounds.width().toFloat(), bounds.height().toFloat()) / 2f
+            val bitmap = ink?.bitmap
+            val radius = if (bitmap == null) hypot(bounds.width().toFloat(), bounds.height().toFloat()) / 2f
+                else hypot(bitmap.width.toFloat(), bitmap.height.toFloat()) / 2f
             val mask = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
                 shader = android.graphics.RadialGradient(size.width / 2f, size.height / 2f, radius.coerceAtLeast(1f),
                     intArrayOf(android.graphics.Color.WHITE, android.graphics.Color.WHITE, android.graphics.Color.TRANSPARENT),
@@ -745,7 +753,8 @@ private fun CountryBubble(code: String?, loading: Boolean, running: Boolean, tim
             onDrawBehind { drawIntoCanvas {
                 val canvas = it.nativeCanvas
                 val checkpoint = canvas.saveLayer(0f, 0f, size.width, size.height, null)
-                canvas.drawText(flag, x, y, paint)
+                if (bitmap == null) canvas.drawText(flag, x, y, paint)
+                else canvas.drawBitmap(bitmap, (size.width - bitmap.width) / 2f, (size.height - bitmap.height) / 2f, null)
                 canvas.drawRect(0f, 0f, size.width, size.height, mask)
                 canvas.restoreToCount(checkpoint)
             } }
@@ -1039,12 +1048,12 @@ private fun StatusTrafficReadings(state: LiteState, active: Boolean, rowSpan: St
 }
 
 @Composable
-private fun StatusTrafficBackground(state: LiteState, running: Boolean, active: Boolean, measured: Boolean,
+internal fun StatusTrafficBackground(state: LiteState, running: Boolean, active: Boolean, measured: Boolean,
     modifier: Modifier) {
     val display = LocalLiteDisplayStreams.current
     val history = displayValue(display?.trafficHistory, state.trafficHistory, active).value
     val revision = displayValue(display?.trafficHistoryRevision, state.trafficHistoryRevision, active).value
     val episode = remember { DashboardTrafficEpisode() }
-    val samples = if (measured) episode.samples(history, revision, active && running) else emptyList()
+    val samples = if (measured) episode.samples(history, revision, running = running) else emptyList()
     DashboardTrafficBackdrop(samples, running, active, modifier)
 }

@@ -21,6 +21,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -29,8 +30,12 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal const val OFFICIAL_RELEASE_FEED = "https://ivansolis1989.github.io/Aerove/releases.json"
+class UpdateHttpException(val status: Int) : IOException("Update server HTTP $status")
+
 interface UpdateTransport : AutoCloseable {
     suspend fun releases(page: Int): String
+    suspend fun officialReleases(): String = error("Official release feed is unavailable")
     suspend fun metadata(url: String): ByteArray
     suspend fun download(url: String, destination: File, expectedBytes: Long, progress: (Long, Long) -> Unit)
     override fun close() = Unit
@@ -46,11 +51,12 @@ class UpdateHttpClient(client: OkHttpClient? = null) : UpdateTransport {
         require(page in 1..5)
         return read("https://api.github.com/repos/$LITE_REPOSITORY/releases?per_page=100&page=$page", 2 * 1024 * 1024, false).strictUtf8()
     }
+    override suspend fun officialReleases(): String = read(OFFICIAL_RELEASE_FEED, 2 * 1024 * 1024, false).strictUtf8()
     override suspend fun metadata(url: String): ByteArray = read(url, 128 * 1024, true)
 
     private suspend fun read(url: String, limit: Int, asset: Boolean): ByteArray = withContext(Dispatchers.IO) {
         response(url, asset) { reply ->
-            check(reply.isSuccessful) { "Update server HTTP ${reply.code}" }
+            if (!reply.isSuccessful) throw UpdateHttpException(reply.code)
             checkNotNull(reply.body).byteStream().use { it.readBounded(limit) }
         }
     }
@@ -60,10 +66,11 @@ class UpdateHttpClient(client: OkHttpClient? = null) : UpdateTransport {
         var url = raw.toHttpUrl()
         repeat(6) { redirects ->
             require(url.isHttps && url.port == 443 && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null) { "Untrusted update endpoint" }
-            val allowed = if (asset) setOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com") else setOf("api.github.com")
+            val allowed = if (asset) setOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com") else if (raw == OFFICIAL_RELEASE_FEED) setOf("ivansolis1989.github.io") else setOf("api.github.com")
             require(url.host in allowed) { "Untrusted update host" }
             val call = http.newCall(Request.Builder().url(url).header("User-Agent", "AEROVE-Lite")
                 .header("Accept", if (asset) "application/octet-stream" else "application/vnd.github+json").build())
+            if (!asset) call.timeout().timeout(20, TimeUnit.SECONDS)
             // Keep cancellation attached after headers while synchronous body reads own the socket.
             val cancellation = Job(currentCoroutineContext()[Job])
             cancellation.invokeOnCompletion { if (it != null) call.cancel() }
@@ -146,15 +153,36 @@ class UpdateRepository(
         checkOwned(identity)
     }
     private suspend fun checkOwned(identity: UpdateIdentity): LiteRelease? = withContext(Dispatchers.IO) {
-        val all = mutableListOf<LiteRelease>()
-        for (page in 1..5) {
-            val array = JSONArray(transport.releases(page))
-            require(array.length() <= 100) { "Invalid release page size" }
-            all += parseLiteReleases(array)
-            if (array.length() < 100) break
-            require(page < 5) { "Release feed scan limit reached" }
+        withTimeout(30_000) {
+            val all = mutableListOf<LiteRelease>()
+            try {
+                for (page in 1..5) {
+                    val array = JSONArray(transport.releases(page))
+                    require(array.length() <= 100) { "Invalid release page size" }
+                    all += parseLiteReleases(array)
+                    if (array.length() < 100) break
+                    require(page < 5) { "Release feed scan limit reached" }
+                }
+            } catch (failure: UpdateHttpException) {
+                if (failure.status !in setOf(403, 429)) throw failure
+                val fallback = try {
+                    val array = JSONArray(transport.officialReleases())
+                    require(array.length() in 1..500) { "Invalid official release feed" }
+                    for (index in 0 until array.length()) {
+                        val row = array.getJSONObject(index)
+                        require(row.get("tag_name") is String && row.get("draft") is Boolean &&
+                            row.get("prerelease") is Boolean && row.get("assets") is JSONArray) { "Invalid official release entry" }
+                    }
+                    val parsed = parseLiteReleases(array)
+                    require(parsed.any { it.tag == "lite-v${identity.version}+${identity.versionCode}" }) { "Official release feed does not cover this build" }
+                    parsed
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { throw failure }
+                all.clear()
+                all += fallback
+            }
+            selectLiteRelease(all, identity)
         }
-        selectLiteRelease(all, identity)
     }
 
     suspend fun download(release: LiteRelease, progress: (Long, Long) -> Unit): VerifiedUpdate = operation {

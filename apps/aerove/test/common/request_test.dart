@@ -83,6 +83,37 @@ void main() {
     );
   });
 
+  test('manual and automatic update callers share one active check', () async {
+    globalState.packageInfo = PackageInfo(
+      appName: 'Aerove',
+      packageName: 'com.follow.clash',
+      version: '0.11.0-beta.11',
+      buildNumber: '2026102264',
+    );
+    var calls = 0;
+    final request = Request()
+      ..dio.httpClientAdapter = _HostAdapter({
+        'api.github.com': () {
+          calls++;
+          return ResponseBody.fromString(
+            '[]',
+            200,
+            headers: {
+              Headers.contentTypeHeader: ['application/json'],
+            },
+          );
+        },
+      });
+    addTearDown(() => request.dio.close(force: true));
+    final first = request.checkForUpdate();
+    final second = request.checkForUpdate();
+    expect(identical(first, second), isTrue);
+    await Future.wait([first, second]);
+    expect(calls, 1);
+    await request.checkForUpdate();
+    expect(calls, 2);
+  });
+
   group('publishedReleases', () {
     test('requests all channels from the paginated list endpoint', () async {
       final pages = <int>[];
@@ -111,7 +142,7 @@ void main() {
     });
 
     test(
-      'API failure never consults stable latest or reports current',
+      'API and official feed failure never consults stable latest or reports current',
       () async {
         globalState.packageInfo = PackageInfo(
           appName: 'Aerove',
@@ -123,6 +154,7 @@ void main() {
         final request = Request()
           ..dio.httpClientAdapter = _HostAdapter({
             'api.github.com': () => ResponseBody.fromString('{}', 403),
+            'ivansolis1989.github.io': () => ResponseBody.fromString('{}', 403),
           });
         request.dio.interceptors.add(
           InterceptorsWrapper(
@@ -137,7 +169,7 @@ void main() {
           request.checkForUpdate(),
           throwsA(isA<DioException>()),
         );
-        expect(hosts, ['api.github.com']);
+        expect(hosts, ['api.github.com', 'ivansolis1989.github.io']);
       },
     );
 
@@ -167,6 +199,144 @@ void main() {
         expect(calls, 5);
       },
     );
+  });
+
+  group('official feed installed-platform coverage', () {
+    const installedTag = 'v0.11.0-beta.11+2026102264';
+    Map<String, dynamic> withAsset(String name, {String? url}) => {
+      ...releaseFixture(installedTag),
+      'draft': false,
+      'prerelease': true,
+      'assets': [
+        {
+          'name': name,
+          'browser_download_url':
+              url ??
+              'https://github.com/$repository/releases/download/$installedTag/$name',
+        },
+      ],
+    };
+
+    test('desktop coverage uses its trusted installer without an ARM64 APK', () {
+      for (final (platform, name) in [
+        ('windows', 'Aerove-windows-amd64.exe'),
+        ('linux', 'Aerove-linux-amd64.AppImage'),
+        ('macos', 'Aerove-macos-arm64.dmg'),
+      ]) {
+        final release = withAsset(name);
+        expect(
+          standardReleaseCoversInstalled(
+            release,
+            installedTag: installedTag,
+            desktopPlatform: platform,
+          ),
+          isTrue,
+        );
+        expect(
+          standardReleaseCoversInstalled(
+            release,
+            installedTag: installedTag,
+            androidAbis: ['arm64-v8a'],
+          ),
+          isFalse,
+        );
+        final invalid = withAsset(
+          name,
+          url:
+              'https://github.com/other/repo/releases/download/$installedTag/$name',
+        );
+        expect(
+          standardReleaseCoversInstalled(
+            invalid,
+            installedTag: installedTag,
+            desktopPlatform: platform,
+          ),
+          isFalse,
+        );
+      }
+      expect(
+        standardReleaseCoversInstalled(
+          withAsset('Aerove-windows-amd64.exe'),
+          installedTag: installedTag,
+          desktopPlatform: 'linux',
+        ),
+        isFalse,
+      );
+    });
+
+    test('Android coverage retains ABI selection and requires an APK', () {
+      final arm64 = withAsset('Aerove-android-arm64.apk');
+      expect(
+        standardReleaseCoversInstalled(
+          arm64,
+          installedTag: installedTag,
+          androidAbis: ['arm64-v8a'],
+        ),
+        isTrue,
+      );
+      expect(
+        standardReleaseCoversInstalled(
+          arm64,
+          installedTag: installedTag,
+          androidAbis: ['x86_64'],
+        ),
+        isFalse,
+      );
+      expect(
+        standardReleaseCoversInstalled(
+          withAsset('Aerove-android-x86_64.apk'),
+          installedTag: installedTag,
+          androidAbis: ['arm64-v8a'],
+        ),
+        isFalse,
+      );
+      expect(
+        standardReleaseCoversInstalled(
+          withAsset('Aerove-windows-amd64.exe'),
+          installedTag: installedTag,
+          androidAbis: ['arm64-v8a'],
+        ),
+        isFalse,
+      );
+      expect(
+        standardReleaseCoversInstalled(
+          {...arm64, 'assets': <dynamic>[]},
+          installedTag: installedTag,
+          androidAbis: ['arm64-v8a'],
+        ),
+        isFalse,
+      );
+    });
+
+    test('coverage and update selection share the same strict asset URL trust', () {
+      const name = 'Aerove-android-arm64.apk';
+      for (final url in [
+        'https://mirror.invalid/$name',
+        'http://github.com/$repository/releases/download/$installedTag/$name',
+        'https://user@github.com/$repository/releases/download/$installedTag/$name',
+        'https://github.com/$repository/releases/download/$installedTag/$name?mirror=1',
+        'https://github.com/$repository/releases/download/other/$name',
+      ]) {
+        final release = withAsset(name, url: url);
+        expect(
+          standardReleaseCoversInstalled(
+            release,
+            installedTag: installedTag,
+            androidAbis: ['arm64-v8a'],
+          ),
+          isFalse,
+        );
+        expect(
+          selectStandardUpdate(
+            [release],
+            version: '0.11.0-beta.10',
+            buildNumber: 2026102263,
+            androidAbis: ['arm64-v8a'],
+          ),
+          isNull,
+        );
+      }
+    });
   });
 
   group('all-channel update selection', () {
@@ -281,7 +451,7 @@ void main() {
       'desktop opens the selected page and never latest or a foreign URL',
       () {
         final row = releaseFixture('v0.9.2-beta.10+4');
-        final exact =
+        const exact =
             'https://github.com/$repository/releases/tag/v0.9.2-beta.10+4';
         expect(
           standardReleasePage({...row, 'html_url': exact}).toString(),

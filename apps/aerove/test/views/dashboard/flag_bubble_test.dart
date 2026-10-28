@@ -13,6 +13,7 @@ import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/current_outbound.dart';
 import 'package:fl_clash/views/dashboard/widgets/outbound_motion.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/ui/native_emoji_cover.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -198,6 +199,77 @@ void main() {
     final loader = FontLoader(desktopEmojiFontFamily)
       ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
     await loader.load();
+  });
+
+  testWidgets('native ink invalidates the resting bubble snapshot', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    NativeEmojiCover.debugFontFamily = desktopEmojiFontFamily;
+    try {
+      final key = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: key,
+          child: _app(Future.value(_residential), DashboardDensity.mobile),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final ink = find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomPaint &&
+            widget.painter.runtimeType.toString() == '_EmojiInkPainter',
+      );
+      for (
+        var attempt = 0;
+        attempt < 500 && ink.evaluate().isEmpty;
+        attempt++
+      ) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 20)),
+        );
+        await tester.pump();
+      }
+      expect(ink, findsOneWidget);
+      await tester.pump();
+      await tester.pump();
+      final rect = tester.getRect(find.byType(NativeEmojiCover));
+      final boundary =
+          key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final red = await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        try {
+          final bytes = (await image.toByteData(
+            format: ui.ImageByteFormat.rawRgba,
+          ))!;
+          var count = 0;
+          for (var y = rect.top.ceil(); y < rect.bottom.floor(); y++) {
+            for (var x = rect.left.ceil(); x < rect.right.floor(); x++) {
+              final offset = (y * image.width + x) * 4;
+              if (bytes.getUint8(offset) > 180 &&
+                  bytes.getUint8(offset + 1) < 80 &&
+                  bytes.getUint8(offset + 2) < 80) {
+                count++;
+              }
+            }
+          }
+          return count;
+        } finally {
+          image.dispose();
+        }
+      });
+      expect(
+        red,
+        greaterThan(10),
+        reason:
+            'The settled snapshot must contain the measured native color flag, not the initial test-font fallback',
+      );
+      await tester.pumpWidget(const SizedBox());
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+      NativeEmojiCover.debugFontFamily = null;
+    }
   });
 
   for (final platform in [TargetPlatform.android, TargetPlatform.windows]) {

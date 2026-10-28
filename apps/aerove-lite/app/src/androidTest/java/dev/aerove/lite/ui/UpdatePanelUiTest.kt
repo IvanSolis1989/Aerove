@@ -120,7 +120,7 @@ class UpdatePanelUiTest {
         compose.onNodeWithText(context.getString(R.string.lite_tab_tools)).performClick()
         compose.onNodeWithText(context.getString(R.string.lite_about)).performScrollTo().performClick()
         try {
-            compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(context.getString(R.string.lite_license_aerove)))
+            compose.onNodeWithTag("about-content").performScrollToNode(hasText(context.getString(R.string.lite_license_aerove)))
         } catch (failure: Throwable) {
             rethrowMatrixCancellation(failure)
             try {
