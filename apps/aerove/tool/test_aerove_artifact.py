@@ -1073,5 +1073,121 @@ class PromotionReceiptReadbackTest(unittest.TestCase):
                     self.module.verify_release_assets(**args)
 
 
+class DraftReleaseDiscoveryTest(unittest.TestCase):
+    def setUp(self):
+        self.module = importlib.import_module('tool.aerove_artifact')
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name)
+        self.contents = {self.module.APK_NAME: b'original apk',
+                         'BUILD_INFO.json': b'{"appEnv":"pre"}', 'SHA256SUMS': b'original sums'}
+        for name, content in self.contents.items():
+            (self.directory / name).write_bytes(content)
+        self.release = dict(id=426582517, draft=True, prerelease=True,
+            tag_name='v0.11.0-beta.11+2026102264', target_commitish=SOURCE,
+            url=f'https://api.github.com/repos/{REPOSITORY}/releases/426582517',
+            assets=[dict(id=index + 1, name=name, size=len(content),
+                         digest='sha256:' + hashlib.sha256(content).hexdigest())
+                    for index, (name, content) in enumerate(self.contents.items())])
+        self.pages = [[dict(id=8, tag_name='v0.11.0-beta.10+other')], [copy.deepcopy(self.release)]]
+        self.detail = copy.deepcopy(self.release)
+        self.tag_status = 404
+        self.endpoints = []
+        self.downloads = []
+
+    def api(self, command, **kwargs):
+        endpoint = next(arg for arg in command if arg.startswith('repos/'))
+        self.endpoints.append(endpoint)
+        if kwargs.get('stdout') is not None:
+            identity = int(endpoint.rsplit('/', 1)[1])
+            name = next(row['name'] for row in self.detail['assets'] if row['id'] == identity)
+            self.downloads.append(name)
+            kwargs['stdout'].write(self.contents[name])
+            return subprocess.CompletedProcess(command, 0)
+        if '/releases/tags/' in endpoint:
+            value = dict(message='Not Found', status=str(self.tag_status))
+            return subprocess.CompletedProcess(command, 1, json.dumps(value), 'gh: failure')
+        if '?per_page=' in endpoint:
+            self.assertIn('--paginate', command)
+            self.assertIn('--slurp', command)
+            return subprocess.CompletedProcess(command, 0, json.dumps(self.pages), '')
+        return subprocess.CompletedProcess(command, 0, json.dumps(self.detail), '')
+
+    def verify(self, tag_source=None):
+        with patch.object(self.module.subprocess, 'run', side_effect=self.api), \
+                patch.object(self.module, '_tag_source', return_value=tag_source):
+            return self.module.verify_release_assets(repository=REPOSITORY, source=SOURCE,
+                tag=self.release['tag_name'], directory=self.directory)
+
+    def test_404_discovers_only_unique_exact_draft_across_pages_then_reads_id_and_all_bytes(self):
+        self.assertEqual(self.verify(), [])
+        self.assertEqual(set(self.downloads), set(self.contents))
+        self.assertEqual(self.endpoints[:3], [
+            f'repos/{REPOSITORY}/releases/tags/{self.release["tag_name"]}',
+            f'repos/{REPOSITORY}/releases?per_page=100',
+            f'repos/{REPOSITORY}/releases/{self.release["id"]}'])
+
+    def test_non_404_errors_do_not_attempt_draft_discovery(self):
+        for status in (401, 403, 500):
+            with self.subTest(status=status):
+                self.tag_status = status
+                self.endpoints.clear()
+                with self.assertRaises(self.module.ArtifactError):
+                    self.verify()
+                self.assertEqual(len(self.endpoints), 1)
+
+    def test_draft_discovery_rejects_duplicate_wrong_tag_target_repository_or_state(self):
+        original = copy.deepcopy(self.pages)
+        cases = [[], [[dict(self.release, tag_name='v0.11.0-beta.12+44')]],
+                 [[self.release, dict(self.release, id=426582518)]],
+                 [[self.release], [self.release]],
+                 [[dict(self.release, target_commitish='f' * 40)]],
+                 [[dict(self.release, url='https://api.github.com/repos/other/repo/releases/426582517')]],
+                 [[dict(self.release, draft=False)]], [[42]]]
+        for pages in cases:
+            with self.subTest(pages=pages):
+                self.pages = pages
+                with self.assertRaises(self.module.ArtifactError):
+                    self.verify()
+                self.assertEqual(self.downloads, [])
+        self.pages = original
+
+    def test_draft_detail_must_keep_the_discovered_identity(self):
+        original = copy.deepcopy(self.detail)
+        for changes in [dict(id=99), dict(tag_name='other'), dict(target_commitish='f' * 40),
+                        dict(draft=False), dict(url='https://api.github.com/repos/other/repo/releases/426582517')]:
+            with self.subTest(changes=changes):
+                self.detail = dict(original, **changes)
+                with self.assertRaises(self.module.ArtifactError):
+                    self.verify()
+                self.assertEqual(self.downloads, [])
+
+    def test_draft_still_rejects_same_size_wrong_bytes_even_with_matching_api_digest(self):
+        self.contents[self.module.APK_NAME] = b'altered apk!'
+        with self.assertRaisesRegex(self.module.ArtifactError, 'bytes differ'):
+            self.verify()
+
+    def test_published_fast_path_keeps_tag_resolution_and_channel_guards(self):
+        self.detail['draft'] = False
+        endpoint = f'repos/{REPOSITORY}/releases/tags/{self.release["tag_name"]}'
+        with patch.object(self.module, '_api_object', return_value=self.detail) as api, \
+                patch.object(self.module.subprocess, 'run', side_effect=self.api), \
+                patch.object(self.module, '_tag_source', return_value=SOURCE):
+            self.assertEqual(self.module.verify_release_assets(repository=REPOSITORY, source=SOURCE,
+                tag=self.release['tag_name'], directory=self.directory), [])
+            api.assert_called_once_with(endpoint, allow_not_found=True)
+        with patch.object(self.module, '_api_object', return_value=self.detail), \
+                patch.object(self.module, '_tag_source', return_value='f' * 40):
+            with self.assertRaisesRegex(self.module.ArtifactError, 'another commit'):
+                self.module.verify_release_assets(repository=REPOSITORY, source=SOURCE,
+                    tag=self.release['tag_name'], directory=self.directory)
+        self.detail['prerelease'] = False
+        with patch.object(self.module, '_api_object', return_value=self.detail), \
+                patch.object(self.module, '_tag_source', return_value=SOURCE):
+            with self.assertRaisesRegex(self.module.ArtifactError, 'wrong product channel'):
+                self.module.verify_release_assets(repository=REPOSITORY, source=SOURCE,
+                    tag=self.release['tag_name'], directory=self.directory)
+
+
 if __name__ == '__main__':
     unittest.main()

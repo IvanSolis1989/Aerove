@@ -379,9 +379,18 @@ def _git(root: Path, *arguments: str) -> str:
     return _command(['git', *arguments], root).strip()
 
 
-def _api_object(endpoint: str) -> dict[str, Any]:
-    result = _json(_command(['gh', 'api', '--method', 'GET', endpoint,
-                            '-H', 'Accept: application/vnd.github+json']))
+def _api_object(endpoint: str, *, allow_not_found=False) -> dict[str, Any] | None:
+    command = ['gh', 'api', '--method', 'GET', endpoint,
+               '-H', 'Accept: application/vnd.github+json']
+    if allow_not_found:
+        response = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = _json(response.stdout)
+        if response.returncode:
+            if isinstance(result, dict) and str(result.get('status')) == '404':
+                return None
+            raise ArtifactError(f'gh api failed for {endpoint}: {response.stderr.strip()}')
+    else:
+        result = _json(_command(command))
     if not isinstance(result, dict):
         raise ArtifactError('Expected an API object')
     return result
@@ -832,11 +841,46 @@ def _tag_source(repository, tag, draft):
     raise ArtifactError('Release tag does not resolve to one commit')
 
 
+def _release_for_tag(repository, source, tag):
+    release = _api_object(f'repos/{repository}/releases/tags/{tag}', allow_not_found=True)
+    if release is not None:
+        return release
+    pages = _json(_command(['gh', 'api', '--paginate', '--slurp',
+                           f'repos/{repository}/releases?per_page=100',
+                           '-H', 'Accept: application/vnd.github+json']))
+    if not isinstance(pages, list) or not pages or any(not isinstance(page, list) for page in pages):
+        raise ArtifactError('Invalid paginated release list')
+    matches = []
+    identities = set()
+    for page in pages:
+        for item in page:
+            if not isinstance(item, dict):
+                raise ArtifactError('Invalid release list entry')
+            identity = _positive(item.get('id'), 'release ID')
+            if identity in identities:
+                raise ArtifactError('Duplicate release ID across pages')
+            identities.add(identity)
+            if item.get('tag_name') == tag:
+                matches.append(item)
+    if len(matches) != 1:
+        raise ArtifactError('Expected one exact draft release for the requested tag')
+    discovered = matches[0]
+    endpoint = f'repos/{repository}/releases/{discovered["id"]}'
+    if (discovered.get('draft') is not True or discovered.get('target_commitish') != source
+            or discovered.get('url') != f'https://api.github.com/{endpoint}'):
+        raise ArtifactError('Discovered draft repository/tag/target identity mismatch')
+    release = _api_object(endpoint)
+    fields = ('id', 'url', 'tag_name', 'target_commitish', 'draft')
+    if any(release.get(field) != discovered.get(field) for field in fields):
+        raise ArtifactError('Draft release identity changed during discovery')
+    return release
+
+
 def verify_release_assets(*, repository, source, tag, directory, allow_missing=False):
     _repository(repository)
     _sha(source, 'release_source')
     _files(directory, {APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS'})
-    release = _api_object(f'repos/{repository}/releases/tags/{tag}')
+    release = _release_for_tag(repository, source, tag)
     draft = release.get('draft')
     if (type(draft) is not bool or release.get('tag_name') != tag
             or release.get('target_commitish') != source):
