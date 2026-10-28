@@ -309,7 +309,24 @@ class LiteAppRenderingTest(private val case: RenderCase) {
                 compose.mainClock.advanceTimeByFrame()
                 openTool(R.string.lite_theme)
                 save("theme")
-                compose.onNodeWithContentDescription(text(R.string.lite_aurora)).performClick()
+                val nextTheme = text(if (case.aurora) R.string.lite_normal_theme else R.string.lite_aurora)
+                val themeOption = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton) and
+                    hasText(nextTheme) and hasClickAction()
+                val option = compose.onNode(themeOption)
+                if (!option.isDisplayed()) {
+                    val scrollers = compose.onAllNodes(hasScrollToIndexAction(), useUnmergedTree = true)
+                    scrollers.assertCountEquals(1)
+                    val scroller = scrollers[0].assertIsDisplayed()
+                    val options = compose.onAllNodes(themeOption).fetchSemanticsNodes()
+                    val above = options.singleOrNull()?.let {
+                        option.getUnclippedBoundsInRoot().top < scroller.getBoundsInRoot().top
+                    } ?: false
+                    scroller.performTouchInput {
+                        if (above) swipeDown(durationMillis = 400) else swipeUp(durationMillis = 400)
+                    }
+                    compose.mainClock.advanceTimeBy(400)
+                }
+                option.assertIsDisplayed().assertIsEnabled().performClick()
                 compose.runOnUiThread { assertEquals(!case.aurora, state.value.settings.aurora) }
                 save("theme-aurora-toggled")
                 compose.runOnUiThread {
