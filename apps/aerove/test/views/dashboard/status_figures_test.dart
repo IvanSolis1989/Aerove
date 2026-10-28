@@ -655,8 +655,9 @@ void main() {
             final bytes = await image.toByteData(
               format: ui.ImageByteFormat.png,
             );
-            File('${directory.path}/$reading-$scale.png')
-                .writeAsBytesSync(bytes!.buffer.asUint8List());
+            File(
+              '${directory.path}/$reading-$scale.png',
+            ).writeAsBytesSync(bytes!.buffer.asUint8List());
             image.dispose();
           });
         }
@@ -773,18 +774,20 @@ void main() {
             'visible': [for (final row in readings) row.text.toPlainText()],
             'collisionPixels': overlap,
           };
-          File('${directory.path}/transition-${direction.name}-$step.json')
-              .writeAsStringSync(
-                const JsonEncoder.withIndent('  ').convert(facts),
-              );
+          File(
+            '${directory.path}/transition-${direction.name}-$step.json',
+          ).writeAsStringSync(
+            const JsonEncoder.withIndent('  ').convert(facts),
+          );
           if (step != 'high-again') {
             await tester.runAsync(() async {
               final image = await boundary.toImage(pixelRatio: 3);
               final bytes = await image.toByteData(
                 format: ui.ImageByteFormat.png,
               );
-              File('${directory.path}/transition-${direction.name}-$step.png')
-                  .writeAsBytesSync(bytes!.buffer.asUint8List());
+              File(
+                '${directory.path}/transition-${direction.name}-$step.png',
+              ).writeAsBytesSync(bytes!.buffer.asUint8List());
               image.dispose();
             });
           }
