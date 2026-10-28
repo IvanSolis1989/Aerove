@@ -6,9 +6,9 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 0.11.0-beta.11+2026102264 — 真机验收通过，待发行
+## 0.11.0-beta.11+2026102264 — 已发行
 
-原构建 [#64](https://github.com/IvanSolis1989/Aerove/actions/runs/40666252315) 使用源码 `b6206f78d7e8beb9f3ebec48ae54042ded3e26ed`，完整 CI 与最终校验通过；原 ARM64 APK 为 `0.11.0-beta.11+2026102264`，SHA256 `5d098cfefb706547bc5d6d6aa2f16dbbe4862af490a4c0819c4bde2711a58147`。用户已安装该原包并确认融合编辑、三统计前后台刷新及连接和日常使用正常，明确要求立即发行。当前尚未正式发布，推广保持原源码、安装编号、签名与 APK 字节，不重新编译；两版分别满足自身完整契约后独立发行。
+原构建 [#64](https://github.com/IvanSolis1989/Aerove/actions/runs/40666252315) 使用源码 `b6206f78d7e8beb9f3ebec48ae54042ded3e26ed`，完整 CI 与最终校验通过；原 ARM64 APK 为 `0.11.0-beta.11+2026102264`，SHA256 `5d098cfefb706547bc5d6d6aa2f16dbbe4862af490a4c0819c4bde2711a58147`。用户安装原包验收通过后，已于 2026 年 10 月 28 日通过[推广 #68](https://github.com/IvanSolis1989/Aerove/actions/runs/40682291514) 发布为 [Android 预览版](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.11%2B2026102264)，并完成 [Telegram 频道推送](https://t.me/IvanSolis89/55)。推广保持原源码、安装编号、签名与 APK 字节，没有重新编译；标准版稳定版 latest 保持不变，Lite 独立继续验收。
 
 - 仪表盘正常页、编辑页、拖拽和恢复列表共用融合卡片，排序、隐藏与恢复按整组操作；未操作的旧成员选择、顺序和平台项保留。
 - 编辑预览隔离内部指针、键盘及读屏业务动作，外层编辑操作保持可访问；每次有效操作即时保存。
