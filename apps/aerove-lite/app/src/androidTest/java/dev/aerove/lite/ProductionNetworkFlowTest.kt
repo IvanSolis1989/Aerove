@@ -105,6 +105,56 @@ class ProductionNetworkFlowTest {
     }
 
     @Test
+    fun releasedListenerTimeWaitRejectsTheOldProbeButAllowsTheProductionBindFlags() = runBlocking<Unit> {
+        assertTrue("The product and socket tests require API33+", Build.VERSION.SDK_INT >= 33)
+        val listener = reserveUserPort(reuseAddress = true)
+        val port = listener.localPort
+        try {
+            listener.soTimeout = 5_000
+            Socket().use { client ->
+                client.soTimeout = 5_000
+                client.connect(InetSocketAddress("127.0.0.1", port), 5_000)
+                listener.accept().use { accepted ->
+                    accepted.soTimeout = 5_000
+                    assertTrue("The accepted server connection must inherit the production reuse flag", accepted.reuseAddress)
+                    client.getOutputStream().write(37)
+                    client.getOutputStream().flush()
+                    assertEquals(37, accepted.getInputStream().read())
+                    accepted.getOutputStream().write(73)
+                    accepted.getOutputStream().flush()
+                    assertEquals(73, client.getInputStream().read())
+                    // The server actively sends FIN while the client remains open.
+                    accepted.shutdownOutput()
+                    assertEquals("The client must observe the server FIN before it closes", -1, client.getInputStream().read())
+                }
+            }
+        } finally { listener.close() }
+        val evidence = awaitObservedTimeWait(port)
+        assertFalse("No live listener may be hidden by this counterexample",
+            evidence.any { it.contains("localPort=$port state=0A ") })
+        ServerSocket().use { oldProbe ->
+            oldProbe.reuseAddress = false
+            assertAddressInUse { oldProbe.bind(InetSocketAddress("127.0.0.1", port)) }
+        }
+        reserveReleasedPort(port).use { productionProbe ->
+            assertTrue(productionProbe.reuseAddress)
+            assertEquals("The same production-compatible probe used by awaitPortsReleased must really bind", port,
+                productionProbe.localPort)
+        }
+    }
+
+    @Test
+    fun productionCompatibleReleaseProbeStillRejectsLiveLoopbackAndWildcardListeners() {
+        assertTrue("The product and socket tests require API33+", Build.VERSION.SDK_INT >= 33)
+        for (host in listOf("127.0.0.1", "0.0.0.0")) {
+            reserveUserPort(host = host, reuseAddress = true).use { listener ->
+                assertTrue(listener.reuseAddress)
+                assertAddressInUse { reserveReleasedPort(listener.localPort).use { } }
+            }
+        }
+    }
+
+    @Test
     fun vpnOnlyChangesNeedOneNoticeAndAnExplicitRestartBeforeBuilderPolicyChanges() = runBlocking<Unit> {
         isolatedSession { session ->
             val original = session.running()
@@ -378,14 +428,15 @@ class ProductionNetworkFlowTest {
     }.mapNotNull { connectivity.getLinkProperties(it) }.flatMap { it.linkAddresses.asSequence() }
         .map { it.address }.filterIsInstance<Inet4Address>().first { !it.isLoopbackAddress }.hostAddress!!
 
-    private fun reserveUserPort(excluded: Set<Int> = emptySet()): ServerSocket {
+    private fun reserveUserPort(excluded: Set<Int> = emptySet(), host: String = "127.0.0.1",
+        reuseAddress: Boolean = false): ServerSocket {
         repeat(100) {
             val port = Random.nextInt(20_000, 45_000)
             if (port !in excluded) {
                 val socket = ServerSocket()
                 try {
-                    socket.reuseAddress = false
-                    socket.bind(InetSocketAddress("127.0.0.1", port))
+                    socket.reuseAddress = reuseAddress
+                    socket.bind(InetSocketAddress(host, port))
                     return socket
                 } catch (_: java.io.IOException) { socket.close() }
             }
@@ -393,6 +444,39 @@ class ProductionNetworkFlowTest {
         error("No isolated legal user proxy port is available")
     }
     private fun freeUserPort(excluded: Set<Int> = emptySet()): Int = reserveUserPort(excluded).use { it.localPort }
+    private fun reserveReleasedPort(port: Int): ServerSocket {
+        val socket = ServerSocket()
+        try {
+            // Android/Unix Tokio -> Mio sets SO_REUSEADDR before bind, without SO_REUSEPORT.
+            socket.reuseAddress = true
+            socket.bind(InetSocketAddress("127.0.0.1", port))
+            return socket
+        } catch (failure: java.io.IOException) { socket.close(); throw failure }
+    }
+    private fun assertAddressInUse(action: () -> Unit) {
+        try { action(); fail("The real bind must fail with EADDRINUSE") }
+        catch (failure: java.net.BindException) {
+            var cause: Throwable? = failure
+            while (cause != null && cause !is android.system.ErrnoException) cause = cause.cause
+            assertTrue("Do not accept another IOException as the negative control", cause is android.system.ErrnoException)
+            assertEquals(android.system.OsConstants.EADDRINUSE, (cause as android.system.ErrnoException).errno)
+        }
+    }
+    private suspend fun awaitObservedTimeWait(port: Int): List<String> = withTimeout(20_000) {
+        while (true) {
+            val evidence = withContext(Dispatchers.IO) {
+                NetworkPortTcpEvidence.capture(instrumentation.uiAutomation, listOf(port))
+            }
+            val complete = evidence.size == 2 && evidence.all { receipt ->
+                receipt.contains("evidence=OBSERVED ") && receipt.contains("complete=true ") &&
+                    receipt.contains("omitted=0 ") && receipt.contains("malformed=0 ")
+            }
+            if (complete && evidence.any { it.contains("localPort=$port state=06 kind=TIME_WAIT ") })
+                return@withTimeout evidence
+            delay(100)
+        }
+        error("unreachable")
+    }
     private suspend fun awaitPortsReleased(stage: String, ports: List<Int>) {
         var lastPort: Int? = null
         var lastFailure: java.io.IOException? = null
@@ -402,14 +486,10 @@ class ProductionNetworkFlowTest {
                     val reservations = mutableListOf<ServerSocket>()
                     try {
                         ports.distinct().forEach { port ->
-                            val socket = ServerSocket()
-                            try {
-                                socket.reuseAddress = false
-                                socket.bind(InetSocketAddress("127.0.0.1", port))
-                                reservations += socket
-                            } catch (failure: java.io.IOException) {
+                            try { reservations += reserveReleasedPort(port) }
+                            catch (failure: java.io.IOException) {
                                 lastPort = port; lastFailure = failure
-                                socket.close(); throw failure
+                                throw failure
                             }
                         }
                         return@withTimeout

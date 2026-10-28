@@ -386,6 +386,16 @@ Lite 仪表盘组织单行适配另只读参考同固定提交的 `TextAutoSize.
 
 **许可证、署名与证据：** MIT；`apps/aerove-lite/native/Cargo.toml`、`Cargo.lock`、[固定版本 LICENSE](https://github.com/tokio-rs/tokio/blob/tokio-1.53.1/LICENSE)、[broadcast.rs](https://docs.rs/tokio/1.53.1/src/tokio/sync/broadcast.rs.html)；新图原始包信息按 crates.io 精确版本 metadata 与桥接 Cargo.lock 核实（未取得 Tokio 新版源码包）
 
+Lite 端口释放探针另只读核对 `1.54.0` / tag `tokio-1.54.0` / commit [`66d34e45c9c850ed72bc61f2ad107368217f040d`](https://github.com/tokio-rs/tokio/commit/66d34e45c9c850ed72bc61f2ad107368217f040d) 的 [`listener.rs`](https://github.com/tokio-rs/tokio/blob/66d34e45c9c850ed72bc61f2ad107368217f040d/tokio/src/net/tcp/listener.rs)，确认 `TcpListener::bind` 委托既有 Mio Unix 实现；只参考绑定语义，不复制实现或新增依赖。Copyright (c) Tokio Contributors；同提交 [LICENSE](https://github.com/tokio-rs/tokio/blob/66d34e45c9c850ed72bc61f2ad107368217f040d/LICENSE) 为 MIT，SHA256 `253cd04c6714889df2d32f3f64d669179a1c95c76ac43c40882c52eb06bc3552`。锁文件 checksum 是固定 crate 身份，本次未下载或重算 crate archive。
+
+#### [tokio-rs/mio](https://github.com/tokio-rs/mio)
+
+**固定版本 / revision：** `1.2.4` / tag `v1.2.4` / commit `79d1417c94e3a45c8bdd796e5422e22e8c488086`；桥接 `apps/aerove-lite/meow-native/Cargo.lock` checksum `1788edb87fdc09c7e26304471e2f5be8cdefb1b6930d6e3985fc02ff53bf86ee`
+
+**用途与采用方式：** 既有 Tokio 传递依赖；只读参考固定 [`net/tcp/listener.rs`](https://github.com/tokio-rs/mio/blob/79d1417c94e3a45c8bdd796e5422e22e8c488086/src/net/tcp/listener.rs) 与 [`sys/unix/tcp.rs`](https://github.com/tokio-rs/mio/blob/79d1417c94e3a45c8bdd796e5422e22e8c488086/src/sys/unix/tcp.rs) 的 `SO_REUSEADDR` 设置，核对 Android 释放探针与生产绑定语义；不复制实现或新增依赖
+
+**许可证、署名与证据：** MIT；Copyright (c) 2014 Carl Lerche and other MIO contributors；固定提交 [LICENSE](https://github.com/tokio-rs/mio/blob/79d1417c94e3a45c8bdd796e5422e22e8c488086/LICENSE) SHA256 `07919255c7e04793d8ea760d6c2ce32d19f9ff02bdbdde3ce90b1e1880929a9b`；上述源码及桥接锁文件。crate checksum 沿用固定锁记录，本次未下载 crate archive
+
 #### [tokio-rs/axum](https://github.com/tokio-rs/axum)
 
 **固定版本 / revision：** `axum-v0.8.9`；`axum 0.8.9` registry checksum `31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90`
