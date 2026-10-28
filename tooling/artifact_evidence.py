@@ -16,6 +16,7 @@ import tempfile
 import time
 import unicodedata
 import zipfile
+import zlib
 
 REPO = "IvanSolis1989/Aerove"
 BRANCH = "refs/heads/codex/aerove-evidence-reader-34"
@@ -264,18 +265,21 @@ def log_json_outputs(out, receipt):
     scope = receipt["outputScope"]
     candidates = [dict(output="INDEX.json")] if scope["mode"] == "index" else scope["members"]
     transport = dict(limitBytes=16384, loggedFiles=[], omittedFiles=[])
-    frames, total = [], 0
     identity = {key: receipt["original"][key] for key in
                 ("runId", "attempt", "headSHA", "artifactId", "artifactName", "expectedZIPsha", "expectedZIPbytes")}
+    total_count = scope.get("totalEntryCount", len(scope.get("members", [])))
+    matched_count = scope.get("matchedEntryCount", scope.get("entryCount", len(scope.get("members", []))))
+    frames = []
     for row in candidates:
         name = row["output"]
         if not name.endswith(".json"):
             continue
         require(name == "INDEX.json" if scope["mode"] == "index" else
                 re.fullmatch(r"member-0[1-8]\.json", name) is not None, "Unexpected JSON output name")
+        limit = 131072 if scope["mode"] == "index" else 16384
         with (out / name).open("rb") as stream:
-            data = stream.read(16385)
-        if len(data) > 16384:
+            data = stream.read(limit + 1)
+        if len(data) > limit:
             transport["omittedFiles"].append(dict(filename=name, reason="single-file byte limit"))
             continue
         digest = hashlib.sha256(data).hexdigest()
@@ -286,27 +290,62 @@ def log_json_outputs(out, receipt):
         if sensitive_text(text):
             transport["omittedFiles"].append(dict(filename=name, reason="sensitive text policy"))
             continue
+        compressed = zlib.compress(data)
+        use_compressed = len(compressed) < len(data)
+        encoded_data = base64.b64encode(compressed if use_compressed else data).decode("ascii")
         frame = dict(version=1, filename=name, bytes=len(data), sha256=digest,
-                     encoding="base64", data=base64.b64encode(data).decode("ascii"), original=identity,
+                     encoding="base64", compression="zlib" if use_compressed else "none",
+                     data=encoded_data, original=identity,
                      wholeZipDigestVerified=True, allEntryCrcVerified=True)
         if scope["mode"] == "index":
             frame["indexScope"] = scope
         else:
             frame["member"] = row["member"]
-        line = "AEROVE_JSON_FRAME_V1 " + json.dumps(frame, separators=(",", ":")) + " AEROVE_JSON_FRAME_END\n"
-        if sensitive_text(json.dumps({key: value for key, value in frame.items() if key != "data"})):
+        if sensitive_text(json.dumps({key: value for key, value in frame.items() if key != "data"}, ensure_ascii=False)):
             transport["omittedFiles"].append(dict(filename=name, reason="sensitive metadata policy"))
             continue
-        size = len(line.encode("utf-8"))
-        if total + size > 16384:
-            transport["omittedFiles"].append(dict(filename=name, reason="total framed byte limit"))
-            continue
-        total += size
-        frames.append(line)
-        transport["loggedFiles"].append(dict(filename=name, bytes=len(data), sha256=digest, framedBytes=size))
+        line = "AEROVE_JSON_FRAME_V1 " + json.dumps(frame, separators=(",", ":"), ensure_ascii=False) + " AEROVE_JSON_FRAME_END\n"
+        frames.append((name, digest, len(data), line))
+
+    emitted = list(frames)
+
+    def status_frame():
+        reasons = {}
+        for row in transport["omittedFiles"]:
+            reason = row["reason"]
+            reasons[reason] = reasons.get(reason, 0) + 1
+        summary = dict(version=1, type="status", original=identity, total=total_count, matched=matched_count,
+                       logged=len(emitted), omitted=len(transport["omittedFiles"]), omittedReasons=reasons,
+                       wholeZipDigestVerified=True, allEntryCrcVerified=True)
+        if sensitive_text(json.dumps(summary, separators=(",", ":"), ensure_ascii=False)):
+            summary["original"] = {}
+            summary["identityOmittedReason"] = "sensitive metadata policy"
+        line = "AEROVE_JSON_FRAME_V1 " + json.dumps(summary, separators=(",", ":"), ensure_ascii=False) + " AEROVE_JSON_FRAME_END\n"
+        if len(line.encode("utf-8")) > 16384:
+            identity_bytes = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            summary.pop("original", None)
+            summary["originalIdentitySha256"] = hashlib.sha256(identity_bytes).hexdigest()
+            summary["identityOmittedReason"] = "status metadata byte limit"
+            line = "AEROVE_JSON_FRAME_V1 " + json.dumps(summary, separators=(",", ":"), ensure_ascii=False) + " AEROVE_JSON_FRAME_END\n"
+        return line
+
+    while True:
+        summary_line = status_frame()
+        total = len(summary_line.encode("utf-8")) + sum(len(row[3].encode("utf-8")) for row in emitted)
+        if total <= 16384:
+            break
+        require(emitted, "JSON log status frame exceeds total transport budget")
+        name, digest, size, line = emitted.pop()
+        transport["omittedFiles"].append(dict(filename=name, reason="total framed byte limit"))
+
+    for name, digest, size, line in emitted:
+        transport["loggedFiles"].append(dict(filename=name, bytes=size, sha256=digest,
+                                             framedBytes=len(line.encode("utf-8"))))
+    require(len(summary_line.encode("utf-8")) <= 16384, "JSON log status frame exceeds total transport budget")
     transport["totalFramedBytes"] = total
     receipt["jsonLogTransport"] = transport
-    for line in frames:
+    print(summary_line, end="", flush=True)
+    for _, _, _, line in emitted:
         print(line, end="", flush=True)
 
 

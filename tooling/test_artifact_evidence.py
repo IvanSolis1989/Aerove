@@ -257,29 +257,61 @@ class ArtifactEvidenceTest(unittest.TestCase):
 
     def test_json_log_byte_exact_and_json_only(self):
         import base64
-        raw = b'{ "spacing": [1, 2] }\r\n'
+        import zlib
+        raw = (json.dumps({"samples": ["x" * 14627]}, separators=(",", ":")) + "\n").encode()
         receipt, text, outputs = self.logged([('metrics.json', raw), ('notes.txt', b'plain')], basenames=['metrics.json', 'notes.txt'])
-        prefix, suffix = 'AEROVE_JSON_FRAME_V1 ', ' AEROVE_JSON_FRAME_END\n'
-        self.assertTrue(text.startswith(prefix) and text.endswith(suffix))
-        frame = json.loads(text[len(prefix):-len(suffix)])
-        self.assertEqual(base64.b64decode(frame['data']), raw)
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 2)
+        status = json.loads(lines[0][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+        frame = json.loads(lines[1][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+        self.assertEqual(status['type'], 'status')
+        encoded = base64.b64decode(frame['data'])
+        decoded = zlib.decompress(encoded) if frame['compression'] == 'zlib' else encoded
+        self.assertEqual(decoded, raw)
+        self.assertEqual(frame['compression'], 'zlib')
         self.assertEqual(frame['sha256'], hashlib.sha256(raw).hexdigest())
         self.assertEqual(frame['bytes'], len(raw))
         self.assertEqual(frame['original']['headSHA'], 'a' * 40)
         self.assertTrue(frame['wholeZipDigestVerified'] and frame['allEntryCrcVerified'])
+        self.assertEqual(status['logged'], 1)
         self.assertEqual(len(receipt['jsonLogTransport']['loggedFiles']), 1)
         self.assertNotIn('member-02', text)
-
+        self.assertEqual(outputs['member-01.json'], raw)
     def test_json_log_limits_omit_without_truncation(self):
+        import random
         receipt, text, _ = self.logged([('metrics.json', b'"' + b'x' * 16384 + b'"')])
-        self.assertEqual(text, '')
-        self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'single-file byte limit')
-        receipt, text, _ = self.logged([('a.json', b'"' + b'x' * 7000 + b'"'), ('b.json', b'"' + b'y' * 7000 + b'"')], basenames=['a.json', 'b.json'])
+        self.assertEqual(len(text.encode()), receipt['jsonLogTransport']['totalFramedBytes'])
         self.assertLessEqual(len(text.encode()), 16384)
+        self.assertEqual(len(text.splitlines()), 1)
+        status = json.loads(text.splitlines()[0][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+        self.assertEqual(status['omittedReasons'], {'single-file byte limit': 1})
+        rng = random.Random(4)
+        noise = ''.join(rng.choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(15500))
+        receipt, text, _ = self.logged([('metrics.json', json.dumps(noise).encode())])
+        self.assertEqual(len(text.splitlines()), 1)
+        status = json.loads(text.splitlines()[0][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+        self.assertEqual(status['omittedReasons'], {'total framed byte limit': 1})
+        self.assertLessEqual(len(text.encode()), 16384)
+    def test_unicode_identity_and_actual_total_budget_boundary(self):
+        import random
+        request = self.request(artifactName='界' * 300)
+        reader.parse_request(json.dumps(request))
+        receipt, text, outputs = self.logged([('metrics.json', b'{}')], artifactName='界' * 300)
+        self.assertEqual(outputs['member-01.json'], b'{}')
+        self.assertLessEqual(len(text.encode('utf-8')), 16384)
+        status = json.loads(text.splitlines()[0][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+        self.assertEqual(status['original']['artifactName'], '界' * 300)
+        self.assertEqual(receipt['jsonLogTransport']['totalFramedBytes'], len(text.encode('utf-8')))
+
+        rng = random.Random(404)
+        noise = ''.join(rng.choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(15000))
+        receipt, text, _ = self.logged([('large.json', json.dumps(noise).encode()), ('tiny.json', b'{}')],
+                                       basenames=['large.json', 'tiny.json'])
+        wire_bytes = len(text.encode('utf-8'))
+        self.assertGreater(wire_bytes, 16000)
+        self.assertLessEqual(wire_bytes, 16384)
+        self.assertEqual(receipt['jsonLogTransport']['totalFramedBytes'], wire_bytes)
         self.assertEqual(len(receipt['jsonLogTransport']['loggedFiles']), 1)
-        self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'total framed byte limit')
-        receipt, text, _ = self.logged([('metrics.json', b'"' + b'x' * 13000 + b'"')])
-        self.assertEqual(text, '')
         self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'total framed byte limit')
 
     def test_json_log_sensitive_recheck_and_failed_integrity_emit_nothing(self):
@@ -294,23 +326,74 @@ class ArtifactEvidenceTest(unittest.TestCase):
             capture = io.StringIO()
             with contextlib.redirect_stdout(capture):
                 reader.log_json_outputs(out, receipt)
-            self.assertEqual(capture.getvalue(), '')
-            self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'sensitive text policy')
+            self.assertEqual(len(capture.getvalue().splitlines()), 1)
+            status = json.loads(capture.getvalue().splitlines()[0][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+            self.assertEqual(status['omittedReasons'], {'sensitive text policy': 1})
+            self.assertNotIn('SYNTHETIC', capture.getvalue())
+            (out / 'INDEX.json').write_bytes(b'{}')
+            private_identity = dict(self.request(), artifactName='https://invalid.example/?secret=SYNTHETIC')
+            unsafe = dict(original=private_identity, completed=True, wholeZipDigestVerified=True,
+                          allEntryCrcVerified=True, outputScope=dict(mode='index'))
+            capture = io.StringIO()
+            with contextlib.redirect_stdout(capture):
+                reader.log_json_outputs(out, unsafe)
+            self.assertNotIn('SYNTHETIC', capture.getvalue())
+            self.assertEqual(len(capture.getvalue().splitlines()), 1)
             for key in ('completed', 'wholeZipDigestVerified', 'allEntryCrcVerified'):
                 bad = dict(receipt, **{key: False})
                 with contextlib.redirect_stdout(capture), self.assertRaises(ValueError):
                     reader.log_json_outputs(out, bad)
-            self.assertEqual(capture.getvalue(), '')
-
+            self.assertEqual(capture.getvalue().splitlines()[-1], capture.getvalue().splitlines()[0])
     def test_index_log_preserves_readonly_scope_and_bytes(self):
         import base64
+        import zlib
         receipt, text, outputs = self.logged([('a.json', b'{}'), ('b.json', b'{}')], mode='index', pathContains='a.json')
-        frame = json.loads(text[len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END\n')])
-        self.assertEqual(base64.b64decode(frame['data']), outputs['INDEX.json'])
+        lines = text.splitlines()
+        frame = json.loads(lines[1][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+        encoded = base64.b64decode(frame['data'])
+        raw = zlib.decompress(encoded) if frame['compression'] == 'zlib' else encoded
+        self.assertEqual(raw, outputs['INDEX.json'])
         self.assertEqual(frame['indexScope'], receipt['outputScope'])
         self.assertEqual(frame['indexScope']['totalEntryCount'], 2)
         self.assertEqual(frame['indexScope']['matchedEntryCount'], 1)
 
+    def test_index_128k_compresses_and_incompressible_index_is_omitted(self):
+        import contextlib
+        import io
+        import base64
+        import random
+        import zlib
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            repeated = (json.dumps([{"path": f"entry/{index:05d}.json", "bytes": 7} for index in range(3000)]) + "\n").encode()
+            self.assertGreater(len(repeated), 16384)
+            self.assertLessEqual(len(repeated), 131072)
+            (out / 'INDEX.json').write_bytes(repeated)
+            scope = dict(mode='index', entryCount=3000, totalEntryCount=3000, matchedEntryCount=3000, filter=None)
+            receipt = dict(original=self.request(), completed=True, wholeZipDigestVerified=True,
+                           allEntryCrcVerified=True, outputScope=scope)
+            capture = io.StringIO()
+            with contextlib.redirect_stdout(capture):
+                reader.log_json_outputs(out, receipt)
+            lines = capture.getvalue().splitlines()
+            self.assertEqual(len(capture.getvalue().encode()), receipt['jsonLogTransport']['totalFramedBytes'])
+            self.assertLessEqual(len(capture.getvalue().encode()), 16384)
+            frames = [json.loads(line[len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')]) for line in lines]
+            payload = frames[1]
+            self.assertEqual(payload['compression'], 'zlib')
+            self.assertEqual(zlib.decompress(base64.b64decode(payload['data'])), repeated)
+            rng = random.Random(13)
+            noise = ''.join(rng.choice('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789') for _ in range(120000))
+            raw = json.dumps(noise).encode()
+            self.assertLessEqual(len(raw), 131072)
+            (out / 'INDEX.json').write_bytes(raw)
+            capture = io.StringIO()
+            with contextlib.redirect_stdout(capture):
+                reader.log_json_outputs(out, receipt)
+            self.assertEqual(len(capture.getvalue().splitlines()), 1)
+            status = json.loads(capture.getvalue().splitlines()[0][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+            self.assertEqual(status['omittedReasons'], {'total framed byte limit': 1})
+            self.assertLessEqual(len(capture.getvalue().encode()), 16384)
     def test_main_integrity_failure_never_logs_and_png_is_skipped(self):
         import contextlib
         import io
@@ -336,7 +419,9 @@ class ArtifactEvidenceTest(unittest.TestCase):
                            allEntryCrcVerified=True, outputScope=dict(mode='select', members=[dict(output='member-01.png')]))
             with contextlib.redirect_stdout(capture):
                 reader.log_json_outputs(Path(directory), receipt)
-            self.assertEqual(capture.getvalue(), '')
+            self.assertEqual(len(capture.getvalue().splitlines()), 1)
+            status = json.loads(capture.getvalue().splitlines()[0][len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END')])
+            self.assertEqual(status['logged'], 0)
             self.assertEqual(receipt['jsonLogTransport']['loggedFiles'], [])
 
 
