@@ -1449,7 +1449,7 @@ def observer_signal_action(name, stopping, captured):
 
 
 HOST_GDB_SCRIPT = r'''
-import gdb, os, json, time, hashlib, select, stat
+import gdb, os, json, time, hashlib, select, stat, struct
 config = json.loads(CONFIG_JSON)
 last_signal = None
 captured = 0
@@ -1469,6 +1469,112 @@ def target_identity():
 def detail(command):
     try: print(gdb.execute(command, to_string=True), flush=True)
     except gdb.error as error: print('unavailable: ' + str(error), flush=True)
+def gfxstream_trap_details(started):
+    pc = int(gdb.newest_frame().pc())
+    module_path = gdb.solib_name(pc)
+    if not module_path or os.path.basename(module_path) != 'libgfxstream_backend.so':
+        return False
+    if captured != 1:
+        marker('trap-detail-unavailable', reason='Fixed trap detail is collected once')
+        return True
+    try:
+        module = config.get('trapModule')
+        if (not module or module_path != module['path']
+                or not any(obj.filename == module_path and getattr(obj, 'build_id', None) == module['buildId']
+                           for obj in gdb.objfiles())):
+            raise ValueError('Fixed module path/build ID unavailable or differs')
+        with os.fdopen(os.open(module_path, os.O_RDONLY | os.O_NOFOLLOW), 'rb') as source:
+            opened_info = os.fstat(source.fileno())
+            if observer_file_identity(opened_info) != module['file']:
+                raise ValueError('Fixed module file identity changed')
+            opened_device = (os.major(opened_info.st_dev), os.minor(opened_info.st_dev))
+            opened_inode = opened_info.st_ino
+            header = source.read(64)
+            if (len(header) != 64 or header[:6] != b'\x7fELF\x02\x01'
+                    or struct.unpack_from('<H', header, 18)[0] != 62):
+                raise ValueError('Unsupported fixed module ELF header')
+            offset = struct.unpack_from('<Q', header, 32)[0]
+            width, count = struct.unpack_from('<HH', header, 54)
+            if width != 56 or not 1 <= count <= 32 or not 64 <= offset < 65536 or offset + width * count > min(65536, module['file']['bytes']):
+                raise ValueError('Fixed module program header bound exceeded')
+            source.seek(offset)
+            table = source.read(width * count)
+            if len(table) != width * count:
+                raise ValueError('Truncated module program headers')
+            segments = []
+            for index in range(count):
+                kind, flags, file_offset, vma, _, file_size, memory_size, _ = struct.unpack_from('<IIQQQQQQ', table, index * width)
+                if kind == 1:
+                    if file_size > memory_size or file_offset + file_size > module['file']['bytes']:
+                        raise ValueError('Invalid fixed module load segment')
+                    segments.append(dict(flags=flags, fileOffset=file_offset, vma=vma, fileBytes=file_size, memoryBytes=memory_size))
+            if observer_file_identity(os.fstat(source.fileno())) != module['file']:
+                raise ValueError('Fixed module changed during header read')
+        with open('/proc/%d/maps' % config['target']['pid']) as maps_source:
+            maps_text = maps_source.read(1048577)
+        if len(maps_text) > 1048576:
+            raise ValueError('Module mapping read bound exceeded')
+        mappings = []
+        for line in maps_text.splitlines():
+            fields = line.split(None, 5)
+            if line.endswith(module_path):
+                if len(fields) != 6 or fields[5] != module_path:
+                    raise ValueError('Fixed module mapping identity fields unavailable')
+                device = fields[3].split(':')
+                if (len(device) != 2 or tuple(int(value, 16) for value in device) != opened_device
+                        or int(fields[4], 10) != opened_inode):
+                    raise ValueError('Fixed module mapped device/inode differ from the opened file')
+                begin, end = [int(value, 16) for value in fields[0].split('-')]
+                mappings.append(dict(begin=begin, end=end, fileOffset=int(fields[2], 16), permissions=fields[1]))
+        page = os.sysconf('SC_PAGE_SIZE')
+        if not 0 < page <= 65536 or page & (page - 1) or not 1 <= len(mappings) <= 32:
+            raise ValueError('Unsupported module page or mapping count')
+        biases = {row['begin'] - segment['vma'] // page * page for row in mappings for segment in segments
+                  if row['fileOffset'] == segment['fileOffset'] // page * page}
+        if len(biases) != 1:
+            raise ValueError('Fixed module load bias is ambiguous')
+        bias = biases.pop()
+        def window(address, before, after):
+            matches = [segment for segment in segments if segment['flags'] & 1
+                       and segment['vma'] <= address - bias < segment['vma'] + segment['fileBytes']]
+            if len(matches) != 1:
+                raise ValueError('Code address is outside a fixed executable file segment')
+            segment = matches[0]
+            executable_maps = [row for row in mappings if 'x' in row['permissions'] and row['begin'] <= address < row['end']]
+            if len(executable_maps) != 1:
+                raise ValueError('Code address lacks the fixed executable module mapping')
+            row = executable_maps[0]
+            file_offset = segment['fileOffset'] + address - bias - segment['vma']
+            if file_offset != row['fileOffset'] + address - row['begin']:
+                raise ValueError('Executable module mapping and segment offset differ')
+            return (max(address - before, bias + segment['vma'], row['begin']),
+                    min(address + after, bias + segment['vma'] + segment['fileBytes'], row['end']), file_offset)
+        begin, end, file_offset = window(pc, 96, 64)
+        marker('trap-module', path=module_path, buildId=module['buildId'], pc=pc, loadBias=bias,
+               elfVma=pc - bias, fileOffset=file_offset, segments=segments,
+               instructionWindowMayStartMidInstruction=True)
+        if file_offset != 0x7c2bed:
+            raise ValueError('Signal differs from the fixed run17 trap file offset')
+        def code_window(address, begin, end):
+            for command in ['info symbol %#x' % address, 'x/%dbx %#x' % (end - begin, begin),
+                            'disassemble /r %#x,%#x' % (begin, end)]:
+                if time.monotonic() - started >= 5:
+                    raise ValueError('Original capture budget exhausted')
+                detail(command)
+        code_window(pc, begin, end)
+        caller = gdb.newest_frame().older()
+        if caller is None or not (caller.name() or '').startswith('gfxstream::gles2_decoder_context_t::decode('):
+            raise ValueError('Expected GLES2 decoder caller unavailable')
+        caller_pc = int(caller.pc())
+        if gdb.solib_name(caller_pc) != module_path:
+            raise ValueError('Decoder caller is outside the fixed module')
+        begin, end, file_offset = window(caller_pc, 96, 32)
+        marker('trap-caller', pc=caller_pc, elfVma=caller_pc - bias, fileOffset=file_offset)
+        code_window(caller_pc, begin, end)
+    except Exception as error:
+        marker('trap-detail-unavailable', errorType=type(error).__name__, reason=str(error) if type(error) is ValueError else 'Fixed module detail unavailable')
+    return True
+
 gdb.events.stop.connect(stopped)
 attached = False
 try:
@@ -1523,23 +1629,24 @@ try:
             fault_thread = gdb.selected_thread()
             try:
                 started = time.monotonic()
-                for command in ['p $_siginfo', 'info registers', 'x/32bx $pc', 'x/16i $pc',
-                                'info sharedlibrary', 'info proc mappings']:
-                    if time.monotonic() - started >= 5: break
-                    detail(command)
-                threads = gdb.selected_inferior().threads()
-                print('threads=%d; at most 64 threads, 32 frames, no arguments/locals' % len(threads), flush=True)
-                for thread in threads[:64]:
-                    if time.monotonic() - started >= 5: break
-                    thread.switch()
-                    frame = gdb.newest_frame()
-                    for index in range(32):
-                        if frame is None or time.monotonic() - started >= 5: break
-                        print('thread=%d frame=%d pc=%#x function=%s' %
-                              (thread.num, index, frame.pc(), frame.name()), flush=True)
-                        frame = frame.older()
-                print('ELF objects/build IDs: ' + json.dumps([
-                    dict(path=obj.filename, buildId=getattr(obj, 'build_id', None)) for obj in gdb.objfiles()]), flush=True)
+                if not gfxstream_trap_details(started):
+                    for command in ['p $_siginfo', 'info registers', 'x/32bx $pc', 'x/16i $pc',
+                                    'info sharedlibrary', 'info proc mappings']:
+                        if time.monotonic() - started >= 5: break
+                        detail(command)
+                    threads = gdb.selected_inferior().threads()
+                    print('threads=%d; at most 64 threads, 32 frames, no arguments/locals' % len(threads), flush=True)
+                    for thread in threads[:64]:
+                        if time.monotonic() - started >= 5: break
+                        thread.switch()
+                        frame = gdb.newest_frame()
+                        for index in range(32):
+                            if frame is None or time.monotonic() - started >= 5: break
+                            print('thread=%d frame=%d pc=%#x function=%s' %
+                                  (thread.num, index, frame.pc(), frame.name()), flush=True)
+                            frame = frame.older()
+                    print('ELF objects/build IDs: ' + json.dumps([
+                        dict(path=obj.filename, buildId=getattr(obj, 'build_id', None)) for obj in gdb.objfiles()]), flush=True)
             except BaseException as error:
                 marker('capture-error', errorType=type(error).__name__)
             finally:
@@ -1761,6 +1868,15 @@ class HostCrashObserver:
             raise ValueError('Observer target is not the emulator child of this owner')
         self.record['target'] = self.target
         self.record['targetBinaries'] = self.binaries
+        self.trap_module = None
+        try:
+            module = sdk.resolve() / 'emulator/lib64/libgfxstream_backend.so'
+            if module.resolve(strict=True) == module and module.is_file():
+                self.trap_module = dict(path=str(module), file=observer_file_identity(module.stat()),
+                    buildId='46e8d25847673eedfdd39a83d11f286d3ae38a21')
+        except (OSError, RuntimeError) as error:
+            self.record['trapModuleUnavailable'] = type(error).__name__
+        self.record['trapModule'] = self.trap_module
         self.launcher_executables = {str(self.tool)}
         if self.prefix:
             self.launcher_executables.add(str(Path(shutil.which('sudo', path=self.environment['PATH'])).resolve(strict=True)))
@@ -1770,7 +1886,7 @@ class HostCrashObserver:
         code = ('import time\n' + inspect.getsource(observer_signal_action).replace(
             'observer_signal_action', 'signal_action') + '\n' + inspect.getsource(observer_file_identity) + '\n'
             + inspect.getsource(observer_target_matches) + '\nCONFIG_JSON = ' + repr(json.dumps(dict(
-                target=self.target, binaries=self.binaries, stop=str(stop), startupDeadline=startup_deadline))) + '\n' + HOST_GDB_SCRIPT)
+                target=self.target, binaries=self.binaries, trapModule=self.trap_module, stop=str(stop), startupDeadline=startup_deadline))) + '\n' + HOST_GDB_SCRIPT)
         script = self.directory / 'observer.gdb'
         script.write_text('python\n' + code + '\nend\n', encoding='utf-8')
         self.process = subprocess.Popen([*self.prefix, str(self.tool), '-nx', '-nh', '--quiet', '--batch',
