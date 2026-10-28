@@ -487,6 +487,7 @@ private fun NoLensControl(
 
 @Composable
 private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foregroundControl: Boolean = false, measuredPosition: Boolean = false, probe: RenderProbe? = null) {
+    val switchBackdrop = LocalLiteInkBackdrop.current ?: LocalLiteBackdrop.current
     Box(Modifier.size(60.dp, 48.dp).alpha(if (case.enabled || case.tier != MaterialTier.Solid) 1f else 0.48f), contentAlignment = Alignment.Center) {
         val visuals = LocalLiteVisuals.current
         val inactive = if (case.tier == MaterialTier.Frosted) 0.13f else 0.06f
@@ -494,30 +495,34 @@ private fun NoLensSwitch(case: RenderCase, flatTrack: Boolean = true, foreground
         val thumbTint = visuals.surface.copy(alpha = if (case.enabled) 0.08f else 0.03f)
         val finish = AeroveGlassStyle.regular(case.dark).copy(blur = 0f)
         val children: @Composable BoxScope.() -> Unit = {
-            val thumb: @Composable () -> Unit = {
-                NoLensControl(case, Modifier.size(24.dp).onGloballyPositioned { probe?.bounds?.set("switch-control-thumb", it.boundsInWindow()) }, LiteCorner.Full, case.checked,
-                    solidColor = if (case.checked) Color.White else visuals.secondaryInk, glassStyle = finish, glassTint = thumbTint) {
-                    if ((foregroundControl || !flatTrack) && case.tier != MaterialTier.Solid) {
-                        val glyph = if (case.checked) FullGlyphs.check else FullGlyphs.close
-                        val paint = visuals.ink.copy(alpha = if (case.enabled) 1f else 0.38f)
-                        // The no-lens plane retains the original Aurora foreground intent.
-                        Box(contentAlignment = Alignment.Center, propagateMinConstraints = false) {
-                            LiteIcon(glyph, Modifier.align(Alignment.Center), paint, size = 14.dp)
+            CompositionLocalProvider(LocalLiteBackdrop provides switchBackdrop) {
+                val thumb: @Composable () -> Unit = {
+                    NoLensControl(case, Modifier.size(24.dp).onGloballyPositioned { probe?.bounds?.set("switch-control-thumb", it.boundsInWindow()) }, LiteCorner.Full, case.checked,
+                        solidColor = if (case.checked) Color.White else visuals.secondaryInk, glassStyle = finish, glassTint = thumbTint) {
+                        if ((foregroundControl || !flatTrack) && case.tier != MaterialTier.Solid) {
+                            val glyph = if (case.checked) FullGlyphs.check else FullGlyphs.close
+                            val paint = visuals.ink.copy(alpha = if (case.enabled) 1f else 0.38f)
+                            // The no-lens plane retains the original Aurora foreground intent.
+                            Box(contentAlignment = Alignment.Center, propagateMinConstraints = false) {
+                                LiteIcon(glyph, Modifier.align(Alignment.Center), paint, size = 14.dp)
+                            }
                         }
                     }
                 }
+                if (measuredPosition) {
+                    BoxWithConstraints(Modifier.fillMaxWidth().height(32.dp).onGloballyPositioned { probe?.bounds?.set("switch-control-track", it.boundsInWindow()) }) {
+                        val thumbLeft = if (case.checked) maxWidth - 28.dp else 4.dp
+                        Box(Modifier.offset { IntOffset(thumbLeft.roundToPx(), 4.dp.roundToPx()) }) { thumb() }
+                    }
+                } else Box(Modifier.offset(if (case.checked) 24.dp else 4.dp, 4.dp)) { thumb() }
             }
-            if (measuredPosition) {
-                BoxWithConstraints(Modifier.fillMaxWidth().height(32.dp).onGloballyPositioned { probe?.bounds?.set("switch-control-track", it.boundsInWindow()) }) {
-                    val thumbLeft = if (case.checked) maxWidth - 28.dp else 4.dp
-                    Box(Modifier.offset { IntOffset(thumbLeft.roundToPx(), 4.dp.roundToPx()) }) { thumb() }
-                }
-            } else Box(Modifier.offset(if (case.checked) 24.dp else 4.dp, 4.dp)) { thumb() }
         }
-        if (flatTrack) NoLensControl(case, Modifier.size(52.dp, 32.dp), LiteCorner.Full, case.checked,
-            solidColor = if (case.checked) visuals.primary else lerp(visuals.surface, visuals.ink, 0.12f), glassStyle = finish, glassTint = trackTint, content = children)
-        else LitePane(Modifier.size(52.dp, 32.dp), corner = LiteCorner.Full, selected = case.checked,
-            solidColor = if (case.checked) visuals.primary else lerp(visuals.surface, visuals.ink, 0.12f), glassStyle = finish, glassTint = trackTint, content = children)
+        CompositionLocalProvider(LocalLiteBackdrop provides switchBackdrop) {
+            if (flatTrack) NoLensControl(case, Modifier.size(52.dp, 32.dp), LiteCorner.Full, case.checked,
+                solidColor = if (case.checked) visuals.primary else lerp(visuals.surface, visuals.ink, 0.12f), glassStyle = finish, glassTint = trackTint, content = children)
+            else LitePane(Modifier.size(52.dp, 32.dp), corner = LiteCorner.Full, selected = case.checked,
+                solidColor = if (case.checked) visuals.primary else lerp(visuals.surface, visuals.ink, 0.12f), glassStyle = finish, glassTint = trackTint, content = children)
+        }
     }
 }
 
