@@ -419,6 +419,11 @@ class ProductionNetworkFlowTest {
             }
         } catch (timeout: TimeoutCancellationException) {
             try {
+                withContext(NonCancellable + Dispatchers.IO) {
+                    NetworkPortTcpEvidence.capture(instrumentation.uiAutomation, ports).forEach { receipt ->
+                        android.util.Log.e("NetworkPortReleaseTcp", "stage=$stage $receipt")
+                    }
+                }
                 android.util.Log.e("NetworkPortRelease",
                     "stage=$stage expectedPorts=${ports.distinct()} lastPort=$lastPort " +
                         "lastType=${lastFailure?.javaClass?.name} lastMessage=${lastFailure?.message} " +
