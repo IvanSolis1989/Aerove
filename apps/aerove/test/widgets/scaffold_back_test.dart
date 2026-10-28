@@ -365,11 +365,12 @@ void main() {
     final container = ProviderContainer(
       overrides: [
         _phoneView(tester),
-        dashboardStateProvider.overrideWithValue(
-          const DashboardState(
+        appSettingProvider.overrideWithBuild(
+          (_, _) => const AppSettingProps(
             dashboardWidgets: [
               DashboardWidget.memoryInfo,
               DashboardWidget.outboundMode,
+              DashboardWidget.networkTakeover,
             ],
           ),
         ),

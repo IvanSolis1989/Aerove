@@ -1046,10 +1046,9 @@ class _CellText extends StatelessWidget {
             maxLines: 1,
             softWrap: false,
             overflow: TextOverflow.ellipsis,
-            style: style.copyWith(
-              fontSize: fitted,
-              height: lineHeight / scaler.scale(fitted),
-            ),
+            style: style
+                .withFontSize(fitted)
+                .copyWith(height: lineHeight / scaler.scale(fitted)),
           ),
         );
       },

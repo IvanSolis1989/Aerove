@@ -417,7 +417,7 @@ void main() {
     final layout = tester.renderObject<RenderStatusCardLayout>(
       find.byType(StatusCardLayout),
     );
-    final band = layout.size.height - 1;
+    final band = layout.size.height;
     expect(curve.width, layout.size.width);
     expect(curve.height, closeTo(band, 0.01));
     expect(
