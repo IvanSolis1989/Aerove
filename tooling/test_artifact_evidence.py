@@ -235,6 +235,110 @@ class ArtifactEvidenceTest(unittest.TestCase):
         self.assertEqual(receipt['outputScope']['totalEntryCount'], 600)
         self.assertLessEqual(len(outputs['INDEX.json']), 131072)
 
+    def logged(self, rows, **changes):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = self.package(root, rows)
+            request = self.request(expectedZIPsha=hashlib.sha256(archive.read_bytes()).hexdigest(), expectedZIPbytes=archive.stat().st_size)
+            request.update(changes)
+            receipt = dict(original=request)
+            out = root / 'out'
+            out.mkdir()
+            reader.consume(archive, request, out, receipt, time.monotonic() + 5)
+            before = {p.name: p.read_bytes() for p in out.iterdir()}
+            receipt['completed'] = True
+            capture = io.StringIO()
+            with contextlib.redirect_stdout(capture):
+                reader.log_json_outputs(out, receipt)
+            self.assertEqual(before, {p.name: p.read_bytes() for p in out.iterdir()})
+            return receipt, capture.getvalue(), before
+
+    def test_json_log_byte_exact_and_json_only(self):
+        import base64
+        raw = b'{ "spacing": [1, 2] }\r\n'
+        receipt, text, outputs = self.logged([('metrics.json', raw), ('notes.txt', b'plain')], basenames=['metrics.json', 'notes.txt'])
+        prefix, suffix = 'AEROVE_JSON_FRAME_V1 ', ' AEROVE_JSON_FRAME_END\n'
+        self.assertTrue(text.startswith(prefix) and text.endswith(suffix))
+        frame = json.loads(text[len(prefix):-len(suffix)])
+        self.assertEqual(base64.b64decode(frame['data']), raw)
+        self.assertEqual(frame['sha256'], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(frame['bytes'], len(raw))
+        self.assertEqual(frame['original']['headSHA'], 'a' * 40)
+        self.assertTrue(frame['wholeZipDigestVerified'] and frame['allEntryCrcVerified'])
+        self.assertEqual(len(receipt['jsonLogTransport']['loggedFiles']), 1)
+        self.assertNotIn('member-02', text)
+
+    def test_json_log_limits_omit_without_truncation(self):
+        receipt, text, _ = self.logged([('metrics.json', b'"' + b'x' * 16384 + b'"')])
+        self.assertEqual(text, '')
+        self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'single-file byte limit')
+        receipt, text, _ = self.logged([('a.json', b'"' + b'x' * 7000 + b'"'), ('b.json', b'"' + b'y' * 7000 + b'"')], basenames=['a.json', 'b.json'])
+        self.assertLessEqual(len(text.encode()), 16384)
+        self.assertEqual(len(receipt['jsonLogTransport']['loggedFiles']), 1)
+        self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'total framed byte limit')
+        receipt, text, _ = self.logged([('metrics.json', b'"' + b'x' * 13000 + b'"')])
+        self.assertEqual(text, '')
+        self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'total framed byte limit')
+
+    def test_json_log_sensitive_recheck_and_failed_integrity_emit_nothing(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory)
+            secret = b'{"secret":"SYNTHETIC"}'
+            (out / 'INDEX.json').write_bytes(secret)
+            receipt = dict(original=self.request(), completed=True, wholeZipDigestVerified=True,
+                           allEntryCrcVerified=True, outputScope=dict(mode='index'))
+            capture = io.StringIO()
+            with contextlib.redirect_stdout(capture):
+                reader.log_json_outputs(out, receipt)
+            self.assertEqual(capture.getvalue(), '')
+            self.assertEqual(receipt['jsonLogTransport']['omittedFiles'][0]['reason'], 'sensitive text policy')
+            for key in ('completed', 'wholeZipDigestVerified', 'allEntryCrcVerified'):
+                bad = dict(receipt, **{key: False})
+                with contextlib.redirect_stdout(capture), self.assertRaises(ValueError):
+                    reader.log_json_outputs(out, bad)
+            self.assertEqual(capture.getvalue(), '')
+
+    def test_index_log_preserves_readonly_scope_and_bytes(self):
+        import base64
+        receipt, text, outputs = self.logged([('a.json', b'{}'), ('b.json', b'{}')], mode='index', pathContains='a.json')
+        frame = json.loads(text[len('AEROVE_JSON_FRAME_V1 '):-len(' AEROVE_JSON_FRAME_END\n')])
+        self.assertEqual(base64.b64decode(frame['data']), outputs['INDEX.json'])
+        self.assertEqual(frame['indexScope'], receipt['outputScope'])
+        self.assertEqual(frame['indexScope']['totalEntryCount'], 2)
+        self.assertEqual(frame['indexScope']['matchedEntryCount'], 1)
+
+    def test_main_integrity_failure_never_logs_and_png_is_skipped(self):
+        import contextlib
+        import io
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as directory:
+            capture = io.StringIO()
+            env = dict(RUNNER_TEMP=directory, GITHUB_REPOSITORY=reader.REPO,
+                       GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF=reader.BRANCH,
+                       EVIDENCE_REQUEST=json.dumps(self.request()))
+            def fake_gh(route, destination, *args):
+                Path(destination).write_text('{}')
+            with mock.patch.dict(os.environ, env), mock.patch.object(reader, 'gh', side_effect=fake_gh), \
+                    mock.patch.object(reader, 'validate_api'), \
+                    mock.patch.object(reader, 'consume', side_effect=zipfile.BadZipFile('synthetic')), \
+                    contextlib.redirect_stdout(capture):
+                self.assertEqual(reader.main(), 1)
+            self.assertEqual(capture.getvalue(), '')
+            saved = json.loads((Path(directory) / 'artifact-evidence-out/RECEIPT.json').read_text())
+            self.assertFalse(saved['completed'])
+            self.assertNotIn('jsonLogTransport', saved)
+            receipt = dict(original=self.request(), completed=True, wholeZipDigestVerified=True,
+                           allEntryCrcVerified=True, outputScope=dict(mode='select', members=[dict(output='member-01.png')]))
+            with contextlib.redirect_stdout(capture):
+                reader.log_json_outputs(Path(directory), receipt)
+            self.assertEqual(capture.getvalue(), '')
+            self.assertEqual(receipt['jsonLogTransport']['loggedFiles'], [])
+
 
 if __name__ == "__main__":
     unittest.main()

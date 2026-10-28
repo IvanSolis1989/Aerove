@@ -1,5 +1,6 @@
 """Bounded same-repository artifact evidence consumer; never application acceptance."""
 import binascii
+import base64
 import hashlib
 import json
 import os
@@ -257,6 +258,58 @@ def consume(archive, request, out, receipt, deadline):
             receipt["outputScope"] = dict(mode="select", members=outputs, sensitiveTextPolicy="reject entire selection before any payload write")
 
 
+def log_json_outputs(out, receipt):
+    require(receipt.get("completed") is True and receipt.get("wholeZipDigestVerified") is True
+            and receipt.get("allEntryCrcVerified") is True, "JSON log transport requires successful evidence read")
+    scope = receipt["outputScope"]
+    candidates = [dict(output="INDEX.json")] if scope["mode"] == "index" else scope["members"]
+    transport = dict(limitBytes=16384, loggedFiles=[], omittedFiles=[])
+    frames, total = [], 0
+    identity = {key: receipt["original"][key] for key in
+                ("runId", "attempt", "headSHA", "artifactId", "artifactName", "expectedZIPsha", "expectedZIPbytes")}
+    for row in candidates:
+        name = row["output"]
+        if not name.endswith(".json"):
+            continue
+        require(name == "INDEX.json" if scope["mode"] == "index" else
+                re.fullmatch(r"member-0[1-8]\.json", name) is not None, "Unexpected JSON output name")
+        with (out / name).open("rb") as stream:
+            data = stream.read(16385)
+        if len(data) > 16384:
+            transport["omittedFiles"].append(dict(filename=name, reason="single-file byte limit"))
+            continue
+        digest = hashlib.sha256(data).hexdigest()
+        if scope["mode"] == "select":
+            require(len(data) == row["bytes"] and digest == row["outputSha256"], "JSON output readback mismatch")
+        text = data.decode("utf-8", errors="strict")
+        json.loads(text)
+        if sensitive_text(text):
+            transport["omittedFiles"].append(dict(filename=name, reason="sensitive text policy"))
+            continue
+        frame = dict(version=1, filename=name, bytes=len(data), sha256=digest,
+                     encoding="base64", data=base64.b64encode(data).decode("ascii"), original=identity,
+                     wholeZipDigestVerified=True, allEntryCrcVerified=True)
+        if scope["mode"] == "index":
+            frame["indexScope"] = scope
+        else:
+            frame["member"] = row["member"]
+        line = "AEROVE_JSON_FRAME_V1 " + json.dumps(frame, separators=(",", ":")) + " AEROVE_JSON_FRAME_END\n"
+        if sensitive_text(json.dumps({key: value for key, value in frame.items() if key != "data"})):
+            transport["omittedFiles"].append(dict(filename=name, reason="sensitive metadata policy"))
+            continue
+        size = len(line.encode("utf-8"))
+        if total + size > 16384:
+            transport["omittedFiles"].append(dict(filename=name, reason="total framed byte limit"))
+            continue
+        total += size
+        frames.append(line)
+        transport["loggedFiles"].append(dict(filename=name, bytes=len(data), sha256=digest, framedBytes=size))
+    transport["totalFramedBytes"] = total
+    receipt["jsonLogTransport"] = transport
+    for line in frames:
+        print(line, end="", flush=True)
+
+
 def main():
     out = Path(os.environ["RUNNER_TEMP"]) / "artifact-evidence-out"
     out.mkdir(exist_ok=False)
@@ -279,6 +332,7 @@ def main():
             gh(f"repos/{REPO}/actions/artifacts/{request['artifactId']}/zip", private / "original.zip", request["expectedZIPbytes"], 160, receipt["requests"])
             consume(private / "original.zip", request, out, receipt, deadline)
         receipt["completed"] = True
+        log_json_outputs(out, receipt)
         result = 0
     except Exception as error:
         receipt["failure"] = dict(type=type(error).__name__, message=str(error) if isinstance(error, ValueError) and type(error) is ValueError else "Evidence read failed; raw exception/stderr withheld")
