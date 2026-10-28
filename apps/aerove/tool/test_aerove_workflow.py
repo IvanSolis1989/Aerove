@@ -101,7 +101,15 @@ class WorkflowPolicyTest(unittest.TestCase):
         self.assertIn('CI_VERIFY_NEEDS: ${{ toJSON(needs) }}', job('verify'))
         self.assertIn('python3 tool/ci_verify.py gate', job('verify'))
         self.assertIn('needs: [promotion_request, reuse, verify, apk]', job('release'))
-        self.assertIn("needs.verify.result == 'success' && needs.apk.result == 'success'", job('release'))
+        release = job('release')
+        selected = job('reuse')
+        self.assertIn('python3 tool/aerove_artifact.py select-build', selected)
+        self.assertIn('--build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID"', selected)
+        self.assertIn('python3 tool/aerove_artifact.py validate', release)
+        self.assertIn('python3 tool/aerove_artifact.py promotion-receipt', release)
+        publish = run_block('Publish verified APK to Releases')
+        self.assertLess(publish.index('python3 tool/aerove_artifact.py check-promotion'),
+                        publish.index('gh release create'))
         self.assertIn('needs.reuse.outputs.run_id || github.run_id', job('release'))
         self.assertIn('hooks_runner/shared/rust_api', job('native'))
         self.assertIn('hooks_runner/shared/rust_api', job('apk'))
@@ -115,6 +123,61 @@ class WorkflowPolicyTest(unittest.TestCase):
                         native_consumers.index('Run preserved verification combination'))
         self.assertIn('-aerove-rust-host-v2-', job('native'))
         self.assertIn('-aerove-rust-host-v2-', native_consumers)
+
+    def test_release_gate_only_accepts_explicit_original_artifact_promotion(self):
+        release = re.search(r'(?ms)^  release:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)', FULL)[1]
+        condition = re.search(r'\$\{\{(.*?)\}\}', release, re.DOTALL)[1]
+        approved = {
+            'github.repository': 'IvanSolis1989/Aerove', 'github.ref': 'refs/heads/main',
+            'github.event_name': 'workflow_dispatch', 'needs.promotion_request.result': 'success',
+            'needs.reuse.result': 'success', 'needs.reuse.outputs.run_id': '123',
+            'inputs.prepare_sources': False, 'inputs.verification_recheck': False,
+            'inputs.publish_release': True, 'inputs.accepted_build_run': '123',
+            'needs.verify.result': 'skipped', 'needs.apk.result': 'skipped',
+        }
+
+        def allows(changes=None, cancelled=False):
+            context = {**approved, **(changes or {})}
+            expression = condition.replace('cancelled()', repr(cancelled))
+            expression = re.sub(r'\b(?:github|needs|inputs)\.[\w.]+',
+                                lambda match: repr(context[match[0]]), expression)
+            expression = re.sub(r'!(?!=)', ' not ', expression)
+            expression = ' '.join(expression.replace('&&', ' and ').replace('||', ' or ').split())
+            return bool(eval(expression, {'__builtins__': {}}, {}))
+
+        self.assertTrue(allows())
+        self.assertFalse(allows(cancelled=True))
+        for key, value in (
+            ('github.repository', 'fork/repository'), ('github.ref', 'refs/heads/feature'),
+            ('github.event_name', 'push'), ('inputs.publish_release', False),
+            ('inputs.accepted_build_run', ''), ('inputs.prepare_sources', True),
+            ('inputs.verification_recheck', True), ('needs.reuse.outputs.run_id', ''),
+            ('needs.promotion_request.result', 'failure'), ('needs.reuse.result', 'failure'),
+            ('needs.promotion_request.result', 'skipped'), ('needs.reuse.result', 'skipped'),
+        ):
+            with self.subTest(field=key, value=value):
+                self.assertFalse(allows({key: value}))
+
+    def test_selected_original_must_have_successful_verify_and_apk_jobs(self):
+        from tool.test_aerove_artifact import ExplicitBuildPromotionTest, SOURCE
+        fixture = ExplicitBuildPromotionTest()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        selected = fixture.select()
+        self.assertEqual(selected['run_id'], 123)
+        self.assertEqual(selected['build_source'], SOURCE)
+        self.assertEqual(selected['build_attempt'], 2)
+        for name in ('verify', 'apk'):
+            job = next(job for job in fixture.jobs if job['name'] == name)
+            for conclusion in ('failure', 'skipped', 'cancelled'):
+                job['conclusion'] = conclusion
+                with self.subTest(job=name, conclusion=conclusion), self.assertRaises(fixture.module.ArtifactError):
+                    fixture.select()
+            job['conclusion'] = 'success'
+            fixture.jobs.remove(job)
+            with self.subTest(job=name, conclusion='missing'), self.assertRaises(fixture.module.ArtifactError):
+                fixture.select()
+            fixture.jobs.append(job)
 
     def test_matrix_consumers_restore_caches_and_keep_performance_on_its_own_runner(self):
         for name in ['render', 'regressions']:
