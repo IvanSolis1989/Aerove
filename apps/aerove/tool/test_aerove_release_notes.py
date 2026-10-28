@@ -45,6 +45,71 @@ class AeroveReleaseNotesTest(unittest.TestCase):
         )
         self.assertEqual(notes.notes_for_release(markdown, TAG), '- 目标版本')
 
+    def test_unique_same_version_development_candidate_keeps_build_and_source_binding(self):
+        tag = 'v0.11.0-beta.11+2026102264'
+        info = {**INFO, 'version': tag.removeprefix('v')}
+        for title in ['0.11.0-beta.11 — 开发候选，待构建和验收',
+                      'v0.11.0-beta.11 — 开发候选']:
+            with self.subTest(title=title):
+                markdown = f'## {title}\n本候选未接受、未发行。\n\n- 本次修改\n'
+                rendered = notes.render_release(markdown, tag, info)
+                self.assertNotIn('本候选未接受、未发行。', rendered)
+                self.assertIn(f'版本：`{info["version"]}`', rendered)
+                self.assertIn(f'源码：`{info["source"]}`', rendered)
+                with self.assertRaises(ValueError):
+                    notes.render_release(markdown, tag, INFO)
+                with self.assertRaises(ValueError):
+                    notes.render_release(markdown, tag, {**info, 'source': 'main'})
+
+    def test_candidate_entries_keep_continuations_and_links_without_unaccepted_status(self):
+        body = ('新原包、完整 CI、Android 功能与用户验收仍待完成，本候选未接受、未发行。\n\n'
+                '- 修复实际功能，参见 [来源](https://example.invalid/source)。\n'
+                '  保留条目的连续说明。\n\n'
+                '- 第二项修改\n'
+                '  [回归证据](https://example.invalid/test)')
+        markdown = '## 0.9.1-X — 开发候选，待构建和验收\n' + body
+        rendered = notes.render_release(markdown, TAG, INFO)
+        self.assertNotIn('仍待完成', rendered)
+        self.assertNotIn('未接受、未发行', rendered)
+        self.assertIn(body.split('\n\n', 1)[1], rendered)
+        exact = f'## {TAG} — 已发布\n' + body
+        self.assertEqual(notes.notes_for_release(exact, TAG), body)
+
+    def test_candidate_body_structure_fails_closed(self):
+        for body in ['尚待构建。\n\n- 修改',
+                     '<!-- control -->本候选未接受、未发行。\n\n- 修改',
+                     '### 本候选未接受、未发行。\n\n- 修改',
+                     '本候选未接受、未发行。\n- 修改',
+                     '本候选未接受、未发行。\n\n第二段状态\n\n- 修改',
+                     '本候选未接受、未发行。\n\n### 更新\n- 修改',
+                     '- 修改\n未缩进的额外段落',
+                     '- 修改\n\n本候选未接受、未发行。']:
+            markdown = '## 0.9.1-X — 开发候选\n' + body
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                notes.render_release(markdown, TAG, INFO)
+
+    def test_exact_build_section_wins_over_candidate_and_pending(self):
+        markdown = ('## 0.9.1-X — 开发候选\n- 候选内容\n'
+                    '## 待发布\n- 后续内容\n'
+                    f'## {TAG} — 已发布\n- 精确构建内容\n')
+        self.assertEqual(notes.notes_for_release(markdown, TAG), '- 精确构建内容')
+
+    def test_candidate_fallback_rejects_ambiguity_wrong_versions_and_invalid_entries(self):
+        for markdown in [
+            '## 0.9.1-X — 开发候选\n- 一\n## v0.9.1-X — 开发候选，待验收\n- 二',
+            '## 0.9.1-X — 开发候选\n- 一\n## 0.9.1-X — 已发布\n- 二',
+            '## 0.9.1-X — 开发候选\n- 一\n## 0.9.1-X — 开发候选\n- 二',
+            '## 0.9.1-X — 已发布\n- 旧记录',
+            '## 0.9.1-X\n- 无候选身份',
+            '## 0.9.1-X-extra — 开发候选\n- 其他版本',
+            '## 0.9.1-X+2026102002 — 开发候选\n- 其他构建',
+            '## 0.9.1-X — 开发候选\n稍后补充',
+            '## 0.9.1-X — 开发候选\n- 更新\n<!-- control -->',
+            f'## {TAG} — 已发布\n- 一\n## {TAG.removeprefix("v")}\n- 二',
+        ]:
+            with self.subTest(markdown=markdown), self.assertRaises(ValueError):
+                notes.render_release(markdown, TAG, INFO)
+
     def test_missing_empty_unchanged_or_ambiguous_notes_stop_publication(self):
         for markdown, previous in [
             ('## 0.9.1-X+2026101815 — 已发布\n- 上一版', ''),

@@ -20,6 +20,8 @@ FACT_DOCUMENTS = {
 }
 PUBLISHERS = {
     'apps/aerove/tool/aerove_artifact.py',
+    'apps/aerove/tool/aerove_release_notes.py',
+    'apps/aerove/tool/test_aerove_release_notes.py',
     'apps/aerove/tool/test_aerove_artifact.py',
     'apps/aerove/tool/test_aerove_workflow.py',
     'apps/aerove-lite/tool/lite_release.py',

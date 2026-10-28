@@ -23,6 +23,8 @@ class ProductSourceTest(unittest.TestCase):
         self.git('config', 'core.autocrlf', 'false')
         for path in ('apps/aerove/lib/app.dart', 'apps/aerove/test/app_test.dart',
                      'apps/aerove-lite/app/App.kt', 'apps/aerove-lite/app/src/test/Test.kt',
+                     'apps/aerove/tool/aerove_release_notes.py',
+                     'apps/aerove/tool/test_aerove_release_notes.py',
                      'docs/aerove/CHANGELOG.md', 'docs/shared/UI_CONTRACT.md',
                      '.github/actions/flutter/action.yaml', '.gitmodules', 'root-build.sh'):
             self.write(path, 'original\n')
@@ -95,6 +97,32 @@ class ProductSourceTest(unittest.TestCase):
                 blob = self.original if mode == '160000' else self.git('rev-parse', self.original + ':' + path)
                 self.git('update-index', '--add', '--cacheinfo', mode, blob, path)
                 self.git('commit', '-q', '-m', 'changed entry type')
+                with self.assertRaises(source.ProjectionError):
+                    self.compare()
+
+    def test_release_notes_publisher_paths_are_exact_exceptions(self):
+        paths = ('apps/aerove/tool/aerove_release_notes.py',
+                 'apps/aerove/tool/test_aerove_release_notes.py')
+        for path in paths:
+            self.write(path, 'reviewed publisher maintenance\n')
+        self.commit()
+        projected = self.compare()
+        baseline = source.equivalent(root=self.root, product='aerove',
+            build_source=self.original, release_source=self.original)
+        self.assertEqual(projected['protected_inputs_sha256'], baseline['protected_inputs_sha256'])
+        changes = projected['changed']
+        self.assertEqual({row['path'] for row in changes}, set(paths))
+        self.assertEqual({row['reason'] for row in changes}, {'publisherBootstrap'})
+        for path in ('apps/aerove/tool/aerove_version.py',
+                     'apps/aerove/tool/ci_verify.py',
+                     'apps/aerove/tool/unknown_publisher.py',
+                     'apps/aerove/setup.dart',
+                     'apps/aerove/android/app/build.gradle.kts',
+                     'tooling/build.py'):
+            with self.subTest(path=path):
+                self.git('reset', '--hard', self.original)
+                self.write(path, 'protected producer or acceptance gate\n')
+                self.commit()
                 with self.assertRaises(source.ProjectionError):
                     self.compare()
 

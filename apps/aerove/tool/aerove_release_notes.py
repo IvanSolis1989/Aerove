@@ -41,17 +41,51 @@ def notes_for_release(markdown, tag, previous_markdown=''):
     if exact:
         notes = exact[0]
     else:
-        pending = [current[key] for key in ('待发布', 'Unreleased') if key in current]
-        if len(pending) != 1:
-            raise ValueError(f'No exact section for {tag} or a single 待发布 section in {CHANGELOG_PATH}')
-        notes = pending[0]
-        previous = sections(previous_markdown)
-        if notes in (previous.get('待发布'), previous.get('Unreleased')):
-            raise ValueError('Pending notes are unchanged from the previous release source')
+        base = identity[1].removeprefix('v')
+        candidates = [(title, body) for title, body in current.items()
+                      if re.fullmatch(r'v?' + re.escape(base) + r'(?:[ \t]+—.*)?', title)]
+        if candidates:
+            if len(candidates) != 1:
+                raise ValueError(f'Multiple changelog sections match the product version for {tag}')
+            title, notes = candidates[0]
+            if not re.fullmatch(r'v?' + re.escape(base)
+                                + r'[ \t]+—[ \t]+开发候选(?:，[^\r\n]+)?', title):
+                raise ValueError(f'Base-version section for {tag} must be an explicit development candidate')
+            notes = development_candidate_notes(notes)
+        else:
+            notes = pending_notes(current, previous_markdown, tag)
     if not re.search(r'^[ \t]*-[ \t]+\S', notes, re.MULTILINE):
         raise ValueError('Release notes must contain actual change entries')
     if '<!--' in notes:
         raise ValueError('Release notes must not contain embedded control comments')
+    return notes
+
+
+def development_candidate_notes(body):
+    if '<!--' in body:
+        raise ValueError('Release notes must not contain embedded control comments')
+    if not re.match(r'-[ \t]+\S', body):
+        status, separator, body = body.partition('\n\n')
+        if (not separator or '\n' in status or status.startswith(('#', '>', '-', '*', '`'))
+                or '本候选未接受、未发行。' not in status):
+            raise ValueError('Development candidate notes must start with entries or one explicit status paragraph')
+        body = body.lstrip('\n')
+    if not re.match(r'-[ \t]+\S', body):
+        raise ValueError('Development candidate notes must contain change entries after the status paragraph')
+    if any(line and not re.match(r'(?:-[ \t]+\S|[ \t]+\S)', line)
+           for line in body.splitlines()):
+        raise ValueError('Development candidate notes allow only change entries and indented continuations')
+    return body
+
+
+def pending_notes(current, previous_markdown, tag):
+    pending = [current[key] for key in ('待发布', 'Unreleased') if key in current]
+    if len(pending) != 1:
+        raise ValueError(f'No exact section for {tag} or a single 待发布 section in {CHANGELOG_PATH}')
+    notes = pending[0]
+    previous = sections(previous_markdown)
+    if notes in (previous.get('待发布'), previous.get('Unreleased')):
+        raise ValueError('Pending notes are unchanged from the previous release source')
     return notes
 
 
