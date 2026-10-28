@@ -110,7 +110,7 @@ def gh(route, binary=False, *, stage, journal, deadline=None):
         request_journal(journal, records)
         args = ['gh', 'api', '--method', 'GET', route]
         if binary:
-            args += ['-H', 'Accept: application/octet-stream']
+            args += ['-H', 'Accept: application/vnd.github+json']
         result = subprocess.run(args, capture_output=True, timeout=remaining)
         record.update(exitCode=result.returncode, stdoutBytes=len(result.stdout), stderrBytes=len(result.stderr))
         if result.returncode:
