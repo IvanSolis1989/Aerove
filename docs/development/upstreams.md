@@ -987,6 +987,8 @@ Lite API 33 VPN Service stop/revoke 语义另只读参考同一固定 revision�
 
 **许可证、署名与证据：** R8 project authors，源码所示 BSD-style license；[固定命令源码](https://r8.googlesource.com/r8/+/d3a004e326742850d743833562cc2d6ca267d117/src/main/java/com/android/tools/r8/tracereferences/TraceReferencesCommandParser.java)、[固定公共诊断 API](https://r8.googlesource.com/r8/+/61dc59bf271ddb314b5e0953231bd22df0ffb17e/src/main/java/com/android/tools/r8/DiagnosticsHandler.java)、[官方 LICENSE](https://r8.googlesource.com/r8/+/refs/heads/main/LICENSE)；本项目 `generate_android_test_keep_rules.py` 与 `AndroidTestAppAbiTrace.java`。
 
+Lite149 原包只读 API 审计另参考固定提交 `a921ddaea4f93a3f0422b83a5add7390fba1556d` 的 [retrace 说明](https://r8.googlesource.com/r8/+/a921ddaea4f93a3f0422b83a5add7390fba1556d/doc/retrace.md) 和 [InlineWithLineNumbersStackTrace.java](https://r8.googlesource.com/r8/+/a921ddaea4f93a3f0422b83a5add7390fba1556d/src/test/java/com/android/tools/r8/retrace/stacktraces/InlineWithLineNumbersStackTrace.java)，核对同 owner 内联 frame 与实际 outer 方法的区别；后者实读 SHA256 `e40f8b8898b8b80d3fca290d768746d1715c59fbd9eb94cdc8bd0b64f8a14b66`，保留 R8 project authors / BSD-style 原版权头。仅参考格式语义，未复制解析器或新增依赖；不能证明的方法映射输出 unknown，声明存在不代表新测试 APK 已运行兼容。
+
 #### [google/perfetto](https://github.com/google/perfetto)
 
 **固定版本 / revision：** `v25.0` / `7e8d6801dbf73936a916dbcd8ed06a758c8d989e`
@@ -1141,6 +1143,8 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 **用途与采用方式：** 历史 QA83 testAPK-only task graph 只读调查 `ProguardConfigurableTask.kt`、`AndroidTestTaskManager.kt`、`R8Task.kt` 的 task/mapping 输入关系，该次 init 候选未执行或采用。后续正式接入公开 classfile API，并参考 `ClassFileProviderFactory.java` 与 `r8Tool.kt` 的有序 library provider 语义，修复重复库类误判：按 boot / compile classpath 顺序选首个定义，同时保留源码冲突和缺失接口的严格失败；未复制 provider 实现。真实 AGP 构建已在客户端 CI 执行，修正后的完整构建仍须验收
 
 标准版原包诊断另只读核对[固定 `sdkmanager.sh`](https://android.googlesource.com/platform/tools/base/+/dcded801a4942d06805cc74b56dc2cecbece2f80/sdklib/wrappers/sdkmanager.sh)，提交为 `dcded801a4942d06805cc74b56dc2cecbece2f80`。该 wrapper 的 `--licenses` 警告并返回成功，用于解释 CI 新工具未生成旧 preview 许可记录的边界；参考源与运行二进制身份分别记录，不互相冒充。诊断流程改用环境中已存在且核版本为 12.0 的 Java SDKmanager 执行正式许可登记，保留实际退出码和原许可文件检查；未复制 wrapper 实现、未新增或伪造许可文件。原文件保留 AOSP 2026 的 Apache-2.0 版权头。
+
+Lite149 原包 API 白名单审计另只读参考固定提交 `598c38100e4fb2b001385faea994fcb54cc515b1` 的 [ApkAnalyzerImpl.java](https://android.googlesource.com/platform/tools/base/+/598c38100e4fb2b001385faea994fcb54cc515b1/apkparser/cli/src/main/java/com/android/tools/apk/analyzer/ApkAnalyzerImpl.java)，核对既有 `apkanalyzer dex code --class` 的方法声明输出。仅参考工具格式，未复制实现或安装新工具；CI 中实际执行的 SDK 工具版本及文件哈希单独记录，不冒充此参考源码构建。保留 AOSP Apache-2.0 原版权与署名。
 
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
 

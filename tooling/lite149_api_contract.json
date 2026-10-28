@@ -1,0 +1,230 @@
+{
+  "request": {
+    "expectedZIPsha": "36ff3c5a5d1a44ca98ad8715fe2d9d2b8319fe49857a4a1c48d6a3b30a3ebeaa",
+    "mode": "index",
+    "headSHA": "46b8e54a61eb96fa2f7a5bb3bf85ec0d8170de4a",
+    "expectedZIPbytes": 35686417,
+    "artifactName": "AEROVE-Lite-runtime-contract-attempt-1",
+    "attempt": 1,
+    "runId": 40627739662,
+    "artifactId": 12790582377
+  },
+  "sourceTree": "137104181ec5ce06d8cf17d2bbd85d1a6e662402",
+  "index": [
+    {
+      "path": "SHA256SUMS",
+      "bytes": 2048,
+      "crc32": "a9d103a1",
+      "rawSha256": "642db0799d9fd9fb4d125f19f3067b946eedbcab8e612a90ff309e05a530b335"
+    },
+    {
+      "path": "BUILD_INFO.json",
+      "bytes": 11203,
+      "crc32": "b7e9c6b9",
+      "rawSha256": "1a35b104c1e4cb12d77a89d420774d6e65dcc3309ec5d36c298cde5a8a60132f"
+    },
+    {
+      "path": "apks/app-release-androidTest.apk",
+      "bytes": 3583725,
+      "crc32": "e02558ff",
+      "rawSha256": "ce6468448606ea405023a37fafb138786c783c90c0be40abf5afb7fcadacbf65"
+    },
+    {
+      "path": "apks/app-release.apk",
+      "bytes": 70440979,
+      "crc32": "3748f426",
+      "rawSha256": "f9cd4bf4bb61aa577a3ef369015e8ebcf21e5f9c05b4ddadc0e01dea13849375"
+    },
+    {
+      "path": "client-helper-build-receipt.json",
+      "bytes": 5049,
+      "crc32": "8ad50c4b",
+      "rawSha256": "1c2bb67a0fecb519669428361cb89a6a211724843ea9489de72736011dfae7ce"
+    },
+    {
+      "path": "dependencies/releaseAndroidTestRuntimeClasspath.exit.txt",
+      "bytes": 2,
+      "crc32": "7e4acd12",
+      "rawSha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "dependencies/releaseAndroidTestRuntimeClasspath.stderr.txt",
+      "bytes": 0,
+      "crc32": "00000000",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt",
+      "bytes": 73390,
+      "crc32": "c0e8ecfa",
+      "rawSha256": "3c7a2d85c76d7c7af726dd6375eef628d3c9f895f69cd5d75475b9c3bfa0eac5"
+    },
+    {
+      "path": "dependencies/releaseRuntimeClasspath.exit.txt",
+      "bytes": 2,
+      "crc32": "7e4acd12",
+      "rawSha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "dependencies/releaseRuntimeClasspath.stderr.txt",
+      "bytes": 0,
+      "crc32": "00000000",
+      "rawSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "dependencies/releaseRuntimeClasspath.stdout.txt",
+      "bytes": 79918,
+      "crc32": "79f6bd7d",
+      "rawSha256": "05e7650bde8bfa33581c62db15feee81a57214189d0e6607b6f8b511933ef3e6"
+    },
+    {
+      "path": "lite-badging.txt",
+      "bytes": 6285,
+      "crc32": "265d349f",
+      "rawSha256": "9126ce55b817906fb45755fa20e010baee59770855528e347351d8b703797183"
+    },
+    {
+      "path": "lite-signature.txt",
+      "bytes": 1017,
+      "crc32": "e0399a11",
+      "rawSha256": "c95138cabc6d1eac58090a2d8b2ff3ba6a6ab2cc187dfacbd605f5a89e56ee70"
+    },
+    {
+      "path": "mapping/release/configuration.txt",
+      "bytes": 414107,
+      "crc32": "6415c984",
+      "rawSha256": "3b581c484f08fedeb58121fd4a0b8166cae610c9344088e40c50bb978426deb8"
+    },
+    {
+      "path": "mapping/release/mapping.txt",
+      "bytes": 81674789,
+      "crc32": "b526f6c3",
+      "rawSha256": "00ecdd068b90a38e340c371fe2d64c159418e277dcf14dc9e9567c9e142b03b2"
+    },
+    {
+      "path": "mapping/release/seeds.txt",
+      "bytes": 2174405,
+      "crc32": "af3ebaa5",
+      "rawSha256": "4b60a389d1f7ffb758369ffa6478ada88cb532869d5c7885f2565cf63cbcade1"
+    },
+    {
+      "path": "mapping/release/usage.txt",
+      "bytes": 4679134,
+      "crc32": "513ddeb8",
+      "rawSha256": "6cedc22b0ec7e9d2d93f1c78c04b89458a3ed9259f66e603d5aaebfeaf221ef4"
+    },
+    {
+      "path": "mapping/releaseAndroidTest/configuration.txt",
+      "bytes": 5730,
+      "crc32": "ce9dd7fc",
+      "rawSha256": "438b7a7fc99ac0c5c08c8f7e104dfe1176459d223928d44da5b18ae805290be3"
+    },
+    {
+      "path": "mapping/releaseAndroidTest/mapping.txt",
+      "bytes": 6840277,
+      "crc32": "5f6f8cab",
+      "rawSha256": "a4536252e32f2f3f4d427b87ec3cae122a095cf057d4393553f6e18fd74c3a9b"
+    },
+    {
+      "path": "mapping/releaseAndroidTest/seeds.txt",
+      "bytes": 2452050,
+      "crc32": "fcb835c2",
+      "rawSha256": "a1a6ce9b680d6696af20aab17f81b44f055babb42d0a48740751108ac32e1a20"
+    },
+    {
+      "path": "mapping/releaseAndroidTest/usage.txt",
+      "bytes": 14881,
+      "crc32": "420c14be",
+      "rawSha256": "99aa547fbfba45b5cac58f7979c41aa21b6ad4bd5b9c47694f9d7790f61e8e34"
+    },
+    {
+      "path": "source-manifest.json",
+      "bytes": 3719,
+      "crc32": "8383cc13",
+      "rawSha256": "8e39e23ae12e0b26c9cc57af31a22196e3da7718c76576bf68197c664d0c3d34"
+    }
+  ],
+  "signerSha256": "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8",
+  "methods": [
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "getModifierInfo",
+      "returns": "java.util.List",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "getWidth",
+      "returns": "int",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "getHeight",
+      "returns": "int",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "getCoordinates",
+      "returns": "androidx.compose.ui.layout.LayoutCoordinates",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "isPlaced",
+      "returns": "boolean",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "getDensity",
+      "returns": "androidx.compose.ui.unit.Density",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "getLayoutDirection",
+      "returns": "androidx.compose.ui.unit.LayoutDirection",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.LayoutInfo",
+      "name": "isAttached",
+      "returns": "boolean",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.semantics.SemanticsNode",
+      "name": "getLayoutInfo",
+      "returns": "androidx.compose.ui.layout.LayoutInfo",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.semantics.SemanticsNode",
+      "name": "getId",
+      "returns": "int",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.layout.ModifierInfo",
+      "name": "getModifier",
+      "returns": "androidx.compose.ui.Modifier",
+      "parameters": []
+    },
+    {
+      "owner": "com.kyant.backdrop.backdrops.LayerBackdrop",
+      "name": "getGraphicsLayer",
+      "returns": "androidx.compose.ui.graphics.layer.GraphicsLayer",
+      "parameters": []
+    },
+    {
+      "owner": "androidx.compose.ui.graphics.layer.GraphicsLayer",
+      "name": "getSize-YbymL2g",
+      "returns": "long",
+      "parameters": []
+    }
+  ],
+  "diagnosticPatchSha256": "6406ed46b6d479c4f6fc58c2f35fa285be64e7411851faafcdb12113da469bb8",
+  "selector": "dev.aerove.lite.ui.LiteSwitchRenderingTest#restingTrackAndThumbFollowTheMaterialIndependently[Clear_ordinary_light_off_disabled]"
+}

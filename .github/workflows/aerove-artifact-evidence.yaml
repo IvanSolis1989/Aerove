@@ -6,6 +6,10 @@ on:
     paths: [.github/workflows/aerove-artifact-evidence.yaml]
   workflow_dispatch:
     inputs:
+      lite149_api_audit:
+        description: Private fixed run149 mapping and APK method-definition audit only
+        type: boolean
+        default: false
       request_json:
         description: Exact original run/artifact identity and index or bounded selection JSON
         required: true
@@ -29,10 +33,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Read original artifact without building or running applications
+        if: ${{ !inputs.lite149_api_audit }}
         env:
           GH_TOKEN: ${{ github.token }}
           EVIDENCE_REQUEST: ${{ inputs.request_json }}
         run: python3 tooling/artifact_evidence.py
+      - name: Audit only the fixed Lite149 original APK API whitelist
+        if: ${{ inputs.lite149_api_audit }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_REQUEST: ${{ inputs.request_json }}
+        run: python3 tooling/lite149_api_evidence.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
