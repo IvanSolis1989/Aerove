@@ -4,6 +4,7 @@ import dev.aerove.lite.DashboardCounts
 import dev.aerove.lite.Traffic
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.test.*
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -53,30 +54,78 @@ class UiTelemetrySignalsTest {
         suspend fun await(ms: Long) { val gate = CompletableDeferred<Unit>(); waits += ms to gate; gate.await() }
         fun advance(ms: Long) { time += ms; waits.last().second.complete(Unit) }
     }
-    @Test fun countsAndTrafficShare300Then600DeadlineAndPublishOnlyLatestWithoutPolling() = runBlocking<Unit> {
+    @Test fun countsHaveIndependentOneSecondDeadlineAndNoSilentTicker() = runBlocking<Unit> {
         val clock = Clock(); val seen = mutableListOf<UiTelemetrySnapshot>()
         val owner = UiTelemetryPublication(this, seen::add, { clock.time }, clock::await)
         try {
-            owner.active(true); assertEquals(1, seen.size)
+            owner.countsActive(true); owner.active(true)
             owner.counts(DashboardCounts(connectionCount = 1)); yield()
-            assertEquals(300L, clock.waits.last().first)
-            owner.counts(DashboardCounts(connectionCount = 2)); owner.counts(DashboardCounts(connectionCount = 3))
+            assertEquals(1000L, clock.waits.single().first)
+            owner.counts(DashboardCounts(connectionCount = 2)); owner.interacting(true)
+            owner.traffic(Traffic(1, 2), true)
+            assertNull(seen.last().counts.connectionCount)
             assertEquals(1, clock.waits.size)
-            clock.advance(300); until { seen.size == 2 }; assertEquals(3, seen.last().counts.connectionCount)
-            owner.interacting(true); owner.traffic(Traffic(1, 2), true)
-            assertEquals(3, seen.size) // first real traffic bypasses the empty initial snapshot
-            owner.traffic(Traffic(2, 4), true); yield(); assertEquals(600L, clock.waits.last().first)
-            owner.counts(DashboardCounts(connectionCount = 4)); clock.advance(600); until { seen.size == 4 }
-            assertEquals(4, seen.last().counts.connectionCount); assertEquals(Traffic(2, 4), seen.last().traffic)
-            val waits = clock.waits.size; delay(15); assertEquals(waits, clock.waits.size)
-            assertEquals(4, seen.size)
+            clock.advance(1000); yield()
+            assertEquals(2, seen.last().counts.connectionCount)
+            val waits = clock.waits.size; val size = seen.size
+            delay(15); assertEquals(waits, clock.waits.size); assertEquals(size, seen.size)
+        } finally { owner.close() }
+    }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun pauseAt999CancelsOldCountsAndResumeIsLatestWithoutMovingTraffic() = runTest {
+        for (hide in listOf(false, true)) {
+            val seen = mutableListOf<UiTelemetrySnapshot>()
+            val owner = UiTelemetryPublication(backgroundScope, seen::add, { testScheduler.currentTime })
+            try {
+                owner.countsActive(true); owner.active(true)
+                owner.traffic(Traffic(1, 2), true)
+                owner.counts(DashboardCounts(connectionCount = 1))
+                advanceTimeBy(999); runCurrent()
+                assertNull(seen.last().counts.connectionCount)
+                if (hide) owner.countsActive(false) else owner.active(false)
+                val size = seen.size
+                owner.counts(DashboardCounts(connectionCount = 2))
+                advanceTimeBy(1); runCurrent(); assertEquals(size, seen.size)
+                if (hide) owner.countsActive(true) else owner.active(true)
+                assertEquals(2, seen.last().counts.connectionCount)
+                val resumed = seen.size
+                runCurrent(); assertEquals(resumed, seen.size)
+                owner.counts(DashboardCounts(connectionCount = 3))
+                owner.active(false); owner.active(true)
+                assertEquals(3, seen.last().counts.connectionCount)
+                val latest = seen.size
+                advanceTimeBy(1000); runCurrent(); assertEquals(latest, seen.size)
+                owner.active(false); owner.reset(); assertEquals(UiTelemetrySnapshot(), seen.last())
+            } finally { owner.close() }
+        }
+    }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun countPublicationCannotFlushPendingTrafficOrReorderItsDeadline() = runTest {
+        val seen = mutableListOf<UiTelemetrySnapshot>()
+        val owner = UiTelemetryPublication(backgroundScope, seen::add, { testScheduler.currentTime })
+        try {
+            owner.countsActive(true); owner.active(true); owner.interacting(true)
+            owner.traffic(Traffic(1, 2), true)
+            owner.counts(DashboardCounts(connectionCount = 1))
+            advanceTimeBy(900); runCurrent()
+            owner.traffic(Traffic(2, 4), true)
+            owner.traffic(Traffic(3, 6), true)
+            advanceTimeBy(99); runCurrent(); assertNull(seen.last().counts.connectionCount)
+            advanceTimeBy(1); runCurrent()
+            assertEquals(1, seen.last().counts.connectionCount)
+            assertEquals(Traffic(2, 4), seen.last().traffic)
+            val countsHistory = seen.last().history
+            advanceTimeBy(499); runCurrent(); assertEquals(Traffic(2, 4), seen.last().traffic)
+            advanceTimeBy(1); runCurrent(); assertEquals(Traffic(3, 6), seen.last().traffic)
+            assertEquals(2, countsHistory.size)
+            assertEquals(3, seen.last().history.size)
         } finally { owner.close() }
     }
     @Test fun pauseRetainsLatestResumeImmediatelyAndRuntimeResetClearsEvenInactive() = runBlocking<Unit> {
         val clock = Clock(); val seen = mutableListOf<UiTelemetrySnapshot>()
         val owner = UiTelemetryPublication(this, seen::add, { clock.time }, clock::await)
         try {
-            owner.active(true); owner.traffic(Traffic(1, 2), true)
+            owner.countsActive(true); owner.active(true); owner.traffic(Traffic(1, 2), true)
             owner.counts(DashboardCounts(connectionCount = 9)); yield()
             owner.active(false); val n = seen.size; clock.advance(600); yield()
             assertEquals(n, seen.size)
@@ -135,4 +184,50 @@ class UiTelemetrySignalsTest {
             release.complete(Unit); until { owner.state.value == 2 }; assertEquals(2, calls)
         } finally { release.complete(Unit); owner.close() }
     }
-}
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun eachOrdinaryCountFieldStartsATrailingBatchAfterSilence() = runTest {
+        for (field in 0..2) {
+            val seen = mutableListOf<UiTelemetrySnapshot>()
+            val owner = UiTelemetryPublication(backgroundScope, seen::add, { testScheduler.currentTime })
+            try {
+                owner.countsActive(true); owner.active(true)
+                val stable = DashboardCounts(1, 10, 20)
+                owner.counts(stable, immediate = true)
+                advanceTimeBy(2500); runCurrent()
+                val changed = when (field) {
+                    0 -> stable.copy(connectionCount = 2)
+                    1 -> stable.copy(requestCount = 11)
+                    else -> stable.copy(dnsCount = 21)
+                }
+                owner.counts(changed); runCurrent()
+                assertEquals(stable, seen.last().counts)
+                advanceTimeBy(999); runCurrent(); assertEquals(stable, seen.last().counts)
+                advanceTimeBy(1); runCurrent(); assertEquals(changed, seen.last().counts)
+            } finally { owner.close() }
+        }
+    }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test fun sustainedChangesPublishLatestOncePerFirstDirtyBatch() = runTest {
+        val seen = mutableListOf<UiTelemetrySnapshot>()
+        val owner = UiTelemetryPublication(backgroundScope, seen::add, { testScheduler.currentTime })
+        try {
+            owner.countsActive(true); owner.active(true)
+            owner.counts(DashboardCounts(connectionCount = 0), immediate = true)
+            advanceTimeBy(2500); runCurrent()
+            repeat(3) { batch ->
+                val previous = seen.last().counts
+                val before = seen.size
+                repeat(10) { event ->
+                    owner.connections(batch * 10 + event + 1); runCurrent()
+                    advanceTimeBy(if (event == 9) 99 else 100)
+                }
+                runCurrent(); assertEquals(previous, seen.last().counts)
+                assertEquals(before, seen.size)
+                advanceTimeBy(1); runCurrent()
+                assertEquals(batch * 10 + 10, seen.last().counts.connectionCount)
+                assertEquals(before + 1, seen.size)
+            }
+            val size = seen.size
+            advanceTimeBy(60000); runCurrent(); assertEquals(size, seen.size)
+        } finally { owner.close() }
+    }}

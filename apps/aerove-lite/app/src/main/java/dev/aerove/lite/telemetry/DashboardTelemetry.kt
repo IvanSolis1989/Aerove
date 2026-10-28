@@ -63,7 +63,7 @@ internal class DashboardConnectionSummary<K : Any>(parent: CoroutineScope,
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) { if (owns(current, requested)) mutable.value = null }
                     if (!owns(current, requested)) return@launch
-                    delay(2000)
+                    delay(1000)
                 }
             } finally { if (generation == requested) task = null }
         }

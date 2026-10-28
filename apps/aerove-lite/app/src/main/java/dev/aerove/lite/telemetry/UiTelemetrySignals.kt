@@ -32,6 +32,7 @@ internal class UiTelemetryPublication(parent: CoroutineScope,
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
     private val gate = Any()
     private var active = false
+    private var countsDemand = false
     private var interacting = false
     private var closed = false
     private var generation = 0L
@@ -44,14 +45,24 @@ internal class UiTelemetryPublication(parent: CoroutineScope,
     private var cachedRevision = -1L
     private var cachedHistory = emptyList<Traffic>()
     private var counts = DashboardCounts()
-    private var countsPending = false
+    private var published = UiTelemetrySnapshot()
+    private var countsGeneration = 0L
+    private var countsJob: Job? = null
     private var historyBoundary = -1L
     private val interval get() = if (interacting) 600L else 300L
 
     fun active(value: Boolean) = synchronized(gate) {
         if (closed || active == value) return@synchronized
-        active = value; cancel()
-        if (value) flush()
+        active = value; cancel(); cancelCounts()
+        if (value) {
+            if (countsDemand) { published = published.copy(counts = counts) }
+            flush()
+        }
+    }
+    fun countsActive(value: Boolean) = synchronized(gate) {
+        if (closed || countsDemand == value) return@synchronized
+        countsDemand = value; cancelCounts()
+        if (value && active) flushCounts()
     }
     fun interacting(value: Boolean) = synchronized(gate) {
         if (closed || interacting == value) return@synchronized
@@ -66,13 +77,12 @@ internal class UiTelemetryPublication(parent: CoroutineScope,
             history.addLast(value); revision++
         }
         val first = !trafficSeen; trafficSeen = true
-        // The first traffic value must not flush an already pending count before its 300/600ms deadline.
-        request(first && !countsPending)
+        request(first)
     }
     fun counts(value: DashboardCounts, immediate: Boolean = false) = synchronized(gate) {
         if (closed) return@synchronized
-        if (counts != value) { counts = value; countsPending = true }
-        if (countsPending) request(immediate)
+        counts = value
+        if (counts != published.counts) requestCounts(immediate)
     }
     fun history(value: HistoryCounts) = synchronized(gate) {
         val immediate = historyBoundary != value.boundaryRevision
@@ -81,11 +91,12 @@ internal class UiTelemetryPublication(parent: CoroutineScope,
             dnsCount = value.dnsCount.takeIf { value.observationsAvailable }), immediate)
     }
     fun connections(value: Int?) = synchronized(gate) {
-        counts(counts.copy(connectionCount = value), immediate = counts.connectionCount == null && value != null && !countsPending)
+        counts(counts.copy(connectionCount = value))
     }
     fun reset() = synchronized(gate) {
         if (closed) return@synchronized
-        cancel(); traffic = Traffic(); trafficSeen = false; counts = DashboardCounts(); countsPending = false; historyBoundary = -1L
+        cancel(); cancelCounts(); traffic = Traffic(); trafficSeen = false; counts = DashboardCounts(); historyBoundary = -1L
+        published = UiTelemetrySnapshot()
         history.clear(); revision = 0; cachedRevision = -1
         // Runtime retirement is authoritative even while no UI owns a read lease.
         flush()
@@ -105,8 +116,30 @@ internal class UiTelemetryPublication(parent: CoroutineScope,
     }
     private fun flush() {
         if (cachedRevision != revision) { cachedHistory = history.toList(); cachedRevision = revision }
-        last = now(); countsPending = false; publish(UiTelemetrySnapshot(traffic, cachedHistory, revision, counts))
+        last = now(); published = UiTelemetrySnapshot(traffic, cachedHistory, revision, published.counts)
+        publish(published)
     }
+    private fun requestCounts(immediate: Boolean) {
+        if (!active || !countsDemand || closed) return
+        if (immediate) { cancelCounts(); flushCounts(); return }
+        if (countsJob != null) return
+        val token = countsGeneration
+        val deadline = now() + 1000L
+        countsJob = scope.launch(start = CoroutineStart.LAZY) {
+            await((deadline - now()).coerceAtLeast(0))
+            synchronized(gate) {
+                if (token == countsGeneration && active && countsDemand && !closed) {
+                    countsJob = null; flushCounts()
+                }
+            }
+        }.also { it.start() }
+    }
+    private fun flushCounts() {
+        if (published.counts == counts) return
+        published = published.copy(counts = counts)
+        publish(published)
+    }
+    private fun cancelCounts() { countsGeneration++; countsJob?.cancel(); countsJob = null }
     private fun cancel() { generation++; pending?.cancel(); pending = null }
-    override fun close() = synchronized(gate) { closed = true; cancel(); scope.cancel() }
+    override fun close() = synchronized(gate) { closed = true; cancel(); cancelCounts(); scope.cancel() }
 }

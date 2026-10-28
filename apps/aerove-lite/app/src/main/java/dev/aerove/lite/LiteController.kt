@@ -898,6 +898,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         if (profileDetailsOwner.isInitialized()) profileDetailsOwner.value.telemetryActive(providerTelemetryRequested && active)
         connectionTelemetryActive.value = connectionTelemetryRequested && active
         val counts = dashboardTrafficActive && active
+        uiPublication.countsActive(counts)
         dashboardConnections.active(counts)
         diagnostics.memory(memoryTelemetryRequested && active)
         if (active) uiPublication.active(true)
@@ -916,6 +917,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     override fun setDashboardTelemetryActive(active: Boolean) {
         dashboardTrafficActive = active
         val demand = active && readDemand.active
+        uiPublication.countsActive(demand)
         dashboardConnections.active(demand)
     }
     override fun setStatusTrafficActive(active: Boolean) { statusTrafficActive = active }

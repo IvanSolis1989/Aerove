@@ -28,7 +28,7 @@ class DashboardTelemetryTest {
         assertEquals(listOf(Traffic()), first)
     }
 
-    @Test fun countOnlySummaryReadsAtTwoSecondsOnlyWhileVisibleAndNeverDuplicatesBinding() = runTest {
+    @Test fun countOnlySummaryReadsAtOneSecondOnlyWhileVisibleAndNeverDuplicatesBinding() = runTest {
         var reads = 0
         val summary = DashboardConnectionSummary(backgroundScope, { _: String -> ++reads }, { true })
         summary.bind("core")
@@ -40,7 +40,7 @@ class DashboardTelemetryTest {
         assertEquals(1, reads)
         assertEquals(1, summary.state.value)
         repeat(5) { summary.bind("core"); summary.active(true) }
-        advanceTimeBy(1999); runCurrent()
+        advanceTimeBy(999); runCurrent()
         assertEquals(1, reads)
         advanceTimeBy(1); runCurrent()
         assertEquals(2, reads)
@@ -72,14 +72,14 @@ class DashboardTelemetryTest {
         summary.close()
     }
 
-    @Test fun failedSummaryKeepsUnknownAndRetriesOnlyAtTheExistingTwoSecondCadence() = runTest {
+    @Test fun failedSummaryKeepsUnknownAndRetriesOnlyAtTheOneSecondCadence() = runTest {
         var reads = 0
         val summary = DashboardConnectionSummary(backgroundScope, { _: String ->
             reads++; if (reads == 1) error("unavailable") else 7
         }, { true })
         summary.bind("core"); summary.active(true); runCurrent()
         assertNull(summary.state.value)
-        advanceTimeBy(1999); runCurrent(); assertEquals(1, reads)
+        advanceTimeBy(999); runCurrent(); assertEquals(1, reads)
         advanceTimeBy(1); runCurrent(); assertEquals(7, summary.state.value)
         summary.bind(null)
         advanceTimeBy(60000); runCurrent(); assertEquals(2, reads)
