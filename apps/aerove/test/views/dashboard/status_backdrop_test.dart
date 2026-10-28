@@ -166,9 +166,9 @@ Future<(List<List<Color>>, Size)> _pixels(WidgetTester tester) async {
   final bytes = (await tester.runAsync(() async {
     final image = await boundary.toImage();
     try {
-      return (await image.toByteData(
-        format: ui.ImageByteFormat.rawRgba,
-      ))!.buffer.asUint8List();
+      return (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!
+          .buffer
+          .asUint8List();
     } finally {
       image.dispose();
     }
@@ -191,11 +191,42 @@ Future<(List<List<Color>>, Size)> _pixels(WidgetTester tester) async {
   );
 }
 
+Future<(List<List<Color>>, Size)> _quietPixels(WidgetTester tester) async {
+  final painters = <RenderCustomPaint, CustomPainter?>{
+    for (final element
+        in find
+            .descendant(
+              of: find.byType(LineChart),
+              matching: find.byType(CustomPaint),
+            )
+            .evaluate())
+      element.renderObject! as RenderCustomPaint:
+          (element.renderObject! as RenderCustomPaint).painter,
+  };
+  expect(painters, hasLength(4));
+  try {
+    for (final paint in painters.keys) {
+      paint.painter = null;
+    }
+    await tester.pump();
+    return await _pixels(tester);
+  } finally {
+    for (final entry in painters.entries) {
+      entry.key.painter = entry.value;
+    }
+    await tester.pump();
+  }
+}
+
 /// The rows of the start padding where something besides the card is drawn,
 /// between the rounded corners.
-List<int> _drawnRows(List<List<Color>> rows, Size size) {
+List<int> _drawnRows(
+  List<List<Color>> rows,
+  Size size, {
+  List<List<Color>>? reference,
+}) {
   final x = size.width ~/ 2;
-  final card = rows[size.height.round() - 8][x];
+  final card = (reference ?? rows)[size.height.round() - 8][x];
   return [
     for (var y = size.height.round() - 6; y < size.height.round(); y++)
       if (rows[y][x] != card) y,
@@ -436,7 +467,9 @@ void main() {
           );
           await tester.pump(fadeTabDuration);
           final (running, runningSize) = await _pixels(tester);
-          final band = _drawnRows(running, runningSize);
+          final (quiet, quietSize) = await _quietPixels(tester);
+          expect(quietSize, runningSize, reason: why);
+          final band = _drawnRows(running, runningSize, reference: quiet);
           expect(band, isNotEmpty, reason: why);
           expect(
             band.last,

@@ -27,6 +27,7 @@ const _font = 'WholeRoboto';
 
 var _fallback = const <String>[];
 
+const _organization = 'Example';
 const _v4 = '142.91.102.22';
 const _v6 = '2001:0db8:85a3:0000:0000:8a2e:0370:7334';
 
@@ -79,7 +80,7 @@ Future<void> _pumpDashboard(
           ip: ip,
           source: IpQualitySource.ipLocate,
           type: IpType.residential,
-          organization: 'Example',
+          organization: _organization,
         ),
       ),
     ],
@@ -99,9 +100,8 @@ Future<void> _pumpDashboard(
           theme: ThemeData(fontFamily: _font, fontFamilyFallback: _fallback),
           child: Builder(
             builder: (context) => MediaQuery(
-              data: MediaQuery.of(
-                context,
-              ).copyWith(textScaler: TextScaler.linear(scale)),
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(scale)),
               child: DashboardView(platform: platform),
             ),
           ),
@@ -148,9 +148,24 @@ void _expectWhole(
         shown.add(text);
         final rect = _rectIn(node, layout);
         final what = '$why "$text" $rect';
-        expect(node.didExceedMaxLines, isFalse, reason: what);
+        final organization = text == _organization;
+        if (organization) {
+          expect(node.maxLines, 1, reason: what);
+          expect(node.softWrap, isFalse, reason: what);
+          expect(node.overflow, TextOverflow.ellipsis, reason: what);
+          expect(
+            node.text.style!.fontSize,
+            inInclusiveRange(11, 15),
+            reason: what,
+          );
+          if (node.didExceedMaxLines) {
+            expect(node.text.style!.fontSize, 11, reason: what);
+          }
+        } else {
+          expect(node.didExceedMaxLines, isFalse, reason: what);
+        }
         expect(rect.width, greaterThan(1), reason: '$what is squeezed away');
-        if (node.overflow == TextOverflow.ellipsis) {
+        if (node.overflow == TextOverflow.ellipsis && !node.didExceedMaxLines) {
           expect(
             node.getMaxIntrinsicWidth(double.infinity),
             lessThanOrEqualTo(node.size.width + 0.5),
@@ -184,8 +199,9 @@ void _expectWhole(
   for (final head in [l10n.status, running ? l10n.running : l10n.notRunning]) {
     expect(shown, contains(head), reason: '$why loses "$head"');
   }
+  expect(shown, contains(_organization), reason: why);
   expect(cells, isNotNull, reason: why);
-  expect(baseline, closeTo(layout.size.height - 1, 0.01), reason: why);
+  expect(baseline, closeTo(layout.size.height, 0.01), reason: why);
 }
 
 void main() {
