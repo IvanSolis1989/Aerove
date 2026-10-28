@@ -13,6 +13,7 @@ import struct
 import subprocess
 import tempfile
 import time
+import unicodedata
 import zipfile
 
 REPO = "IvanSolis1989/Aerove"
@@ -93,7 +94,7 @@ def parse_request(raw):
     request = json.loads(raw)
     required = {"runId", "attempt", "headSHA", "artifactId", "artifactName", "expectedZIPsha", "expectedZIPbytes", "mode"}
     require(isinstance(request, dict) and required <= request.keys()
-            and not request.keys() - required - {"memberPaths", "basenames"}, "Input schema mismatch")
+            and not request.keys() - required - {"memberPaths", "basenames", "pathContains"}, "Input schema mismatch")
     for key in ("runId", "attempt", "artifactId", "expectedZIPbytes"):
         require(type(request[key]) is int and request[key] > 0, "Positive integer input required")
     require(request["expectedZIPbytes"] <= MAX_ZIP and request["mode"] in ("index", "select")
@@ -102,6 +103,13 @@ def parse_request(raw):
     safe_path(request["artifactName"])
     lists = [key for key in ("memberPaths", "basenames") if key in request]
     require((request["mode"] == "index" and not lists) or (request["mode"] == "select" and len(lists) == 1), "Selection scope mismatch")
+    if "pathContains" in request:
+        value = request["pathContains"]
+        require(request["mode"] == "index" and isinstance(value, str)
+                and 1 <= len(value) <= 128
+                and all(not unicodedata.category(c).startswith("C") for c in value)
+                and len(value.encode("utf-8")) <= 256 and not sensitive_text(value),
+                "Invalid literal index filter")
     if lists:
         names = request[lists[0]]
         require(isinstance(names, list) and 1 <= len(names) <= 8 and all(isinstance(n, str) for n in names)
@@ -221,10 +229,14 @@ def consume(archive, request, out, receipt, deadline):
                 payloads[entry.filename] = b""
         receipt["allEntryCrcVerified"] = True
         if request["mode"] == "index":
-            data = (json.dumps(entries, indent=2) + "\n").encode()
+            path_filter = request.get("pathContains")
+            matched = entries if path_filter is None else [row for row in entries if path_filter in row["path"]]
+            data = (json.dumps(matched, indent=2) + "\n").encode()
             require(len(data) <= 131072, "Index output limit exceeded; select exact members instead")
             (out / "INDEX.json").write_bytes(data)
-            receipt["outputScope"] = dict(mode="index", entryCount=len(entries), bytes=len(data))
+            receipt["outputScope"] = dict(mode="index", entryCount=len(matched), bytes=len(data),
+                totalEntryCount=len(entries), matchedEntryCount=len(matched),
+                filter=None if path_filter is None else dict(pathContains=path_filter, interpretation="literal substring", caseSensitive=True))
         else:
             outputs = []
             for index, name in enumerate(selected, 1):

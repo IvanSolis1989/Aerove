@@ -172,6 +172,69 @@ class ArtifactEvidenceTest(unittest.TestCase):
         self.assertTrue(receipt["allEntryCrcVerified"])
         self.assertEqual(set(output), {"INDEX.json"})
 
+    def index_request(self, **changes):
+        request = self.request()
+        del request['basenames']
+        request.update(mode='index')
+        request.update(changes)
+        return reader.parse_request(json.dumps(request))
+
+    def test_filter_schema_and_identity(self):
+        self.index_request(pathContains='截图/[a]*?.json')
+        for value in ('', None, 12, [], 'a' * 129, '界' * 100, 'a\n', 'a\u202e', 'a\ud800',
+                      'https://invalid.example', 'secret=SYNTHETIC'):
+            with self.subTest(value=repr(value)), self.assertRaises(ValueError):
+                self.index_request(pathContains=value)
+        for changes in (dict(mode='select'), dict(mode='INDEX'), dict(headSHA='bad'),
+                        dict(expectedZIPsha='bad'), dict(version=2), dict(unknown=True)):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.index_request(pathContains='metrics', **changes)
+        with self.assertRaises(ValueError):
+            reader.parse_request(json.dumps(self.request(pathContains='metrics')))
+
+    def test_literal_subset_empty_and_unfiltered(self):
+        rows = [('截图/[a]*?.json', b'{}'), ('capture/aa.json', b'[]'), ('capture/METRICS.json', b'{}')]
+        receipt, output = self.consume(rows, mode='index')
+        complete = json.loads(output['INDEX.json'])
+        self.assertEqual([r['path'] for r in complete], [r[0] for r in rows])
+        self.assertIsNone(receipt['outputScope']['filter'])
+        self.assertEqual(receipt['outputScope']['totalEntryCount'], 3)
+        for literal, expected in (('[a]*?', complete[:1]), ('metrics', []), ('capture/', complete[1:])):
+            receipt, output = self.consume(rows, mode='index', pathContains=literal)
+            self.assertEqual(json.loads(output['INDEX.json']), expected)
+            self.assertEqual(receipt['outputScope']['totalEntryCount'], 3)
+            self.assertEqual(receipt['outputScope']['matchedEntryCount'], len(expected))
+            self.assertEqual(receipt['outputScope']['entryCount'], len(expected))
+            self.assertEqual(receipt['outputScope']['filter']['pathContains'], literal)
+            self.assertTrue(receipt['wholeZipDigestVerified'])
+            self.assertTrue(receipt['allEntryCrcVerified'])
+        self.assertEqual(complete[0]['rawSha256'], hashlib.sha256(b'{}').hexdigest())
+
+    def test_unmatched_corruption_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = self.package(root, [('metrics.json', b'{}'), ('unmatched.bin', b'ORIGINAL_PAYLOAD')])
+            data = archive.read_bytes().replace(b'ORIGINAL_PAYLOAD', b'CORRUPTED_BYTES!')
+            archive.write_bytes(data)
+            request = self.index_request(pathContains='metrics', expectedZIPsha=hashlib.sha256(data).hexdigest(), expectedZIPbytes=len(data))
+            out = root / 'out'
+            out.mkdir()
+            receipt = {}
+            with self.assertRaises(zipfile.BadZipFile):
+                reader.consume(archive, request, out, receipt, time.monotonic() + 5)
+            self.assertFalse(receipt.get('allEntryCrcVerified', False))
+            self.assertEqual(list(out.iterdir()), [])
+
+    def test_output_limit_unchanged(self):
+        rows = [('capture/' + str(i) + 'x' * 150 + '.json', b'{}') for i in range(600)]
+        for changes in ({}, {'pathContains': 'capture/'}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, 'Index output limit'):
+                self.consume(rows, mode='index', **changes)
+        receipt, outputs = self.consume(rows, mode='index', pathContains='capture/599x')
+        self.assertEqual(receipt['outputScope']['matchedEntryCount'], 1)
+        self.assertEqual(receipt['outputScope']['totalEntryCount'], 600)
+        self.assertLessEqual(len(outputs['INDEX.json']), 131072)
+
 
 if __name__ == "__main__":
     unittest.main()
