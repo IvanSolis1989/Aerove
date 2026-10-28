@@ -112,6 +112,8 @@ Lite 当前源码将 AndroidX Compose UI 固定到稳定版 `1.12.1` 作为 Rect
 
 Lite143 网络胶囊布局诊断另只读核对实际解析的 Google Maven 发行源码：`androidx.compose.foundation:foundation-android:1.12.0`、`androidx.compose.ui:ui-text-android:1.13.0-beta01` 和 `androidx.compose.material3:material3-android:1.4.0`；各 sources JAR 按官方 SHA512 校验。只读参考文本布局缓存与溢出定义作 API 诊断，未复制源码或升级依赖。上述 Git 参考提交不是这些发行包的身份。
 
+Lite 仪表盘组织单行适配另只读参考同固定提交的 `TextAutoSize.kt` 与 `MultiParagraphLayoutCache.kt`：复用既有 Compose `BasicText`、`TextAutoSize.StepBased`、`TextOverflow.Ellipsis` API，范围为 15sp 至 11sp、步长 0.5sp，保留 20sp 行高及字体、透色角色。省略号避碰另只读参考同提交的 `TextLayoutResult.kt`、`AndroidParagraph.android.kt` 和 `TextLayout.android.kt`，使用公开行边界、段落方向、拟合后文字样式和段落绘制 API，纳入合成尾省略号的实际墨迹边界；测试以独立原生段落栅格检查省略号。未复制源码或新增依赖；参考源码为 Apache-2.0。
+
 **许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)、[固定 `AlignmentLine.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/layout/AlignmentLine.kt)；本项目入口为 `GlobalResourceLibraryScreen.kt` 和 `OverviewScreen.kt`
 
 #### [aosp-mirror/platform_external_skia](https://github.com/aosp-mirror/platform_external_skia)
@@ -921,6 +923,8 @@ Lite API 33 VPN Service stop/revoke 语义另只读参考同一固定 revision�
 
 仅作 framework API / 行为参考，未复制 Java 源码或新增依赖；来源登记不表示 Lite Service、Android Binder 或 VPN 验收通过。
 
+另只读参考 frameworks/base 固定 `428aef405975f5e07e8e47afaf91823ea3c338a4` 的 [UiAutomationConnection.java](https://android.googlesource.com/platform/frameworks/base/+/428aef405975f5e07e8e47afaf91823ea3c338a4/core/java/android/app/UiAutomationConnection.java)，blob `d4bad39a974494e88fd7359ce5c2ee3f543aa299`，核对 shell 身份边界；该版本不代表实际 API33 系统实现。只作接口行为参考，未复制实现；Apache-2.0，保留 Android Open Source Project 2013 署名。
+
 **许可证、署名与证据：** Apache-2.0，原 AOSP 源文件许可头；[固定 ActivityManager.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/1cdfff555f4a21f71ccc978290e2e212e2f8b168/core/java/android/app/ActivityManager.java)、[官方 API](https://developer.android.com/reference/android/app/ActivityManager.AppTask#getTaskInfo())。；run83 固定来源中的两份 AOSP 源文件许可为 Apache-2.0，证据见 `SOURCES.json`
 
 #### [torvalds/linux](https://github.com/torvalds/linux)
@@ -928,6 +932,8 @@ Lite API 33 VPN Service stop/revoke 语义另只读参考同一固定 revision�
 **固定版本 / revision：** [`v6.8`](https://github.com/torvalds/linux/tree/v6.8) / `net/ipv4/tcp.c` blob `c82dc42f57c65df112f79080ff407cd98d11ce68`
 
 **用途与采用方式：** Run31 取消夹具的只读诊断参考：核查 `tcp_close()` 对 unread TCP data 的处理路径（关闭并发送 active reset）；未复制 Linux 实现，不声称 CI kernel 为 v6.8。
+
+另只读参考固定 `v5.10` 的 [tcp_states.h](https://github.com/torvalds/linux/blob/v5.10/include/net/tcp_states.h)，仅核对 TCP 状态数值 `0A/LISTEN`、`06/TIME_WAIT`；未复制实现或新增依赖，不代表原 148 内核版本或 socket 状态。源文件声明 GPL-2.0-or-later。
 
 **许可证、署名与证据：** 文件 SPDX `GPL-2.0-or-later`，见 [固定 `tcp.c`](https://github.com/torvalds/linux/blob/v6.8/net/ipv4/tcp.c)；GitHub 仓库 API 许可字段为 `NOASSERTION`；[Linux `LICENSES/preferred/GPL-2.0`](https://github.com/torvalds/linux/blob/v6.8/LICENSES/preferred/GPL-2.0)，blob `ff0812fd89cc41fc1b1ed6732a621057d30ed2ad`。
 
@@ -1029,6 +1035,8 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 
 **用途与采用方式：** Lite TUN 测试只读核对 [`timeout.c`](https://android.googlesource.com/platform/external/toybox/+/refs/tags/android-13.0.0_r1/toys/other/timeout.c) 的单调时钟、子进程限时与等待，以及 [`netcat.c`](https://android.googlesource.com/platform/external/toybox/+/refs/tags/android-13.0.0_r1/toys/net/netcat.c) 的连接超时边界；调用测试系统已有命令，未复制实现或新增运行时依赖。远端 nc 的独立限时不代表取消瞬间已回收全部远端进程。
 
+另只读核对 [landley/toybox 0.8.7 的 head.c](https://github.com/landley/toybox/blob/0.8.7/toys/posix/head.c) 的 `-c` 字节上限与短读继续读取行为；未复制实现，不将该参考 tag 当成本次 API33 系统版本。保留 Timothy Elliott 2006 版权与上游许可。
+
 **许可证、署名与证据：** 保留固定源码中 Rob Landley 2013 / 2007 版权头及上游许可声明；只作行为参考。两文件 SHA256 分别为 `985cc5300ece9af6c87c5797ff0b607c45f0dde79e9f347dc37a97b8e1bbe715`、`8397c2436b246e69b08d7c21c66daaecbc2f094b0d13718e4b5c4c6c0ff9cc3c`。
 
 #### [AOSP platform/libcore](https://android.googlesource.com/platform/libcore)
@@ -1066,6 +1074,8 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 另核官方 Google Maven `androidx.test:runner:1.7.0` 发布产物：[sources JAR](https://dl.google.com/dl/android/maven2/androidx/test/runner/1.7.0/runner-1.7.0-sources.jar) SHA256 `22d99db01579e249e415802fb7926dfbb04bf8b89d5ea62cba1459ccb0ff0628`，AAR SHA256 `970311c47119928a2e406a88892a3d270387cc5a49a181a1c44511105b41b818`；两者均匹配 Google Maven 官方 `.sha512`。来源身份为发行版本与包哈希，无对应 Git commit。两版 AAR 的 `ShardingFilter` 对原 423 个描述项比对符合既有分片算法；仅作工具兼容/只读参考，不复制代码、不新增运行依赖，也不代表 APK 方法已执行。
 
 同固定提交另只读核对 [`GrantPermissionRule.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/rules/java/androidx/test/rule/GrantPermissionRule.java#L37-L45) 中“撤销已授予权限会使 Instrumentation 进程崩溃”的说明；[`AndroidJUnitRunner.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/runner/AndroidJUnitRunner.java#L92-L107) 记录精确 `class#method` 和 `notClass` 选择接口；[`TestRequestBuilder.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/internal/runner/TestRequestBuilder.java#L417-L508) 记录参数化方法名后缀与根方法名的过滤行为。仅作权限与测试选择 API 行为参考，未复制代码或新增依赖；既有主分片算法来源和说明保持不变。
+
+Lite 端口释放失败的证据采集另只读参考固定 `6de0b804ca086a6194a108ef2988fa6104eea96d` 的 [UiAutomationShellCommand.java](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/runner/permission/UiAutomationShellCommand.java) 的 shell 输出与 FD 关闭契约；复用项目 `NativeSmokeTest` 已有非阻塞 `Os.poll/read` 与 toybox timeout 模式，不采用上游阻塞 readLine 或计时循环，未复制代码或新增依赖。Apache-2.0，保留 Android Open Source Project 2016 署名。
 
 **许可证、署名与证据：** Apache-2.0；固定来源与许可证据见 run83 `SOURCES.json`
 
