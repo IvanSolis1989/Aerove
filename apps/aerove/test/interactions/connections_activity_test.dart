@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -197,6 +199,107 @@ void main() {
       shown.value = true;
       await tester.pump();
       expect(find.text('events 23'), findsOneWidget);
+      await unmount(tester);
+    },
+  );
+  testWidgets('count reads once per second and resumes with one timer', (
+    tester,
+  ) async {
+    container.read(runTimeProvider.notifier).value = 1;
+    remaining = 1;
+    await mount(tester);
+    expect(reads, 1);
+    remaining = 2;
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(reads, 1);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+    expect(reads, 2);
+    expect(find.text('2'), findsOneWidget);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump(const Duration(seconds: 20));
+    expect(reads, 2);
+    remaining = 3;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(reads, 3);
+    await tester.pump();
+    expect(find.text('3'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(reads, 3);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+    expect(reads, 4);
+    await unmount(tester);
+  });
+
+  testWidgets(
+    'an old count RPC cannot replace a resumed read or restart its timer',
+    (tester) async {
+      final old = Completer<int>();
+      when(() => core.getConnectionCount()).thenAnswer((_) {
+        reads++;
+        return reads == 1 ? old.future : Future.value(9);
+      });
+      container.read(runTimeProvider.notifier).value = 1;
+      await mount(tester);
+      expect(reads, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(reads, 2);
+      await tester.pump();
+      expect(find.text('9'), findsOneWidget);
+      old.complete(99);
+      await tester.pump();
+      expect(find.text('99'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 999));
+      expect(reads, 2);
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+      expect(reads, 3);
+      await unmount(tester);
+    },
+  );
+
+  testWidgets(
+    'app visibility synchronously cancels the pending count at 999ms',
+    (tester) async {
+      var builds = 0;
+      await mount(
+        tester,
+        body: ThrottledCount(
+          provider: requestCountProvider,
+          builder: (_, count) {
+            builds++;
+            return Text('events $count');
+          },
+        ),
+      );
+      container.read(requestCountProvider.notifier).value = 1;
+      await tester.pump(const Duration(milliseconds: 999));
+      expect(find.text('events 0'), findsOneWidget);
+      final before = builds;
+      container.read(appVisibleProvider.notifier).value = false;
+      container.read(requestCountProvider.notifier).value = 23;
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(builds, before);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      await tester.pump(const Duration(seconds: 20));
+      expect(builds, before);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      container.read(appVisibleProvider.notifier).value = true;
+      await tester.pump();
+      expect(find.text('events 23'), findsOneWidget);
+      expect(builds, before + 1);
+      container.read(requestCountProvider.notifier).value = 24;
+      await tester.pump(const Duration(milliseconds: 999));
+      expect(find.text('events 23'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(find.text('events 24'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 20));
+      expect(builds, before + 2);
+      expect(tester.binding.hasScheduledFrame, isFalse);
       await unmount(tester);
     },
   );

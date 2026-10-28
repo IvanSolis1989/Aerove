@@ -10,6 +10,7 @@ import 'package:fl_clash/views/connection/requests.dart';
 import 'package:fl_clash/views/dashboard/widgets/connection_stats.dart';
 import 'package:fl_clash/views/dns_queries.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:fl_clash/widgets/aurora.dart' show AuroraMotionActivity;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -52,6 +53,7 @@ void main() {
 
   setUp(() {
     core = _MockCore();
+    when(() => core.getConnections()).thenAnswer((_) async => []);
     when(() => core.getConnectionCount()).thenAnswer((_) async => 0);
     container = ProviderContainer(
       overrides: [
@@ -82,7 +84,10 @@ void main() {
         child: TestApp(
           locale: locale,
           child: Scaffold(
-            body: ListView(children: const [ConnectionStatsCard()]),
+            body: AuroraMotionActivity(
+              enabled: false,
+              child: ListView(children: const [ConnectionStatsCard()]),
+            ),
           ),
         ),
       ),
@@ -116,13 +121,47 @@ void main() {
     await tester.pump();
 
     expect(find.text('1,284'), findsNothing);
-    await tester.pump(const Duration(milliseconds: 301));
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(find.text('1,284'), findsNothing);
+    expect(find.text('42'), findsNothing);
+    container.read(requestCountProvider.notifier).value = 1285;
+    container.read(dnsQueryCountProvider.notifier).value = 43;
+    await tester.pump(const Duration(milliseconds: 1));
 
-    expect(find.text('1,284'), findsOneWidget);
-    expect(find.text('42'), findsOneWidget);
+    expect(find.text('1,285'), findsOneWidget);
+    expect(find.text('43'), findsOneWidget);
 
     await teardownCard(tester);
   });
+
+  testWidgets(
+    'all three counts keep their one second cadence during interaction',
+    (tester) async {
+      var live = 30;
+      when(() => core.getConnectionCount()).thenAnswer((_) async => live);
+      container.read(runTimeProvider.notifier).value = 1;
+      await pumpCard(tester);
+      final gesture = await tester.startGesture(const Offset(200, 200));
+      for (var second = 1; second <= 3; second++) {
+        live = 30 + second;
+        for (var event = 0; event < 100; event++) {
+          container.read(requestCountProvider.notifier).value++;
+          container.read(dnsQueryCountProvider.notifier).value++;
+        }
+        await tester.pump(const Duration(milliseconds: 999));
+        expect(find.text('$live'), findsNothing);
+        expect(find.text('${second * 100}'), findsNothing);
+        await tester.pump(const Duration(milliseconds: 1));
+        await tester.pump();
+        expect(find.text('$live'), findsOneWidget);
+        expect(find.text('${second * 100}'), findsNWidgets(2));
+        expect(container.read(requestCountProvider), second * 100);
+        expect(container.read(dnsQueryCountProvider), second * 100);
+      }
+      await gesture.up();
+      await teardownCard(tester);
+    },
+  );
 
   testWidgets('a count too long for a third of a phone is shortened in any '
       'locale', (tester) async {

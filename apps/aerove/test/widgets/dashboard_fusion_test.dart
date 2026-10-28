@@ -601,7 +601,9 @@ void main() {
       expect(tester.state(find.byType(ConnectionStatsCard)), same(counts));
       container.read(requestCountProvider.notifier).value = 123;
       container.read(dnsQueryCountProvider.notifier).value = 22;
-      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.text('123'), findsOneWidget);
+      expect(find.text('22'), findsOneWidget);
       expect(owner.watches, initialWatches);
       expect(owner.refreshes, 1);
       expect(tester.state(find.byType(ConnectionStatsCard)), same(counts));

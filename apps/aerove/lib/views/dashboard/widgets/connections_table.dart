@@ -25,6 +25,7 @@ import 'current_outbound.dart';
 /// Enough to fill the tallest card several times over; the full feed is a
 /// tap away.
 const _maxFeedRows = 100;
+const _countCadence = Duration(seconds: 1);
 const _midTableWidth = 620.0;
 const _wideTableWidth = 880.0;
 const _cellInset = 8.0;
@@ -131,7 +132,7 @@ mixin ConnectionsPolling<T extends ConsumerStatefulWidget>
   CoreController get _core => ref.read(coreHandlerProvider);
 
   @override
-  Duration get pollInterval => Duration(seconds: pollsConnections ? 1 : 2);
+  Duration get pollInterval => _countCadence;
 
   @override
   void dispose() {
@@ -190,8 +191,7 @@ mixin ConnectionsPolling<T extends ConsumerStatefulWidget>
   }
 }
 
-/// Follows a counter the Core moves per event, at the cadence the feed's own
-/// list repaints at.
+/// Publishes the latest event count once per second while visible.
 class ThrottledCount extends ConsumerStatefulWidget {
   const ThrottledCount({
     super.key,
@@ -211,6 +211,7 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
   late var _latest = _count;
   Timer? _repaint;
   var _active = true;
+  late var _appVisible = ref.read(appVisibleProvider);
   var _pageShown = true;
   var _shown = false;
   final _inView = ValueNotifier(false);
@@ -219,18 +220,26 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
   void initState() {
     super.initState();
     _inView.addListener(_syncShown);
+    ref.listenManual(appVisibleProvider, (_, visible) {
+      _appVisible = visible;
+      _syncShown();
+    });
     ref.listenManual(widget.provider, (_, next) {
       _latest = next;
       if (!_shown) {
         return;
       }
-      _repaint ??= Timer(renderThrottleDuration, _showLatest);
+      if (_latest != _count) {
+        _repaint ??= Timer(_countCadence, _showLatest);
+      }
     });
   }
 
   void _showLatest() {
     _repaint = null;
-    if (mounted && _shown) setState(() => _count = _latest);
+    if (mounted && _shown && _count != _latest) {
+      setState(() => _count = _latest);
+    }
   }
 
   @override
@@ -243,7 +252,7 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
   }
 
   void _syncShown() {
-    final shown = _active && _pageShown && _inView.value;
+    final shown = _active && _appVisible && _pageShown && _inView.value;
     if (shown == _shown) return;
     _shown = shown;
     _repaint?.cancel();
@@ -280,10 +289,7 @@ class _ThrottledCountState extends ConsumerState<ThrottledCount> {
   @override
   Widget build(BuildContext context) => ViewportVisibility(
     visible: _inView,
-    child: InteractionPaced(
-      revision: _count,
-      builder: (context) => widget.builder(context, _count),
-    ),
+    child: widget.builder(context, _count),
   );
 }
 
@@ -451,10 +457,7 @@ class _ConnectionsTableCardState extends ConsumerState<ConnectionsTableCard>
                           DashboardFeed.connections,
                           ValueListenableBuilder(
                             valueListenable: connectionCount,
-                            builder: (context, count, _) => InteractionPaced(
-                              revision: count,
-                              builder: (_) => _TabCount(count),
-                            ),
+                            builder: (context, count, _) => _TabCount(count),
                           ),
                         ),
                         segment(

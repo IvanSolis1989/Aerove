@@ -44,10 +44,7 @@ class _ConnectionStatsCardState extends ConsumerState<ConnectionStatsCard>
           shape: shape,
           count: ValueListenableBuilder(
             valueListenable: connectionCount,
-            builder: (context, count, _) => InteractionPaced(
-              revision: count,
-              builder: (_) => _Count(count),
-            ),
+            builder: (context, count, _) => _Count(count),
           ),
         ),
         _Stat(

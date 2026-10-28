@@ -1,6 +1,5 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/controller.dart';
-import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -8,6 +7,7 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/dashboard/dashboard.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widgets/widgets.dart';
+import 'package:fl_clash/widgets/aurora.dart' show AuroraMotionActivity;
 import 'package:flutter/gestures.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,7 +17,7 @@ import 'package:mocktail/mocktail.dart';
 import '../../helpers/test_app.dart';
 import '../../helpers/test_profiles.dart';
 
-class _MockCore extends Mock implements CoreHandlerInterface {}
+class _MockCore extends Mock implements CoreController {}
 
 TrackerInfo _connection(
   int index, {
@@ -147,20 +147,28 @@ void main() {
   testWidgets('the table keeps the newest rows, sorts every connection and '
       'counts them all', (tester) async {
     final core = _MockCore();
-    when(() => core.getConnections()).thenAnswer(
-      (_) async => [
-        for (var index = 0; index < 150; index++)
+    var fullReads = 0;
+    var countReads = 0;
+    var liveConnections = 150;
+    when(() => core.getConnectionCount()).thenAnswer((_) async {
+      countReads++;
+      return 17;
+    });
+    when(() => core.getConnections()).thenAnswer((_) async {
+      fullReads++;
+      return [
+        for (var index = 0; index < liveConnections; index++)
           _connection(
             index,
             network: index < 130 ? 'tcp' : 'udp',
             download: index == 0 ? 1 << 30 : index,
           ),
-      ],
-    );
+      ];
+    });
     final connections = ProviderContainer(
       overrides: [
         profilesProvider.overrideWith(TestProfiles.new),
-        coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+        coreHandlerProvider.overrideWithValue(core),
         coreStatusProvider.overrideWithBuild((_, _) => CoreStatus.connected),
       ],
     );
@@ -184,7 +192,10 @@ void main() {
               child: DashboardDensityScope(
                 density: DashboardDensity.standard,
                 scale: 1,
-                child: ConnectionsTableCard(),
+                child: AuroraMotionActivity(
+                  enabled: false,
+                  child: ConnectionsTableCard(),
+                ),
               ),
             ),
           ),
@@ -204,6 +215,34 @@ void main() {
     await tester.tap(find.text('Download'));
     await tester.pump();
     expect(find.text('host-0.test'), findsOneWidget);
+    expect(fullReads, 1);
+    expect(countReads, 0);
+    final gesture = await tester.startGesture(const Offset(900, 580));
+    for (var second = 1; second <= 3; second++) {
+      liveConnections++;
+      connections.read(requestCountProvider.notifier).value = second * 100;
+      connections.read(dnsQueryCountProvider.notifier).value = second * 200;
+      await tester.pump(const Duration(milliseconds: 999));
+      expect(fullReads, second);
+      expect(find.text('$liveConnections'), findsNothing);
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pump();
+      expect(fullReads, second + 1);
+      expect(countReads, 0);
+      expect(find.text('$liveConnections'), findsOneWidget);
+      expect(find.text('${second * 100}'), findsOneWidget);
+      expect(find.text('${second * 200}'), findsOneWidget);
+    }
+    await gesture.up();
+    await tester.tap(find.text('Recent requests'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(countReads, 0);
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+    expect(countReads, 1);
+    expect(fullReads, 4);
+    expect(find.text('17'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 2));
