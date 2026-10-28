@@ -6,9 +6,11 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 0.11.0-beta.13 — 开发候选，待构建和验收
+## 0.11.0-beta.13+2026102270 — 已发行
 
-本候选未接受、未发行。新源码安装编号由实际构建生成；已发行 beta.11 的原包与来源保持原样。
+原构建 [#70](https://github.com/IvanSolis1989/Aerove/actions/runs/40774939107) 使用源码 `cc7af6972bdf183b37a71b4f293239e84ca1b493`，完整 CI 与用户真机验收通过。原 ARM64 APK 为 `0.11.0-beta.13+2026102270`，SHA256 `00f3d47b9d11ff5373b240df194e9935f1e5a2d640dd790f9fe4b36d2cb644dc`；已于 2026 年 10 月 29 日通过[推广 #72](https://github.com/IvanSolis1989/Aerove/actions/runs/40784557047) 发布为 [Android 预览版](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.13%2B2026102270)。推广使用同一原包，保留源码、安装编号、签名及 APK 字节，没有重新编译；标准版稳定版 latest 保持不变，Lite 独立继续验收。
+
+已完成 [Telegram 频道推送](https://t.me/IvanSolis89/56)，仅附该原版 APK；[官方完整发行列表](https://ivansolis1989.github.io/Aerove/releases.json) 已包含本版本与对应 ARM64 安装包，供 HTTP 403 或 429 时的备用检查路径使用。
 
 - 仪表盘切页或暂时离开前台时保留已有上下行曲线，返回后衔接最新采样；实际连接重启仍建立新的曲线。
 - Android 国旗按系统彩色字形的可见像素居中，保留原气泡和边缘渐隐；字形测量完成后同步更新静止截图缓存。
