@@ -120,6 +120,22 @@ Lite 仪表盘组织单行适配另只读参考同固定提交的 `TextAutoSize.
 
 Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f9212fdba3a92c813d88c8b` 的 [`LifecycleEffect.kt`](https://android.googlesource.com/platform/frameworks/support/+/a6dd05ae754a1c807f9212fdba3a92c813d88c8b/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/LifecycleEffect.kt)，SHA256 `037bcfd89499ba68ff3520f5180b8c2b054486f293b02983dfe20fb619422e15`。复用项目已有 `LifecycleEventObserver`、`DisposableEffect`、Compose 剪贴板及通知能力，仅编写本项目设置回执与页面消费接线，未复制上游实现或新增依赖。保留 AOSP 2023 / Apache-2.0 原版权与许可头；参考源码身份不冒充实际发布依赖版本。
 
+#### [AOSP / APK 签名工具](https://android.googlesource.com/platform/tools/apksig/)
+
+**固定版本 / revision：** `4db55337435819b56e6e863feef7f1d6e7372826`；源码 blob `33ae6565382f32705ef42c0e6e703ee99d065cca`
+
+**用途 / 采用方式：** 只读参考 `ApkSignerTool.java` 的证书声明输出：编号标签与 API 范围标签；用于标准版原包复验的输出读取兼容。真实密码学验证仍由 Android SDK 的 `apksigner verify` 执行，固定证书、单记录及原包身份校验保持；未引入新运行依赖。
+
+**许可证、署名与证据：** AOSP 2016 / Apache-2.0；[固定工具源码](https://android.googlesource.com/platform/tools/apksig/+/4db55337435819b56e6e863feef7f1d6e7372826/src/apksigner/java/com/android/apksigner/ApkSignerTool.java)；本项目入口为 `apps/aerove/tool/aerove_artifact.py`
+
+#### [AOSP / 发行签名检查](https://android.googlesource.com/platform/build/)
+
+**固定版本 / revision：** `19ef59596a4d6e36030af18b665963f070447682`；源码 blob `d935607e433b07d68f96e617a81abf7b771c361f`
+
+**用途 / 采用方式：** 参考官方 `check_target_files_signatures.py` 同时读取两种 signer 标签的设计，按本项目的固定证书和单记录约束实现严格子集；未复制完整检查程序，不更换签名或降低原包验收条件。
+
+**许可证、署名与证据：** AOSP 2009 / Apache-2.0；[固定发行检查源码](https://android.googlesource.com/platform/build/+/19ef59596a4d6e36030af18b665963f070447682/tools/releasetools/check_target_files_signatures.py)；本项目入口为 `apps/aerove/tool/aerove_artifact.py`
+
 #### [aosp-mirror/platform_external_skia](https://github.com/aosp-mirror/platform_external_skia)
 
 **固定版本 / revision：** `android-13.0.0_r1`，Gitiles tag peeled commit `8b4ab703efb1097702eef9f6a73814221cf08200`；另固定 `SkMaskGamma.cpp` 参照提交 `31dc48138c144f9c868eac242afc3d1bd5451ba0`

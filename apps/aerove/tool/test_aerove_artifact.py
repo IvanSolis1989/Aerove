@@ -1014,6 +1014,59 @@ class OriginalApk74RecheckTest(unittest.TestCase):
             self.module._original_payloads(fixture.dist, fixture.generated, self.run_id)
 
 
+class OriginalSignerOutputTest(unittest.TestCase):
+    def setUp(self):
+        self.module = importlib.import_module('tool.aerove_artifact')
+        self.digest = self.module.RECHECK_SIGNER
+        self.numbered = f'Signer #1 certificate SHA-256 digest: {self.digest}\n'
+        self.ranged = f'Signer (minSdkVersion=24, maxSdkVersion=2147483647) certificate SHA-256 digest: {self.digest}\n'
+
+    def test_accepts_aosp_numbered_sdk_range_and_dev_release_records(self):
+        for output in (self.numbered, self.ranged, self.ranged.replace('=24,', '=33 (dev release=true),'),
+                self.ranged.replace('=2147483647', '=24'), self.numbered.replace('#1', '#12'),
+                ' \t' + self.ranged.replace(self.digest, self.digest.upper()).rstrip() + '\t \r\n',
+                'Signer #1 certificate DN: CN=private subject\n' + self.numbered
+                + 'Signer #1 certificate SHA-1 digest: ' + 'a' * 40 + '\n'):
+            with self.subTest(output=output):
+                self.assertIsNone(self.module._verify_original_signer(output, self.digest))
+
+    def test_rejects_empty_unknown_malformed_ranges_and_digests(self):
+        invalid = ['', self.numbered.replace('#1', '#0'), self.numbered.replace('#1', '#01'),
+            self.numbered.replace('#1', '#-1'), self.numbered.replace('#1', 'unknown'),
+            self.ranged.replace('=24,', '=0,'), self.ranged.replace('=24,', '=-1,'),
+            self.ranged.replace('=24,', '=2147483648,'), self.ranged.replace('=2147483647', '=23'),
+            self.ranged.replace('=2147483647', '=2147483648'), self.ranged.replace('=24,', '=024,'),
+            self.ranged.replace('=24,', '=24 (dev release=false),'),
+            self.ranged.replace('=2147483647)', '=2147483647 (dev release=true))'),
+            self.ranged.replace(', maxSdkVersion=2147483647', ''),
+            self.numbered.replace(self.digest, 'a' * 64), self.numbered.replace(self.digest, '0' * 63),
+            self.numbered.replace(self.digest, '0' * 65), self.numbered.replace(self.digest, 'g' * 64),
+            self.numbered.replace(self.digest, self.digest + ' trailing'),
+            self.ranged.replace('=24,', '=' + '9' * 5000 + ',')]
+        for output in invalid:
+            with self.subTest(output=output[:120]), self.assertRaises(self.module.ArtifactError):
+                self.module._verify_original_signer(output, self.digest)
+
+    def test_duplicate_mixed_and_unrecognized_records_fail_without_sensitive_diagnostics(self):
+        for output in (self.numbered * 2, self.ranged * 2, self.numbered + self.ranged,
+                       self.numbered + self.ranged.replace('=24,', '=0,'),
+                       self.numbered + self.numbered.replace('#1', 'unknown'),
+                       self.numbered + self.numbered.replace('certificate', 'Certificate')):
+            with self.subTest(output=output), self.assertRaises(self.module.ArtifactError) as raised:
+                self.module._verify_original_signer('Signer #1 certificate DN: PRIVATE-SUBJECT\n' + output, self.digest)
+            message = str(raised.exception)
+            self.assertIn('parsed_records=', message)
+            self.assertIn('formats=', message)
+            self.assertNotIn('PRIVATE-SUBJECT', message)
+            self.assertIn('certificate_sha256=', message)
+        with self.assertRaises(self.module.ArtifactError) as raised:
+            self.module._verify_original_signer(self.numbered * 6, self.digest)
+        message = str(raised.exception)
+        self.assertIn('parsed_records=6', message)
+        self.assertEqual(message.count(self.digest), 4)
+        self.assertEqual(message.count('numbered'), 4)
+
+
 class OriginalApkReceiptTest(unittest.TestCase):
     def setUp(self):
         self.fixture = ArtifactFilesTest()
@@ -1075,6 +1128,24 @@ class OriginalApkReceiptTest(unittest.TestCase):
         self.assertEqual(receipt['testHarness']['source'], 'f' * 40)
         self.assertEqual(receipt['files'][self.module.APK_NAME], hashlib.sha256(before[self.fixture.dist / self.module.APK_NAME]).hexdigest())
         self.assertEqual(before, {path: path.read_bytes() for path in before})
+
+    def test_aosp_range_format_preserves_original_receipt_and_failed_verify_still_rejects(self):
+        before = {path: path.read_bytes() for directory in (self.fixture.dist, self.fixture.generated)
+                  for path in directory.iterdir()}
+        self.certs = f'Signer (minSdkVersion=24, maxSdkVersion=2147483647) certificate SHA-256 digest: {self.module.RECHECK_SIGNER}\n'
+        receipt = self.receipt()
+        self.assertIs(receipt['accepted'], True)
+        self.assertIs(receipt['compiled'], False)
+        self.assertEqual(receipt['signer_sha256'], self.module.RECHECK_SIGNER)
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+        original_command = self.command
+        def failed_verify(arguments, root=None):
+            if arguments[0] == 'signer':
+                raise self.module.ArtifactError('signer verify failed')
+            return original_command(arguments, root)
+        with patch.object(self, 'command', side_effect=failed_verify), \
+                self.assertRaisesRegex(self.module.ArtifactError, 'signer verify failed'):
+            self.receipt()
 
     def test_acceptance_rejects_wrong_signer_actual_package_and_original_source(self):
         valid_badging = self.badging

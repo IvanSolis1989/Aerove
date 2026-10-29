@@ -618,6 +618,37 @@ def _original_payloads(directory: Path, generated: Path, build_run: int = RECHEC
             raise ArtifactError(f'Original Std{policy["run_number"]} payload bytes/hash mismatch: {name}')
 
 
+def _verify_original_signer(output: str, expected: str) -> None:
+    records, formats, invalid = [], [], 0
+    pattern = re.compile(
+        r'Signer (?P<index>#[1-9][0-9]*|\(minSdkVersion=(?P<minimum>[1-9][0-9]*)'
+        r'(?P<dev> \(dev release=true\))?, maxSdkVersion=(?P<maximum>[1-9][0-9]*)\))'
+        r' certificate SHA-256 digest:[ \t]*(?P<digest>[0-9a-fA-F]{64})'
+    )
+    for line in output.splitlines():
+        folded = line.casefold()
+        if 'certificate' not in folded or 'sha-256' not in folded:
+            continue
+        match = pattern.fullmatch(line.strip())
+        if match is None:
+            invalid += 1
+            continue
+        if match['minimum'] is not None:
+            if (len(match['minimum']) > 10 or len(match['maximum']) > 10
+                    or not 1 <= int(match['minimum']) <= int(match['maximum']) <= 2147483647):
+                invalid += 1
+                continue
+            formats.append('sdk-range-dev' if match['dev'] else 'sdk-range')
+        else:
+            formats.append('numbered')
+        records.append(match['digest'].lower())
+    if invalid or records != [expected]:
+        raise ArtifactError('Original APK signer mismatch: '
+            f'parsed_records={len(records)}, invalid_records={invalid}, '
+            f'formats={",".join(formats[:4]) or "none"}, '
+            f'certificate_sha256={",".join(records[:4]) or "none"}, expected_match={records == [expected]}')
+
+
 def recheck_receipt(*, root: Path, repository: str, source: str, build_run: int,
                     run_id: int, directory: Path, generated_directory: Path,
                     apksigner: Path, aapt: Path) -> dict[str, Any]:
@@ -641,9 +672,7 @@ def recheck_receipt(*, root: Path, repository: str, source: str, build_run: int,
                            metadata=fixed / 'upstream-version.json', pubspec=fixed / 'pubspec.yaml')
     apk = directory / APK_NAME
     certs = _command([str(apksigner), 'verify', '--print-certs', str(apk)])
-    signers = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})$', certs, re.MULTILINE)
-    if signers != [policy['signer']]:
-        raise ArtifactError('Original APK signer mismatch')
+    _verify_original_signer(certs, policy['signer'])
     info = _json((directory / 'BUILD_INFO.json').read_text(encoding='utf-8'))
     name, code = info['version'].rsplit('+', 1)
     if policy['version'] is not None and info['version'] != policy['version']:
