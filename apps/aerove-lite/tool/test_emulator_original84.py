@@ -99,6 +99,30 @@ class Original84Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             original.original_sample_selector('matrix')
 
+    def test_lite158_fixed_frame_sample_and_producer_gate(self):
+        spec = original.runtime_spec('lite158-frame-sample')
+        self.assertEqual((40825097086, 158, 1), (int(spec['identity']['workflowRun']), spec['identity']['runNumber'], spec['identity']['runAttempt']))
+        self.assertEqual(12875689873, spec['artifact'])
+        self.assertEqual(35824612, spec['zipBytes'])
+        self.assertEqual('1d141104700c72a2c228434d60cb9383b7ba735fb41de7b453c4e0f76fae8967', spec['zipSha256'])
+        self.assertEqual({'solid'}, set(spec['samples']))
+        selector = 'dev.aerove.lite.ui.LiteMaterialRenderingTest#threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Solid_ordinary_light_on_disabled]'
+        self.assertEqual(selector, original.original_sample_selector('solid', 'lite158-frame-sample'))
+        with self.assertRaises(ValueError):
+            original.original_sample_selector('clear', 'lite158-frame-sample')
+        artifact, run = self._lite125_api_rows(spec)
+        job = dict(id=spec['producerJob'], run_id=int(spec['identity']['workflowRun']), status='completed', conclusion='success')
+        class DownloadBoundary(Exception):
+            pass
+        for bad_job in (None, dict(job, run_id=1), dict(job, conclusion='failure')):
+            def api(route):
+                return artifact if '/artifacts/' in route else run if '/runs/' in route else bad_job or job
+            with self.subTest(job=bad_job), mock.patch.object(original.release, '_gh_json', side_effect=api), \
+                    mock.patch.object(original.release, '_gh_binary', side_effect=DownloadBoundary) as download:
+                with self.assertRaises(DownloadBoundary if bad_job is None else ValueError):
+                    original.prepare(self.root / 'lite158-runtime', self.root / 'lite158-evidence', target='lite158-frame-sample')
+                self.assertEqual(bad_job is None, download.called)
+
     def test_lite125_sample_proof_is_diagnostic_and_cannot_be_accepted(self):
         spec = original.runtime_spec('lite125-original-samples')
         proof = dict(self.proof)
@@ -180,8 +204,13 @@ class Original84Tests(unittest.TestCase):
                     identity['sourceTree'], identity['workflowRun'], identity['runAttempt'], identity['runNumber'])
 
     def test_lite141_shell_snapshot_keeps_original_app_identity_and_current_harness_separate(self):
-        from emulator_original84 import LITE141_PREBUILT_SHARDS
-        spec = LITE141_PREBUILT_SHARDS
+        self.original_snapshot('lite141-prebuilt-shards', 'remaining', '8', '1')
+
+    def test_lite158_snapshot_binds_original_apks_manifest_and_single_sample_to_new_harness(self):
+        self.original_snapshot('lite158-frame-sample', 'original-sample', '', '')
+
+    def original_snapshot(self, target, phase, count, index):
+        spec = original.runtime_spec(target)
         dependency_rel = 'dependencies/releaseAndroidTestRuntimeClasspath.stdout.txt'
         dependency = self.runtime / dependency_rel
         dependency.parent.mkdir(parents=True, exist_ok=True)
@@ -194,7 +223,7 @@ class Original84Tests(unittest.TestCase):
         current_harness = dict(sourceRevision='a' * 40, sourceTree='b' * 40,
             workflowRun='500', runNumber=200, runAttempt=2)
         original_proof = dict(originalAppIdentity=spec['identity'], harnessIdentity=current_harness,
-            diagnosticOriginalRuntime=True, runtimeTarget='lite141-prebuilt-shards', diagnosticOnly=True,
+            diagnosticOriginalRuntime=True, runtimeTarget=target, diagnosticOnly=True,
             accepted=False, promotionAccepted=False, aggregateAcceptance=False,
             artifactId=spec['artifact'], artifactZipSha256=spec['zipSha256'],
             runtimeManifestSha256=spec['manifestSha256'], apks=spec['apks'])
@@ -203,9 +232,9 @@ class Original84Tests(unittest.TestCase):
         renderer_path = self.root / 'renderer.json'
         renderer_path.write_text('{}')
         renderer = dict(originalAppIdentity=spec['identity'], harnessIdentity=current_harness,
-            diagnosticOriginalRuntime=True, runtimeTarget='lite141-prebuilt-shards', runtimeManifestSha256=manifest_sha,
+            diagnosticOriginalRuntime=True, runtimeTarget=target, runtimeManifestSha256=manifest_sha,
             apks=spec['apks'], rendererBackend='SwANGLE (ANGLE + SwiftShader)',
-            runtimeDirectory=str(self.runtime))
+            runtimeDirectory=str(self.runtime), promotionAccepted=False)
         shell = Path(__file__).with_name('emulator_acceptance.sh').read_text()
         program = shell.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
         output = self.root / 'SOURCE.json'
@@ -213,11 +242,14 @@ class Original84Tests(unittest.TestCase):
             AEROVE_ORIGINAL_RUNTIME_PROOF=str(proof_path), RUNNER_TEMP=str(self.root),
             GITHUB_SHA=current_harness['sourceRevision'], GITHUB_RUN_ID=current_harness['workflowRun'],
             GITHUB_RUN_NUMBER=str(current_harness['runNumber']), GITHUB_RUN_ATTEMPT=str(current_harness['runAttempt']))
+        if phase == 'original-sample':
+            env.update(AEROVE_ORIGINAL_RUNTIME_TARGET=target, AEROVE_ORIGINAL_SAMPLE='solid',
+                       AEROVE_ORIGINAL_SAMPLE_SELECTOR=spec['samples']['solid']['selector'])
         with mock.patch.dict(os.environ, env, clear=False), \
                 mock.patch.object(owner, 'validate_renderer_proof', return_value=renderer), \
                 mock.patch('subprocess.check_output', return_value=current_harness['sourceTree'] + '\n'), \
-                mock.patch.object(owner.sys, 'argv', ['snapshot', str(output), 'remaining', '120000',
-                    'emulator-5554', '8', '1', 'dev.aerove.lite.ui.LiteDashboardMatrixTest']):
+                mock.patch.object(owner.sys, 'argv', ['snapshot', str(output), phase, '120000',
+                    'emulator-5554', count, index, 'dev.aerove.lite.ui.LiteDashboardMatrixTest']):
             exec(compile(program, 'lite141-source-snapshot', 'exec'), {})
         source = json.loads(output.read_text())
         self.assertEqual(spec['identity'], source['originalAppIdentity'])
@@ -229,6 +261,10 @@ class Original84Tests(unittest.TestCase):
         self.assertIs(source['promotionAccepted'], False)
         self.assertIs(source['aggregateAcceptance'], False)
         self.assertEqual(manifest_sha, source['runtimeManifestSha256'])
+        if phase == 'original-sample':
+            self.assertIsNone(source['testShard'])
+            self.assertEqual(spec['samples']['solid']['selector'], source['originalSample']['selector'])
+            self.assertEqual(dep_sha, source['androidTestDependencyReportSha256'])
 
     def _lite125_api_rows(self, spec, **run_changes):
         identity = spec['identity']

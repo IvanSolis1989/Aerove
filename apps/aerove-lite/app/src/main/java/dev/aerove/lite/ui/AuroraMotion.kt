@@ -129,7 +129,7 @@ internal fun Modifier.auroraMotionActivity(activity: AuroraMotionActivity, enabl
 internal fun rememberAuroraTime(enabled: Boolean, restartKey: Any? = null, activity: AuroraMotionActivity? = null): LongState {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val reduced = LocalLiteReducedMotion.current
-    val micros = remember(restartKey) { mutableLongStateOf(0L) }
+    val micros = remember(restartKey, reduced) { mutableLongStateOf(0L) }
     SideEffect { if (reduced) micros.longValue = 0L }
     LaunchedEffect(enabled, lifecycle, reduced, micros) {
         if (enabled && !reduced) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {

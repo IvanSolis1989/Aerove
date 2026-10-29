@@ -116,9 +116,29 @@ Lite143 网络胶囊布局诊断另只读核对实际解析的 Google Maven 发�
 
 Lite 仪表盘组织单行适配另只读参考同固定提交的 `TextAutoSize.kt` 与 `MultiParagraphLayoutCache.kt`：复用既有 Compose `BasicText`、`TextAutoSize.StepBased`、`TextOverflow.Ellipsis` API，范围为 15sp 至 11sp、步长 0.5sp，保留 20sp 行高及字体、透色角色。省略号避碰另只读参考同提交的 `TextLayoutResult.kt`、`AndroidParagraph.android.kt` 和 `TextLayout.android.kt`，使用公开行边界、段落方向、拟合后文字样式和段落绘制 API，纳入合成尾省略号的实际墨迹边界；测试以独立原生段落栅格检查省略号。未复制源码或新增依赖；参考源码为 Apache-2.0。
 
+出口 IP 适配另复用既有 `TextMeasurer`、`Layout` 与 graphics layer，按标准版已采用的 11 逻辑字号底线连续缩放；确实不足时仅在点或冒号后断行，保留完整原地址语义。组织墨迹 oracle 与省略段落保护核对上述实际 `ui-text-android:1.13.0-beta01` 的 `TextLayoutInput.defaultLocaleList`、`MultiParagraph.paint`；官方 sources JAR SHA256 为 `2fb4e4bc1be2d87e4e3fdbf2566e17a82ba47c80c01b46a089a0fa8795d8bea2`，已匹配官方 SHA512 并检查成员 CRC。仅调用既有 API，不复制实现或新增依赖；真实布局、栅格成本及 Android 验收分别核实。
+
+极光减少动态效果另只读核对同固定提交的 `Composables.kt` keyed `remember` 与 `Effects.kt` keyed `LaunchedEffect`：仅在减少动态设置改变时隔离已有时钟状态，复用原 ticker、节拍与前后台门。未复制实现、增加依赖或新增周期源；固定参考提交不冒充实际发布依赖版本。
+
 **许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)、[固定 `AlignmentLine.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/layout/AlignmentLine.kt)；本项目入口为 `GlobalResourceLibraryScreen.kt` 和 `OverviewScreen.kt`
 
 Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f9212fdba3a92c813d88c8b` 的 [`LifecycleEffect.kt`](https://android.googlesource.com/platform/frameworks/support/+/a6dd05ae754a1c807f9212fdba3a92c813d88c8b/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/LifecycleEffect.kt)，SHA256 `037bcfd89499ba68ff3520f5180b8c2b054486f293b02983dfe20fb619422e15`。复用项目已有 `LifecycleEventObserver`、`DisposableEffect`、Compose 剪贴板及通知能力，仅编写本项目设置回执与页面消费接线，未复制上游实现或新增依赖。保留 AOSP 2023 / Apache-2.0 原版权与许可头；参考源码身份不冒充实际发布依赖版本。
+
+#### [AOSP / owned-start 取消与条件服务停止](https://github.com/aosp-mirror/platform_frameworks_base)
+
+**固定版本 / revision：** Android 13 `android-13.0.0_r1`；tag object `a4cd7977df1c42b7c215acc47a34227fff06a7a2`；`CancellationSignal.java` blob `260f7ade8ab713b68d11d45850c59d15c2107b16`，`Service.java` blob `7635138f6cdded8a4fe7f2bbc9597d23b36d139a`。
+
+**用途 / 采用方式：** Lite 的 owned-start 句柄只读参考一次性取消 latch、取消先到时向后来绑定的接收方传递取消，以及 startId 条件停止的原则。复用项目原 Service intent generation、native admission 与 Coordinator 资源回执；仅补调用方发送前的请求身份及精确取消接线。AOSP 隐藏 Binder transport 不适合公开客户端直接使用，startId 也不能在 Service 接纳前取得；未复制实现或增加运行依赖。
+
+**许可证、署名与证据：** AOSP 2012 / 2006，Apache-2.0；[固定 CancellationSignal 源码](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/os/CancellationSignal.java)、[固定 Service 源码](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/app/Service.java) 保留原许可头；[stopSelfResult 官方 API](https://developer.android.com/reference/android/app/Service#stopSelfResult(int))。归档镜像仅作为固定 API33 来源；源码参考不代表本项目 Kotlin、Android 或实际资源取消验收通过。
+
+#### [AOSP / CTS 跨 UID socket 夹具](https://android.googlesource.com/platform/cts/)
+
+**固定版本 / revision：** `433e5a80509184bd3ae159f05515cc29b3f33bc0`；`VpnTest.java` blob `48f0afb61e687dba5413938fa9d542465d57b30e`，`RemoteSocketFactoryClient.java` blob `80f99b6605b3867e002875cc9e1d3b5ed8ce7d0c`。
+
+**用途 / 采用方式：** Lite 的连接归属设备测试只读参考 CTS 的显式跨包 Service 绑定、独立 UID socket 持有、真实端点读取及解绑清理模式。CTS helper 使用其内部 AIDL / Soong 且只提供 TCP，不能直接作为本项目测试依赖；本项目用公开 Messenger 和 Java socket API 实现最小 TCP / UDP nonce 往返夹具，复用现有 Lite 控制器启动真实 TUN。夹具为 CI 独立测试 APK，不进入产品资产或发布列表；未复制 CTS 实现或增加主 App 依赖。
+
+**许可证、署名与证据：** AOSP 2014 / 2016，Apache-2.0；[固定 VPN 测试源码](https://android.googlesource.com/platform/cts/+/433e5a80509184bd3ae159f05515cc29b3f33bc0/hostsidetests/net/app/src/com/android/cts/net/hostside/VpnTest.java)、[固定跨包客户端源码](https://android.googlesource.com/platform/cts/+/433e5a80509184bd3ae159f05515cc29b3f33bc0/hostsidetests/net/app/src/com/android/cts/net/hostside/RemoteSocketFactoryClient.java) 均保留原许可头。此来源记录不代表本项目夹具已通过 APK 编译或实际 Android 验收。
 
 #### [AOSP / APK 签名工具](https://android.googlesource.com/platform/tools/apksig/)
 
@@ -1104,6 +1124,8 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 另核官方 Google Maven `androidx.test:runner:1.7.0` 发布产物：[sources JAR](https://dl.google.com/dl/android/maven2/androidx/test/runner/1.7.0/runner-1.7.0-sources.jar) SHA256 `22d99db01579e249e415802fb7926dfbb04bf8b89d5ea62cba1459ccb0ff0628`，AAR SHA256 `970311c47119928a2e406a88892a3d270387cc5a49a181a1c44511105b41b818`；两者均匹配 Google Maven 官方 `.sha512`。来源身份为发行版本与包哈希，无对应 Git commit。两版 AAR 的 `ShardingFilter` 对原 423 个描述项比对符合既有分片算法；仅作工具兼容/只读参考，不复制代码、不新增运行依赖，也不代表 APK 方法已执行。
 
 同固定提交另只读核对 [`GrantPermissionRule.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/rules/java/androidx/test/rule/GrantPermissionRule.java#L37-L45) 中“撤销已授予权限会使 Instrumentation 进程崩溃”的说明；[`AndroidJUnitRunner.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/runner/AndroidJUnitRunner.java#L92-L107) 记录精确 `class#method` 和 `notClass` 选择接口；[`TestRequestBuilder.java`](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/internal/runner/TestRequestBuilder.java#L417-L508) 记录参数化方法名后缀与根方法名的过滤行为。仅作权限与测试选择 API 行为参考，未复制代码或新增依赖；既有主分片算法来源和说明保持不变。
+
+Lite158 固定原包单样本诊断另只读核对同一 runner 1.7.0 的 `TestRequestBuilder.java`：完整参数化方法名优先精确匹配，数字后缀裁剪仅作方法根名回退。选择器来自原 App/Test 的 log-only discovery，执行前再验证恰好一条；无执行的发现不计通过。未复制实现或新增依赖；沿用 Android Open Source Project / Apache-2.0 署名。来源核对不代表原 APK 方法已执行或 Android 验收通过。
 
 Lite 端口释放失败的证据采集另只读参考固定 `6de0b804ca086a6194a108ef2988fa6104eea96d` 的 [UiAutomationShellCommand.java](https://github.com/android/android-test/blob/6de0b804ca086a6194a108ef2988fa6104eea96d/runner/android_junit_runner/java/androidx/test/runner/permission/UiAutomationShellCommand.java) 的 shell 输出与 FD 关闭契约；复用项目 `NativeSmokeTest` 已有非阻塞 `Os.poll/read` 与 toybox timeout 模式，不采用上游阻塞 readLine 或计时循环，未复制代码或新增依赖。Apache-2.0，保留 Android Open Source Project 2016 署名。
 

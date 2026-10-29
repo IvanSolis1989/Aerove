@@ -139,7 +139,9 @@ class LiteSwitchRenderingTest(private val case: RenderCase) {
                     val source = compose.frame(state, marker.copy(stage = FixtureStage.Source), capture, "$label-source")
                     val actual = compose.frame(state, marker.copy(stage = FixtureStage.Production), capture, "$label-production")
                     val control = compose.frame(state, marker.copy(stage = FixtureStage.NoLens), capture, "$label-no-lens")
-                    val x = bounds.left + (if (thumb) { if (case.checked) 48 else 28 } else { if (case.checked) 22 else 38 }) * d
+                    val x = if (thumb && case.tier == MaterialTier.Clear) {
+                        requireNotNull(probe.bounds["switch-control-thumb"]) { "Missing measured Clear thumb control bounds" }.center.x
+                    } else bounds.left + (if (thumb) { if (case.checked) 48 else 28 } else { if (case.checked) 22 else 38 }) * d
                     val top = bounds.top + (if (thumb) 12 else 8) * d
                     val end = top + (if (thumb) 9 else 18) * d
                     fun profile(frame: CapturedFrame) = lineProfile(frame, probe, x, top + 0.5f * d, end, halfWidthDp = 1.5f, originY = top)

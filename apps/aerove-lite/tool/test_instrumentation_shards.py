@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 import instrumentation_shards as shards
 
@@ -392,6 +393,44 @@ class ShardSelectionTests(unittest.TestCase):
         self.assertIn('120s "${adb_device[@]}" shell am instrument', shell)
         self.assertIn('test_timeout_msec=120000', shell)
         self.assertIn('--deadline "$instrumentation_deadline"', shell)
+
+    def test_lite158_trace_is_an_exclusive_single_original_sample(self):
+        repository = Path(__file__).resolve().parents[3]
+        workflow = (repository / '.github/workflows/aerove-lite.yaml').read_text()
+        job = workflow.split('  diagnostic_lite158_frame_sample:\n', 1)[1].split('\n  diagnostic_', 1)[0]
+        self.assertNotIn('matrix:', job)
+        self.assertIn('runtime_target: lite158-frame-sample', job)
+        self.assertIn('sample: solid', job)
+        self.assertNotIn('gradle', job.lower())
+        shell = (repository / 'apps/aerove-lite/tool/emulator_acceptance.sh').read_text()
+        self.assertIn('"$phase" == original-sample && "${AEROVE_ORIGINAL_RUNTIME_TARGET:-}" == lite158-frame-sample', shell)
+        self.assertIn('--command-timeout 240', shell)
+        self.assertIn('test_timeout_msec=120000', shell)
+
+    @unittest.skipUnless(BASH and Path(BASH).is_file(), 'Bash is required for workflow guard admission')
+    def test_lite158_workflow_guards_reject_other_samples_shards_and_mixed_modes(self):
+        import textwrap
+        repository = Path(__file__).resolve().parents[3]
+        workflow = (repository / '.github/workflows/aerove-lite.yaml').read_text()
+        guard = workflow.split('  diagnostic_guard:\n', 1)[1].split("        python3 - <<'PY'\n", 1)[1].split('\n        PY', 1)[0]
+        mode = dict(REQUEST_EVENT='workflow_dispatch', DIAGNOSTIC_TARGET='lite158-frame-sample', NATIVE_TEST_FILTER='')
+        mode.update({key: 'false' for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT',
+                    'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS')})
+        for change in ({}, {'PUBLISH_RELEASE': 'true'}, {'CLIENT_PREFLIGHT': 'true'}, {'REQUEST_EVENT': 'push'}, {'NATIVE_TEST_FILTER': 'x'}):
+            with self.subTest(change=change), mock.patch.dict(os.environ, dict(mode, **change)):
+                if change:
+                    with self.assertRaises(SystemExit):
+                        exec(textwrap.dedent(guard), {})
+                else:
+                    exec(textwrap.dedent(guard), {})
+        reusable = (repository / '.github/workflows/aerove-lite-qa84.yaml').read_text()
+        shell = textwrap.dedent(reusable.split('      run: |\n', 1)[1].split('\n    - uses:', 1)[0])
+        base = dict(os.environ, EXCLUSIVE='true', RUNTIME_TARGET='lite158-frame-sample', SAMPLE='solid', SHARD_INDEX='-1')
+        for change in ({}, {'SAMPLE': 'clear'}, {'SAMPLE': ''}, {'SHARD_INDEX': '0'}, {'EXCLUSIVE': 'false'}, {'RUNTIME_TARGET': 'lite94'}):
+            with self.subTest(change=change):
+                result = subprocess.run([BASH, '-eo', 'pipefail', '-c', shell], env=dict(base, **change), capture_output=True,
+                    creationflags=0x08000040 if os.name == 'nt' else 0)
+                self.assertEqual(not change, result.returncode == 0, result.stderr)
 
     def test_explicit_sixteen_discovery_still_binds_source_apks_and_log_only_identity(self):
         runtime = self.root / "runtime"

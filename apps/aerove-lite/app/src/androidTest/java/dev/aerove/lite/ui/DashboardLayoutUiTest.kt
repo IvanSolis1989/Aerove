@@ -632,7 +632,8 @@ class DashboardLayoutUiTest {
             textSize = with(input.density) { style.fontSize.toPx() }
             typeface = input.fontFamilyResolver.resolve(style.fontFamily, style.fontWeight ?: FontWeight.Normal,
                 style.fontStyle ?: FontStyle.Normal, style.fontSynthesis ?: FontSynthesis.All).value as android.graphics.Typeface
-            style.localeList?.firstOrNull()?.let { textLocale = Locale.forLanguageTag(it.toLanguageTag()) }
+            val locales = style.localeList ?: input.defaultLocaleList
+            textLocales = android.os.LocaleList(*(0 until locales.size).map { Locale.forLanguageTag(locales[it].toLanguageTag()) }.toTypedArray())
         }
         return android.graphics.Rect().also { paint.getTextBounds(input.text.text, first, last, it) }
     }
@@ -669,14 +670,9 @@ class DashboardLayoutUiTest {
     }
 
     private fun rasterParagraphInk(text: TextLayoutResult): List<Rect> {
-        val input = text.layoutInput
-        val rendered = androidx.compose.ui.text.TextMeasurer(input.fontFamilyResolver, input.density,
-            input.layoutDirection, cacheSize = 0).measure(input.text, style = input.style,
-            overflow = input.overflow, softWrap = input.softWrap, maxLines = input.maxLines,
-            constraints = input.constraints)
-        val bitmap = Bitmap.createBitmap(rendered.size.width.coerceAtLeast(1), rendered.size.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
+        val bitmap = Bitmap.createBitmap(text.size.width.coerceAtLeast(1), text.size.height.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         return try {
-            rendered.multiParagraph.paint(androidx.compose.ui.graphics.Canvas(android.graphics.Canvas(bitmap)), androidx.compose.ui.graphics.Color.Black)
+            text.multiParagraph.paint(androidx.compose.ui.graphics.Canvas(android.graphics.Canvas(bitmap)), androidx.compose.ui.graphics.Color.Black)
             buildList {
                 for (y in 0 until bitmap.height) {
                     var x = 0
@@ -1072,6 +1068,78 @@ class DashboardLayoutUiTest {
         addTrafficAndAssertOriginalForeground(expectedOverlay = true)
     }
 
+    @Test fun normal360WideIpv4FitsWithoutGrowingTheOriginalStatusBody() {
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en")
+        awaitOrganization("${localized("en").getString(R.string.lite_organization)}\nExample ISP")
+        val anchored = listOf("dashboard-status", "dashboard-status-body", "dashboard-status-button",
+            "dashboard-status-uptime", "dashboard-status-traffic").associateWith(::statusRect)
+        for (address in listOf("198.51.100.8", "198.51.100.10", "255.255.255.255")) {
+            compose.runOnUiThread { state.value = state.value.copy(outboundIdentity = state.value.outboundIdentity!!.copy(address = address)) }
+            compose.waitForIdle()
+            assertCompleteAddress(address, singleLine = true)
+            anchored.forEach { (tag, rect) -> assertEquals("$address $tag", rect, statusRect(tag)) }
+            addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+        }
+    }
+
+    @Test fun narrowIpv6KeepsTheWholeAddressAndBreaksOnlyAfterSeparators() {
+        val address = "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running,
+            outboundIdentity = OutboundIdentity(address, "SG", "Example ISP", "Residential")),
+            maxWidth = 320.dp, fontScale = 1.3f, deviceDensity = 2.625f, language = "en")
+        awaitOrganization("${localized("en").getString(R.string.lite_organization)}\nExample ISP")
+        assertCompleteAddress(address, singleLine = false)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = null)
+    }
+
+    @Test fun normal360FullIpv6KeepsTheWholeAddressAtTheReadableFloor() {
+        val address = "2001:0db8:85a3:0000:0000:8a2e:0370:7334"
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running,
+            outboundIdentity = OutboundIdentity(address, "SG", "Example ISP", "Residential")),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en")
+        awaitOrganization("${localized("en").getString(R.string.lite_organization)}\nExample ISP")
+        assertCompleteAddress(address, singleLine = false)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = null)
+    }
+
+    @Test fun normal360CompressedIpv6KeepsItsOriginalAccessibleAddress() {
+        val address = "2001:db8::8"
+        launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running,
+            outboundIdentity = OutboundIdentity(address, "SG", "Example ISP", "Residential")),
+            maxWidth = 360.dp, deviceDensity = 2.625f, language = "en")
+        awaitOrganization("${localized("en").getString(R.string.lite_organization)}\nExample ISP")
+        assertCompleteAddress(address, singleLine = true)
+        addTrafficAndAssertOriginalForeground(expectedOverlay = true)
+    }
+
+    private fun assertCompleteAddress(address: String, singleLine: Boolean) {
+        val raw = compose.onNodeWithTag("dashboard-status-ip-raw", useUnmergedTree = true)
+        val results = mutableListOf<TextLayoutResult>()
+        raw.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(results) }
+        val text = results.single()
+        val shown = text.layoutInput.text.text
+        assertEquals(address, shown.replace("\u200B", ""))
+        assertTrue(!text.didOverflowWidth && !text.didOverflowHeight)
+        assertTrue((0 until text.lineCount).none(text::isLineEllipsized))
+        if (singleLine) assertEquals(1, text.lineCount)
+        else {
+            assertTrue(text.lineCount > 1)
+            assertEquals(11f, text.layoutInput.style.fontSize.value * text.layoutInput.density.fontScale, 0.01f)
+            for (line in 0 until text.lineCount - 1) {
+                val last = shown.substring(text.getLineStart(line), text.getLineEnd(line, visibleEnd = true)).trimEnd('\u200B').last()
+                assertTrue("$address line $line must end at a separator: $last", last == '.' || last == ':')
+            }
+        }
+        val card = statusRect("dashboard-status")
+        assertTrue(raw.fetchSemanticsNode().boundsInRoot.within(card))
+        val description = compose.onNodeWithTag("dashboard-status-ip", useUnmergedTree = true)
+            .fetchSemanticsNode().config[SemanticsProperties.ContentDescription].single()
+        assertEquals("$address, ${localized("en").getString(R.string.lite_details, localized("en").getString(R.string.lite_outbound_ip))}", description)
+        android.util.Log.i("DashboardAddressFit", "address=$address lines=${text.lineCount} input=${text.layoutInput} " +
+            "raw=${raw.fetchSemanticsNode().boundsInRoot} card=$card body=${statusRect("dashboard-status-body")} traffic=${statusRect("dashboard-status-traffic")}")
+    }
+
     @Test
     fun normal360ChineseKeepsBothFooterInkCentersAndOriginalBody() {
         launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = dev.aerove.lite.VpnPhase.Running),
@@ -1143,18 +1211,19 @@ class DashboardLayoutUiTest {
 
     private fun fittedOrganizationLayout(actual: TextLayoutResult): TextLayoutResult {
         val input = actual.layoutInput
-        val measurer = androidx.compose.ui.text.TextMeasurer(input.fontFamilyResolver, input.density,
-            input.layoutDirection, cacheSize = 0)
+        val measurer = androidx.compose.ui.text.TextMeasurer(input.fontFamilyResolver, input.defaultLocaleList,
+            input.density, input.layoutDirection, cacheSize = 0)
         // BasicText semantics replace the fitted style, but retain the actual paragraph and its full glyph advance.
         val matches = (22..30).map { halfSp ->
             measurer.measure(input.text, style = input.style.copy(fontSize = (halfSp / 2f).sp),
                 overflow = input.overflow, softWrap = input.softWrap, maxLines = input.maxLines,
-                constraints = input.constraints)
+                placeholders = input.placeholders, constraints = input.constraints)
         }.filter { candidate ->
             kotlin.math.abs(candidate.multiParagraph.intrinsics.maxIntrinsicWidth -
                 actual.multiParagraph.intrinsics.maxIntrinsicWidth) < 0.01f
         }
-        assertEquals("actual glyph advance must uniquely identify a bounded fitted size", 1, matches.size)
+        assertEquals("actual glyph advance must uniquely identify a bounded fitted size: " +
+            "input=$input advance=${actual.multiParagraph.intrinsics.maxIntrinsicWidth}", 1, matches.size)
         val fitted = matches.single()
         assertEquals(actual.size, fitted.size)
         assertEquals(actual.lineCount, fitted.lineCount)
@@ -1186,13 +1255,15 @@ class DashboardLayoutUiTest {
             textSize = with(fitted.density) { fitted.style.fontSize.toPx() }
             typeface = fitted.fontFamilyResolver.resolve(fitted.style.fontFamily, fitted.style.fontWeight ?: FontWeight.Normal,
                 fitted.style.fontStyle ?: FontStyle.Normal, fitted.style.fontSynthesis ?: FontSynthesis.All).value as android.graphics.Typeface
-            fitted.style.localeList?.firstOrNull()?.let { textLocale = Locale.forLanguageTag(it.toLanguageTag()) }
+            val locales = fitted.style.localeList ?: fitted.defaultLocaleList
+            textLocales = android.os.LocaleList(*(0 until locales.size).map { Locale.forLanguageTag(locales[it].toLanguageTag()) }.toTypedArray())
         }
         val narrowWidth = ceil(paint.measureText("\u2026").toDouble()).toInt()
         for (rtl in listOf(false, true)) {
             val direction = if (rtl) androidx.compose.ui.unit.LayoutDirection.Rtl else androidx.compose.ui.unit.LayoutDirection.Ltr
             val source = if (rtl) "חברת תקשורת בינלאומית ארוכה" else organization
-            val paragraph = androidx.compose.ui.text.TextMeasurer(fitted.fontFamilyResolver, fitted.density, direction, cacheSize = 0)
+            val paragraph = androidx.compose.ui.text.TextMeasurer(fitted.fontFamilyResolver, fitted.defaultLocaleList,
+                fitted.density, direction, cacheSize = 0)
                 .measure(source, style = fitted.style.copy(textDirection = if (rtl) androidx.compose.ui.text.style.TextDirection.Rtl
                     else androidx.compose.ui.text.style.TextDirection.Ltr), maxLines = 1, softWrap = false,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1248,7 +1319,7 @@ class DashboardLayoutUiTest {
         launch(fixture(listOf(DashboardWidget.CurrentOutbound)).copy(phase = VpnPhase.Running),
             maxWidth = 360.dp, deviceDensity = 2.625f, language = "en",
             lookup = { address -> IpQuality(address, IpQualitySource.IdentMe, IpType.Residential,
-                organization = names[address.substringAfterLast('.').toInt() - 8]) })
+                organization = names[8 - address.substringAfterLast('.').toInt()]) })
         awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n${names.first()}")
         addTrafficAndAssertOriginalForeground(expectedOverlay = true)
         val anchored = listOf("dashboard-status", "dashboard-status-body", "dashboard-status-button",
@@ -1256,7 +1327,7 @@ class DashboardLayoutUiTest {
             .associateWith(::statusRect)
         for ((index, organization) in names.withIndex()) {
             if (index > 0) compose.runOnUiThread {
-                state.value = state.value.copy(outboundIdentity = state.value.outboundIdentity!!.copy(address = "198.51.100.${index + 8}"))
+                state.value = state.value.copy(outboundIdentity = state.value.outboundIdentity!!.copy(address = "198.51.100.${8 - index}"))
             }
             awaitOrganization("${localized("en").getString(R.string.lite_organization)}\n$organization")
             compose.waitForIdle()

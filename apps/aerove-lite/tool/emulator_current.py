@@ -101,10 +101,10 @@ def original_sample_phase_selector(phase, sample, runtime):
         if sample is not None:
             raise ValueError('A sample is valid only for the original-sample phase')
         return None
-    if runtime.get('runtimeTarget') != 'lite125-original-samples':
-        raise ValueError('Single-sample phase requires the fixed Lite125 original runtime')
-    from emulator_original84 import original_sample_selector
-    return original_sample_selector(sample)
+    from emulator_original84 import SAMPLE_TARGETS, original_sample_selector
+    if runtime.get('runtimeTarget') not in SAMPLE_TARGETS:
+        raise ValueError('Single-sample phase requires a fixed original runtime')
+    return original_sample_selector(sample, runtime['runtimeTarget'])
 
 
 def main():
@@ -174,6 +174,7 @@ def main():
             check_cancelled(receipt)
             acceptance_command = ['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', args.phase]
             if args.sample:
+                environment['AEROVE_ORIGINAL_RUNTIME_TARGET'] = current['runtimeTarget']
                 environment['AEROVE_ORIGINAL_SAMPLE'] = args.sample
                 environment['AEROVE_ORIGINAL_SAMPLE_SELECTOR'] = sample_selector
                 acceptance_command.append(args.sample)

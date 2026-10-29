@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.aerove.fixture.socketowner">
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="33" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="AEROVE socket owner CI fixture" android:allowBackup="false" android:testOnly="true">
+        <service android:name=".SocketOwnerService" android:exported="true" />
+    </application>
+</manifest>

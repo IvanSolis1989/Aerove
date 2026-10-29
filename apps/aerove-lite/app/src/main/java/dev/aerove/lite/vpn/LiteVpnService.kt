@@ -32,6 +32,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
@@ -66,6 +67,8 @@ class LiteVpnService : VpnService() {
     @Volatile private var ownerAdmissionAllowed = false
     private var owner = 0L
     @Volatile private var lastPlan: VpnPlan? = null
+    @Volatile private var ownedStart: OwnedStartServiceReceipt? = null
+    private var ownedPreparation: Job? = null
     private var maintenanceHold = false
     private var heldMaintenance: MaintenanceRuntimeContext? = null
     private var policyPreferences = BackgroundPolicyPreferences()
@@ -173,6 +176,7 @@ class LiteVpnService : VpnService() {
                 if (snapshot.phase == VpnPhase.Failed && lastPlan?.ownerIntentToken == intentGeneration && !maintenanceHold) {
                     val startId = latestReceivedStartId
                     requested(false)
+                    retireOwnedStart()
                     lastPlan = null
                     syncListenerPolicy()
                     removeNotification()
@@ -210,10 +214,12 @@ class LiteVpnService : VpnService() {
         }
         val command = latestReceivedCommand
         traceLifecycle(VpnServiceLifecycleTrace.Event.CommandReceived, startId, command)
-        if (intent?.action in setOf(ACTION_START, ACTION_RECONFIGURE, SERVICE_INTERFACE) || intent == null)
-            showForeground(if (::coordinator.isInitialized) coordinator.state.value.phase else VpnPhase.Starting)
+        val hasOwnedId = intent?.action == ACTION_START && intent?.hasExtra(EXTRA_OWNED_START_ID) == true
+        val ownedId = if (hasOwnedId) intent?.getStringExtra(EXTRA_OWNED_START_ID) else null
+        if (hasOwnedId && ownedId == null) return rejectOwnedStart(startId)
         // Restore owns the complete stop/join/write transaction, including non-UI entry points.
         if (graph.maintenanceActive && intent?.action != ACTION_STOP) {
+            ownedId?.let(graph.ownedStarts::reject)
             traceLifecycle(VpnServiceLifecycleTrace.Event.MaintenanceIgnored, startId, command)
             if (lastPlan == null && !wasRequested(this)) {
                 removeNotification()
@@ -243,7 +249,22 @@ class LiteVpnService : VpnService() {
             }
             return START_NOT_STICKY
         }
+        var nextOwned: OwnedStartServiceReceipt? = null
+        if (hasOwnedId) {
+            val admitted = graph.ownedStarts.admit(checkNotNull(ownedId)) { request ->
+                val receipt = OwnedStartServiceReceipt(request, owner, intentGeneration + 1, startId)
+                nextOwned = receipt
+                val cancel: () -> Unit = { cancelOwnedStart(receipt) }
+                cancel
+            }
+            if (admitted == null) return rejectOwnedStart(startId)
+        }
+        if (intent?.action in setOf(ACTION_START, ACTION_RECONFIGURE, SERVICE_INTERFACE) || intent == null)
+            showForeground(if (::coordinator.isInitialized) coordinator.state.value.phase else VpnPhase.Starting)
         val generation = ++intentGeneration
+        val previousPreparation = retireOwnedStart()
+        ownedStart = nextOwned
+        previousPreparation?.cancel()
         traceLifecycle(VpnServiceLifecycleTrace.Event.IntentAccepted, startId, command, generation)
         if (intent?.action == ACTION_STOP) {
             graph.invalidatePendingStarts()
@@ -274,13 +295,13 @@ class LiteVpnService : VpnService() {
         val now = System.nanoTime()
         val requestedAt = intent?.getLongExtra(EXTRA_REQUESTED_AT_NANOS, 0L)?.takeIf { it != 0L && now - it >= 0L } ?: now
         traceLifecycle(VpnServiceLifecycleTrace.Event.StartQueued, startId, command, generation)
-        scope.launch {
+        val preparation = scope.launch {
             traceLifecycle(VpnServiceLifecycleTrace.Event.StartEntered, startId, command, generation)
             try {
                 val profile = checkNotNull(graph.profiles.snapshot().selectedId) { "Import and select a configuration first" }
                 val settings = graph.settings.read()
                 traceLifecycle(VpnServiceLifecycleTrace.Event.StartRead, startId, command, generation)
-                if (generation != intentGeneration) return@launch
+                if (generation != intentGeneration || nextOwned?.request?.cancelling == true) return@launch
                 val plan = VpnPlan(profile, settings)
                 val actual = if (reconfigure) coordinator.requestedBuilderSettings() else settings
                 check(canStartRuntime(checkNotNull(actual).network.vpnEnabled, intent?.action == SERVICE_INTERFACE) {
@@ -293,8 +314,9 @@ class LiteVpnService : VpnService() {
             } catch (failure: Exception) {
                 traceLifecycle(if (failure is CancellationException) VpnServiceLifecycleTrace.Event.StartCancelled else VpnServiceLifecycleTrace.Event.StartRejected, startId, command, generation)
                 if (generation == intentGeneration) {
-                    graph.publishVpn(owner, VpnSnapshot(VpnPhase.Failed, error = failure.message))
                     requested(false)
+                    retireOwnedStart()
+                    graph.publishVpn(owner, VpnSnapshot(VpnPhase.Failed, error = failure.message))
                     lastPlan = null
                     removeNotification()
                     traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfById, startId, command, generation)
@@ -302,7 +324,52 @@ class LiteVpnService : VpnService() {
                 }
             }
         }
+        if (nextOwned != null && ownedStart === nextOwned) ownedPreparation = preparation
         return START_STICKY
+    }
+
+    private fun rejectOwnedStart(startId: Int): Int {
+        if (wasRequested(this)) return START_STICKY
+        if (lastPlan == null && !maintenanceHold &&
+            coordinator.state.value.phase in setOf(VpnPhase.Stopped, VpnPhase.Stopping)) finishStop(startId, intentGeneration)
+        return START_NOT_STICKY
+    }
+
+    /** Invalidate generation or admission first: a first Native capture may otherwise see an unowned gap. */
+    private fun retireOwnedStart(): Job? {
+        val previous = ownedStart
+        val preparation = ownedPreparation
+        ownedStart = null
+        ownedPreparation = null
+        previous?.let { graph.ownedStarts.retire(it.request) }
+        return preparation
+    }
+
+    private fun cancelOwnedStart(expected: OwnedStartServiceReceipt) {
+        scope.launch(Dispatchers.Default + NonCancellable) {
+            val result = cancelOwnedStartForService(expected,
+                current = { ownedStart.takeIf { graph.ownsVpnOwner(owner) && intentGeneration == expected.intentGeneration } },
+                currentGeneration = { if (graph.ownsVpnOwner(owner)) intentGeneration else Long.MIN_VALUE },
+                latestStartId = { latestReceivedStartId },
+                onMain = { action -> withContext(Dispatchers.Main.immediate) { action() } },
+                withdraw = {
+                    val generation = ++intentGeneration
+                    val preparation = retireOwnedStart()
+                    preparation?.cancel()
+                    requested(false)
+                    lastPlan = null
+                    syncListenerPolicy()
+                    OwnedStartStop(generation, preparation, coordinator.stopAndCapture())
+                },
+                finish = { startId, generation ->
+                    requestVpnServiceStop(startId, generation, intentGeneration, lastPlan != null, maintenanceHold) { capturedId ->
+                        removeNotification()
+                        traceLifecycle(VpnServiceLifecycleTrace.Event.StopSelfById, capturedId, causeIntentGeneration = generation)
+                        stopSelf(capturedId)
+                    }
+                })
+            expected.request.completeCancellation(result)
+        }
     }
 
     private fun updateUnderlying() {
@@ -417,6 +484,8 @@ class LiteVpnService : VpnService() {
             clear = {
                 val startId = latestReceivedStartId
                 ++intentGeneration
+                val preparation = retireOwnedStart()
+                preparation?.cancel()
                 requested(false)
                 lastPlan = null
                 syncListenerPolicy()
@@ -429,6 +498,8 @@ class LiteVpnService : VpnService() {
         val previous = wasRequested(this@LiteVpnService)
         val context = coordinator.maintenanceContext(previous)
         ++intentGeneration
+        val preparation = retireOwnedStart()
+        preparation?.cancel()
         maintenanceHold = true
         val receipt = context.copy(ownerToken = owner, intentGeneration = intentGeneration)
         heldMaintenance = receipt
@@ -457,6 +528,8 @@ class LiteVpnService : VpnService() {
         val plan = VpnPlan(checkNotNull(profileId) { "Restored profile is unavailable" }, restored, vpnSettings = baseline,
             vpnReservedFakeIpRanges = context.previousPlan?.vpnReservedFakeIpRanges, vpnDnsEnabled = context.previousPlan?.vpnDnsEnabled)
         ++intentGeneration
+        val preparation = retireOwnedStart()
+        preparation?.cancel()
         lastPlan = plan.copy(ownerIntentToken = intentGeneration)
         requested(true)
         syncListenerPolicy()
@@ -488,6 +561,8 @@ class LiteVpnService : VpnService() {
                     ?: heldMaintenance?.builderSettings?.network?.vpnEnabled
                     ?: heldMaintenance?.previousPlan?.builderSettings()?.network?.vpnEnabled) != true) return@launch
             val generation = ++intentGeneration
+            val preparation = retireOwnedStart()
+            preparation?.cancel()
             val startId = latestReceivedStartId
             maintenanceHold = false
             heldMaintenance = null
@@ -507,6 +582,7 @@ class LiteVpnService : VpnService() {
     override fun onDestroy() {
         traceLifecycle(VpnServiceLifecycleTrace.Event.DestroyEntered)
         ++intentGeneration
+        retireOwnedStart()?.cancel()
         startupIntentChanges.value++
         maintenanceHold = false
         heldMaintenance = null
@@ -618,7 +694,8 @@ class LiteVpnService : VpnService() {
     }
 
     private fun captureOwnerIntent(plan: VpnPlan): () -> Boolean {
-        return capturedOwnerIntent(plan.ownerIntentToken, { intentGeneration }, { ownerAdmissionAllowed })
+        return capturedOwnedStartIntent(plan.ownerIntentToken, ownedStart, owner, { intentGeneration },
+            { ownerAdmissionAllowed }, { graph.ownsVpnOwner(owner) })
     }
 
     private fun requested(value: Boolean) {
@@ -632,6 +709,7 @@ class LiteVpnService : VpnService() {
         val hostNetworkGeneration: kotlinx.coroutines.flow.StateFlow<Long> = mutableHostNetworkGeneration
         const val ACTION_START = "dev.aerove.lite.START"
         const val EXTRA_REQUESTED_AT_NANOS = "dev.aerove.lite.REQUESTED_AT_NANOS"
+        const val EXTRA_OWNED_START_ID = "dev.aerove.lite.OWNED_START_ID"
         const val ACTION_STOP = "dev.aerove.lite.STOP"
         const val ACTION_RECONFIGURE = "dev.aerove.lite.RECONFIGURE"
         const val ACTION_RETRY_NETWORK = "dev.aerove.lite.RETRY_NETWORK"

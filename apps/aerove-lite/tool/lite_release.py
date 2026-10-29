@@ -24,6 +24,8 @@ TOOL_DIR = Path(__file__).resolve().parent
 APP_DIR = TOOL_DIR.parent
 REPO = "IvanSolis1989/Aerove"
 WORKFLOW = "aerove-lite.yaml"
+BUILD_BRANCHES = {"codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",
+                  "codex/aerove-lite-beta24-validation"}
 ARTIFACT_PREFIXES = {
     "arm": "AEROVE-Lite-preview-arm64-attempt-",
     "x86": "AEROVE-Lite-runtime-contract-attempt-",
@@ -192,7 +194,7 @@ def _run_identity(run, run_id, source=None, release=False):
         if run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main":
             raise PromotionError("Promotion must be an explicit main workflow dispatch")
     elif (run.get("event") not in {"push", "workflow_dispatch"}
-            or run.get("head_branch") not in {"codex/aerove-independent-architecture", "codex/aerove-lite-meow-app"}
+            or run.get("head_branch") not in BUILD_BRANCHES
             or run.get("status") != "completed" or run.get("conclusion") != "success"):
         raise PromotionError("Explicit original build is not a fully accepted product run")
 
@@ -262,7 +264,7 @@ def select_acceptance(source, current_run, outputs, root=None, build_run=None):
     candidates = []
     for run in data.get("workflow_runs", []):
         if (run.get("id") == current_run or run.get("head_sha") != source
-                or run.get("head_branch") not in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app")
+                or run.get("head_branch") not in BUILD_BRANCHES
                 or run.get("path", "").split("@", 1)[0] != f".github/workflows/{WORKFLOW}"
                 or run.get("status") != "completed" or run.get("conclusion") != "success"
                 or run.get("event") not in {"push", "workflow_dispatch"}):

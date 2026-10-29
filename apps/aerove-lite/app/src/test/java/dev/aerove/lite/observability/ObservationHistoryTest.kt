@@ -40,6 +40,40 @@ class ObservationHistoryTest {
         assertEquals(7uL, snapshot.dns.single().delayMillis); assertFalse(snapshot.dns.single().failed)
     }
 
+    @Test fun requestCopyPreservesOriginalIdentityClosureAndEveryCollectedField() {
+        val entry = RequestHistoryEntry("original-request-id", time, "tcp", host = "example.test",
+            sourceIP = "2001:db8::2", sourcePort = 54321, destinationIP = "2001:db8::3", destinationPort = 443,
+            inbound = "tun", process = "Browser", processPath = "/real/browser", uid = "10042",
+            chains = listOf("Node", "Select"), rule = "DOMAIN", rulePayload = "example.test",
+            upload = ULong.MAX_VALUE, download = 9u, end = time.plusSeconds(2))
+        assertEquals("""
+            2026-10-23T00:00:00Z
+            id=original-request-id
+            end=2026-10-23T00:00:02Z
+            tcp
+            example.test
+            2001:db8::2
+            54321
+            2001:db8::3
+            443
+            tun
+            Browser
+            /real/browser
+            10042
+            DOMAIN
+            example.test
+            Node
+            Select
+            upload=18446744073709551615
+            download=9
+        """.trimIndent(), requestHistoryText(entry))
+    }
+
+    @Test fun requestCopyDoesNotInventClosureOrMissingOptionalMetadata() {
+        val entry = RequestHistoryEntry("open-request-id", Instant.EPOCH, "udp")
+        assertEquals("1970-01-01T00:00:00Z\nid=open-request-id\nudp\nupload=0\ndownload=0", requestHistoryText(entry))
+    }
+
     @Test fun invalidUnsignedSequencesTypesAndOversizedWindowsFailWithoutExposingPayload() {
         val cases = listOf(
             envelope(emptyList(), "018").toString(), envelope(emptyList(), "18446744073709551616").toString(),

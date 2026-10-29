@@ -75,7 +75,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite125_test_only:
@@ -118,6 +118,18 @@ jobs:
     with:
       exclusive_mode: true
       runtime_target: beta14
+  diagnostic_lite158_frame_sample:
+    name: Lite158 original first-frame trace (diagnostic only)
+    needs: diagnostic_guard
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite158-frame-sample') }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/aerove-lite-qa84.yaml
+    with:
+      exclusive_mode: true
+      runtime_target: lite158-frame-sample
+      sample: solid
   diagnostic_lite141_shards:
     name: Lite141 original APK remaining shard ${{ matrix.shard_index }}/8 (diagnostic only)
     needs: diagnostic_guard
@@ -530,6 +542,11 @@ jobs:
     - run: |
         sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
         test -f "$ANDROID_SDK_ROOT/platforms/android-37.1/android.jar"
+    - name: Compile and inspect the separate-UID socket test dependency
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      run: |-
+        python3 apps/aerove-lite/tool/build_process_owner_fixture.py \
+          --output apps/aerove-lite/app/build/reports/process-owner-fixture --deadline-seconds 120
     - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
       with:
         gradle-version: 9.6.0
@@ -1122,7 +1139,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

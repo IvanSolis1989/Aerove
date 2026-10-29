@@ -3,6 +3,7 @@ package dev.aerove.lite.ui
 import android.graphics.Color
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import java.io.Closeable
@@ -21,7 +22,6 @@ import dev.aerove.lite.MaterialTier
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -94,32 +94,8 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
         }
     }
 
-    @Test
-    fun translucentAuroraInkPreservesGlyphCoverageAndBlankPixels() {
-        // One representative real GPU case exercises source alpha without duplicating the matrix.
-        assumeTrue("Source-alpha coverage uses the Solid/light/Aurora representative",
-            case.aurora && case.tier == MaterialTier.Solid && !case.dark)
-        val fixture = FixtureState(inkAlpha = 0.8f, fixtureGeometry = JSONObject(), inkContrastSource = true, inkContrastDrawReceipt = JSONObject(), sceneDrawReceipt = JSONObject())
-        withOpticalFixture(compose, case, "translucent-ink_$case", initial = fixture) { state, probe, capture ->
-            val rawMotion = captureUnmodifiedWallpaperMotion(state, fixture, probe, capture)
-            val source = compose.frame(state, fixture, capture, "source-alpha-08")
-            val mask = compose.frame(state, fixture.copy(stage = FixtureStage.InkMask), capture, "coverage-alpha-08")
-            val actual = compose.frame(state, fixture.copy(stage = FixtureStage.Production), capture, "ink-alpha-08")
-            val halfSource = compose.frame(state, fixture.copy(auroraTime = 45_000_000L), capture, "source-half-alpha-08")
-            val halfActual = compose.frame(state, fixture.copy(stage = FixtureStage.Production, auroraTime = 45_000_000L), capture, "ink-half-alpha-08")
-            val report = JSONObject().put("sourceAlpha", Color.alpha(probe.ink)).put("unmodifiedWallpaperMotion", rawMotion).put("samplingSourceMode", "wallpaper+independent-test-contrast")
-            val controls = capturePlainInkControls(state, fixture, probe, capture, report,
-                "plain-ink-alpha-08", "translucent-ink_$case", source, halfSource, actual)
-            try { runInkAssertionsAndMetrics(controls.failure, metrics = { capture.metrics(report) }) {
-                controls.requireCalibrated()
-                assertTrue("The fixture must actually draw a translucent source", Color.alpha(probe.ink) == 204)
-                for (name in listOf("ink", "inkIcon")) report.put(name, assertInk(mask, source, halfSource, actual, halfActual, probe, name, controls))
-            } } finally { controls.close() }
-        }
-    }
-
     /** Observes raw source poses, then restores and actually captures the exact entry scene. */
-    private fun captureUnmodifiedWallpaperMotion(
+    internal fun captureUnmodifiedWallpaperMotion(
         state: MutableState<FixtureState>, fixture: FixtureState, probe: RenderProbe, capture: HardwareCapture,
     ): JSONObject {
         val previous = state.value
@@ -154,7 +130,7 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
                 observed.getDouble("inkAlpha").toFloat() == expected.inkAlpha)
     }
 
-    private fun capturePlainInkControls(
+    internal fun capturePlainInkControls(
         state: MutableState<FixtureState>, fixture: FixtureState, probe: RenderProbe,
         capture: HardwareCapture, report: JSONObject, prefix: String, captureName: String,
         source: CapturedFrame, halfSource: CapturedFrame, originalActual: CapturedFrame,
@@ -238,7 +214,7 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
         return controls
     }
 
-    private fun assertInk(
+    internal fun assertInk(
         mask: CapturedFrame,
         source: CapturedFrame,
         halfSource: CapturedFrame,
@@ -327,6 +303,37 @@ class LiteLayerAndInkRenderingTest(private val case: RenderCase) {
     }
 }
 
+@RunWith(AndroidJUnit4::class)
+class LiteTranslucentAuroraInkRenderingTest {
+    private val case = RenderCase(MaterialTier.Solid, true, false, false, true)
+    private val fixture = LiteLayerAndInkRenderingTest(case)
+    @get:Rule val compose = fixture.compose
+    private val captureUnmodifiedWallpaperMotion = fixture::captureUnmodifiedWallpaperMotion
+    private val capturePlainInkControls = fixture::capturePlainInkControls
+    private val assertInk = fixture::assertInk
+
+    @Test
+    fun translucentAuroraInkPreservesGlyphCoverageAndBlankPixels() {
+        val fixture = FixtureState(inkAlpha = 0.8f, fixtureGeometry = JSONObject(), inkContrastSource = true, inkContrastDrawReceipt = JSONObject(), sceneDrawReceipt = JSONObject())
+        withOpticalFixture(compose, case, "translucent-ink_$case", initial = fixture) { state, probe, capture ->
+            val rawMotion = captureUnmodifiedWallpaperMotion(state, fixture, probe, capture)
+            val source = compose.frame(state, fixture, capture, "source-alpha-08")
+            val mask = compose.frame(state, fixture.copy(stage = FixtureStage.InkMask), capture, "coverage-alpha-08")
+            val actual = compose.frame(state, fixture.copy(stage = FixtureStage.Production), capture, "ink-alpha-08")
+            val halfSource = compose.frame(state, fixture.copy(auroraTime = 45_000_000L), capture, "source-half-alpha-08")
+            val halfActual = compose.frame(state, fixture.copy(stage = FixtureStage.Production, auroraTime = 45_000_000L), capture, "ink-half-alpha-08")
+            val report = JSONObject().put("sourceAlpha", Color.alpha(probe.ink)).put("unmodifiedWallpaperMotion", rawMotion).put("samplingSourceMode", "wallpaper+independent-test-contrast")
+            val controls = capturePlainInkControls(state, fixture, probe, capture, report,
+                "plain-ink-alpha-08", "translucent-ink_$case", source, halfSource, actual)
+            try { runInkAssertionsAndMetrics(controls.failure, metrics = { capture.metrics(report) }) {
+                controls.requireCalibrated()
+                assertTrue("The fixture must actually draw a translucent source", Color.alpha(probe.ink) == 204)
+                for (name in listOf("ink", "inkIcon")) report.put(name, assertInk(mask, source, halfSource, actual, halfActual, probe, name, controls))
+            } } finally { controls.close() }
+        }
+    }
+}
+
 private fun assertPlainControlEntry(stage: String, contrastSource: Boolean, plainControl: Boolean, sdkReference: Boolean) {
     assertTrue("Plain controls must enter from the original controlled Production scene", stage == "Production" && contrastSource && !plainControl && !sdkReference)
 }
@@ -364,13 +371,13 @@ internal fun runInkAssertionsAndMetrics(controlFailure: Throwable?, metrics: () 
     original?.let { throw it }
 }
 
-private class SdkGlyphReference(val bitmap: Bitmap, val bounds: Rect, val evidence: JSONObject, val metadataFile: File) : Closeable {
+internal class SdkGlyphReference(val bitmap: Bitmap, val bounds: Rect, val evidence: JSONObject, val metadataFile: File) : Closeable {
     fun pixel(x: Int, y: Int): Int = bitmap.getPixel(x - bounds.left.roundToInt(), y - bounds.top.roundToInt())
     fun normalizedCoverage(x: Int, y: Int, paint: Int): Double = Color.alpha(pixel(x, y)) * 255.0 / Color.alpha(paint)
     override fun close() { if (!bitmap.isRecycled) bitmap.recycle() }
 }
 
-private class InkReferenceControls(val paint: Int) : Closeable {
+internal class InkReferenceControls(val paint: Int) : Closeable {
     val references = linkedMapOf<String, MutableMap<String, SdkGlyphReference>>()
     var calibrated = false
     var failure: Throwable? = null

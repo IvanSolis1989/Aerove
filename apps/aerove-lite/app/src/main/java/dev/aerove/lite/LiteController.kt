@@ -33,6 +33,7 @@ import dev.aerove.lite.telemetry.TelemetryVisibility
 import dev.aerove.lite.telemetry.sessionBindings
 import dev.aerove.lite.vpn.CoreEndpoint
 import dev.aerove.lite.vpn.LiteVpnService
+import dev.aerove.lite.vpn.OwnedStartRequest
 import dev.aerove.lite.platform.LocalNetworkMonitor
 import dev.aerove.lite.profiles.AndroidProfileDocuments
 import dev.aerove.lite.profiles.ProfileListFeature
@@ -936,17 +937,37 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     }
 
     override fun connect() {
-        if (application.maintenanceActive) return
+        prepareOwnedConnect()?.let(::connectOwned)
+    }
+
+    fun prepareOwnedConnect(): OwnedStartRequest? =
+        if (canConnect()) application.ownedStarts.prepare() else null
+
+    fun connectOwned(request: OwnedStartRequest): Boolean {
+        if (!application.ownedStarts.send(request)) return false
+        try {
+            if (!canConnect()) { application.ownedStarts.retire(request); return false }
+            ContextCompat.startForegroundService(application, Intent(application, LiteVpnService::class.java)
+                .setAction(LiteVpnService.ACTION_START).putExtra(LiteVpnService.EXTRA_REQUESTED_AT_NANOS, System.nanoTime())
+                .putExtra(LiteVpnService.EXTRA_OWNED_START_ID, request.id))
+        } catch (failure: Exception) {
+            application.ownedStarts.retire(request)
+            throw failure
+        }
+        return true
+    }
+
+    private fun canConnect(): Boolean {
+        if (application.maintenanceActive) return false
         if (state.value.settings.network.vpnEnabled && VpnService.prepare(application) != null) {
             showMessage(application.getString(R.string.error_vpn_permission))
-            return
+            return false
         }
         if (state.value.selectedProfile == null) {
             showMessage(application.getString(R.string.error_profile_required))
-            return
+            return false
         }
-        ContextCompat.startForegroundService(application, Intent(application, LiteVpnService::class.java)
-            .setAction(LiteVpnService.ACTION_START).putExtra(LiteVpnService.EXTRA_REQUESTED_AT_NANOS, System.nanoTime()))
+        return true
     }
 
     override fun disconnect() {

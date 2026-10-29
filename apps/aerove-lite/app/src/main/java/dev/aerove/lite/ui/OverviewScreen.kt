@@ -411,7 +411,7 @@ internal fun OutboundStatusCard(state: LiteState, actions: LiteActions, showTraf
                                             val address = if (quality.hidden) "*****" else shown
                                             // TalkBack joins Standard's address and its unique tooltip with ", "; Compose exposes no tooltip.
                                             // Standard also reads the provisional last exit while its first probe runs (outbound_ip.dart).
-                                            LiteText(address, Modifier.statusForeground(StatusForeground.Address).testTag("dashboard-status-ip").statusControl(StatusControl.Address)
+                                            DashboardAddressText(address, Modifier.statusForeground(StatusForeground.Address).testTag("dashboard-status-ip").statusControl(StatusControl.Address)
                                                 .clickable(onClick = open).semantics { contentDescription = "$address, $detail" },
                                                 style = LiteType.Title2, color = qualityInk(quality.quality?.level))
                                         }
@@ -546,6 +546,11 @@ private val statusWordPattern = Regex("\\S+")
 
 internal fun statusWordInk(text: String, paragraph: androidx.compose.ui.text.TextLayoutResult,
     paint: android.graphics.Paint): List<Rect> = buildList {
+    // Generated ellipsis has no source glyph box; use the fitted paragraph's actual antialiased ink.
+    if ((0 until paragraph.lineCount).any(paragraph::isLineEllipsized)) {
+        addAll(statusParagraphInk(paragraph))
+        return@buildList
+    }
     for (line in 0 until paragraph.lineCount) {
         val start = paragraph.getLineStart(line)
         val end = paragraph.getLineEnd(line, visibleEnd = true)
@@ -564,17 +569,29 @@ internal fun statusWordInk(text: String, paragraph: androidx.compose.ui.text.Tex
             add(Rect(minOf(left, left + ink.left), baseline + ink.top,
                 maxOf(right, left + ink.right), baseline + ink.bottom))
         }
-        if (paragraph.isLineEllipsized(line)) {
-            // The generated end marker has no source substring; use its fitted glyph at the actual line edge.
-            val marker = "\u2026"
-            val markerInk = android.graphics.Rect().also { paint.getTextBounds(marker, 0, marker.length, it) }
-            val x = if (paragraph.getParagraphDirection(start) == androidx.compose.ui.text.style.ResolvedTextDirection.Rtl)
-                paragraph.getLineLeft(line) else paragraph.getLineRight(line) - paint.measureText(marker)
-            val baseline = paragraph.getLineBaseline(line)
-            if (!markerInk.isEmpty) add(Rect(x + markerInk.left, baseline + markerInk.top,
-                x + markerInk.right, baseline + markerInk.bottom))
-        }
     }
+}
+
+private fun statusParagraphInk(paragraph: TextLayoutResult): List<Rect> {
+    val bitmap = android.graphics.Bitmap.createBitmap(paragraph.size.width.coerceAtLeast(1),
+        paragraph.size.height.coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+    return try {
+        paragraph.multiParagraph.paint(androidx.compose.ui.graphics.Canvas(android.graphics.Canvas(bitmap)), Color.Black)
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        buildList {
+            for (y in 0 until bitmap.height) {
+                var x = 0
+                val row = y * bitmap.width
+                while (x < bitmap.width) {
+                    while (x < bitmap.width && (pixels[row + x] ushr 24) == 0) x++
+                    val start = x
+                    while (x < bitmap.width && (pixels[row + x] ushr 24) != 0) x++
+                    if (x > start) add(Rect(start.toFloat(), y.toFloat(), x.toFloat(), y + 1f))
+                }
+            }
+        }
+    } finally { bitmap.recycle() }
 }
 
 @Composable
@@ -593,6 +610,7 @@ private fun StatusFooterText(text: String, part: StatusMetricPart, modifier: Mod
         }
     }
     val result = remember { arrayOfNulls<androidx.compose.ui.text.TextLayoutResult>(1) }
+    val measuredInk = remember(text, paint) { arrayOfNulls<Pair<TextLayoutResult, List<Rect>>>(1) }
     val organizationValue = part == StatusMetricPart.OrganizationValueInk
     val textInk = if (text.codePoints().anyMatch { it in 0x1F000..0x1FAFF || it in 0x2600..0x27BF }) Modifier
         else Modifier.liteInk(color, if (organizationValue) dev.aerove.lite.optics.AeroveInkRole.Section else dev.aerove.lite.optics.AeroveInkRole.Small)
@@ -610,7 +628,12 @@ private fun StatusFooterText(text: String, part: StatusMetricPart, modifier: Mod
             val child = measurables.single().measure(constraints)
             val paragraph = checkNotNull(result[0])
             paint.textSize = with(density) { paragraph.layoutInput.style.fontSize.toPx() }
-            ink[part] = statusWordInk(text, paragraph, paint).mapNotNull { word ->
+            val locales = paragraph.layoutInput.style.localeList ?: paragraph.layoutInput.defaultLocaleList
+            paint.textLocales = android.os.LocaleList(*(0 until locales.size).map { Locale.forLanguageTag(locales[it].toLanguageTag()) }.toTypedArray())
+            val words = measuredInk[0]?.takeIf { it.first === paragraph }?.second ?: statusWordInk(text, paragraph, paint).also {
+                measuredInk[0] = paragraph to it
+            }
+            ink[part] = words.mapNotNull { word ->
                 word.intersect(Rect(0f, 0f, child.width.toFloat(), child.height.toFloat())).takeUnless { it.isEmpty }
             }
             return layout(child.width, child.height, mapOf(part.bounds.left to 0, part.bounds.top to 0,

@@ -420,7 +420,8 @@ class LitePromotionGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp, mock.patch.object(release, "_gh_json", side_effect=api), \
                 mock.patch.object(release, "_candidate_jobs", return_value={"complete": True}):
             outputs = Path(temp) / "outputs"
-            for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app"):
+            for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",
+                           "codex/aerove-lite-beta24-validation"):
                 for event in ("push", "workflow_dispatch"):
                     run.update(head_branch=branch,event=event)
                     with self.subTest(branch=branch,event=event):
@@ -429,7 +430,8 @@ class LitePromotionGateTests(unittest.TestCase):
                         self.assertEqual(result["run_attempt"], attempt)
                         self.assertEqual(set(result["artifact_ids"]), {"arm", "x86", "matrix", "helper"})
             for branch in ("codex/aerove-meow-preflight", "codex/unrelated", "main",
-                    "codex/aerove-lite-meow-app-extra", "codex/aerove-lite-meow-app/child", "", None):
+                    "codex/aerove-lite-meow-app-extra", "codex/aerove-lite-meow-app/child",
+                    "codex/aerove-lite-beta24-validation-extra", "codex/aerove-lite-beta24-validation/child", "", None):
                 run["head_branch"] = branch
                 with self.subTest(rejectedBranch=branch), self.assertRaisesRegex(release.PromotionError,"No exact-source"):
                     release.select_acceptance(source,999,outputs)
@@ -631,6 +633,47 @@ class ExplicitBuildPromotionTest(unittest.TestCase):
         self.assertEqual(result["run_id"], 123)
         self.assertEqual(result["run_attempt"], 2)
         self.assertEqual(set(result["artifact_ids"]), {"arm", "x86", "helper", "matrix"})
+
+    def test_explicit_original_accepts_only_exact_approved_development_branches(self):
+        for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",
+                       "codex/aerove-lite-beta24-validation"):
+            for event in ("push", "workflow_dispatch"):
+                self.run.update(head_branch=branch, event=event)
+                with self.subTest(branch=branch, event=event):
+                    result = self.select()
+                    self.assertEqual((result["build_source"], result["run_id"], result["run_attempt"]),
+                                     (self.source, 123, 2))
+        for branch in ("main", "codex/unrelated", "feature/lite", "codex/aerove-lite-beta24-validation-extra",
+                       "codex/aerove-lite-beta24-validation/child", "CODEX/aerove-lite-beta24-validation", "", None):
+            self.run["head_branch"] = branch
+            with self.subTest(rejectedBranch=branch), self.assertRaises(release.PromotionError):
+                self.select()
+
+    def test_validation_branch_still_rejects_incomplete_or_forged_original_identity(self):
+        self.run["head_branch"] = "codex/aerove-lite-beta24-validation"
+        for key, value in (("id", 999), ("run_attempt", 0), ("run_attempt", True),
+                           ("run_number", 0), ("run_number", True), ("head_sha", "main"),
+                           ("path", ".github/workflows/another.yaml"),
+                           ("repository", dict(full_name="fork/repository")),
+                           ("head_repository", dict(full_name="fork/repository")),
+                           ("event", "pull_request"), ("status", "in_progress"), ("conclusion", "failure")):
+            original = self.run[key]
+            self.run[key] = value
+            with self.subTest(field=key, value=value), self.assertRaises(release.PromotionError):
+                self.select()
+            self.run[key] = original
+        with self.assertRaises(release.PromotionError):
+            release._run_identity(self.run, 123, "c" * 40)
+
+    def test_development_branch_admission_does_not_expand_main_dispatch_release_gate(self):
+        self.run["head_branch"] = "main"
+        release._run_identity(self.run, 123, self.source, release=True)
+        for branch, event in (("main", "push"), ("codex/aerove-lite-beta24-validation", "workflow_dispatch"),
+                              ("codex/aerove-lite-meow-app", "workflow_dispatch"),
+                              ("codex/aerove-independent-architecture", "workflow_dispatch")):
+            self.run.update(head_branch=branch, event=event)
+            with self.subTest(branch=branch, event=event), self.assertRaises(release.PromotionError):
+                release._run_identity(self.run, 123, self.source, release=True)
 
     def test_forged_failed_wrong_attempt_or_expired_original_is_rejected(self):
         for key, value in (("id", 999), ("conclusion", "failure"), ("status", "in_progress"),

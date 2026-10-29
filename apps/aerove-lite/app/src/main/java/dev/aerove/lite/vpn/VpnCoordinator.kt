@@ -8,7 +8,9 @@ import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.networksettings.effectiveVpnNetworkOptions
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,8 +60,10 @@ data class VpnSnapshot(
     val initialDnsEnabled: Boolean? = null,
     val appliedDnsEnabled: Boolean? = null,
     val plannedBuilderSettings: LiteSettings? = null,
+    // Coordinator revision across phases; only Running with an endpoint proves a usable session.
     val sessionGeneration: Long = 0L,
     val networkRequest: dev.aerove.lite.networksettings.NetworkRuntimeRequest? = null,
+    val serviceOwner: Long = 0L,
 )
 
 interface TunnelSession {
@@ -103,36 +107,46 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     val state = mutableState.asStateFlow()
     private var unconfirmedStop: Throwable? = null
     private var closed = false
-    private data class OwnedSession(val generation: Long, val session: TunnelSession, val joined: kotlinx.coroutines.CompletableDeferred<Unit> = kotlinx.coroutines.CompletableDeferred())
+    private class Execution(val generation: Long, val joined: CompletableDeferred<Unit> = CompletableDeferred())
+    private data class OwnedSession(val execution: Execution, val session: TunnelSession) {
+        val generation: Long get() = execution.generation
+    }
+    private var latestExecution: Execution? = null
     private var activeSession: OwnedSession? = null
     private val policyLock = Mutex()
     @Volatile private var desiredListening = true
     @Volatile private var desiredPolicyCurrent: () -> Boolean = { true }
     private val worker = scope.launch {
         requests.collectLatest { request ->
+            val execution = synchronized(this@VpnCoordinator) {
+                if (closed || request.generation != generation.get()) null
+                else Execution(request.generation).also { if (request.plan != null) latestExecution = it }
+            } ?: return@collectLatest
             var session: TunnelSession? = null
-            var ownership: OwnedSession? = null
+            var openingFailure: Throwable? = null
             try {
-                if (request.generation != generation.get()) return@collectLatest
-                unconfirmedStop?.let { throw IllegalStateException("Previous core termination was not confirmed", it) }
+                synchronized(this@VpnCoordinator) { unconfirmedStop }?.let {
+                    throw IllegalStateException("Previous core termination was not confirmed", it)
+                }
                 if (request.plan == null) {
-                    publish(request, VpnSnapshot(error = request.failureReason))
+                    publish(request, VpnSnapshot(error = request.failureReason, sessionGeneration = request.generation))
                     return@collectLatest
                 }
-                publish(request, VpnSnapshot(VpnPhase.Starting, runningSinceNanos = request.startedAtNanos))
+                publish(request, VpnSnapshot(VpnPhase.Starting, runningSinceNanos = request.startedAtNanos,
+                    sessionGeneration = request.generation))
                 val requestedPlan = checkNotNull(request.plan)
                 var openedPlan = requestedPlan
                 withContext(NonCancellable) {
                     // Read after the previous session's join barrier, immediately before opening its successor.
                     openedPlan = if (request.internalReconnect) reconnectPlan(requestedPlan) else requestedPlan
-                    session = backend.open(openedPlan)
+                    session = try { backend.open(openedPlan) }
+                    catch (failure: Throwable) { openingFailure = failure; throw failure }
                 }
                 val running = checkNotNull(session)
                 running.awaitReady()
                 if (running is ListenerPolicySession) latestSavedSettings()?.let { running.configurePolicies(it) }
                 if (running is ListenerPolicySession) latestNetworkDns()?.let { running.configureNetworkDns(it) }
-                val record = OwnedSession(request.generation, running)
-                ownership = record
+                val record = OwnedSession(execution, running)
                 synchronized(this@VpnCoordinator) {
                     if (request.generation == generation.get()) activeSession = record
                 }
@@ -158,11 +172,12 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                publish(request, VpnSnapshot(VpnPhase.Failed, error = failure.message ?: failure.javaClass.simpleName))
+                publish(request, VpnSnapshot(VpnPhase.Failed, error = failure.message ?: failure.javaClass.simpleName,
+                    sessionGeneration = request.generation))
             } finally {
-                session?.let { owned ->
-                    withContext(NonCancellable) {
-                        var stopFailure: Exception? = null
+                withContext(NonCancellable) {
+                    var stopFailure: Exception? = null
+                    session?.let { owned ->
                         try {
                             try {
                                 beforeSessionStop(owned.endpoint)
@@ -171,15 +186,17 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                             }
                         } catch (failure: Exception) {
                             stopFailure = failure
+                        }
+                    }
+                    synchronized(this@VpnCoordinator) {
+                        stopFailure?.let { failure ->
                             unconfirmedStop = failure
-                            mutableState.value = VpnSnapshot(VpnPhase.Failed, error = failure.message)
+                            mutableState.value = VpnSnapshot(VpnPhase.Failed, error = failure.message,
+                                sessionGeneration = execution.generation)
                         }
-                        synchronized(this@VpnCoordinator) {
-                            if (activeSession?.session === owned) activeSession = null
-                        }
-                        ownership?.joined?.let { joined ->
-                            if (stopFailure == null) joined.complete(Unit) else joined.completeExceptionally(stopFailure!!)
-                        }
+                        if (activeSession?.execution === execution) activeSession = null
+                        val failure = stopFailure ?: openingFailure ?: unconfirmedStop
+                        if (failure == null) execution.joined.complete(Unit) else execution.joined.completeExceptionally(failure)
                     }
                 }
             }
@@ -192,7 +209,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         val next = generation.incrementAndGet()
         val current = mutableState.value
         val started = current.uptimeStartNanos(true).takeUnless { it == 0L } ?: requestedAtNanos
-        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started)
+        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started, sessionGeneration = next)
         requests.value = Request(next, plan, startedAtNanos = started)
     }
 
@@ -200,8 +217,20 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     fun stop() {
         if (closed) return
         val next = generation.incrementAndGet()
-        if (mutableState.value.phase != VpnPhase.Stopped) mutableState.value = VpnSnapshot(VpnPhase.Stopping)
+        if (mutableState.value.phase != VpnPhase.Stopped)
+            mutableState.value = VpnSnapshot(VpnPhase.Stopping, sessionGeneration = next)
         requests.value = Request(next, null)
+    }
+
+    /** Captures only work admitted before this stop, even if a newer start replaces its command. */
+    @Synchronized
+    internal fun stopAndCapture(): Deferred<Unit> {
+        val joined = latestExecution?.joined ?: CompletableDeferred<Unit>().also {
+            val failure = unconfirmedStop
+            if (failure == null) it.complete(Unit) else it.completeExceptionally(failure)
+        }
+        stop()
+        return joined
     }
 
     /** Compensation failure may stop only the captured endpoint and its current session generation. */
@@ -212,12 +241,12 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                 owned.generation != generation.get() || mutableState.value.phase != VpnPhase.Running) null
             else {
                 val next = generation.incrementAndGet()
-                mutableState.value = VpnSnapshot(VpnPhase.Stopping, error = reason)
+                mutableState.value = VpnSnapshot(VpnPhase.Stopping, error = reason, sessionGeneration = next)
                 requests.value = Request(next, null, failureReason = reason)
                 owned
             }
         } ?: return false
-        kotlinx.coroutines.withTimeout(45_000) { captured.joined.await() }
+        kotlinx.coroutines.withTimeout(45_000) { captured.execution.joined.await() }
         return true
     }
 
@@ -236,7 +265,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         val baseline = preserveBuilder(plan, current)
         val next = generation.incrementAndGet()
         val started = current.uptimeStartNanos(true).takeUnless { it == 0L } ?: nanoTime()
-        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started)
+        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started, sessionGeneration = next)
         requests.value = Request(next, baseline, internalReconnect = true, startedAtNanos = started)
     }
 
@@ -249,7 +278,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         val baseline = preserved.builderSettings()
         val next = generation.incrementAndGet()
         val started = mutableState.value.uptimeStartNanos(true).takeUnless { it == 0L } ?: nanoTime()
-        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started)
+        mutableState.value = VpnSnapshot(VpnPhase.Starting, runningSinceNanos = started, sessionGeneration = next)
         requests.value = Request(next, plan.copy(vpnNetwork = baseline.network, vpnIpv6 = baseline.ipv6, vpnSettings = baseline,
             vpnReservedFakeIpRanges = preserved.vpnReservedFakeIpRanges, vpnDnsEnabled = preserved.vpnDnsEnabled), startedAtNanos = started)
     }
@@ -349,13 +378,14 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     suspend fun close() {
         synchronized(this) {
             closed = true
-            generation.incrementAndGet()
+            val next = generation.incrementAndGet()
             if (mutableState.value.phase !in setOf(VpnPhase.Stopped, VpnPhase.Failed))
-                mutableState.value = VpnSnapshot(VpnPhase.Stopping)
+                mutableState.value = VpnSnapshot(VpnPhase.Stopping, sessionGeneration = next)
         }
         worker.cancelAndJoin()
         synchronized(this) {
-            if (mutableState.value.phase != VpnPhase.Failed) mutableState.value = VpnSnapshot()
+            if (mutableState.value.phase != VpnPhase.Failed)
+                mutableState.value = VpnSnapshot(sessionGeneration = generation.get())
         }
     }
 

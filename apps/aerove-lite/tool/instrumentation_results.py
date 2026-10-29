@@ -132,7 +132,7 @@ def parse_execution(path, expected):
     return output
 
 
-def build_index(source, discovery, sums, ordinary, isolated=None, discovery_log=None, host_exit=None):
+def build_index(source, discovery, sums, ordinary, isolated=None, discovery_log=None, host_exit=None, owner=None):
     index = dict(schema=1, kind="instrumentation-diagnostic-index", diagnosticOnly=True,
                  accepted=False, aggregateAcceptance=False, complete=False, identityBound=False,
                  errors=[], hostExitCode=host_exit)
@@ -178,23 +178,24 @@ def build_index(source, discovery, sums, ordinary, isolated=None, discovery_log=
         inputs = [dict(role="ordinary", **normal)]
         records = list(normal["records"].values())
         index["errors"] += normal["errors"]
-        if plan["isolated"]:
-            ordinary_passed = not normal["errors"] and all(x["status"] == "passed" for x in records)
-            if isolated is not None and Path(isolated).is_file():
-                scoped = parse_execution(isolated, plan["isolated"])
-                inputs.append(dict(role="isolated-SSID", **scoped))
-                records += list(scoped["records"].values())
-                index["errors"] += scoped["errors"]
-                if not ordinary_passed:
-                    index["errors"].append("Isolated SSID was observed before ordinary full-pass gate")
-            else:
-                records += [dict(description=x, status="unstarted", reason="ordinary gate failed" if not ordinary_passed else "isolated invocation missing") for x in plan["isolated"]]
-        elif isolated is not None and Path(isolated).is_file():
-            index["errors"].append("Unexpected isolated log for a shard without SSID")
+        ordinary_passed = not normal["errors"] and all(x["status"] == "passed" for x in records)
+        for key, path, role in (("isolated", isolated, "isolated-SSID"), ("owner", owner, "isolated-owner")):
+            if plan[key]:
+                if path is not None and Path(path).is_file():
+                    scoped = parse_execution(path, plan[key])
+                    inputs.append(dict(role=role, **scoped))
+                    records += list(scoped["records"].values())
+                    index["errors"] += scoped["errors"]
+                    if not ordinary_passed:
+                        index["errors"].append("Isolated fixture was observed before ordinary full-pass gate")
+                else:
+                    records += [dict(description=x, status="unstarted", reason="ordinary gate failed" if not ordinary_passed else "isolated invocation missing") for x in plan[key]]
+            elif path is not None and Path(path).is_file():
+                index["errors"].append("Unexpected isolated log for a shard without " + key)
         for item in inputs:
             item.pop("records")
         counts = Counter(x["status"] for x in records)
-        index.update(expectedCount=len(plan["ordinary"] + plan["isolated"]), counts=dict(counts), tests=sorted(records, key=lambda x:x["description"]), inputs=inputs,
+        index.update(expectedCount=len(plan["ordinary"] + plan["isolated"] + plan["owner"]), counts=dict(counts), tests=sorted(records, key=lambda x:x["description"]), inputs=inputs,
                      slowest=sorted((x for x in records if x.get("durationSeconds") is not None), key=lambda x:x["durationSeconds"], reverse=True)[:10])
         index["complete"] = not index["errors"] and not any(counts[x] for x in ("active", "unstarted", "unknown"))
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -221,9 +222,10 @@ def main():
     for key in ("source", "discovery", "sums", "ordinary-log", "discovery-log", "output", "markdown"):
         parser.add_argument("--" + key, type=Path, required=True)
     parser.add_argument("--isolated-log", type=Path)
+    parser.add_argument("--owner-log", type=Path)
     parser.add_argument("--host-exit-code", type=int)
     args = parser.parse_args()
-    index = build_index(args.source, args.discovery, args.sums, args.ordinary_log, args.isolated_log, args.discovery_log, args.host_exit_code)
+    index = build_index(args.source, args.discovery, args.sums, args.ordinary_log, args.isolated_log, args.discovery_log, args.host_exit_code, args.owner_log)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     args.markdown.write_text(markdown(index), encoding="utf-8")

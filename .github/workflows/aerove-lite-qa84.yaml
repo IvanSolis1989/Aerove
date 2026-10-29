@@ -16,18 +16,22 @@ defaults:
         type: number
         required: false
         default: -1
+      sample:
+        type: string
+        required: false
+        default: ''
 permissions:
   contents: read
   actions: read
 jobs:
   android-qa:
-    name: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && format('original run141 remaining shard {0}/8', inputs.shard_index) || inputs.runtime_target == 'beta14' && 'diagnostic original run107 beta14 profile (matrix)' || inputs.runtime_target == 'lite94' && 'diagnostic original run94 (matrix)' || 'original run84 (matrix)' }}
+    name: ${{ inputs.runtime_target == 'lite158-frame-sample' && 'original run158 single frame trace (diagnostic only)' || inputs.runtime_target == 'lite141-prebuilt-shards' && format('original run141 remaining shard {0}/8', inputs.shard_index) || inputs.runtime_target == 'beta14' && 'diagnostic original run107 beta14 profile (matrix)' || inputs.runtime_target == 'lite94' && 'diagnostic original run94 (matrix)' || 'original run84 (matrix)' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ github.token }}
-      AEROVE_CLEAR_FRAME_TRACE: ${{ (inputs.runtime_target == 'lite94' || inputs.runtime_target == 'beta14') && '1' || '0' }}
-      AEROVE_REQUIRE_FRAME_TRACE: ${{ (inputs.runtime_target == 'lite94' || inputs.runtime_target == 'beta14') && '1' || '0' }}
+      AEROVE_CLEAR_FRAME_TRACE: ${{ (inputs.runtime_target == 'lite94' || inputs.runtime_target == 'beta14' || inputs.runtime_target == 'lite158-frame-sample') && '1' || '0' }}
+      AEROVE_REQUIRE_FRAME_TRACE: ${{ (inputs.runtime_target == 'lite94' || inputs.runtime_target == 'beta14' || inputs.runtime_target == 'lite158-frame-sample') && '1' || '0' }}
       AEROVE_BETA14_PROFILE: ${{ inputs.runtime_target == 'beta14' && '1' || '0' }}
     steps:
     - name: Reject mixed build, preflight, QA79 or publication modes
@@ -35,9 +39,15 @@ jobs:
         EXCLUSIVE: ${{ inputs.exclusive_mode }}
         RUNTIME_TARGET: ${{ inputs.runtime_target }}
         SHARD_INDEX: ${{ inputs.shard_index }}
+        SAMPLE: ${{ inputs.sample }}
       run: |
         test "$EXCLUSIVE" = true
-        case "$RUNTIME_TARGET" in original84|lite94|beta14|lite141-prebuilt-shards) ;; *) echo 'Unknown immutable runtime target' >&2; exit 2 ;; esac
+        case "$RUNTIME_TARGET" in original84|lite94|beta14|lite141-prebuilt-shards|lite158-frame-sample) ;; *) echo 'Unknown immutable runtime target' >&2; exit 2 ;; esac
+        if [[ "$RUNTIME_TARGET" == lite158-frame-sample ]]; then
+          [[ "$SAMPLE" == solid ]] || { echo 'Lite158 requires its one fixed solid source-frame sample.' >&2; exit 2; }
+        else
+          [[ -z "$SAMPLE" ]] || { echo 'Sample input is only valid for Lite158 frame diagnosis.' >&2; exit 2; }
+        fi
         if [[ "$RUNTIME_TARGET" == lite141-prebuilt-shards ]]; then
           [[ "$SHARD_INDEX" =~ ^[0-7]$ ]] || { echo 'Lite141 diagnostic requires one shard index 0..7' >&2; exit 2; }
         else
@@ -122,10 +132,13 @@ jobs:
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
         RUNTIME_TARGET: ${{ inputs.runtime_target }}
-        RUNTIME_DIRECTORY: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && 'lite141-original-shards-runtime' || inputs.runtime_target == 'beta14' && 'beta14-original-runtime' || inputs.runtime_target == 'lite94' && 'lite94-original-runtime' || 'qa84-original-runtime' }}
+        RUNTIME_DIRECTORY: ${{ inputs.runtime_target == 'lite158-frame-sample' && 'lite158-original-frame-runtime' || inputs.runtime_target == 'lite141-prebuilt-shards' && 'lite141-original-shards-runtime' || inputs.runtime_target == 'beta14' && 'beta14-original-runtime' || inputs.runtime_target == 'lite94' && 'lite94-original-runtime' || 'qa84-original-runtime' }}
         SHARD_INDEX: ${{ inputs.shard_index }}
+        ORIGINAL_SAMPLE: ${{ inputs.sample }}
       run: |
-        if [[ "$RUNTIME_TARGET" == lite141-prebuilt-shards ]]; then
+        if [[ "$RUNTIME_TARGET" == lite158-frame-sample ]]; then
+          python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --sample "$ORIGINAL_SAMPLE" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
+        elif [[ "$RUNTIME_TARGET" == lite141-prebuilt-shards ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase remaining --shard-index "$SHARD_INDEX" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
         else
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
@@ -134,6 +147,6 @@ jobs:
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && format('AEROVE-Lite-original141-shard-{0}-of-8-attempt-{1}', inputs.shard_index, github.run_attempt) || inputs.runtime_target == 'beta14' && format('AEROVE-Lite-beta14-profile-matrix-{0}', github.run_attempt) || inputs.runtime_target == 'lite94' && format('AEROVE-Lite-diagnostic94-matrix-{0}', github.run_attempt) || format('AEROVE-Lite-QA84-matrix-{0}', github.run_attempt) }}
-        path: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' && format('{0}/lite-diagnostics/', runner.temp) || format('{0}/lite-diagnostics/matrix/', runner.temp) }}
+        name: ${{ inputs.runtime_target == 'lite158-frame-sample' && format('AEROVE-Lite-original158-frame-sample-attempt-{0}', github.run_attempt) || inputs.runtime_target == 'lite141-prebuilt-shards' && format('AEROVE-Lite-original141-shard-{0}-of-8-attempt-{1}', inputs.shard_index, github.run_attempt) || inputs.runtime_target == 'beta14' && format('AEROVE-Lite-beta14-profile-matrix-{0}', github.run_attempt) || inputs.runtime_target == 'lite94' && format('AEROVE-Lite-diagnostic94-matrix-{0}', github.run_attempt) || format('AEROVE-Lite-QA84-matrix-{0}', github.run_attempt) }}
+        path: ${{ (inputs.runtime_target == 'lite141-prebuilt-shards' || inputs.runtime_target == 'lite158-frame-sample') && format('{0}/lite-diagnostics/', runner.temp) || format('{0}/lite-diagnostics/matrix/', runner.temp) }}
         if-no-files-found: error

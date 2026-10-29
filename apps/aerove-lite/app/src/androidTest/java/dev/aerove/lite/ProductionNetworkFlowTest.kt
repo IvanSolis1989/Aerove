@@ -93,8 +93,12 @@ class ProductionNetworkFlowTest {
                 awaitPortsReleased("bind-failure-session", listOf(oldMixed, mixed, http, original.endpoint!!.port))
             } finally { blocker.close() }
             // The saved intent remains authoritative: recovery starts that exact now-available port.
-            session.activity.onActivity { session.controller.dismissMessage(); session.controller.connect() }
-            val recovered = session.running(after = checkNotNull(original.endpoint))
+            lateinit var recoveryBaseline: VpnSnapshot
+            session.activity.onActivity {
+                recoveryBaseline = graph.vpn.value
+                session.controller.dismissMessage(); session.controller.connect()
+            }
+            val recovered = session.running(after = checkNotNull(original.endpoint), newerThan = recoveryBaseline)
             assertNotSame(original.endpoint, recovered.endpoint)
             assertEquals(occupied, recovered.initialNetwork?.ports?.mixed)
             desired = graph.settings.read().network
@@ -209,10 +213,12 @@ class ProductionNetworkFlowTest {
 
     private inner class Session(val fixture: String, val activity: ActivityScenario<MainActivity>,
         val controller: LiteController, val snapshots: CopyOnWriteArrayList<VpnSnapshot>) {
-        suspend fun running(after: CoreEndpoint? = null): VpnSnapshot {
+        suspend fun running(after: CoreEndpoint? = null, newerThan: VpnSnapshot? = null): VpnSnapshot {
             val snapshot = withTimeout(60_000) { graph.vpn.first {
-                it.phase == VpnPhase.Failed || (it.phase == VpnPhase.Running &&
-                    (it.endpoint != null && (after == null || it.endpoint !== after)))
+                val current = newerThan == null || it.serviceOwner > newerThan.serviceOwner ||
+                    (it.serviceOwner == newerThan.serviceOwner && it.sessionGeneration > newerThan.sessionGeneration)
+                current && (it.phase == VpnPhase.Failed || (it.phase == VpnPhase.Running &&
+                    (it.endpoint != null && (after == null || it.endpoint !== after))))
             } }
             assertEquals(snapshot.error ?: "The actual service must become ready", VpnPhase.Running, snapshot.phase)
             return snapshot

@@ -50,7 +50,8 @@ write_result_index() {
         --source "$diagnostics/SOURCE.json" --discovery "$diagnostics/TEST-DISCOVERY.json" \
         --discovery-log "$diagnostics/discovery.log" --sums "$diagnostics/APK_SHA256SUMS" \
         --ordinary-log "$diagnostics/instrumentation.log" \
-        --isolated-log "$diagnostics/ssid-device/instrumentation.log" --host-exit-code "$1" \
+        --isolated-log "$diagnostics/ssid-device/instrumentation.log" \
+        --owner-log "$diagnostics/process-owner-device/instrumentation.log" --host-exit-code "$1" \
         --output "$diagnostics/TEST-RESULT-INDEX.json" --markdown "$diagnostics/TEST-RESULT-INDEX.md" \
         > "$diagnostics/result-index.log" 2>&1 || true
     cat "$diagnostics/result-index.log" || true
@@ -105,9 +106,11 @@ if original:
         source.update(diagnosticOriginalRuntime=True, runtimeTarget=current["runtimeTarget"],
                       sourceAppRevision=original["sourceRevision"],
                       harnessIdentity=current["harnessIdentity"])
-        if current["runtimeTarget"] == "lite141-prebuilt-shards":
-            if sys.argv[2] != "remaining":
-                raise SystemExit("The Lite141 prebuilt diagnostic only permits the original remaining shards")
+        if current["runtimeTarget"] in ("lite141-prebuilt-shards", "lite158-frame-sample"):
+            target = current["runtimeTarget"]
+            if (target == "lite141-prebuilt-shards" and sys.argv[2] != "remaining"
+                    or target == "lite158-frame-sample" and sys.argv[2] != "original-sample"):
+                raise SystemExit("Original runtime diagnostic phase differs from its fixed target")
             harness_identity = dict(sourceRevision=os.environ["GITHUB_SHA"],
                 sourceTree=subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip(),
                 workflowRun=os.environ["GITHUB_RUN_ID"], runNumber=int(os.environ["GITHUB_RUN_NUMBER"]),
@@ -115,7 +118,7 @@ if original:
             proof_file = Path(os.environ["AEROVE_ORIGINAL_RUNTIME_PROOF"])
             original_proof_bytes = proof_file.read_bytes()
             original_proof = json.loads(original_proof_bytes)
-            expected_flags = dict(diagnosticOriginalRuntime=True, runtimeTarget="lite141-prebuilt-shards",
+            expected_flags = dict(diagnosticOriginalRuntime=True, runtimeTarget=target,
                 diagnosticOnly=True, accepted=False, promotionAccepted=False, aggregateAcceptance=False)
             if (original_proof.get("originalAppIdentity") != original
                     or original_proof.get("harnessIdentity") != harness_identity
@@ -152,11 +155,13 @@ if original:
                 androidTestDependencyReportSha256=dependency_sha,
                 diagnosticOnly=True, accepted=False, aggregateAcceptance=False)
 if sys.argv[2] == "original-sample":
-    if original is None or current.get("runtimeTarget") != "lite125-original-samples":
-        raise ValueError("Original sample requires the approved immutable run125 runtime")
-    from emulator_original84 import runtime_spec
+    from emulator_original84 import SAMPLE_TARGETS, runtime_spec
+    if original is None or current.get("runtimeTarget") not in SAMPLE_TARGETS:
+        raise ValueError("Original sample requires an approved immutable sample runtime")
+    if current["runtimeTarget"] == "lite158-frame-sample" and os.environ.get("AEROVE_ORIGINAL_RUNTIME_TARGET") != current["runtimeTarget"]:
+        raise ValueError("Frame trace target differs from verified runtime")
     from original_sample import context
-    source.update(context(runtime_spec("lite125-original-samples"), current,
+    source.update(context(runtime_spec(current["runtimeTarget"]), current,
                           os.environ["AEROVE_ORIGINAL_SAMPLE"], os.environ["AEROVE_ORIGINAL_SAMPLE_SELECTOR"]))
 Path(sys.argv[1]).write_text(json.dumps(source, indent=2), encoding="utf-8")
 PY
@@ -346,13 +351,16 @@ if [[ "$phase" == original-sample ]]; then
         --log "$diagnostics/sample-discovery.log" --discovery --output "$diagnostics/SAMPLE-SELECTION.json"
 fi
 ssid_selector=""
+owner_selector=""
 if [[ -n "$shard_count" ]]; then
     python3 apps/aerove-lite/tool/instrumentation_shards.py plan \
         --discovery "$diagnostics/TEST-DISCOVERY.json" --output "$diagnostics/EXECUTION-PLAN.json"
     ssid_selector=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["isolatedSelector"] or "")' "$diagnostics/EXECUTION-PLAN.json")
-    if [[ -n "$ssid_selector" ]]; then
-        selection=(-e notClass "$matrix_class,$ssid_selector" -e numShards "$shard_count" -e shardIndex "$shard_index")
-    fi
+    owner_selector=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["ownerSelector"] or "")' "$diagnostics/EXECUTION-PLAN.json")
+    excluded_classes="$matrix_class"
+    if [[ -n "$ssid_selector" ]]; then excluded_classes+=",$ssid_selector"; fi
+    if [[ -n "$owner_selector" ]]; then excluded_classes+=",$owner_selector"; fi
+    selection=(-e notClass "$excluded_classes" -e numShards "$shard_count" -e shardIndex "$shard_index")
 fi
 instrumentation_prefix=()
 consumer_receipt_args=()
@@ -363,6 +371,12 @@ if [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]]; then
     instrumentation_prefix=(python3 apps/aerove-lite/tool/clear_frame_trace.py
         --serial "$serial" --output "$diagnostics/clear-trace" --duration 120
         --command-timeout 660 --)
+fi
+if [[ "$phase" == original-sample && "${AEROVE_ORIGINAL_RUNTIME_TARGET:-}" == lite158-frame-sample ]]; then
+    [[ "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]] || { echo 'Fixed Lite158 sample requires its bounded trace collector.' >&2; exit 2; }
+    instrumentation_prefix=(python3 apps/aerove-lite/tool/clear_frame_trace.py
+        --serial "$serial" --output "$diagnostics/clear-trace" --duration 120
+        --command-timeout 240 --)
 fi
 if [[ "${AEROVE_BETA14_PROFILE:-0}" == 1 ]]; then
     [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]] || exit 2
@@ -391,8 +405,13 @@ fi
 if [[ "${pipeline_status[0]}" != 0 ]]; then exit "${pipeline_status[0]}"; fi
 if [[ "${pipeline_status[1]}" != 0 ]]; then exit "${pipeline_status[1]}"; fi
 if [[ "$phase" == original-sample ]]; then
+    sample_execution_evidence=()
+    if [[ "${AEROVE_ORIGINAL_RUNTIME_TARGET:-}" == lite158-frame-sample ]]; then
+        sample_execution_evidence=(--selection "$diagnostics/SAMPLE-SELECTION.json"
+            --trace-receipt "$diagnostics/clear-trace/TRACE-RECEIPT.json")
+    fi
     python3 apps/aerove-lite/tool/original_sample.py --source "$diagnostics/SOURCE.json" \
-        --log "$diagnostics/instrumentation.log" --output "$diagnostics/SAMPLE-RESULT.json"
+        --log "$diagnostics/instrumentation.log" --output "$diagnostics/SAMPLE-RESULT.json" "${sample_execution_evidence[@]}"
 fi
 python3 - "$diagnostics/instrumentation.log" "$phase" "$matrix_class" <<'PY'
 import re, sys
@@ -421,6 +440,17 @@ if [[ -n "$shard_count" ]]; then
             "${smart_fixture_args[@]}" -e isolatedBackgroundPolicy true -e deviceKind CI-emulator \
             -e rendererBackend "$renderer_backend_remote" dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner
         isolated_verification=(--isolated-log "$diagnostics/ssid-device/instrumentation.log")
+    fi
+    if [[ -n "$owner_selector" ]]; then
+        python3 apps/aerove-lite/tool/process_owner_device_setup.py \
+            --serial "$serial" --source "$diagnostics/SOURCE.json" --discovery "$diagnostics/TEST-DISCOVERY.json" \
+            --proof "${AEROVE_CURRENT_RENDERER_PROOF:?Owned emulator proof required}" \
+            --output "$diagnostics/process-owner-device" --deadline "$instrumentation_deadline" -- \
+            "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" \
+            -e class "$owner_selector" -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
+            "${smart_fixture_args[@]}" "${consumer_receipt_args[@]}" -e isolatedBackgroundPolicy true -e deviceKind CI-emulator \
+            -e rendererBackend "$renderer_backend_remote" dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner
+        isolated_verification+=(--owner-log "$diagnostics/process-owner-device/instrumentation.log")
     fi
     python3 apps/aerove-lite/tool/instrumentation_shards.py verify \
         --discovery "$diagnostics/TEST-DISCOVERY.json" --log "$diagnostics/instrumentation.log" \

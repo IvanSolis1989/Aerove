@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
@@ -80,8 +81,10 @@ class DashboardEditorUiTest {
             CompositionLocalProvider(LocalLiteMotionOverride provides true) {
                 LiteTheme(settings.value) {
                     val source = rememberLayerBackdrop()
+                    val overlay = remember { LiteOverlayState() }
                     Box(Modifier.fillMaxSize().layerBackdrop(source)) {
-                        CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source) {
+                        CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source,
+                            LocalLiteOverlay provides overlay) {
                             DashboardEditor(settings.value, actions::changeSettings, {}, draftCardContent = { widget, draft ->
                                 SideEffect { previews[widget] = draft }
                                 Box(Modifier.fillMaxWidth()) {
@@ -141,9 +144,9 @@ class DashboardEditorUiTest {
                 LiteTheme(settings.value) {
                     val source = rememberLayerBackdrop()
                     Box(Modifier.fillMaxSize().layerBackdrop(source)) {
-                        if (showOld.value) LiteButton("Old normal control", { activations++ },
-                            Modifier.focusRequester(oldFocus).onFocusChanged { oldFocused = it.isFocused })
                         CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source) {
+                            if (showOld.value) LiteButton("Old normal control", { activations++ },
+                                Modifier.focusRequester(oldFocus).onFocusChanged { oldFocused = it.isFocused })
                             if (editing.value) DashboardEditor(settings.value, actions::changeSettings,
                                 { closed++; editing.value = false }, draftCardContent = { widget, draft ->
                                     Column(Modifier.fillMaxWidth()) {

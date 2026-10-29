@@ -1,9 +1,11 @@
 """Fixtures exercise contracts, never Android execution."""
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 import emulator_current as current
 
@@ -19,6 +21,14 @@ class CurrentOwnerTests(unittest.TestCase):
         rows = []
         for name, loc in [('app-release.apk', 'release'), ('app-release-androidTest.apk', 'androidTest/release')]:
             data = ('fixture-' + name).encode()
+            if name == 'app-release.apk':
+                archive = io.BytesIO()
+                assets = Path(__file__).resolve().parents[1] / 'app/src/main/assets/scripts'
+                with zipfile.ZipFile(archive, 'w') as bundle:
+                    for asset in assets.iterdir():
+                        if asset.is_file():
+                            bundle.writestr('assets/scripts/' + asset.name, asset.read_bytes())
+                data = archive.getvalue()
             original = self.runtime / 'apks' / name
             installed = self.apks / loc / name
             for path in [original, installed]:
@@ -92,7 +102,8 @@ class CurrentOwnerTests(unittest.TestCase):
                            GITHUB_RUN_NUMBER='90', GITHUB_RUN_ATTEMPT='2')
         with patch.dict(os.environ, environment):
             os.environ.pop('AEROVE_QA79_PROOF', None)
-            with patch.object(current.sys, 'argv', ['snapshot', str(output), 'matrix', '600000', 'emulator-5554']), \
+            with patch.object(current.sys, 'argv', ['snapshot', str(output), 'matrix', '600000', 'emulator-5554', '', '',
+                    'dev.aerove.lite.ui.LiteDashboardMatrixTest']), \
                     patch.object(current.subprocess, 'check_output', return_value='new-tree\n'):
                 exec(compile(program, 'acceptance-source-snapshot', 'exec'), {})
         result = json.loads(output.read_text())
@@ -362,6 +373,14 @@ class CurrentCancellationTests(unittest.TestCase):
 
 
 class OriginalSamplePhaseTests(unittest.TestCase):
+    def test_lite158_phase_uses_only_its_fixed_parameterized_sample(self):
+        runtime = {'runtimeTarget': 'lite158-frame-sample'}
+        self.assertEqual('dev.aerove.lite.ui.LiteMaterialRenderingTest#threeMaterialsAndIndependentSwitchPlanesUseRealWindowPixels[Solid_ordinary_light_on_disabled]',
+                         current.original_sample_phase_selector('original-sample', 'solid', runtime))
+        for sample in ('glyph', 'clear', None):
+            with self.subTest(sample=sample), self.assertRaises(ValueError):
+                current.original_sample_phase_selector('original-sample', sample, runtime)
+
     def test_requires_one_fixed_lite125_sample_and_preserves_selector(self):
         runtime = {'runtimeTarget': 'lite125-original-samples'}
         self.assertEqual('dev.aerove.lite.ui.GlyphPaintedBoundsUiTest#actualArrowPaintIncludingAntialiasFitsTheSharedEnvelope',

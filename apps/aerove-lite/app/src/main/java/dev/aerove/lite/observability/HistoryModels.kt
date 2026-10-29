@@ -60,6 +60,8 @@ internal fun historyMatches(query: String, fields: List<String>): Boolean {
 
 internal fun requestHistoryText(entry: RequestHistoryEntry): String = buildString {
     appendLine(entry.time.toString())
+    appendLine("id=${entry.id}")
+    entry.end?.let { appendLine("end=$it") }
     entry.searchFields.filter(String::isNotEmpty).forEach(::appendLine)
     appendLine("upload=${entry.upload}")
     append("download=${entry.download}")

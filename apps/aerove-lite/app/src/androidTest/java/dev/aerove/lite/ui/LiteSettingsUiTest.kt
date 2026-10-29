@@ -88,19 +88,20 @@ class LiteSettingsUiTest {
             SideEffect { composeRootFocused = currentRootFocused }
             LiteApp(state.value, actions)
         }
-        fun assertDemand(stage: String, expected: List<Boolean>) {
-            val connectionNodes = compose.onAllNodesWithTag("connections-search").fetchSemanticsNodes().size
-            compose.runOnIdle {
+        fun assertDemand(stage: String, expected: List<Boolean>, readSemantics: Boolean = true) {
+            val connectionNodes = if (readSemantics) compose.onAllNodesWithTag("connections-search").fetchSemanticsNodes().size else null
+            val verifyDemand = {
                 val receipt = JSONObject().put("stage", stage)
                     .put("rootWindowFocused", compose.activity.window.decorView.hasWindowFocus())
                     .put("composeRootWindowFocused", composeRootFocused)
                     .put("lifecycle", compose.activity.lifecycle.currentState.name)
-                    .put("connectionsSearchNodes", connectionNodes)
+                    .put("connectionsSearchNodes", connectionNodes ?: JSONObject.NULL)
                     .put("fixtureMessage", state.value.message)
                     .put("connectionTelemetry", actions.connectionTelemetry.toString()).toString()
                 Log.i("ConnectionDemandReceipt", receipt)
                 assertEquals(receipt, expected, actions.connectionTelemetry)
             }
+            if (readSemantics) compose.runOnIdle(verifyDemand) else compose.runOnUiThread(verifyDemand)
         }
         assertDemand("initial", emptyList())
         openSettingsDetail(R.string.lite_tab_connections)
@@ -112,8 +113,9 @@ class LiteSettingsUiTest {
         compose.waitForIdle()
         assertDemand("uncovered", listOf(true, false, true))
         compose.activityRule.scenario.moveToState(Lifecycle.State.STARTED)
-        assertDemand("started", listOf(true, false, true, false))
+        assertDemand("started", listOf(true, false, true, false), readSemantics = false)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.onNodeWithTag("connections-search").assertIsDisplayed()
         assertDemand("resumed", listOf(true, false, true, false, true))
         compose.onNodeWithContentDescription(text(R.string.lite_back)).performClick()
         assertDemand("closed", listOf(true, false, true, false, true, false))

@@ -27,6 +27,7 @@ class LiteApplication : Application() {
     internal val physicalNetworks by lazy { dev.aerove.lite.platform.PhysicalNetworkMonitor(applicationContext, providerResetOwner::network) }
 
     internal val nativeLifecycle = Mutex()
+    internal val ownedStarts = dev.aerove.lite.vpn.OwnedStartRegistry()
     private val pendingStarts = java.util.concurrent.atomic.AtomicLong()
     fun startIntentEpoch(): Long = pendingStarts.get()
     fun invalidatePendingStarts() { pendingStarts.incrementAndGet() }
@@ -193,10 +194,13 @@ class LiteApplication : Application() {
     internal fun registerVpnOwner(): Long = ++owner
 
     @Synchronized
+    internal fun ownsVpnOwner(expected: Long): Boolean = owner == expected
+
+    @Synchronized
     internal fun publishVpn(owner: Long, snapshot: VpnSnapshot) {
         if (this.owner == owner) {
             providerResetOwner.runtime(owner, snapshot)
-            mutableVpn.value = snapshot
+            mutableVpn.value = snapshot.copy(serviceOwner = owner)
         }
     }
 }
