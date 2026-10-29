@@ -374,6 +374,12 @@ RECHECK_POLICY_74 = dict(
     tree='581fa6f42a75e37d0dce94fc97b27a49863c215f',
     test='apps/aerove/test/views/theme_test.dart',
     test_blobs=('dc9256478d86328b350e2b9fb2ea870ac2e1b8bd', 'd7e2dca79caaf546573bf58507588082ef65468e'),
+    reviewed_wiring={
+        'apps/aerove/tool/aerove_release_notes.py':
+            ('52d31edcc123d42d7de45c144da2564e81a5383b', '8fb18bef71d7245aceabe2adb682abf2991096a9'),
+        'apps/aerove/tool/test_aerove_release_notes.py':
+            ('09f34045adeba0a7f4ceda0ee220931eac2d4785', 'f5ba248e0721f223f3c84875fe040cf8aa83c5c9'),
+    },
     workflow_blob='af037f37630b64001823087d56bde3fd884861c2',
     artifacts={
         'Aerove-android-arm64': (12864444196, 64763537,
@@ -518,10 +524,11 @@ def recheck_inputs(root: Path, source: str, build_run: int = RECHECK_RUN) -> lis
     original = policy['source']
     _git(root, 'merge-base', '--is-ancestor', original, source)
     paths = _command(['git', 'diff', '--no-renames', '--name-only', '-z', original, source], root).split('\0')
+    reviewed = policy.get('reviewed_wiring', {})
     result = []
     for path in filter(None, paths):
         documentation = path.startswith('docs/') and path.endswith('.md')
-        if path not in RECHECK_WIRING | {policy['test']} and not documentation:
+        if path not in RECHECK_WIRING | {policy['test']} | reviewed.keys() and not documentation:
             raise ArtifactError(f'Recheck changed an unapproved APK/build input: {path}')
         entries = [_git(root, 'ls-tree', revision, '--', path) for revision in (original, source)]
         if any(not re.fullmatch(r'100644 blob [0-9a-f]{40}\t' + re.escape(path), item) for item in entries):
@@ -529,6 +536,8 @@ def recheck_inputs(root: Path, source: str, build_run: int = RECHECK_RUN) -> lis
         before, after = [entry.split()[2] for entry in entries]
         if path == policy['test'] and (before, after) != policy['test_blobs']:
             raise ArtifactError('Recheck test is not the reviewed original-run test fix')
+        if path in reviewed and (before, after) != reviewed[path]:
+            raise ArtifactError(f'Recheck wiring is not the exact reviewed original-run delta: {path}')
         result.append(dict(path=path, before=before, after=after))
     if policy['test'] not in {row['path'] for row in result}:
         raise ArtifactError('Recheck must contain the exact reviewed original-run test fix')
@@ -768,7 +777,7 @@ def find_rechecked_artifacts(*, root: Path, repository: str, source: str, exclud
                 paths = _command(['git', 'diff', '--no-renames', '--name-only', '-z', policy['source'], source], root).split('\0')
             except ArtifactError:
                 continue
-            if any(path and path not in RECHECK_WIRING | {policy['test']}
+            if any(path and path not in RECHECK_WIRING | {policy['test']} | policy.get('reviewed_wiring', {}).keys()
                    and not (path.startswith('docs/') and path.endswith('.md')) for path in paths):
                 continue
         raise ArtifactError('The reviewed test-only source has no accepted original-APK recheck; rebuilding is forbidden')

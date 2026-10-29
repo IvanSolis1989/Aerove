@@ -67,7 +67,8 @@ def development_candidate_notes(body):
     if not re.match(r'-[ \t]+\S', body):
         status, separator, body = body.partition('\n\n')
         if (not separator or '\n' in status or status.startswith(('#', '>', '-', '*', '`'))
-                or '本候选未接受、未发行。' not in status):
+                or ('本候选未接受、未发行。' not in status
+                    and status != '本候选尚未构建、验收或发行，安装编号由下一次实际构建生成。')):
             raise ValueError('Development candidate notes must start with entries or one explicit status paragraph')
         body = body.lstrip('\n')
     if not re.match(r'-[ \t]+\S', body):

@@ -888,6 +888,57 @@ class OriginalApk74RecheckTest(unittest.TestCase):
             with patch.dict(row, changes), self.subTest(changes=changes), self.assertRaises(self.module.ArtifactError):
                 self.original_build()
 
+    def test_reviewed_notes_wiring_requires_exact_original_and_harness_blobs_only_for_std74(self):
+        reviewed = copy.deepcopy(self.policy['reviewed_wiring'])
+        blobs = {**reviewed, self.policy['test']: self.policy['test_blobs']}
+        paths = list(blobs)
+        def git(root, *arguments):
+            if arguments[0] == 'merge-base':
+                return ''
+            if arguments[0] == 'rev-parse':
+                return self.policy['workflow_blob']
+            if arguments[0] == 'ls-tree':
+                revision, path = arguments[1], arguments[-1]
+                index = 0 if revision == self.original else 1
+                return f'100644 blob {blobs[path][index]}\t{path}'
+            self.fail(str(arguments))
+        def command(arguments, root=None):
+            if arguments[1] == 'diff':
+                return '\0'.join(paths) + '\0'
+            if arguments[1] == 'show':
+                if arguments[-1].startswith(self.original + ':'):
+                    return self.baseline
+                return self.fixture.workflow.read_text(encoding='utf-8')
+            self.fail(str(arguments))
+        def inputs():
+            with patch.object(self.module, '_git', side_effect=git), \
+                    patch.object(self.module, '_command', side_effect=command):
+                return self.inputs()
+        self.assertEqual({row['path'] for row in inputs()}, set(paths))
+        for path in reviewed:
+            for index in (0, 1):
+                wrong = list(reviewed[path])
+                wrong[index] = 'f' * 40
+                with patch.dict(blobs, {path: tuple(wrong)}), self.subTest(path=path, index=index), \
+                        self.assertRaisesRegex(self.module.ArtifactError, 'exact reviewed'):
+                    inputs()
+        paths.append('apps/aerove/tool/unreviewed_notes.py')
+        with self.assertRaisesRegex(self.module.ArtifactError, 'unapproved'):
+            inputs()
+        paths.pop()
+        path = next(iter(reviewed))
+        with patch.dict(blobs, {path: (reviewed[path][0], 'f' * 40)}), \
+                patch.object(self.module, '_git', side_effect=git), \
+                patch.object(self.module, '_command', side_effect=command), \
+                patch.object(self.module, '_api_items', return_value=[]), \
+                self.assertRaisesRegex(self.module.ArtifactError, 'rebuilding is forbidden'):
+            self.module.find_rechecked_artifacts(root=self.root, repository=REPOSITORY,
+                source=self.harness, exclude_run=999)
+        self.assertFalse(self.module._recheck_policy(self.module.RECHECK_RUN).get('reviewed_wiring'))
+        with patch.object(self.module, '_git', side_effect=git), \
+                patch.object(self.module, '_command', side_effect=command), self.assertRaises(self.module.ArtifactError):
+            self.module.recheck_inputs(self.root, self.harness, self.module.RECHECK_RUN)
+
     def test_unknown_recheck_run_is_rejected_before_git_or_api(self):
         with patch.object(self.module, '_api_object') as api, patch.object(self.module, '_git') as git:
             for run_id in (self.run_id + 1, 0, '40797508485', float(self.run_id), True):
