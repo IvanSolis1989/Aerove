@@ -147,6 +147,7 @@ class FixedMappingTraceTest(unittest.TestCase):
         mapping = audit.TRACE_OWNER + ' -> a.b:\n' + rows
         targets = audit.mapping_targets(mapping, audit.TRACE_METHODS, trace)
         self.assertEqual(targets, audit.mapping_targets(mapping, audit.TRACE_METHODS))
+        self.assertTrue(all(row['candidatePath']['matchesExistingMappedNameCount'] for row in trace['methods']))
         return trace
 
     def positives(self):
@@ -183,9 +184,9 @@ class FixedMappingTraceTest(unittest.TestCase):
         trace = self.trace(self.positives() + '    1:1:androidx.compose.ui.geometry.Rect getBoundsInRoot():2 -> bounds\n'
             '    2:2:int caller():4 -> bounds\n    # {"id":"unknown.metadata","secret":"PRIVATE_METADATA"}\n')
         self.assertEqual(['ALIAS_MULTIPLE_OUTER_SIGNATURES', 'METADATA_REJECTED'], trace['methods'][0]['reasons'])
-        self.assertEqual(2, sum(group['alias'] == 'bounds' for group in trace['groups']))
+        self.assertEqual(2, trace['methods'][0]['candidatePath']['aliasClosureGroupCount'])
         self.assertNotIn('PRIVATE_METADATA', json.dumps(trace))
-        self.assertIn('unknown.metadata', json.dumps(trace))
+        self.assertEqual(1, trace['methods'][0]['candidatePath']['rejectedCandidateAliasCounts']['METADATA_REJECTED'])
 
     def test_unknown_metadata_and_unsupported_syntax_fail_closed(self):
         for suffix, reason in (('    # arbitrary private metadata\n', 'METADATA_REJECTED'),
@@ -212,8 +213,9 @@ class FixedMappingTraceTest(unittest.TestCase):
         self.assertLessEqual(len(result['declarationHeaders']), 128)
         self.assertLessEqual(len(json.dumps(result).encode()), audit.TRACE_BYTES)
         trace = self.trace(self.positives() + '    int unrelated() -> u\n' * 130)
-        self.assertTrue(trace['truncated'])
-        self.assertIn('TRACE_TRUNCATED_UNKNOWN', trace['methods'][0]['reasons'])
+        self.assertFalse(trace['truncated'])
+        self.assertFalse(trace['sampleTruncated'])
+        self.assertEqual(['SIGNATURE_NOT_PARSED_IN_OWNER'], trace['methods'][0]['reasons'])
         with mock.patch.object(audit, 'TRACE_BYTES', 200):
             result = audit.mapping_diagnostic(trace, self.smali())
         self.assertEqual('TRACE_SIZE_OR_SAFETY_LIMIT', result['reason'])
@@ -266,6 +268,81 @@ class FixedMappingTraceTest(unittest.TestCase):
         safe_smali = '.class public La/b;\n.method public getId()I\n.end method\n' \
             '.method public getLayoutInfo()Landroidx/compose/ui/layout/LayoutInfo;\n.end method\n'
         self.assertEqual(2, sum(isinstance(header, str) for header in audit.mapping_diagnostic(preserved, safe_smali)['declarationHeaders']))
+
+    def test_late_fixed_signatures_survive_unrelated_owner_groups(self):
+        trace = self.trace('    int unrelated() -> unrelated\n' * 2048 + self.positives()
+            + '    int getBoundsInRoot() -> wrongSignature\n' * 4
+            + '    1:1:androidx.compose.ui.geometry.Rect getBoundsInRoot():2 -> bounds\n'
+            + '    int unrelated() -> unused\n' * 2048
+            + '    2:2:com.private.Customer privateCaller():4 -> bounds\n'
+            + '    # {"id":"com.private.Customer.metadata"}\n')
+        target = trace['methods'][0]
+        self.assertEqual(['ALIAS_MULTIPLE_OUTER_SIGNATURES', 'METADATA_REJECTED'], target['reasons'])
+        self.assertEqual(1, target['candidatePath']['exactRows'])
+        self.assertEqual(2, target['candidatePath']['aliasClosureGroupCount'])
+        self.assertTrue(target['candidatePath']['fullCandidateScanComplete'])
+        self.assertFalse(trace['truncated'])
+        target_samples = [group for group in trace['groups'] if group['alias'] == 'bounds']
+        self.assertEqual(1, len(target_samples))
+        self.assertFalse(any(group['alias'] == 'wrongSignature' for group in trace['groups']))
+        self.assertEqual([[], []], [row['reasons'] for row in trace['methods'][1:]])
+        self.assertNotIn('com.private', json.dumps(audit.mapping_diagnostic(trace, self.smali())))
+
+    def test_sample_overflow_does_not_hide_late_rejection_or_contradict_controls(self):
+        inline = ''.join(f'    {i}:{i}:int getId():2 -> inline\n    {i}:{i}:int caller():4 -> inline\n' for i in range(1, 6))
+        bounds = ''.join(f'    {i}:{i}:androidx.compose.ui.geometry.Rect getBoundsInRoot():2 -> bounds\n' for i in range(10, 16))
+        trace = self.trace(inline + self.positives() + bounds + '    # unknown metadata\n')
+        target, control = trace['methods'][:2]
+        self.assertEqual(['METADATA_REJECTED'], target['reasons'])
+        self.assertEqual(6, target['candidatePath']['exactRows'])
+        self.assertEqual(1, target['candidatePath']['rejectedCandidateAliasCounts']['METADATA_REJECTED'])
+        self.assertEqual([], control['reasons'])
+        self.assertEqual(5, control['candidatePath']['nonOuterGroups'])
+        self.assertEqual(1, control['candidatePath']['outerGroups'])
+        self.assertEqual('CONFIRMED_MAPPING_ONLY', control['observation'])
+        self.assertTrue(trace['sampleTruncated'])
+        self.assertFalse(trace['truncated'])
+        self.assertLessEqual(len(trace['groups']), 6)
+
+    def test_large_group_prioritizes_fixed_frame_and_actual_outer(self):
+        rows = ['    1:1:com.private.Customer privateCaller():4 -> bounds\n'] * 101
+        rows[50] = '    1:1:androidx.compose.ui.geometry.Rect getBoundsInRoot():2 -> bounds\n'
+        trace = self.trace(self.positives() + ''.join(rows))
+        group = next(group for group in trace['groups'] if group['alias'] == 'bounds')
+        self.assertEqual([50, 100], group['framePositions'])
+        self.assertEqual(101, group['frameCount'])
+        self.assertEqual(['NON_OUTER_FRAME'], trace['methods'][0]['reasons'])
+        result = audit.mapping_diagnostic(trace, self.smali())
+        projected = next(group for group in result['mapping']['groups'] if group['frameCount'] == 101)
+        self.assertEqual([False, True], [frame['isOuter'] for frame in projected['frames']])
+        self.assertTrue(projected['frames'][1]['redacted'])
+        self.assertNotIn('com.private', json.dumps(result))
+
+    def test_detail_byte_limit_preserves_complete_candidate_summary(self):
+        trace = self.trace(self.positives() + '    androidx.compose.ui.geometry.Rect getBoundsInRoot() -> bounds\n')
+        smali = self.smali('.method public extra()V\n.end method\n' * 100)
+        full = audit.mapping_diagnostic(trace, smali)
+        with mock.patch.object(audit, 'TRACE_BYTES', len(json.dumps(full).encode()) - 1):
+            reduced = audit.mapping_diagnostic(trace, smali)
+        self.assertTrue(reduced['detailOutputTruncated'])
+        self.assertEqual([], reduced['mapping']['groups'])
+        self.assertTrue(reduced['mapping']['fullCandidateScanComplete'])
+        self.assertEqual(full['mapping']['methods'], reduced['mapping']['methods'])
+
+    def test_qualified_approved_outer_reports_actual_qualified_rejection(self):
+        trace = self.trace('    androidx.compose.ui.geometry.Rect '
+            'androidx.compose.ui.semantics.SemanticsNode.getBoundsInRoot() -> bounds\n')
+        target = trace['methods'][0]
+        path = target['candidatePath']
+        self.assertEqual(['QUALIFIED_OUTER_REJECTED'], target['reasons'])
+        self.assertEqual((0, 1, 1, 0), (path['exactRows'], path['qualifiedRows'], path['outerGroups'], path['nonOuterGroups']))
+        self.assertEqual(1, path['outerCandidateAliasCount'])
+        self.assertEqual(1, path['rejectedCandidateAliasCounts']['QUALIFIED_OUTER_REJECTED'])
+        self.assertEqual(0, path['acceptedOuterCandidateAliasCount'])
+        self.assertEqual([], trace['targets'][0]['mappedNames'])
+        projected = audit.mapping_diagnostic(trace, '')['mapping']['groups'][0]
+        self.assertTrue(projected['frames'][0]['qualified'])
+        self.assertTrue(projected['frames'][0]['isOuter'])
 
 
 if __name__ == '__main__':

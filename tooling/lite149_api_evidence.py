@@ -54,21 +54,57 @@ def mapping_targets(text, methods, _trace=None):
     group_metadata = False
     trace_groups, metadata_ids = [], []
     trace_truncated = False
+    trace_paths = [dict(exactRows=0, qualifiedRows=0, sameNameRows=0, matchingGroups=0,
+        outerGroups=0, nonOuterGroups=0, aliases=set(), outerAliases=set(), sampleGroups=0,
+        mismatchSampleGroups=0) for _ in TRACE_METHODS]
 
     def finish_group():
         nonlocal pending, group_metadata, metadata_ids, trace_truncated
         if pending:
             groups.append((pending[0]['owner'], pending[0]['alias'], pending[-1]['signature'], group_metadata))
             if _trace is not None and pending[0]['owner'] == TRACE_OWNER:
-                if len(trace_groups) < 128 and len(pending) <= 32:
+                keep = False
+                signatures = [row['signature'] for row in pending]
+                for method, path in zip(TRACE_METHODS, trace_paths):
+                    key = (TRACE_OWNER, method['name'], method['returns'], '')
+                    qualified = (TRACE_OWNER, TRACE_OWNER + '.' + method['name'], method['returns'], '')
+                    exact, qualified_rows = signatures.count(key), signatures.count(qualified)
+                    named = sum(frame[1] in (method['name'], TRACE_OWNER + '.' + method['name']) for frame in signatures)
+                    path['exactRows'] += exact
+                    path['qualifiedRows'] += qualified_rows
+                    path['sameNameRows'] += named
+                    if exact or qualified_rows:
+                        path['matchingGroups'] += 1
+                        path['aliases'].add(pending[0]['alias'])
+                        path['outerGroups' if signatures[-1] in (key, qualified) else 'nonOuterGroups'] += 1
+                        if signatures[-1] in (key, qualified):
+                            path['outerAliases'].add(pending[0]['alias'])
+                    if named:
+                        sample_key = 'sampleGroups' if exact or qualified_rows else 'mismatchSampleGroups'
+                        if path[sample_key] < 2:
+                            keep = True
+                            path[sample_key] += 1
+                        else:
+                            trace_truncated = True
+                if keep:
+                    positions = []
+                    for method in TRACE_METHODS:
+                        for index, frame in enumerate(signatures):
+                            if frame in ((TRACE_OWNER, method['name'], method['returns'], ''),
+                                         (TRACE_OWNER, TRACE_OWNER + '.' + method['name'], method['returns'], '')):
+                                positions.append(index)
+                                break
+                    positions += [index for index, frame in enumerate(signatures) if any(frame[1] in
+                        (method['name'], TRACE_OWNER + '.' + method['name']) for method in TRACE_METHODS)]
+                    positions = list(dict.fromkeys(positions))[:7]
+                    positions = sorted(set(positions + [len(pending) - 1]))
                     trace_groups.append(dict(alias=pending[0]['alias'], interval=pending[0]['interval'],
-                        frames=[row['signature'] for row in pending], outer=pending[-1]['signature'],
-                        sourceLines=[row['sourceLine'] for row in pending],
+                        frames=[signatures[index] for index in positions], outer=signatures[-1],
+                        sourceLines=[pending[index]['sourceLine'] for index in positions],
+                        framePositions=positions, frameCount=len(pending),
                         metadataRejected=group_metadata, metadataIds=metadata_ids[:8],
                         metadataIdsTruncated=len(metadata_ids) > 8))
-                    trace_truncated = trace_truncated or len(metadata_ids) > 8
-                else:
-                    trace_truncated = True
+                    trace_truncated = trace_truncated or len(positions) < len(pending) or len(metadata_ids) > 8
         pending, group_metadata = [], False
         metadata_ids = []
 
@@ -127,40 +163,60 @@ def mapping_targets(text, methods, _trace=None):
             descriptor='(' + ''.join(descriptor(p) for p in method['parameters']) + ')' + descriptor(method['returns']))
     if _trace is not None:
         fixed_targets = [target(method) for method in TRACE_METHODS]
-        touched = {group['alias'] for group in trace_groups if any(
-            frame[1] in {m['name'] for m in TRACE_METHODS} or
-            frame[1] in {TRACE_OWNER + '.' + m['name'] for m in TRACE_METHODS} for frame in group['frames'])}
-        selected = [group for group in trace_groups if group['alias'] in touched]
+        selected_samples = []
+        for method in TRACE_METHODS:
+            exact = [group for group in trace_groups if any(frame in
+                ((TRACE_OWNER, method['name'], method['returns'], ''),
+                 (TRACE_OWNER, TRACE_OWNER + '.' + method['name'], method['returns'], '')) for frame in group['frames'])]
+            named = [group for group in trace_groups if any(frame[1] in
+                (method['name'], TRACE_OWNER + '.' + method['name']) for frame in group['frames'])]
+            for group in (exact or named)[:2]:
+                if not any(group is prior for prior in selected_samples):
+                    selected_samples.append(group)
+        touched = set().union(*(path['aliases'] for path in trace_paths))
+        alias_paths = {alias: dict(groups=0, metadataGroups=0, qualifiedOuterGroups=0) for alias in touched}
+        for class_owner, alias, outer, metadata in groups:
+            if class_owner == TRACE_OWNER and alias in alias_paths:
+                path = alias_paths[alias]
+                path['groups'] += 1
+                path['metadataGroups'] += bool(metadata)
+                path['qualifiedOuterGroups'] += '.' in outer[1]
         diagnoses = []
-        for method, mapped in zip(TRACE_METHODS, fixed_targets):
-            key = (TRACE_OWNER, method['name'], method['returns'], '')
-            qualified = (TRACE_OWNER, TRACE_OWNER + '.' + method['name'], method['returns'], '')
-            matching = [group for group in selected if key in group['frames'] or qualified in group['frames']]
+        for method, mapped, path in zip(TRACE_METHODS, fixed_targets, trace_paths):
             reasons = set()
-            if not matching:
-                same_name = any(frame[1] in (method['name'], TRACE_OWNER + '.' + method['name'])
-                    for group in selected for frame in group['frames'])
-                reasons.add('GETTER_SIGNATURE_MISMATCH' if same_name else 'SIGNATURE_NOT_PARSED_IN_OWNER')
-            for group in matching:
-                signatures, uncertain = residuals[(TRACE_OWNER, group['alias'])]
-                if key != group['outer']:
+            rejected = dict(ALIAS_MULTIPLE_OUTER_SIGNATURES=0, METADATA_REJECTED=0, QUALIFIED_OUTER_REJECTED=0,
+                UNSUPPORTED_OWNER_METHOD_SYNTAX=0)
+            accepted_aliases = 0
+            for alias in path['outerAliases']:
+                signatures, uncertain = residuals[(TRACE_OWNER, alias)]
+                accepted_aliases += len(signatures) == 1 and not uncertain
+                rejected['ALIAS_MULTIPLE_OUTER_SIGNATURES'] += len(signatures) != 1
+                rejected['METADATA_REJECTED'] += alias_paths[alias]['metadataGroups'] > 0
+                rejected['QUALIFIED_OUTER_REJECTED'] += alias_paths[alias]['qualifiedOuterGroups'] > 0
+                rejected['UNSUPPORTED_OWNER_METHOD_SYNTAX'] += TRACE_OWNER in unsupported_owners
+            if not mapped['mappedNames']:
+                if not path['exactRows'] and not path['qualifiedRows']:
+                    reasons.add('GETTER_SIGNATURE_MISMATCH' if path['sameNameRows'] else 'SIGNATURE_NOT_PARSED_IN_OWNER')
+                elif not path['outerAliases']:
                     reasons.add('NON_OUTER_FRAME')
-                if len(signatures) != 1:
-                    reasons.add('ALIAS_MULTIPLE_OUTER_SIGNATURES')
-                if any(g['metadataRejected'] for g in selected if g['alias'] == group['alias']):
-                    reasons.add('METADATA_REJECTED')
-                if any('.' in sig[1] for sig in signatures):
-                    reasons.add('QUALIFIED_OUTER_REJECTED')
-                if uncertain and not reasons:
+                reasons.update(reason for reason, count in rejected.items() if count)
+                if TRACE_OWNER in unsupported_owners:
+                    reasons.add('UNSUPPORTED_OWNER_METHOD_SYNTAX')
+                if not reasons:
                     reasons.add('UNKNOWN_UNCERTAINTY')
-            if TRACE_OWNER in unsupported_owners:
-                reasons.add('UNSUPPORTED_OWNER_METHOD_SYNTAX')
-            if trace_truncated:
-                reasons.add('TRACE_TRUNCATED_UNKNOWN')
+            summary = {key: value for key, value in path.items() if key not in
+                ('aliases', 'outerAliases', 'sampleGroups', 'mismatchSampleGroups')}
+            summary.update(aliasCount=len(path['aliases']), outerCandidateAliasCount=len(path['outerAliases']),
+                aliasClosureGroupCount=sum(alias_paths[alias]['groups'] for alias in path['aliases']),
+                rejectedCandidateAliasCounts=rejected, mappedAliasCount=len(mapped['mappedNames']),
+                acceptedOuterCandidateAliasCount=accepted_aliases,
+                matchesExistingMappedNameCount=accepted_aliases == len(mapped['mappedNames']),
+                fullCandidateScanComplete=True)
             diagnoses.append(dict(name=method['name'], reasons=sorted(reasons), mappedNames=mapped['mappedNames'],
-                observation='UNKNOWN' if not mapped['mappedNames'] or trace_truncated else 'CONFIRMED_MAPPING_ONLY'))
+                candidatePath=summary, observation='CONFIRMED_MAPPING_ONLY' if mapped['mappedNames'] else 'UNKNOWN'))
         _trace.update(owner=TRACE_OWNER, mappedOwner=classes.get(TRACE_OWNER), targets=fixed_targets,
-            groups=selected, methods=diagnoses, truncated=trace_truncated,
+            groups=selected_samples, methods=diagnoses, truncated=False, sampleTruncated=trace_truncated,
+            fullCandidateScanComplete=True,
             unsupportedOwner=TRACE_OWNER in unsupported_owners)
     return [target(method) for method in methods]
 
@@ -174,15 +230,18 @@ def diagnostic_projection(trace):
         return dict(redacted=True, observation='UNKNOWN')
     aliases = list(dict.fromkeys(group['alias'] for group in trace['groups']))
     groups = [dict(aliasGroup=aliases.index(group['alias']) + 1, interval=group['interval'],
-        frameCount=len(group['frames']), frames=[dict(frame_identity(frame), isOuter=index == len(group['frames']) - 1)
+        frameCount=group['frameCount'], frames=[dict(frame_identity(frame), isOuter=group['framePositions'][index] == group['frameCount'] - 1)
             for index, frame in enumerate(group['frames'])],
+        sampledFramePositions=group['framePositions'],
         outer=frame_identity(group['outer']), sourceLines=group['sourceLines'],
         metadataRejected=group['metadataRejected'], metadataIdCount=len(group['metadataIds']),
         metadataIdsRedacted=True, metadataIdsTruncated=group['metadataIdsTruncated']) for group in trace['groups']]
     methods = [dict(name=row['name'], reasons=row['reasons'], mappedNameCount=len(row['mappedNames']),
-        observation=row['observation']) for row in trace['methods']]
+        candidatePath=row['candidatePath'], observation=row['observation']) for row in trace['methods']]
     return dict(owner=TRACE_OWNER, mappedOwnerPresent=trace['mappedOwner'] is not None, groups=groups,
         aliasGroupCount=len(aliases), methods=methods, truncated=trace['truncated'],
+        sampleTruncated=trace['sampleTruncated'], fullCandidateScanComplete=trace['fullCandidateScanComplete'],
+        groupScope='FIXED_SIGNATURE_PRIORITY_SAMPLES_FULL_RESIDUAL_SUMMARY',
         unsupportedOwner=trace['unsupportedOwner'])
 
 
@@ -221,6 +280,11 @@ def mapping_diagnostic(trace, smali):
                 declarationHeaders=declaration_projection([head for head in headers[:128] if len(head.encode()) <= 512], trace['targets']),
                 declarationHeadersRedacted=True,
                 truncated=result['truncated'] or len(headers) > 128 or any(len(h.encode()) > 512 for h in headers))
+    if len(json.dumps(result).encode()) > TRACE_BYTES:
+        result['mapping']['groups'] = []
+        result['mapping']['sampleTruncated'] = True
+        result['declarationHeaders'] = []
+        result['detailOutputTruncated'] = True
     if len(json.dumps(result).encode()) > TRACE_BYTES or reader.sensitive_text(json.dumps(result)):
         return dict(diagnosticOnly=True, accepted=False, compileAuthorized=False, observation='UNKNOWN',
             truncated=True, reason='TRACE_SIZE_OR_SAFETY_LIMIT', declarationHeaders=[])
