@@ -48,7 +48,7 @@ on:
         type: boolean
         default: false
       original_build_run:
-        description: Immutable original APK run to recheck (40488925368 only)
+        description: Immutable original APK run to recheck (reviewed Std55 40488925368 or Std74 40797508485 only)
         type: string
         default: ''
       build_apk:

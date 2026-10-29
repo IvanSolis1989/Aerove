@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/common/system_fonts.dart';
 import 'package:fl_clash/enum/enum.dart';
+import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
@@ -69,6 +70,10 @@ void main() {
   }
 
   ThemeProps readTheme() => container.read(themeSettingProvider);
+
+  Finder solidThemeChoice(WidgetTester tester) => find.text(
+    AppLocalizations.of(tester.element(find.byType(ThemeView))).solidThemeColor,
+  );
 
   Future<void> revealThemeSetting(WidgetTester tester, Finder setting) async {
     final scrollables = find.descendant(
@@ -219,8 +224,8 @@ void main() {
       expect(readTheme().colorStyle, saved.colorStyle);
       expect(readTheme().auroraSeed, saved.auroraSeed);
       expect(readTheme().auroraColors, saved.auroraColors);
-      await tester.ensureVisible(find.text('Solid theme color'));
-      await tester.tap(find.text('Solid theme color'));
+      await tester.ensureVisible(solidThemeChoice(tester));
+      await tester.tap(solidThemeChoice(tester));
       await tester.pumpAndSettle();
       expect(readTheme(), saved);
       expect(find.byType(AuroraSettings), findsNothing);
@@ -539,8 +544,8 @@ void main() {
         await tester.pumpAndSettle();
         expect(readTheme().liquidGlass, LiquidGlassMode.none);
         expect(readTheme().auroraSeed, seed);
-        await tester.ensureVisible(find.text('Solid theme color'));
-        await tester.tap(find.text('Solid theme color'));
+        await tester.ensureVisible(solidThemeChoice(tester));
+        await tester.tap(solidThemeChoice(tester));
         await tester.pumpAndSettle();
         await tester.ensureVisible(group);
         expect(

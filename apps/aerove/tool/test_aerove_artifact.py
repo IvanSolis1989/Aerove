@@ -763,7 +763,8 @@ class OriginalApkRecheckTest(unittest.TestCase):
         receipt = dict(schema=1, role='originalApkVerificationRecheck', accepted=True, compiled=False,
                        repository=REPOSITORY, originalBuild=selected,
                        testHarness=dict(source=self.harness, tree=self.git('rev-parse', 'HEAD^{tree}'), run_id=777, run_attempt=1),
-                       files={name: 'a' * 64 for name in (self.module.APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')},
+                       files={name: digest for name, (_, digest) in self.module.RECHECK_PAYLOADS.items()
+                              if name in (self.module.APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')},
                        signer_sha256=self.module.RECHECK_SIGNER)
         def find(value):
             with patch.object(self.module, '_api_items', side_effect=[[run], [dict(name=self.module.RECHECK_ARTIFACT)]]), \
@@ -796,6 +797,223 @@ class OriginalApkRecheckTest(unittest.TestCase):
 
 
 
+class OriginalApk74RecheckTest(unittest.TestCase):
+    def setUp(self):
+        self.fixture = OriginalApkRecheckTest()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.module, self.root = self.fixture.module, self.fixture.root
+        self.run_id = self.module.RECHECK_RUN_74
+        self.policy = copy.deepcopy(self.module.RECHECK_POLICY_74)
+        self.test = self.root / self.policy['test']
+        self.test.parent.mkdir(parents=True, exist_ok=True)
+        self.baseline = self.fixture.workflow.read_text(encoding='utf-8')
+        self.test.write_text('original theme assertions\n', encoding='utf-8')
+        self.fixture.commit()
+        self.original = self.fixture.git('rev-parse', 'HEAD')
+        before = self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')
+        self.fixture.workflow.write_text(self.baseline.replace(
+            'Immutable original APK run to recheck (40488925368 only)', self.module.RECHECK_DESCRIPTION), encoding='utf-8')
+        self.test.write_text('reviewed theme assertions\n', encoding='utf-8')
+        self.fixture.commit()
+        self.harness = self.fixture.git('rev-parse', 'HEAD')
+        self.policy.update(source=self.original, tree=self.fixture.git('rev-parse', self.original + '^{tree}'),
+            test_blobs=(before, self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')),
+            workflow_blob=self.fixture.git('rev-parse', f'HEAD:{self.module.WORKFLOW}'))
+        patch.object(self.module, 'RECHECK_POLICY_74', self.policy).start()
+        self.run = dict(id=self.run_id, run_number=74, run_attempt=1, head_sha=self.original,
+            path=self.module.WORKFLOW, event='workflow_dispatch', status='completed', conclusion='failure',
+            repository=dict(full_name=REPOSITORY), head_repository=dict(full_name=REPOSITORY))
+        self.producers = [dict(**pin, name=name, run_id=self.run_id, head_sha=self.original,
+            run_attempt=1, status='completed', conclusion='success') for name, pin in self.policy['producers'].items()]
+        self.artifacts = [dict(id=pin[0], name=name, size_in_bytes=pin[1], digest=pin[2], expired=False,
+            created_at=self.policy['created_at'][name], workflow_run=dict(id=self.run_id, head_sha=self.original))
+            for name, pin in self.policy['artifacts'].items()]
+
+    def inputs(self):
+        return self.module.recheck_inputs(self.root, self.fixture.git('rev-parse', 'HEAD'), self.run_id)
+
+    def original_build(self):
+        with patch.object(self.module, '_api_object', return_value=self.run), \
+                patch.object(self.module, '_api_items', side_effect=[self.producers, self.artifacts]):
+            return self.module.original_recheck_build(REPOSITORY, self.run_id)
+
+    def test_existing_input_baseline_accepts_only_exact_theme_fix_and_description(self):
+        self.assertEqual({row['path'] for row in self.inputs()}, {self.policy['test'], self.module.WORKFLOW})
+        with self.assertRaises(self.module.ArtifactError):
+            self.module.recheck_inputs(self.root, self.harness, self.module.RECHECK_RUN)
+        for path, content in [(self.policy['test'], 'unreviewed assertion\n'),
+                ('apps/aerove/lib/main.dart', 'production change\n'),
+                ('apps/aerove/pubspec.lock', 'dependency change\n'),
+                ('apps/aerove/assets/logo.png', 'asset change\n'),
+                ('apps/aerove/test/extra_test.dart', 'extra test\n')]:
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding='utf-8')
+            self.fixture.commit()
+            with self.subTest(path=path), self.assertRaises(self.module.ArtifactError):
+                self.inputs()
+            self.fixture.git('reset', '--hard', self.harness)
+        accepted = self.fixture.workflow.read_text(encoding='utf-8')
+        for old, new in [('preserved-apk', 'changed-apk'), ('preserved-verify', 'bypass-verify'),
+                         ('name: fixture', 'name: changed'), ('fail-fast: false', 'fail-fast: true')]:
+            with self.subTest(workflow=old), self.assertRaises(self.module.ArtifactError):
+                self.module._workflow_inputs_unchanged(self.baseline, accepted.replace(old, new), build_run=self.run_id)
+        self.test.write_text('unreviewed test bytes\n', encoding='utf-8')
+        self.fixture.commit()
+        with patch.object(self.module, '_api_items', return_value=[]), \
+                self.assertRaisesRegex(self.module.ArtifactError, 'rebuilding is forbidden'):
+            self.module.find_rechecked_artifacts(root=self.root, repository=REPOSITORY,
+                source=self.fixture.git('rev-parse', 'HEAD'), exclude_run=999)
+
+    def test_original_failure_keeps_exact_run_producers_archives_and_full_tree(self):
+        selected = self.original_build()
+        self.assertEqual((selected['build_source'], selected['run_number'], selected['build_attempt'],
+                          selected['build_conclusion']), (self.original, 74, 1, 'failure'))
+        with patch.object(self.module, 'original_recheck_build', return_value=selected):
+            plan = self.module.recheck_plan(root=self.root, repository=REPOSITORY,
+                source=self.harness, build_run=self.run_id)
+            self.assertEqual(plan['build_tree'], self.policy['tree'])
+            with patch.dict(self.policy, tree='0' * 40), self.assertRaises(self.module.ArtifactError):
+                self.module.recheck_plan(root=self.root, repository=REPOSITORY,
+                    source=self.harness, build_run=self.run_id)
+        for field, value in [('head_sha', self.fixture.original), ('id', self.module.RECHECK_RUN),
+                             ('run_number', 55), ('run_attempt', 2), ('status', 'in_progress')]:
+            with patch.dict(self.run, {field: value}), self.subTest(field=field), self.assertRaises(self.module.ArtifactError):
+                self.original_build()
+        for row, changes in [(self.producers[0], dict(id=1)), (self.producers[1], dict(conclusion='failure')),
+                (self.artifacts[0], dict(created_at='2026-10-29T01:11:31Z')),
+                (self.artifacts[0], dict(digest=self.module.RECHECK_ARTIFACTS['Aerove-android-arm64'][2])),
+                (self.artifacts[1], dict(workflow_run=dict(id=self.module.RECHECK_RUN, head_sha=self.original)))]:
+            with patch.dict(row, changes), self.subTest(changes=changes), self.assertRaises(self.module.ArtifactError):
+                self.original_build()
+
+    def test_unknown_recheck_run_is_rejected_before_git_or_api(self):
+        with patch.object(self.module, '_api_object') as api, patch.object(self.module, '_git') as git:
+            for run_id in (self.run_id + 1, 0, '40797508485', float(self.run_id), True):
+                with self.subTest(run_id=run_id), self.assertRaises(self.module.ArtifactError):
+                    self.module.recheck_plan(root=self.root, repository=REPOSITORY, source=self.harness, build_run=run_id)
+            api.assert_not_called()
+            git.assert_not_called()
+
+    def test_promotion_request_and_all_verification_jobs_must_succeed_without_building(self):
+        run = dict(id=777, run_attempt=1, head_sha=self.harness)
+        jobs = OriginalApkRecheckTest.jobs(self, run)
+        promotion = dict(id=100, name='promotion_request', run_id=777, run_attempt=1,
+                         head_sha=self.harness, status='completed', conclusion='success')
+        jobs.append(promotion)
+        with patch.object(self.module, '_api_items', return_value=jobs):
+            self.module._recheck_jobs(REPOSITORY, run, final=True, build_run=self.run_id)
+        invalid = [jobs[:-1], jobs + [promotion]]
+        for field, value in [('conclusion', 'failure'), ('conclusion', 'skipped'), ('head_sha', self.original),
+                             ('run_id', self.run_id), ('run_attempt', 2)]:
+            invalid.append(jobs[:-1] + [{**promotion, field: value}])
+        for index in range(len(jobs)):
+            changed = copy.deepcopy(jobs)
+            changed[index]['conclusion'] = 'success' if changed[index]['name'] == 'apk' else 'failure'
+            invalid.append(changed)
+        for altered in invalid:
+            with patch.object(self.module, '_api_items', return_value=altered), self.assertRaises(self.module.ArtifactError):
+                self.module._recheck_jobs(REPOSITORY, run, final=True, build_run=self.run_id)
+
+    def test_explicit_selection_requires_its_own_unchanged_receipt(self):
+        original = self.original_build()
+        expected = {**original, 'build_tree': self.policy['tree'], 'test_harness_source': self.harness,
+                    'changed': self.inputs()}
+        run = {**self.run, 'id': 777, 'head_sha': self.harness, 'conclusion': 'success'}
+        identity = dict(source=self.harness, tree=self.fixture.git('rev-parse', 'HEAD^{tree}'), run_id=777, run_attempt=1)
+        receipt = dict(schema=1, role='originalApkVerificationRecheck', accepted=True, compiled=False,
+            repository=REPOSITORY, originalBuild=expected, testHarness=identity, signer_sha256=self.policy['signer'],
+            files={name: digest for name, (_, digest) in self.policy['payloads'].items()
+                   if name in (self.module.APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')})
+        def select(value, finder=False):
+            with patch.object(self.module, 'original_recheck_build', return_value=original), \
+                    patch.object(self.module, '_api_items', side_effect=[[run], [dict(name=self.module.RECHECK_ARTIFACT)]]), \
+                    patch.object(self.module, '_recheck_jobs') as jobs, \
+                    patch.object(self.module, '_download_receipt', return_value=value), \
+                    patch.object(self.module, 'recheck_plan', return_value=expected) as plan:
+                if finder:
+                    result = self.module.find_rechecked_artifacts(root=self.root, repository=REPOSITORY,
+                        source=self.harness, exclude_run=999)
+                else:
+                    result = self.module.accepted_build(root=self.root, repository=REPOSITORY,
+                        source=self.harness, build_run=self.run_id, release_run=999)
+                self.assertEqual(jobs.call_args.kwargs['build_run'], self.run_id)
+                self.assertEqual(plan.call_args.kwargs['build_run'], self.run_id)
+                return result
+        for finder in (False, True):
+            self.assertEqual(select(receipt, finder)['build_source'], self.original)
+            for field, value in [('originalBuild', {**expected, 'run_id': self.module.RECHECK_RUN}),
+                    ('originalBuild', None),
+                    ('originalBuild', {**expected, 'build_source': self.fixture.original}),
+                    ('files', {name: digest for name, (_, digest) in self.module.RECHECK_PAYLOADS.items()
+                               if name in receipt['files']}), ('compiled', True),
+                    ('testHarness', {**identity, 'source': self.original})]:
+                with self.subTest(field=field, finder=finder), self.assertRaises(self.module.ArtifactError):
+                    select({**receipt, field: value}, finder)
+
+    def test_receipt_validates_original_bytes_signature_package_version_and_tree(self):
+        fixture = ArtifactFilesTest()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.info.update(source=self.original, version=self.policy['version'], appEnv='pre',
+                            workflow=f'https://github.com/{REPOSITORY}/actions/runs/{self.run_id}')
+        (fixture.generated / 'xclash-verified-tree.txt').write_bytes((self.policy['tree'] + '\n').encode('ascii'))
+        fixture.save_info()
+        payloads = {path.name: (path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest())
+                    for directory in (fixture.dist, fixture.generated) for path in directory.iterdir()}
+        run = {**self.run, 'id': 777, 'head_sha': self.harness, 'head_branch': 'codex/recheck',
+               'status': 'in_progress', 'conclusion': None}
+        jobs = OriginalApkRecheckTest.jobs(self, run) + [dict(id=100, name='promotion_request',
+            run_id=777, run_attempt=1, head_sha=self.harness, status='completed', conclusion='success')]
+        selected = dict(run_id=self.run_id, run_number=74, build_source=self.original, build_tree=self.policy['tree'])
+        certs = f'Signer #1 certificate SHA-256 digest: {self.policy["signer"]}\n'
+        badging = "package: name='com.follow.clash.dev' versionCode='2026102274' versionName='0.11.0-beta.14' rest\n"
+        def command(arguments, root=None):
+            if arguments[0] == 'signer':
+                return certs
+            if arguments[0] == 'aapt':
+                return badging
+            if arguments[:2] == ['git', 'show']:
+                self.assertTrue(arguments[-1].startswith(self.original + ':'))
+                return json.dumps(fixture.metadata) if arguments[-1].endswith('upstream-version.json') else 'version: 0.11.0-beta.14+1\n'
+            self.fail(str(arguments))
+        def receipt():
+            with patch.dict(self.policy, payloads=payloads), \
+                    patch.object(self.module, 'recheck_plan', return_value=selected), \
+                    patch.object(self.module, '_api_object', return_value=run), \
+                    patch.object(self.module, '_api_items', return_value=jobs), \
+                    patch.object(self.module, '_command', side_effect=command), \
+                    patch.object(self.module, '_git', return_value='e' * 40):
+                return self.module.recheck_receipt(root=self.root, repository=REPOSITORY, source=self.harness,
+                    build_run=self.run_id, run_id=777, directory=fixture.dist, generated_directory=fixture.generated,
+                    apksigner=Path('signer'), aapt=Path('aapt'))
+        before = {path: path.read_bytes() for directory in (fixture.dist, fixture.generated) for path in directory.iterdir()}
+        self.assertIs(receipt()['compiled'], False)
+        self.assertEqual(before, {path: path.read_bytes() for path in before})
+        for path, contents in before.items():
+            path.write_bytes(contents + b'changed')
+            with self.subTest(payload=path.name), self.assertRaisesRegex(self.module.ArtifactError, 'payload bytes/hash'):
+                receipt()
+            path.write_bytes(contents)
+        for invalid in ('Signer #1 certificate SHA-256 digest: ' + 'a' * 64 + '\n', certs + certs):
+            original_certs, certs = certs, invalid
+            with self.assertRaisesRegex(self.module.ArtifactError, 'signer'):
+                receipt()
+            certs = original_certs
+        original_badging = badging
+        for old, new in [('com.follow.clash.dev', 'dev.aerove.lite'), ('2026102274', '2026102255'),
+                         ('0.11.0-beta.14', '0.11.0-beta.7')]:
+            badging = original_badging.replace(old, new)
+            with self.subTest(badging=old), self.assertRaisesRegex(self.module.ArtifactError, 'package/version'):
+                receipt()
+        badging = original_badging
+        with patch.dict(selected, build_tree='0' * 40), self.assertRaises(self.module.ArtifactError):
+            receipt()
+        with patch.dict(self.policy, payloads=self.module.RECHECK_PAYLOADS), self.assertRaises(self.module.ArtifactError):
+            self.module._original_payloads(fixture.dist, fixture.generated, self.run_id)
+
+
 class OriginalApkReceiptTest(unittest.TestCase):
     def setUp(self):
         self.fixture = ArtifactFilesTest()
@@ -808,6 +1026,12 @@ class OriginalApkReceiptTest(unittest.TestCase):
         payloads = {path.name: (path.stat().st_size, hashlib.sha256(path.read_bytes()).hexdigest())
                     for directory in (self.fixture.dist, self.fixture.generated) for path in directory.iterdir()}
         pin = patch.object(self.module, 'RECHECK_PAYLOADS', payloads)
+        pin.start()
+        self.addCleanup(pin.stop)
+        original_policy = self.module._recheck_policy
+        policy = {**original_policy(self.module.RECHECK_RUN), 'source': SOURCE}
+        pin = patch.object(self.module, '_recheck_policy', side_effect=lambda run, repository=REPOSITORY:
+                           policy if run == RUN_ID else original_policy(run, repository))
         pin.start()
         self.addCleanup(pin.stop)
         self.run = dict(id=777, run_number=56, run_attempt=1, head_sha='f' * 40,
