@@ -58,6 +58,8 @@ Future<ProviderContainer> _pumpHome(
   WidgetTester tester, {
   List<Override> overrides = const [],
   bool settle = true,
+  bool glass = false,
+  LiquidGlassQuality quality = LiquidGlassQuality.ultra,
 }) async {
   tester.view.physicalSize = _mobileSize;
   tester.view.devicePixelRatio = 1;
@@ -98,7 +100,14 @@ Future<ProviderContainer> _pumpHome(
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const TestApp(includeNavigatorKey: false, child: HomePage()),
+      child: TestApp(
+        includeNavigatorKey: false,
+        child: LiquidGlassScope(
+          enabled: glass,
+          quality: quality,
+          child: LiquidGlassHost(enabled: glass, child: const HomePage()),
+        ),
+      ),
     ),
   );
   if (settle) {
@@ -133,6 +142,59 @@ void main() {
     navigationPort = navigation;
     addTearDown(() => navigationPort = null);
   });
+
+  for (final material in [
+    (glass: false, quality: LiquidGlassQuality.standard),
+    (glass: true, quality: LiquidGlassQuality.standard),
+    (glass: true, quality: LiquidGlassQuality.ultra),
+  ]) {
+    testWidgets('floating glyphs outline unselected destinations and animate '
+        'selection with $material', (tester) async {
+      final container = await _pumpHome(
+        tester,
+        glass: material.glass,
+        quality: material.quality,
+      );
+      Iterable<GlyphIcon> icons(Glyph glyph) => tester.widgetList<GlyphIcon>(
+        find.descendant(
+          of: find.byType(FloatingNavigationBar),
+          matching: find.byWidgetPredicate(
+            (widget) => widget is GlyphIcon && identical(widget.glyph, glyph),
+          ),
+        ),
+      );
+      void expectFill(Glyph glyph, double fill) {
+        expect(icons(glyph), isNotEmpty);
+        for (final icon in icons(glyph)) {
+          expect(icon.fill, fill);
+          expect(IconTheme.of(tester.element(find.byWidget(icon))).size, 28);
+        }
+      }
+
+      expectFill(AppGlyphs.dashboard, 1);
+      expectFill(AppGlyphs.profiles, 0);
+      expectFill(AppGlyphs.tools, 0);
+      final toolsLabel = tester
+          .widget<NavigationDock>(find.byType(NavigationDock))
+          .destinations
+          .last
+          .label;
+      final destination = tester.widget<Semantics>(
+        _destinationButton(toolsLabel),
+      );
+      destination.properties.onTap!();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(container.read(currentPageLabelProvider), PageLabel.tools);
+      for (final icon in icons(AppGlyphs.tools)) {
+        expect(icon.fill, inExclusiveRange(0, 1));
+      }
+      await tester.pumpAndSettle();
+      expectFill(AppGlyphs.dashboard, 0);
+      expectFill(AppGlyphs.tools, 1);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('the dock stays centred alone on every page, the dashboard '
       'included', (tester) async {

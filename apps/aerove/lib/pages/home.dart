@@ -118,6 +118,16 @@ class _HomeShellState extends ConsumerState<_HomeShell> {
     final floating = ref.watch(
       appSettingProvider.select((state) => state.floatingNavigationBar),
     );
+    final glass = LiquidGlassScope.of(context);
+    final fixedBar = _NavigationPadding(
+      child: _FixedNavigationBar(
+        navigationItems: navigationItems,
+        selectedIndex: state.currentIndex,
+        onSelected: (index) {
+          _handleToPage(navigationItems[index].label, ref);
+        },
+      ),
+    );
     return Material(
       color: LiquidGlassScope.of(context) || AuroraAppearance.enabledOf(context)
           ? Colors.transparent
@@ -133,6 +143,8 @@ class _HomeShellState extends ConsumerState<_HomeShell> {
                     child: BottomInsetScope(
                       inset: isMobile && floating
                           ? NavigationDock.insetOf(context)
+                          : isMobile && glass
+                          ? _FixedNavigationBar.insetOf(context)
                           : 0,
                       child: NotificationListener<ScrollNotification>(
                         onNotification: isMobile && floating
@@ -173,33 +185,76 @@ class _HomeShellState extends ConsumerState<_HomeShell> {
                     ),
                   ),
                 ),
+                if (glass)
+                  PositionedDirectional(
+                    start: 0,
+                    end: 0,
+                    bottom: 0,
+                    child: AnimatedVisibility.bottomNavigation(
+                      visible: isMobile && !floating,
+                      child: fixedBar,
+                    ),
+                  ),
               ],
             ),
           ),
-          AnimatedVisibility.bottomNavigation(
-            visible: isMobile && !floating,
-            child: _NavigationPadding(
-              child: NavigationBar(
-                destinations: [
-                  for (final (index, item) in navigationItems.indexed)
-                    NavigationDestination(
-                      icon: AnimatedGlyph(
-                        glyph: item.glyph,
-                        filled: index == state.currentIndex,
-                      ),
-                      label: item.label.label,
-                    ),
-                ],
-                selectedIndex: state.currentIndex,
-                onDestinationSelected: (index) {
-                  _handleToPage(navigationItems[index].label, ref);
-                },
-              ),
+          if (!glass)
+            AnimatedVisibility.bottomNavigation(
+              visible: isMobile && !floating,
+              child: fixedBar,
             ),
-          ),
         ],
       ),
     );
+  }
+}
+
+class _FixedNavigationBar extends StatelessWidget {
+  const _FixedNavigationBar({
+    required this.navigationItems,
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final List<NavigationItem> navigationItems;
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  static double _heightOf(BuildContext context) =>
+      NavigationBarTheme.of(context).height ?? 80;
+
+  static double insetOf(BuildContext context) =>
+      _heightOf(context) + MediaQuery.paddingOf(context).bottom;
+
+  @override
+  Widget build(BuildContext context) {
+    final glass = LiquidGlassScope.of(context);
+    final bar = NavigationBar(
+      height: _heightOf(context),
+      backgroundColor: glass ? Colors.transparent : null,
+      surfaceTintColor: glass ? Colors.transparent : null,
+      elevation: glass ? 0 : null,
+      destinations: [
+        for (final (index, item) in navigationItems.indexed)
+          NavigationDestination(
+            icon: AnimatedGlyph(
+              glyph: item.glyph,
+              filled: index == selectedIndex,
+            ),
+            label: item.label.label,
+          ),
+      ],
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onSelected,
+    );
+    return glass
+        ? LiquidGlass(
+            contentBackdrop: true,
+            style: LiquidGlassStyle.pill(context.colorScheme),
+            clipper: const ShapeBorderClipper(shape: AppShape.none),
+            child: bar,
+          )
+        : bar;
   }
 }
 
