@@ -975,6 +975,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
   final ValueNotifier<LiquidGlassGlow> _touchGlow = ValueNotifier(
     LiquidGlassGlow.none,
   );
+  final _glyphMotionAllowed = ValueNotifier(true);
   Offset _glowAt = Offset.zero;
   late final Listenable _barMotion = Listenable.merge([_swell, _stretch]);
   late final Listenable _motion = Listenable.merge([_lens, _lift, _jelly]);
@@ -995,6 +996,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
 
   @override
   void _motionChanged() {
+    _glyphMotionAllowed.value = _motionAllowed;
     final springs = [
       _lens,
       _lift,
@@ -1073,6 +1075,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
     _glow.dispose();
     _glowSpread.dispose();
     _touchGlow.dispose();
+    _glyphMotionAllowed.dispose();
     _hoverAt.dispose();
     super.dispose();
   }
@@ -1432,6 +1435,7 @@ class _FloatingNavigationBarState extends State<FloatingNavigationBar>
                               child: _FloatingBarItem(
                                 destination: destination,
                                 selected: index == _selectedIndex,
+                                glyphMotionAllowed: _glyphMotionAllowed,
                                 index: index,
                                 part: part,
                                 lens: _lens,
@@ -1734,6 +1738,7 @@ class _FloatingBarItem extends StatefulWidget {
   const _FloatingBarItem({
     required this.destination,
     required this.selected,
+    required this.glyphMotionAllowed,
     required this.index,
     required this.part,
     required this.lens,
@@ -1750,6 +1755,7 @@ class _FloatingBarItem extends StatefulWidget {
 
   final NavigationDockDestination destination;
   final bool selected;
+  final ValueListenable<bool> glyphMotionAllowed;
   final int index;
 
   /// Only [_LensPart.inside] is drawn bare: it stands over the lens, while
@@ -1832,9 +1838,17 @@ class _FloatingBarItemState extends State<_FloatingBarItem> {
           children: [
             IconTheme.merge(
               data: IconThemeData(size: _iconSize, color: color),
-              child: AnimatedGlyph(
-                glyph: widget.destination.glyph,
-                filled: widget.selected,
+              child: ValueListenableBuilder(
+                valueListenable: widget.glyphMotionAllowed,
+                builder: (_, allowed, _) => allowed
+                    ? AnimatedGlyph(
+                        glyph: widget.destination.glyph,
+                        filled: widget.selected,
+                      )
+                    : GlyphIcon(
+                        widget.destination.glyph,
+                        fill: widget.selected ? 1 : 0,
+                      ),
               ),
             ),
             SizedBox(height: _labelGap * widget.labelVisibility),
