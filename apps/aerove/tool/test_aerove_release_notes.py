@@ -14,6 +14,23 @@ INFO = {'source': 'a' * 40, 'version': TAG.removeprefix('v')}
 
 
 class AeroveReleaseNotesTest(unittest.TestCase):
+    def test_original_std74_candidate_preamble_is_removed_without_changing_build_identity(self):
+        info = {'source': '806558b3c397ebd6b3d4ea4d558a442828c6d285',
+                'version': '0.11.0-beta.14+2026102274'}
+        status = '本候选尚未构建、验收或发行，安装编号由下一次实际构建生成。'
+        entries = ('- 主题色选项“普通主题色”更名为“经典单色”，同步七种语言。\n'
+                   '- 融合网络控制卡显式开启局域网代理后，成功提示并复制局域网 IP 与端口；失败、取消或过时结果不触发复制，卡片保持原布局。')
+        markdown = '## 0.11.0-beta.14 — 开发候选\n\n' + status + '\n\n' + entries
+        rendered = notes.render_release(markdown, 'v' + info['version'], info)
+        self.assertEqual(notes.notes_for_release(markdown, 'v' + info['version']), entries)
+        self.assertIn(f'版本：`{info["version"]}`', rendered)
+        self.assertIn(f'源码：`{info["source"]}`', rendered)
+        self.assertNotIn(status, rendered)
+        for invalid in (status + '后续说明', status.replace('尚未构建', '已经构建'),
+                        status + '\n\n其他状态', '<!-- control -->' + status):
+            with self.subTest(status=invalid), self.assertRaises(ValueError):
+                notes.render_release(markdown.replace(status, invalid), 'v' + info['version'], info)
+
     def test_independent_stable_and_preview_tags_keep_exact_build_binding(self):
         for tag in ['v1.0.0+2026102002', 'v1.1.0-beta.1+2026102003']:
             info = {**INFO, 'version': tag.removeprefix('v')}
