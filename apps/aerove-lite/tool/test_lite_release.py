@@ -662,5 +662,82 @@ class ExplicitBuildPromotionTest(unittest.TestCase):
                 release._gh_items("endpoint?per_page=100", "artifacts")
 
 
+TAG = "lite-v0.1.0-beta.24+24"
+INFO = {"version": "0.1.0-beta.24", "version_code": 24,
+        "source": "a" * 40, "tree": "b" * 40,
+        "workflow": "https://github.com/IvanSolis1989/Aerove/actions/runs/123",
+        "run_number": 50, "run_attempt": 2}
+STATUS = ("下一应用候选为 **0.1.0-beta.24（安装编号 24）**；包名 `dev.aerove.lite`、独立签名与 preview 通道沿用。"
+          "新源码 APK 尚未构建，本候选未接受、未发行。真实光学、帧表现和网络取消/恢复等完整验收仍未闭合；满足自身完整契约后独立发行。")
+ENTRIES = ("- **主题名称：** 主题色选项统一更名为“经典单色”，同步七种语言。\n"
+           "- **来源：** [核心记录](core/meow-migration.md#rule-preview-budget)，版本 `v6.0.21-meow.7`。\n"
+           "  保留缩进的功能说明。")
+
+
+class LiteReleaseNotesTests(unittest.TestCase):
+    def test_exact_current_candidate_status_is_removed_and_entries_are_preserved(self):
+        rendered = notes.render("## 待发布\n\n" + STATUS + "\n\n" + ENTRIES, TAG, INFO, 123, 2)
+        self.assertIn(ENTRIES, rendered)
+        self.assertNotIn(STATUS, rendered)
+        for value in (TAG, INFO["source"], INFO["tree"], INFO["workflow"],
+                      "run `123`，attempt `2`", notes.BEGIN, notes.END):
+            self.assertIn(value, rendered)
+
+    def test_current_changelog_renders_only_implemented_entries(self):
+        path = Path(__file__).resolve().parents[3] / notes.CHANGELOG
+        rendered = notes.render(path.read_text(encoding="utf-8"), TAG, INFO, 123, 2)
+        for pending in ("未接受", "未发行", "尚未构建", "待验收", "仍待", "待新候选", "尚待"):
+            self.assertNotIn(pending, rendered)
+        for entry in ("融合编辑", "主题名称", "局域网地址", "统计刷新", "曲线延续", "国旗定心",
+                      "更新备用源", "专版脚本", "验证接线", "c18c314d94206eb6724d235ca0d590c3e14e9121",
+                      "v6.0.21-meow.7"):
+            self.assertIn(entry, rendered)
+        self.assertNotIn("历史未发行候选记录", rendered)
+
+    def test_unknown_duplicate_and_malformed_status_or_html_fail_closed(self):
+        for body in ("尚待构建。\n\n" + ENTRIES,
+                     STATUS + "\n第二行状态\n\n" + ENTRIES,
+                     STATUS + "\n\n" + STATUS + "\n\n" + ENTRIES,
+                     STATUS + STATUS + "\n\n" + ENTRIES,
+                     STATUS + "\n" + ENTRIES,
+                     "> " + STATUS + "\n\n" + ENTRIES,
+                     "<b>" + STATUS + "</b>\n\n" + ENTRIES,
+                     STATUS + "\n\n- <script>alert(1)</script>",
+                     "<!-- control -->\n" + ENTRIES,
+                     ENTRIES + "\n  <!-- control -->",
+                     ENTRIES + "\n\n" + STATUS,
+                     ENTRIES + "\n  " + STATUS,
+                     ENTRIES + "\n无缩进的额外状态",
+                     "- 更新\x00伪造"):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                notes.render("## 待发布\n\n" + body, TAG, INFO, 123, 2)
+        with self.assertRaises(ValueError):
+            notes.render("## 待发布\n- 一\n## 待发布\n- 二", TAG, INFO, 123, 2)
+
+    def test_status_only_change_cannot_republish_previous_entries(self):
+        previous = "## 待发布\n\n" + STATUS + "\n\n" + ENTRIES
+        for markdown in (previous, "## 待发布\n\n" + ENTRIES,
+                         previous.replace("尚未构建", "尚未重新构建")):
+            with self.subTest(markdown=markdown), self.assertRaisesRegex(ValueError, "unchanged"):
+                notes.render(markdown, TAG, INFO, 123, 2, previous)
+
+    def test_first_release_and_previous_without_pending_remain_supported(self):
+        for previous in ("", "# AEROVE Lite\n\n历史发行模板。"):
+            rendered = notes.render("## 待发布\n\n" + ENTRIES, TAG, INFO, 123, 2, previous)
+            self.assertIn(ENTRIES, rendered)
+
+    def test_tag_source_tree_and_acceptance_binding_remain_required(self):
+        for tag, info, run, attempt in (
+                (TAG + "extra", INFO, 123, 2),
+                (TAG, {**INFO, "source": "main"}, 123, 2),
+                (TAG, {**INFO, "tree": "b" * 39}, 123, 2),
+                (TAG, {**INFO, "workflow": INFO["workflow"] + "4"}, 123, 2),
+                (TAG, {**INFO, "run_number": 0}, 123, 2),
+                (TAG, {**INFO, "run_number": True}, 123, 2),
+                (TAG, INFO, 124, 2), (TAG, INFO, 123, 3)):
+            with self.subTest(tag=tag, info=info, run=run, attempt=attempt), self.assertRaises(ValueError):
+                notes.render("## 待发布\n\n" + STATUS + "\n\n" + ENTRIES, tag, info, run, attempt)
+
+
 if __name__ == "__main__":
     unittest.main()

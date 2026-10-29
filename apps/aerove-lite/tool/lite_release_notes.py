@@ -23,6 +23,22 @@ def _sections(markdown):
     return result
 
 
+def _release_entries(body):
+    if "<" in body or re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", body):
+        raise ValueError("Lite release notes must not contain HTML or control characters")
+    if not re.match(r"-[ \t]+\S", body):
+        status, separator, body = body.partition("\n\n")
+        if (not separator or "\n" in status or status.startswith(("#", ">", "-", "*", "`"))
+                or status.count("本候选未接受、未发行。") != 1):
+            raise ValueError("Lite changelog must contain real pending entries or one explicit status paragraph")
+        body = body.lstrip("\n")
+    if ("本候选未接受、未发行。" in body or not re.match(r"-[ \t]+\S", body)
+            or any(line and not re.match(r"(?:-[ \t]+\S|[ \t]+\S)", line)
+                   for line in body.splitlines())):
+        raise ValueError("Lite release notes allow only change entries and indented continuations")
+    return body
+
+
 def render(markdown, tag, info, acceptance_run, acceptance_attempt, previous_markdown=""):
     expected_tag = f"lite-v{info.get('version')}+{info.get('version_code')}"
     if tag != expected_tag:
@@ -37,9 +53,11 @@ def render(markdown, tag, info, acceptance_run, acceptance_attempt, previous_mar
         raise ValueError("Acceptance attempt does not match Build Info")
     sections = _sections(markdown)
     notes = sections.get("待发布")
-    if not notes or not re.search(r"^[ \t]*-[ \t]+\S", notes, re.MULTILINE) or "<!--" in notes:
+    if not notes:
         raise ValueError("Lite changelog must contain real pending release notes")
-    if previous_markdown and notes == _sections(previous_markdown).get("待发布"):
+    notes = _release_entries(notes)
+    previous = _sections(previous_markdown).get("待发布")
+    if previous and notes == _release_entries(previous):
         raise ValueError("Lite pending release notes are unchanged from the previous release source")
     return (f"# AEROVE Lite {tag}\n\n{BEGIN}\n"
             f"验收工作流：`{info['workflow']}`；run `{acceptance_run}`，attempt `{acceptance_attempt}`。\n\n"
