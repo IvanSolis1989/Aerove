@@ -621,8 +621,9 @@ def _original_payloads(directory: Path, generated: Path, build_run: int = RECHEC
 def _verify_original_signer(output: str, expected: str) -> None:
     records, formats, invalid = [], [], 0
     pattern = re.compile(
-        r'Signer (?P<index>#[1-9][0-9]*|\(minSdkVersion=(?P<minimum>[1-9][0-9]*)'
+        r'(?:Signer (?P<index>#[1-9][0-9]*|\(minSdkVersion=(?P<minimum>[1-9][0-9]*)'
         r'(?P<dev> \(dev release=true\))?, maxSdkVersion=(?P<maximum>[1-9][0-9]*)\))'
+        r'|(?P<v2>V2 Signer:))'
         r' certificate SHA-256 digest:[ \t]*(?P<digest>[0-9a-fA-F]{64})'
     )
     for line in output.splitlines():
@@ -639,6 +640,8 @@ def _verify_original_signer(output: str, expected: str) -> None:
                 invalid += 1
                 continue
             formats.append('sdk-range-dev' if match['dev'] else 'sdk-range')
+        elif match['v2'] is not None:
+            formats.append('v2')
         else:
             formats.append('numbered')
         records.append(match['digest'].lower())
