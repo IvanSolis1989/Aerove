@@ -355,6 +355,10 @@ if [[ -n "$shard_count" ]]; then
     fi
 fi
 instrumentation_prefix=()
+consumer_receipt_args=()
+if [[ "$phase" == remaining && "${AEROVE_GLASS_CONSUMER_RECEIPT:-0}" == 1 ]]; then
+    consumer_receipt_args=(-e glassConsumerReceipt true)
+fi
 if [[ "$phase" == matrix && "${AEROVE_CLEAR_FRAME_TRACE:-0}" == 1 ]]; then
     instrumentation_prefix=(python3 apps/aerove-lite/tool/clear_frame_trace.py
         --serial "$serial" --output "$diagnostics/clear-trace" --duration 120
@@ -370,6 +374,7 @@ instrumentation_deadline=""
 if [[ -n "$shard_count" ]]; then instrumentation_deadline=$(( $(date +%s) + 1200 )); fi
 set +e
 "${remaining_timeout[@]}" "${instrumentation_prefix[@]}" "${adb_device[@]}" shell am instrument -w -r -e debug false -e timeout_msec "$test_timeout_msec" "${selection[@]}" \
+    "${consumer_receipt_args[@]}" \
     -e fixtureUrl http://10.0.2.2:18080 -e sourceRevision "$app_source" \
     "${smart_fixture_args[@]}" \
     -e isolatedBackgroundPolicy true -e deviceKind CI-emulator -e rendererBackend "$renderer_backend_remote" \

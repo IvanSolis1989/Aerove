@@ -4,6 +4,7 @@ import android.content.res.AssetManager
 import android.graphics.PathMeasure
 import android.view.View
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
@@ -13,6 +14,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.Rect
@@ -114,6 +116,8 @@ private class ViewportClamp(private val view: View) {
     private val previous = FloatArray(4) { Float.NaN }
     private var cached: androidx.compose.ui.graphics.RenderEffect? = null
 
+    fun diagnosticViewport(): FloatArray = previous.copyOf()
+
     fun effect(width: Int, height: Int, pad: Float, coordinates: LayoutCoordinates): androidx.compose.ui.graphics.RenderEffect {
         view.getLocationInWindow(location)
         val position = coordinates.positionInWindow()
@@ -201,10 +205,32 @@ internal fun Modifier.liteGlassBackdrop(source: Backdrop, shape: Shape, style: A
     val composition = LocalDensity.current
     val plainPad = composition.glassBackdropPadding(style)
     if (style.haze == 0f) {
-        val cached = remember(source, shape, style, glow, rim, explicitGlow, sources, geometry, viewport, plainPad) {
-            Modifier.onGloballyPositioned { coordinates.value = it }.drawPlainBackdrop(
+        val role = LocalLiteGlassConsumerRole.current
+        val subscriptionId = LiteGlassConsumerDiagnostics.subscriptionId
+        val diagnostic = remember(source, view, role, subscriptionId) {
+            if (role == null || subscriptionId == null) null else LiteGlassConsumerDiagnostics.attach(view.rootView, view, role, source)
+                ?.let { GlassConsumerDrawObservation(it, viewport::diagnosticViewport) }
+        }
+        if (diagnostic != null) DisposableEffect(diagnostic) {
+            onDispose { LiteGlassConsumerDiagnostics.detach(diagnostic.handle) }
+        }
+        val cached = remember(source, shape, style, glow, rim, explicitGlow, sources, geometry, viewport, plainPad, diagnostic) {
+            val tracked = Modifier.onGloballyPositioned {
+                coordinates.value = it
+                if (diagnostic != null && diagnostic.handle.session.owns(diagnostic.handle)) {
+                    val bounds = it.boundsInWindow(clipBounds = false)
+                    LiteGlassConsumerDiagnostics.recordLayout(diagnostic.handle, GlassConsumerLayout(
+                        GlassConsumerRect(bounds.left, bounds.top, bounds.right, bounds.bottom), it.size.width, it.size.height,
+                        composition.density, System.identityHashCode(view.rootView), it.isAttached))
+                }
+            }
+            val observed = if (diagnostic == null) tracked else tracked.drawWithContent {
+                drawContent()
+                LiteGlassConsumerDiagnostics.recordDraw(diagnostic.handle)
+            }
+            observed.drawPlainBackdrop(
                 backdrop = source, shape = { BackdropBufferShape },
-                effects = glassBackdropEffects(composition, style, geometry, sources.glass, glow, rim, explicitGlow, viewport.tracking { coordinates.value }))
+                effects = glassBackdropEffects(composition, style, geometry, sources.glass, glow, rim, explicitGlow, viewport.tracking { coordinates.value }, diagnostic))
         }
         return this.then(cached)
     }
@@ -332,17 +358,28 @@ private fun ViewportClamp.tracking(coordinates: () -> LayoutCoordinates?): Backd
 internal fun frostBackdropEffects(composition: Density, style: AeroveGlassStyle, viewport: BackdropViewport) =
     plainBackdropEffects(composition, style, Density::frostBackdropPadding, viewport) { _, _ -> }
 
+internal class GlassConsumerDrawObservation(val handle: LiteGlassConsumerDiagnostics.Handle, val viewport: () -> FloatArray)
+
 internal fun glassBackdropEffects(
     composition: Density, style: AeroveGlassStyle, geometry: PaneGeometry, glassSource: String, glow: LitePressGlow?, rim: LiteGlassRim?,
     explicitGlow: dev.aerove.lite.optics.AeroveGlassGlow?, viewport: BackdropViewport,
+    diagnostic: GlassConsumerDrawObservation? = null,
 ) = plainBackdropEffects(composition, style, Density::glassBackdropPadding, viewport) { pad, sigma ->
     geometry.resolve(size, layoutDirection, this)
     val capture = AeroveGlassCapture(size.width.toInt() + 2 * pad, size.height.toInt() + 2 * pad, density, pad, sigma)
     runtimeShaderEffect("AeroveGlassSource-v1", glassSource, "content") {
+        val receipt = diagnostic?.takeIf { it.handle.session.owns(it.handle) }?.let {
+            LiteGlassConsumerDiagnostics.beginConfiguration(it.handle, asAndroidRuntimeShader(), glassSource,
+                geometry.geometry.width.toFloat(), geometry.geometry.height.toFloat(), capture, it.viewport())
+        }
         configureAeroveGlass(geometry.geometry, style, capture, profile = geometry.profile,
             glow = explicitGlow ?: glow?.resolve(size, density) ?: dev.aerove.lite.optics.AeroveGlassGlow(),
-            shine = rim?.uniforms(Size(geometry.geometry.width.toFloat(), geometry.geometry.height.toFloat()), geometry.geometry.radii[0].toFloat()) ?: dev.aerove.lite.optics.AeroveGlassShine.none())
-        setFloatUniform("uHazeOffset", 0f)
+            shine = rim?.uniforms(Size(geometry.geometry.width.toFloat(), geometry.geometry.height.toFloat()), geometry.geometry.radii[0].toFloat()) ?: dev.aerove.lite.optics.AeroveGlassShine.none(),
+            uniformObserver = receipt)
+        val hazeOffset = 0f
+        setFloatUniform("uHazeOffset", hazeOffset)
+        receipt?.onUniformSet("uHazeOffset", floatArrayOf(hazeOffset))
+        receipt?.complete()
     }
 }
 

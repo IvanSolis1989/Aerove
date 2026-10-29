@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 internal class RenderProbe {
+    var consumerReceipt: GlassConsumerReceiptTestSupport? = null
     lateinit var view: View
     var density = 1f
     var fontScale = 1f
@@ -74,12 +75,16 @@ internal class HardwareCapture(
                 val height = view.height
                 assertTrue("The tested window must be visible and focused: shown=$shown, focused=$focused, attached=$attached, " +
                     "windowVisibility=$windowVisibility, width=$width, height=$height", shown && focused)
+                probe.consumerReceipt?.arm(probe.view)
                 observation.registerAndInvalidate(probe.view, probe.view.context.activity().window)
             }
             assertTrue("No hardware frame was committed", observation.awaitOriginalDeadline())
+            probe.consumerReceipt?.commit(observation)
         }
         return copyCommittedWindow(label, windowImage, configuration)
     }
+
+    fun consumerStage(state: FixtureState) { probe.consumerReceipt?.beginStage(state) }
 
     fun captureMatrix(label: String, windowImage: String, configuration: JSONObject): MatrixCapturedResult {
         rule.waitForIdle()
@@ -216,6 +221,11 @@ internal class HardwareCapture(
             .put("performanceEvidence", false)
         submissionEvidence?.let { evidence.put("matrixSubmission", it).put("diagnosticOnly", it.getBoolean("diagnosticOnly")) }
         evidence.put("pixelCopyOwnerId", frame.copyOwnership.snapshot().id)
+        probe.consumerReceipt?.let { receipt ->
+            val diagnostic = try { receipt.finish(probe.view, frame.copyOwnership.snapshot().id) }
+                catch (failure: Exception) { receipt.unavailable("receipt-exception:${failure.javaClass.simpleName}") }
+            evidence.put("glassConsumerReceipt", diagnostic)
+        }
         val boxes = JSONObject()
         probe.bounds.forEach { (key, rect) -> boxes.put(key, JSONArray(listOf(rect.left, rect.top, rect.right, rect.bottom))) }
         evidence.put("windowCoordinates", boxes)

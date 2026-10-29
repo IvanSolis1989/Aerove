@@ -240,14 +240,14 @@ internal fun LiteSwitch(checked: Boolean, label: String, onCheckedChange: (Boole
             .toggleable(checked, interactionSource = interaction, indication = null, enabled = enabled, role = Role.Switch, onValueChange = onCheckedChange),
         contentAlignment = Alignment.Center,
     ) {
-        CompositionLocalProvider(LocalLiteBackdrop provides switchBackdrop) {
+        CompositionLocalProvider(LocalLiteBackdrop provides switchBackdrop, LocalLiteGlassConsumerRole provides GlassConsumerRole.SwitchTrack) {
             LitePane(Modifier.size(52.dp, 32.dp), corner = LiteCorner.Full, selected = checked, glassStyle = finish, glassTint = trackTint,
                 interactionSource = interaction,
                 solidColor = if (checked) visuals.primary else androidx.compose.ui.graphics.lerp(visuals.surface, visuals.ink, 0.12f)) {
                 androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(32.dp)) {
                     val travel = maxWidth - 32.dp
                     Row(Modifier.offset { IntOffset(((travel * position.value + 4.dp).toPx()).roundToInt(), 4.dp.roundToPx()) }) {
-                        CompositionLocalProvider(LocalLiteBackdrop provides switchBackdrop) {
+                        CompositionLocalProvider(LocalLiteBackdrop provides switchBackdrop, LocalLiteGlassConsumerRole provides GlassConsumerRole.SwitchThumb) {
                             LitePane(Modifier.size(24.dp), corner = LiteCorner.Full, selected = checked, glassStyle = finish, glassTint = thumbTint,
                                 interactionSource = interaction,
                                 solidColor = if (checked) Color.White else visuals.secondaryInk) {

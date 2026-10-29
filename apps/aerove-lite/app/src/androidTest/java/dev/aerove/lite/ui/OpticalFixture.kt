@@ -190,7 +190,10 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
             probe.switchThumb = (if (case.checked) Color.White else visuals.secondaryInk).toArgb()
             probe.ink = ink.toArgb()
         }
-        BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned { probe.bounds["root"] = it.boundsInWindow() }.drawWithContent {
+        BoxWithConstraints(Modifier.fillMaxSize().onGloballyPositioned {
+            probe.bounds["root"] = it.boundsInWindow()
+            probe.consumerReceipt?.rootLayout(view.rootView, it.boundsInWindow(clipBounds = false))
+        }.drawWithContent {
             drawContent()
             state.sceneDrawReceipt?.let { receipt ->
                 receipt.put("drawPasses", receipt.optLong("drawPasses", 0L) + 1L).put("stage", state.stage.name)
@@ -199,9 +202,13 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                     .put("plainInkControl", state.plainInkControl).put("sdkInkReference", state.sdkInkReference != null)
                     .put("inkAlpha", state.inkAlpha).put("method", "OpticalFixture root drawWithContent after drawContent")
             }
+            probe.consumerReceipt?.rootDraw(state, view.rootView)
         }) {
             val paneWidth = minOf(320.dp, maxWidth - 48.dp)
-            Box(Modifier.fillMaxSize().layerBackdrop(source)) {
+            val sourceModifier = if (probe.consumerReceipt == null) Modifier else Modifier.onGloballyPositioned {
+                probe.consumerReceipt?.sourceLayout(it.boundsInWindow(clipBounds = false))
+            }
+            Box(Modifier.fillMaxSize().then(sourceModifier).layerBackdrop(source)) {
                 LiteWallpaper(auroraTime, Modifier.fillMaxSize())
                 Canvas(Modifier.fillMaxSize()) {
                     val base = Color(if (state.revision == 0) 0xFF172432 else 0xFFBDC3CF)
@@ -227,6 +234,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                             ?.put("alpha", 0.60)?.put("blendMode", "SrcOver")?.put("canvasDrawExecuted", true)
                     }
                     if (state.stage == FixtureStage.InkMask) drawRect(Color.Black, Offset(0f, 310.dp.toPx()), Size(size.width, 44.dp.toPx()))
+                    probe.consumerReceipt?.sourceDraw(state, source, size.width, size.height, density)
                 }
             }
             CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source) {

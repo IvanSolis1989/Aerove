@@ -262,7 +262,7 @@ internal fun ComposeContentTestRule.frame(
     capture: HardwareCapture,
     label: String,
 ): CapturedFrame {
-    runOnUiThread { state.value = next }
+    runOnUiThread { capture.consumerStage(next); state.value = next }
     mainClock.advanceTimeBy(400)
     waitForIdle()
     return capture.capture(label, configuration = next.opticalConfiguration())
@@ -279,11 +279,22 @@ internal fun withOpticalFixture(
     compose.mainClock.autoAdvance = false
     val state = mutableStateOf(initial)
     val probe = RenderProbe()
-    compose.replaceAppContent {
-        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) { OpticalFixture(case, state.value, probe) }
+    if (GlassConsumerReceiptTestSupport.requested(case, name)) {
+        compose.runOnUiThread {
+            probe.consumerReceipt = GlassConsumerReceiptTestSupport.create(case, name, compose.activity.window.decorView.rootView)
+            probe.consumerReceipt?.beginStage(initial)
+        }
     }
-    compose.mainClock.advanceTimeBy(400)
-    compose.waitForIdle()
-    assertViewport(probe)
-    HardwareCapture(compose, probe, name).use { test(state, probe, it) }
+    try {
+        compose.replaceAppContent {
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) { OpticalFixture(case, state.value, probe) }
+        }
+        compose.mainClock.advanceTimeBy(400)
+        compose.waitForIdle()
+        assertViewport(probe)
+        HardwareCapture(compose, probe, name).use { test(state, probe, it) }
+    } finally {
+        probe.consumerReceipt?.close()
+        probe.consumerReceipt = null
+    }
 }

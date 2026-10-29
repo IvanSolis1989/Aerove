@@ -14,6 +14,33 @@ class AeroveOpticsPrograms private constructor(val glassSource: String, val inkS
     }
 }
 
+interface AeroveGlassUniformObserver {
+    fun onUniformSet(name: String, values: FloatArray)
+    fun onObserverFailure(error: Exception) {}
+}
+
+private class ObservedGlassUniforms(private val target: RuntimeShader, private val observer: AeroveGlassUniformObserver) : RuntimeShader by target {
+    private fun record(name: String, values: FloatArray) {
+        try { observer.onUniformSet(name, values) }
+        catch (failure: Exception) { try { observer.onObserverFailure(failure) } catch (_: Exception) {} }
+    }
+    override fun setFloatUniform(name: String, value: Float) {
+        target.setFloatUniform(name, value); record(name, floatArrayOf(value))
+    }
+    override fun setFloatUniform(name: String, value1: Float, value2: Float) {
+        target.setFloatUniform(name, value1, value2); record(name, floatArrayOf(value1, value2))
+    }
+    override fun setFloatUniform(name: String, value1: Float, value2: Float, value3: Float) {
+        target.setFloatUniform(name, value1, value2, value3); record(name, floatArrayOf(value1, value2, value3))
+    }
+    override fun setFloatUniform(name: String, value1: Float, value2: Float, value3: Float, value4: Float) {
+        target.setFloatUniform(name, value1, value2, value3, value4); record(name, floatArrayOf(value1, value2, value3, value4))
+    }
+    override fun setFloatUniform(name: String, values: FloatArray) {
+        target.setFloatUniform(name, values); record(name, values.copyOf())
+    }
+}
+
 fun RuntimeShader.configureAeroveGlass(
     geometry: AeroveSuperellipseGeometry,
     style: AeroveGlassStyle,
@@ -22,37 +49,39 @@ fun RuntimeShader.configureAeroveGlass(
     glow: AeroveGlassGlow = AeroveGlassGlow(),
     profile: FloatArray? = null,
     shine: AeroveGlassShine = AeroveGlassShine.none(),
+    uniformObserver: AeroveGlassUniformObserver? = null,
 ) {
     require(geometry.width > 0 && geometry.height > 0)
     require(profile == null || (profile.size == 64 && profile.all { it.isFinite() && it > 0 }))
     require(style.haze == 0f || hazeShader != null) { "Haze requires a separately blurred backdrop shader" }
     val step = 1f / capture.density
     val origin = -capture.paddingPixels * step
-    setFloatUniform("uSize", capture.widthPixels, capture.heightPixels)
-    setFloatUniform("uFrame", origin, origin, step, step)
-    setFloatUniform("uSample", origin, origin, step, step)
-    setFloatUniform("uClamp", 0.5f, 0.5f, capture.widthPixels - 0.5f, capture.heightPixels - 0.5f)
-    setFloatUniform("uTexels", step, capture.capturedBlurSigmaPixels)
-    setFloatUniform("uHazeSample", origin, origin, step, step)
-    setFloatUniform("uHazeClamp", 0.5f, 0.5f, capture.widthPixels - 0.5f, capture.heightPixels - 0.5f)
-    setFloatUniform("uHaze", style.haze)
-    setFloatUniform("uShape", geometry.width.toFloat(), geometry.height.toFloat(), style.bevel, style.blur)
-    setFloatUniform("uCorners", geometry.radii.map { it.toFloat() }.toFloatArray())
-    setFloatUniform("uCurves", geometry.curveUniforms())
-    setFloatUniform("uQuadrants", geometry.quadrantUniforms())
-    setFloatUniform("uOptics", style.refraction, style.saturation, style.brightness)
-    setFloatUniform("uTint", style.tint.red, style.tint.green, style.tint.blue, style.tint.alpha)
-    setFloatUniform("uLight", style.rim, style.rimWidth, style.endShade)
-    setFloatUniform("uGlow", glow.centerX, glow.centerY, glow.strength, style.contrast)
-    setFloatUniform("uGlowSpread", glow.reach, glow.wash)
-    setFloatUniform("uEdge", style.hairline, style.dispersion, style.rimBlur)
-    setFloatUniform("uRim", style.rimTail, style.rimFocus, style.rimAdded, style.hairlineSide ?: style.hairline)
-    setFloatUniform("uOutlined", if (profile == null) 0f else 1f)
-    setFloatUniform("uProfile", profile ?: FloatArray(64))
-    setFloatUniform("uShineTurns", shine.turns)
-    setFloatUniform("uShineLit", shine.lights)
-    setFloatUniform("uShineEnds", shine.ends)
-    setFloatUniform("uShineShares", shine.shares)
+    val uniforms = if (uniformObserver == null) this else ObservedGlassUniforms(this, uniformObserver)
+    uniforms.setFloatUniform("uSize", capture.widthPixels, capture.heightPixels)
+    uniforms.setFloatUniform("uFrame", origin, origin, step, step)
+    uniforms.setFloatUniform("uSample", origin, origin, step, step)
+    uniforms.setFloatUniform("uClamp", 0.5f, 0.5f, capture.widthPixels - 0.5f, capture.heightPixels - 0.5f)
+    uniforms.setFloatUniform("uTexels", step, capture.capturedBlurSigmaPixels)
+    uniforms.setFloatUniform("uHazeSample", origin, origin, step, step)
+    uniforms.setFloatUniform("uHazeClamp", 0.5f, 0.5f, capture.widthPixels - 0.5f, capture.heightPixels - 0.5f)
+    uniforms.setFloatUniform("uHaze", style.haze)
+    uniforms.setFloatUniform("uShape", geometry.width.toFloat(), geometry.height.toFloat(), style.bevel, style.blur)
+    uniforms.setFloatUniform("uCorners", geometry.radii.map { it.toFloat() }.toFloatArray())
+    uniforms.setFloatUniform("uCurves", geometry.curveUniforms())
+    uniforms.setFloatUniform("uQuadrants", geometry.quadrantUniforms())
+    uniforms.setFloatUniform("uOptics", style.refraction, style.saturation, style.brightness)
+    uniforms.setFloatUniform("uTint", style.tint.red, style.tint.green, style.tint.blue, style.tint.alpha)
+    uniforms.setFloatUniform("uLight", style.rim, style.rimWidth, style.endShade)
+    uniforms.setFloatUniform("uGlow", glow.centerX, glow.centerY, glow.strength, style.contrast)
+    uniforms.setFloatUniform("uGlowSpread", glow.reach, glow.wash)
+    uniforms.setFloatUniform("uEdge", style.hairline, style.dispersion, style.rimBlur)
+    uniforms.setFloatUniform("uRim", style.rimTail, style.rimFocus, style.rimAdded, style.hairlineSide ?: style.hairline)
+    uniforms.setFloatUniform("uOutlined", if (profile == null) 0f else 1f)
+    uniforms.setFloatUniform("uProfile", profile ?: FloatArray(64))
+    uniforms.setFloatUniform("uShineTurns", shine.turns)
+    uniforms.setFloatUniform("uShineLit", shine.lights)
+    uniforms.setFloatUniform("uShineEnds", shine.ends)
+    uniforms.setFloatUniform("uShineShares", shine.shares)
     if (hazeShader != null) asAndroidRuntimeShader().setInputShader("hazeContent", hazeShader)
 }
 
