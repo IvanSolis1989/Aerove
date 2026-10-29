@@ -15,6 +15,11 @@ import artifact_evidence as reader
 
 HERE = Path(__file__).resolve().parent
 CONTRACT = json.loads((HERE / 'lite149_api_contract.json').read_text())
+TRACE_OWNER = 'androidx.compose.ui.semantics.SemanticsNode'
+TRACE_METHODS = [dict(owner=TRACE_OWNER, name=name, returns=returns, parameters=[]) for name, returns in (
+    ('getBoundsInRoot', 'androidx.compose.ui.geometry.Rect'), ('getId', 'int'),
+    ('getLayoutInfo', 'androidx.compose.ui.layout.LayoutInfo'))]
+TRACE_BYTES = 24576
 
 
 def digest(path):
@@ -43,18 +48,31 @@ def usage_results(text, methods):
              (method['owner'], method['name'], ','.join(method['parameters'])) in members)) for method in methods]
 
 
-def mapping_targets(text, methods):
+def mapping_targets(text, methods, _trace=None):
     classes, names, owner = {}, {}, None
     groups, pending, unsupported_owners = [], [], set()
     group_metadata = False
+    trace_groups, metadata_ids = [], []
+    trace_truncated = False
 
     def finish_group():
-        nonlocal pending, group_metadata
+        nonlocal pending, group_metadata, metadata_ids, trace_truncated
         if pending:
             groups.append((pending[0]['owner'], pending[0]['alias'], pending[-1]['signature'], group_metadata))
+            if _trace is not None and pending[0]['owner'] == TRACE_OWNER:
+                if len(trace_groups) < 128 and len(pending) <= 32:
+                    trace_groups.append(dict(alias=pending[0]['alias'], interval=pending[0]['interval'],
+                        frames=[row['signature'] for row in pending], outer=pending[-1]['signature'],
+                        sourceLines=[row['sourceLine'] for row in pending],
+                        metadataRejected=group_metadata, metadataIds=metadata_ids[:8],
+                        metadataIdsTruncated=len(metadata_ids) > 8))
+                    trace_truncated = trace_truncated or len(metadata_ids) > 8
+                else:
+                    trace_truncated = True
         pending, group_metadata = [], False
+        metadata_ids = []
 
-    for line in text.splitlines():
+    for source_line, line in enumerate(text.splitlines(), 1):
         match = re.fullmatch(r'([^\s]+) -> ([^\s:]+):', line)
         if match:
             finish_group()
@@ -64,6 +82,9 @@ def mapping_targets(text, methods):
         elif line.lstrip().startswith('#'):
             # Preserve frame adjacency; unknown per-method metadata cannot prove identity.
             group_metadata = group_metadata or bool(pending)
+            if _trace is not None and pending and owner == TRACE_OWNER and len(metadata_ids) < 9:
+                match = re.search(r'"id"\s*:\s*"([A-Za-z0-9._-]{1,80})"', line)
+                metadata_ids.append(match[1] if match else 'UNKNOWN')
         elif line.startswith('    '):
             match = re.fullmatch(r'\s+(?:(\d+):(\d+):)?([^ ]+) ([^ (]+)\(([^)]*)\)(?::(\d+)(?::(\d+))?)? -> ([^ ]+)', line)
             if not match:
@@ -76,6 +97,8 @@ def mapping_targets(text, methods):
                 unsupported_owners.add(owner)
             row = dict(owner=owner, alias=match[8], interval=interval,
                 signature=(owner, match[4], match[3], match[5]))
+            if _trace is not None and owner == TRACE_OWNER:
+                row['sourceLine'] = source_line
             if pending and (interval is None or pending[0]['interval'] != interval or pending[0]['alias'] != row['alias']):
                 finish_group()
             pending.append(row)
@@ -96,13 +119,111 @@ def mapping_targets(text, methods):
         if name.endswith('[]'):
             return '[' + descriptor(name[:-2])
         return primitive[name] if name in primitive else 'L' + classes.get(name, name).replace('.', '/') + ';'
-    result = []
-    for method in methods:
+    def target(method):
         key = (method['owner'], method['name'], method['returns'], ','.join(method['parameters']))
         mapped = sorted(names.get(key, set()))
-        result.append(dict(method, mappedOwner=classes.get(method['owner']), mappedNames=mapped,
+        return dict(method, mappedOwner=classes.get(method['owner']), mappedNames=mapped,
             mappingStatus='CONFIRMED_OUTER_METHOD' if mapped else 'MISSING_OR_AMBIGUOUS_OUTER_MAPPING',
-            descriptor='(' + ''.join(descriptor(p) for p in method['parameters']) + ')' + descriptor(method['returns'])))
+            descriptor='(' + ''.join(descriptor(p) for p in method['parameters']) + ')' + descriptor(method['returns']))
+    if _trace is not None:
+        fixed_targets = [target(method) for method in TRACE_METHODS]
+        touched = {group['alias'] for group in trace_groups if any(
+            frame[1] in {m['name'] for m in TRACE_METHODS} or
+            frame[1] in {TRACE_OWNER + '.' + m['name'] for m in TRACE_METHODS} for frame in group['frames'])}
+        selected = [group for group in trace_groups if group['alias'] in touched]
+        diagnoses = []
+        for method, mapped in zip(TRACE_METHODS, fixed_targets):
+            key = (TRACE_OWNER, method['name'], method['returns'], '')
+            qualified = (TRACE_OWNER, TRACE_OWNER + '.' + method['name'], method['returns'], '')
+            matching = [group for group in selected if key in group['frames'] or qualified in group['frames']]
+            reasons = set()
+            if not matching:
+                same_name = any(frame[1] in (method['name'], TRACE_OWNER + '.' + method['name'])
+                    for group in selected for frame in group['frames'])
+                reasons.add('GETTER_SIGNATURE_MISMATCH' if same_name else 'SIGNATURE_NOT_PARSED_IN_OWNER')
+            for group in matching:
+                signatures, uncertain = residuals[(TRACE_OWNER, group['alias'])]
+                if key != group['outer']:
+                    reasons.add('NON_OUTER_FRAME')
+                if len(signatures) != 1:
+                    reasons.add('ALIAS_MULTIPLE_OUTER_SIGNATURES')
+                if any(g['metadataRejected'] for g in selected if g['alias'] == group['alias']):
+                    reasons.add('METADATA_REJECTED')
+                if any('.' in sig[1] for sig in signatures):
+                    reasons.add('QUALIFIED_OUTER_REJECTED')
+                if uncertain and not reasons:
+                    reasons.add('UNKNOWN_UNCERTAINTY')
+            if TRACE_OWNER in unsupported_owners:
+                reasons.add('UNSUPPORTED_OWNER_METHOD_SYNTAX')
+            if trace_truncated:
+                reasons.add('TRACE_TRUNCATED_UNKNOWN')
+            diagnoses.append(dict(name=method['name'], reasons=sorted(reasons), mappedNames=mapped['mappedNames'],
+                observation='UNKNOWN' if not mapped['mappedNames'] or trace_truncated else 'CONFIRMED_MAPPING_ONLY'))
+        _trace.update(owner=TRACE_OWNER, mappedOwner=classes.get(TRACE_OWNER), targets=fixed_targets,
+            groups=selected, methods=diagnoses, truncated=trace_truncated,
+            unsupportedOwner=TRACE_OWNER in unsupported_owners)
+    return [target(method) for method in methods]
+
+
+def diagnostic_projection(trace):
+    def frame_identity(frame):
+        for method in TRACE_METHODS:
+            if frame in ((TRACE_OWNER, method['name'], method['returns'], ''),
+                         (TRACE_OWNER, TRACE_OWNER + '.' + method['name'], method['returns'], '')):
+                return dict(method, qualified=frame[1] != method['name'])
+        return dict(redacted=True, observation='UNKNOWN')
+    aliases = list(dict.fromkeys(group['alias'] for group in trace['groups']))
+    groups = [dict(aliasGroup=aliases.index(group['alias']) + 1, interval=group['interval'],
+        frameCount=len(group['frames']), frames=[dict(frame_identity(frame), isOuter=index == len(group['frames']) - 1)
+            for index, frame in enumerate(group['frames'])],
+        outer=frame_identity(group['outer']), sourceLines=group['sourceLines'],
+        metadataRejected=group['metadataRejected'], metadataIdCount=len(group['metadataIds']),
+        metadataIdsRedacted=True, metadataIdsTruncated=group['metadataIdsTruncated']) for group in trace['groups']]
+    methods = [dict(name=row['name'], reasons=row['reasons'], mappedNameCount=len(row['mappedNames']),
+        observation=row['observation']) for row in trace['methods']]
+    return dict(owner=TRACE_OWNER, mappedOwnerPresent=trace['mappedOwner'] is not None, groups=groups,
+        aliasGroupCount=len(aliases), methods=methods, truncated=trace['truncated'],
+        unsupportedOwner=trace['unsupportedOwner'])
+
+
+def declaration_projection(headers, targets):
+    reviewed = {method['name'] + {'int': '()I', 'androidx.compose.ui.geometry.Rect':
+        '()Landroidx/compose/ui/geometry/Rect;', 'androidx.compose.ui.layout.LayoutInfo':
+        '()Landroidx/compose/ui/layout/LayoutInfo;'}[method['returns']] for method in TRACE_METHODS}
+    mapped = {name + target['descriptor'] for target in targets for name in target['mappedNames']}
+    flags = {'public', 'private', 'protected', 'static', 'final', 'synchronized', 'native', 'abstract',
+        'strictfp', 'declared-synchronized'}
+    result = []
+    for header in headers:
+        parts = header.split()
+        if len(parts) >= 2 and parts[0] == '.method' and parts[-1] in reviewed & mapped and set(parts[1:-1]) <= flags:
+            result.append(header)
+        else:
+            result.append(dict(redacted=True, observation='UNKNOWN'))
+    return result
+
+
+def mapping_diagnostic(trace, smali):
+    positives = definition_results(smali, trace['targets'][1:])
+    proven = all(len(row['definitionCandidates']) == 1 for row in positives)
+    result = dict(diagnosticOnly=True, accepted=False, compileAuthorized=False, observation='UNKNOWN',
+        mapping=diagnostic_projection(trace), positiveControls=[dict(name=row['name'],
+            mappedNameCount=len(row['mappedNames']), definitionCandidateCount=len(row['definitionCandidates'])) for row in positives],
+        declarationSource='WITHHELD_NO_POSITIVE_IDENTITY',
+        declarationHeaders=[], truncated=trace['truncated'])
+    if proven and trace['mappedOwner']:
+        expected = 'L' + trace['mappedOwner'].replace('.', '/') + ';'
+        classes = re.findall(r'^\.class\s+[^\n]*?\s(L[^\s;]+;)\s*$', smali, re.MULTILINE)
+        if classes == [expected]:
+            headers = re.findall(r'^\s*(\.method\s+[^\r\n]+)$', smali, re.MULTILINE)
+            result.update(declarationSource='TWO_POSITIVE_MAPPED_DEFINITIONS_AND_EXACT_CLASS',
+                smaliSha256=hashlib.sha256(smali.encode()).hexdigest(), declarationCount=len(headers),
+                declarationHeaders=declaration_projection([head for head in headers[:128] if len(head.encode()) <= 512], trace['targets']),
+                declarationHeadersRedacted=True,
+                truncated=result['truncated'] or len(headers) > 128 or any(len(h.encode()) > 512 for h in headers))
+    if len(json.dumps(result).encode()) > TRACE_BYTES or reader.sensitive_text(json.dumps(result)):
+        return dict(diagnosticOnly=True, accepted=False, compileAuthorized=False, observation='UNKNOWN',
+            truncated=True, reason='TRACE_SIZE_OR_SAFETY_LIMIT', declarationHeaders=[])
     return result
 
 
@@ -212,16 +333,24 @@ def audit_archive(archive, private, deadline):
     analyzer, signer, identity = tool_identity()
     signature = bounded_command([str(signer), 'verify', '--verbose', '--print-certs', str(paths[needed[0]])], 20, deadline, private)
     verify_signature(signature)
-    targets = mapping_targets(paths[needed[1]].read_text(), CONTRACT['methods'])
+    trace = {}
+    targets = mapping_targets(paths[needed[1]].read_text(), CONTRACT['methods'], trace)
     results = []
-    for owner in sorted({row['mappedOwner'] for row in targets if row['mappedOwner']}):
+    diagnostic_owner = trace['mappedOwner'] if all(row['mappedNames'] for row in trace['targets'][1:]) else None
+    owners = {row['mappedOwner'] for row in targets if row['mappedOwner']}
+    if diagnostic_owner:
+        owners.add(diagnostic_owner)
+    diagnostic_smali = ''
+    for owner in sorted(owners):
         smali = bounded_command([str(analyzer), 'dex', 'code', '--class', owner, str(paths[needed[0]])], 20, deadline, private)
+        if owner == diagnostic_owner:
+            diagnostic_smali = smali
         results += definition_results(smali, [row for row in targets if row['mappedOwner'] == owner])
     results += [dict(row, definitionCandidates=[]) for row in targets if not row['mappedOwner']]
     found = len(results) == len(CONTRACT['methods']) and all(len(row['definitionCandidates']) == 1 for row in results)
     result.update(status='REQUIRED_DEFINITIONS_FOUND_COMPILE_STILL_REQUIRED' if found else 'REQUIRED_DEFINITION_MISSING_OR_REWRITTEN',
         definitionsChecked=True, allRequiredDefinitionsFound=found, methods=results,
-        sdkToolIdentity=identity, signatureVerifiedAtRuntime=True,
+        sdkToolIdentity=identity, signatureVerifiedAtRuntime=True, mappingTrace=mapping_diagnostic(trace, diagnostic_smali),
         boundary='DEX declarations only; not test compilation, R8 mapping consumption, classloader linkage or Android execution')
     return result
 
@@ -247,7 +376,7 @@ def main():
             reader.gh(f"repos/{reader.REPO}/actions/artifacts/{fixed['artifactId']}/zip", private / 'original.zip', fixed['expectedZIPbytes'], min(160, deadline-time.monotonic()), receipt['requests'])
             result = audit_archive(private / 'original.zip', private, deadline)
         payload = (json.dumps(result, indent=2) + '\n').encode()
-        reader.require(len(payload) <= 65536 and not reader.sensitive_text(payload.decode()), 'Whitelist audit result output rejected')
+        reader.require(len(payload) <= 61440 and not reader.sensitive_text(payload.decode()), 'Whitelist audit result output rejected')
         (out / 'API-WHITELIST.json').write_bytes(payload)
         receipt.update(completed=True, resultSha256=hashlib.sha256(payload).hexdigest(),
             outputScope='Only fixed whitelist signatures and status; private APK/mapping/smali never uploaded')
@@ -255,7 +384,10 @@ def main():
     except Exception as error:
         receipt['failure'] = dict(type=type(error).__name__, message=str(error) if type(error) is ValueError else 'Audit failed; raw exception withheld')
     finally:
-        (out / 'RECEIPT.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        receipt_payload = (json.dumps(receipt, indent=2) + '\n').encode()
+        if len(receipt_payload) > 4096 or reader.sensitive_text(receipt_payload.decode()):
+            receipt_payload = b'{"completed":false,"accepted":false,"failure":"RECEIPT_SIZE_OR_SAFETY_LIMIT"}\n'
+        (out / 'RECEIPT.json').write_bytes(receipt_payload)
     return code
 
 

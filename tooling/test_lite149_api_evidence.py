@@ -141,5 +141,132 @@ class Lite149ApiEvidenceTest(unittest.TestCase):
         self.assertEqual(8*1024*1024,audit.reader.MAX_OUTPUT)
 
 
+class FixedMappingTraceTest(unittest.TestCase):
+    def trace(self, rows):
+        trace = {}
+        mapping = audit.TRACE_OWNER + ' -> a.b:\n' + rows
+        targets = audit.mapping_targets(mapping, audit.TRACE_METHODS, trace)
+        self.assertEqual(targets, audit.mapping_targets(mapping, audit.TRACE_METHODS))
+        return trace
+
+    def positives(self):
+        return ('    int getId() -> id\n'
+                '    androidx.compose.ui.layout.LayoutInfo getLayoutInfo() -> info\n')
+
+    def smali(self, extra=''):
+        return ('.class public La/b;\n.method public id()I\n    const-string v0, "PRIVATE_BODY"\n.end method\n'
+                '.method public info()Landroidx/compose/ui/layout/LayoutInfo;\n.end method\n' + extra)
+
+    def test_positive_identity_allows_only_headers_and_does_not_authorize(self):
+        trace = self.trace(self.positives() + '    androidx.compose.ui.geometry.Rect getBoundsInRoot() -> bounds\n')
+        result = audit.mapping_diagnostic(trace, self.smali('.method private bounds()Landroidx/compose/ui/geometry/Rect;\n.end method\n'))
+        self.assertEqual('TWO_POSITIVE_MAPPED_DEFINITIONS_AND_EXACT_CLASS', result['declarationSource'])
+        self.assertEqual(3, len(result['declarationHeaders']))
+        self.assertNotIn('PRIVATE_BODY', json.dumps(result))
+        self.assertFalse(result['accepted']); self.assertFalse(result['compileAuthorized'])
+        self.assertEqual('UNKNOWN', result['observation'])
+        self.assertEqual([], trace['methods'][0]['reasons'])
+
+    def test_missing_and_signature_mismatch_are_distinct(self):
+        trace = self.trace(self.positives())
+        self.assertEqual(['SIGNATURE_NOT_PARSED_IN_OWNER'], trace['methods'][0]['reasons'])
+        trace = self.trace(self.positives() + '    int getBoundsInRoot() -> bounds\n')
+        self.assertEqual(['GETTER_SIGNATURE_MISMATCH'], trace['methods'][0]['reasons'])
+
+    def test_inline_frame_never_becomes_outer_identity(self):
+        trace = self.trace(self.positives() + '    1:1:androidx.compose.ui.geometry.Rect getBoundsInRoot():2 -> bounds\n'
+            '    1:1:int caller():4 -> bounds\n')
+        self.assertEqual(['NON_OUTER_FRAME'], trace['methods'][0]['reasons'])
+        self.assertEqual([], trace['targets'][0]['mappedNames'])
+
+    def test_alias_closure_includes_other_intervals_and_metadata(self):
+        trace = self.trace(self.positives() + '    1:1:androidx.compose.ui.geometry.Rect getBoundsInRoot():2 -> bounds\n'
+            '    2:2:int caller():4 -> bounds\n    # {"id":"unknown.metadata","secret":"PRIVATE_METADATA"}\n')
+        self.assertEqual(['ALIAS_MULTIPLE_OUTER_SIGNATURES', 'METADATA_REJECTED'], trace['methods'][0]['reasons'])
+        self.assertEqual(2, sum(group['alias'] == 'bounds' for group in trace['groups']))
+        self.assertNotIn('PRIVATE_METADATA', json.dumps(trace))
+        self.assertIn('unknown.metadata', json.dumps(trace))
+
+    def test_unknown_metadata_and_unsupported_syntax_fail_closed(self):
+        for suffix, reason in (('    # arbitrary private metadata\n', 'METADATA_REJECTED'),
+                               ('    unexpected method mapping() -> z\n', 'UNSUPPORTED_OWNER_METHOD_SYNTAX')):
+            with self.subTest(reason=reason):
+                trace = self.trace(self.positives() + '    androidx.compose.ui.geometry.Rect getBoundsInRoot() -> bounds\n' + suffix)
+                self.assertIn(reason, trace['methods'][0]['reasons'])
+                self.assertEqual([], trace['targets'][0]['mappedNames'])
+
+    def test_no_header_output_without_both_positive_definitions_and_class(self):
+        trace = self.trace(self.positives())
+        for smali in (self.smali().replace('id()I', 'getId()I'), self.smali().replace('La/b;', 'La/c;'),
+                      self.smali().replace('info()', 'getLayoutInfo()')):
+            with self.subTest(smali=smali):
+                result = audit.mapping_diagnostic(trace, smali)
+                self.assertEqual([], result['declarationHeaders'])
+                self.assertEqual('WITHHELD_NO_POSITIVE_IDENTITY', result['declarationSource'])
+
+    def test_count_length_group_and_byte_limits_explicitly_truncate(self):
+        trace = self.trace(self.positives())
+        result = audit.mapping_diagnostic(trace, self.smali('.method private ' + 'x' * 513 + '()V\n'
+            + '.method private extra()V\n' * 130))
+        self.assertTrue(result['truncated'])
+        self.assertLessEqual(len(result['declarationHeaders']), 128)
+        self.assertLessEqual(len(json.dumps(result).encode()), audit.TRACE_BYTES)
+        trace = self.trace(self.positives() + '    int unrelated() -> u\n' * 130)
+        self.assertTrue(trace['truncated'])
+        self.assertIn('TRACE_TRUNCATED_UNKNOWN', trace['methods'][0]['reasons'])
+        with mock.patch.object(audit, 'TRACE_BYTES', 200):
+            result = audit.mapping_diagnostic(trace, self.smali())
+        self.assertEqual('TRACE_SIZE_OR_SAFETY_LIMIT', result['reason'])
+        self.assertEqual('UNKNOWN', result['observation'])
+
+    def test_combined_artifact_limit_reserves_bounded_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            def gh(route, destination, *args):
+                Path(destination).write_text('{}')
+            env = dict(RUNNER_TEMP=directory, GITHUB_REPOSITORY=audit.reader.REPO,
+                GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF=audit.reader.BRANCH)
+            with mock.patch.dict(audit.os.environ, env), mock.patch.object(audit, 'request', return_value=audit.CONTRACT['request']), \
+                 mock.patch.object(audit.reader, 'gh', side_effect=gh), mock.patch.object(audit.reader, 'validate_api'), \
+                 mock.patch.object(audit, 'audit_archive', return_value=dict(large='x' * 61440)):
+                self.assertEqual(1, audit.main())
+            output = Path(directory) / 'artifact-evidence-out'
+            self.assertFalse((output / 'API-WHITELIST.json').exists())
+            self.assertLessEqual(sum(path.stat().st_size for path in output.iterdir()), 65536)
+            self.assertFalse(json.loads((output / 'RECEIPT.json').read_text())['completed'])
+
+    def test_private_alias_closure_and_metadata_never_enter_output(self):
+        trace = self.trace('    1:1:androidx.compose.ui.geometry.Rect getBoundsInRoot():2 -> privateAlias\n'
+            '    1:1:com.private.Customer readCustomer(com.private.Customer[]):3 -> privateAlias\n'
+            '    # {"id":"com.private.Customer.metadata"}\n')
+        result = audit.mapping_diagnostic(trace, '')
+        raw = json.dumps(result)
+        for private in ('com.private', 'readCustomer', 'privateAlias'):
+            self.assertNotIn(private, raw)
+        group = result['mapping']['groups'][0]
+        self.assertEqual(2, group['frameCount'])
+        self.assertTrue(group['frames'][-1]['isOuter'])
+        self.assertTrue(group['outer']['redacted'])
+        self.assertEqual(1, group['metadataIdCount'])
+        self.assertIn('NON_OUTER_FRAME', result['mapping']['methods'][0]['reasons'])
+        self.assertEqual([], trace['targets'][0]['mappedNames'])
+
+    def test_unreviewed_headers_and_nested_private_descriptors_are_redacted(self):
+        trace = self.trace(self.positives() + '    androidx.compose.ui.geometry.Rect getBoundsInRoot() -> com.private.Customer\n')
+        smali = self.smali('.method public readCustomer([[Lcom/private/Customer;)Lcom/private/Customer$Nested;\n'
+            '.end method\n.method public synthetic getId()I\n.end method\n')
+        result = audit.mapping_diagnostic(trace, smali)
+        raw = json.dumps(result)
+        for private in ('com.private', 'com/private', 'readCustomer', 'Customer', 'synthetic'):
+            self.assertNotIn(private, raw)
+        self.assertTrue(all(isinstance(header, dict) and header['redacted'] for header in result['declarationHeaders']))
+        self.assertEqual('TWO_POSITIVE_MAPPED_DEFINITIONS_AND_EXACT_CLASS', result['declarationSource'])
+        self.assertFalse(result['compileAuthorized'])
+        preserved = self.trace('    int getId() -> getId\n'
+            '    androidx.compose.ui.layout.LayoutInfo getLayoutInfo() -> getLayoutInfo\n')
+        safe_smali = '.class public La/b;\n.method public getId()I\n.end method\n' \
+            '.method public getLayoutInfo()Landroidx/compose/ui/layout/LayoutInfo;\n.end method\n'
+        self.assertEqual(2, sum(isinstance(header, str) for header in audit.mapping_diagnostic(preserved, safe_smali)['declarationHeaders']))
+
+
 if __name__ == '__main__':
     unittest.main()
