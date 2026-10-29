@@ -16,7 +16,7 @@ import urllib.request
 
 from prepare_smart_config_meow_current_fixture import COMMIT, SCRIPT, SCRIPT_SHA, prepare
 
-MANIFEST_SHA = "5a8081f376143e23a8eab6e60bdb4cffd6a663ce67134eddbd27d66e6b1d018f"
+MANIFEST_SHA = "a0fcb5d55331bfb9621d6fdd06b19ea9a564c483c718206d2f0844d94953a1e6"
 PINNED_GEO = {
     "mmdb": dict(file="Country.mmdb", repository="Loyalsoldier/geoip",
         commit="7ae41d7f3d4e7acc37acd1b02e554b7bb85f3a8d",
@@ -33,7 +33,7 @@ ASN = dict(file="ASN.mmdb", bytes=10789175,
            gitBlobSha1="c654595f1ba22d31396dbd8f7ce731ae0b6a298c",
            sha256="c0507cfb091f42ac525f4eb8a0051a7897f5fac72e852799e01096583566033b")
 ASN_PATH = "apps/aerove/assets/data/ASN.mmdb"
-SMART_TREE = "bb822a54a5e71348114cf8e700e0fb72e8204a1f"
+SMART_TREE = "7aea89a7fb99f3fb84f6e7d52688b7dfca4676e5"
 
 
 def sha(data):
@@ -148,7 +148,7 @@ def verify_receipt(path, source, tree):
     receipt = json.loads(path.read_text(encoding="utf-8"))
     expected = dict(schema=1, appSourceRevision=source, appSourceTree=tree,
                     smartCommit=COMMIT, smartTree=SMART_TREE,
-                    fixtureManifestSha256=MANIFEST_SHA, fixtureFiles=158, fixtureDataBytes=27364030)
+                    fixtureManifestSha256=MANIFEST_SHA, fixtureFiles=158, fixtureDataBytes=27363912)
     if any(receipt.get(key) != value for key, value in expected.items()):
         raise ValueError("Fixture receipt differs from actual app/source identity")
     if len(receipt.get("providers", [])) != 153 or receipt["script"]["sha256"] != SCRIPT_SHA:

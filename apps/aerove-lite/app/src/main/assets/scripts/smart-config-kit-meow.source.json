@@ -1,17 +1,17 @@
 {
   "repository": "IvanSolis1989/Smart-Config-Kit",
-  "commit": "3971964b4089b38c6a1233537e1cf2e44bf2be4d",
+  "commit": "c18c314d94206eb6724d235ca0d590c3e14e9121",
   "requestedRef": "main",
   "path": "Meow内核系/Aerove Lite/AeroveLite(meow).js",
-  "blobSha": "cfa9c270cc451f1aa0e71efbeb040be810e20c6c",
-  "bytes": 116527,
-  "sha256": "33f727336ec761744e3f38c583da1d32eb7dcbdf54fe683a3503d6a6e601e93e",
-  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/3971964b4089b38c6a1233537e1cf2e44bf2be4d/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
-  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/3971964b4089b38c6a1233537e1cf2e44bf2be4d/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
+  "blobSha": "c995576a11e06be1ed6ae386c34e17b886f96484",
+  "bytes": 116534,
+  "sha256": "96b798d1d01129c0d8552a4a7a39b5108668d9007c6af996cb58b82d0d429586",
+  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/c18c314d94206eb6724d235ca0d590c3e14e9121/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
+  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/c18c314d94206eb6724d235ca0d590c3e14e9121/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
   "updateUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
   "versionHeader": [
     "// AEROVE Lite / meow-rs 分流覆写候选（共享 Meow 分流实现）",
-    "// 版本：v6.0.21-meow.6 | Build：2026-10-28",
+    "// 版本：v6.0.21-meow.7 | Build：2026-10-29",
     "// 架构：最多 22 个 url-test 区域组 + 33 业务组；融合 MRS / residual YAML",
     "// 规则源：rulesets/source/routing-graph.js v6.0.21",
     "// 生成：node tools/generate-meow.js；运行时输入：Mihomo内核系/FlClash/FlClash(mihomo).js",
@@ -24,7 +24,7 @@
     "// 客户端联调和真实连接验收状态见支持队列。",
     ""
   ],
-  "readmeSha256": "4943bd37395c5bd854c4e2feaf9ce6cae36c993cedcf837aae25e2ec1d727c3d",
+  "readmeSha256": "886f312178aea697990c1a7d1a9076afa4a7ded154a896624cdc1870c15a8344",
   "licenseEvidence": {
     "rootNames": [
       ".github",
@@ -47,13 +47,23 @@
     "independentRootLicenseFound": false,
     "readmeLines": [
       {
-        "line": 91,
+        "line": 94,
         "text": "<sub>本项目用于个人技术研究与学习，不提供节点、订阅或代理服务。采用 MIT License；第三方规则与数据遵循各自许可证。[使用边界](docs/guide/acknowledgements.md#usage)</sub>"
       }
     ],
     "originalLicenseFetch": "Fresh fixed-commit root inventory; no tracked independent root license text"
   },
-  "fetchedBy": "Read-only fixed Git commit; bytes independently match verified remote snapshot",
+  "fetchedBy": "Fixed-commit HTTPS download; bytes independently match local Git object",
   "scriptExecuted": true,
-  "scriptExecutionRuntime": "Offline Node vm main(config); Android QuickJS/JNI pending CI"
+  "scriptExecutionRuntime": "Offline Node vm main(config); Android QuickJS/JNI pending CI",
+  "sourceManifests": {
+    "adapter": {
+      "path": "Meow内核系/adapter-manifest.json",
+      "sha256": "2cdef32271601fec6c63b5cd5387a169f983757a2aaa72bcc20d24f543fa7695"
+    },
+    "ruleAssets": {
+      "path": "Meow内核系/Aerove Lite/rule-assets/manifest.json",
+      "sha256": "6b1373486ffc79e2f7d5294ad3545aaf79b416cba4a3746fb98b034642543c0a"
+    }
+  }
 }

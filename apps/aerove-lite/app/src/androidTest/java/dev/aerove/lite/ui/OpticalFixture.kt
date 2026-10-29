@@ -234,7 +234,7 @@ internal fun OpticalFixture(case: RenderCase, state: FixtureState, probe: Render
                             ?.put("alpha", 0.60)?.put("blendMode", "SrcOver")?.put("canvasDrawExecuted", true)
                     }
                     if (state.stage == FixtureStage.InkMask) drawRect(Color.Black, Offset(0f, 310.dp.toPx()), Size(size.width, 44.dp.toPx()))
-                    probe.consumerReceipt?.sourceDraw(state, source, size.width, size.height, density)
+                    probe.consumerReceipt?.sourceDraw(state, source, size.width, size.height, this.density)
                 }
             }
             CompositionLocalProvider(LocalLiteBackdrop provides source, LocalLiteInkBackdrop provides source) {

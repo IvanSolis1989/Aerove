@@ -519,9 +519,9 @@ def verify_identity(badging, signature, product, channel):
 
 BUNDLED_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_SCRIPT_FILES = {
-    "smart-config-kit-meow.js": (116527, "33f727336ec761744e3f38c583da1d32eb7dcbdf54fe683a3503d6a6e601e93e"),
-    "smart-config-kit-meow.source.json": (3143, "4caa23881f647915ab7dad3d05ca510d75cfbffefaccc1881cdc3f1f56f239d0"),
-    "smart-config-kit-meow.upstream-README.md": (6229, "4943bd37395c5bd854c4e2feaf9ce6cae36c993cedcf837aae25e2ec1d727c3d"),
+    "smart-config-kit-meow.js": (116534, "96b798d1d01129c0d8552a4a7a39b5108668d9007c6af996cb58b82d0d429586"),
+    "smart-config-kit-meow.source.json": (3502, "d422fd4ef19018aceb46e9cab518b0ab83183b766021a0603eef6297df1b7ce4"),
+    "smart-config-kit-meow.upstream-README.md": (6493, "886f312178aea697990c1a7d1a9076afa4a7ded154a896624cdc1870c15a8344"),
 }
 
 
@@ -531,15 +531,15 @@ def validate_bundled_script(archive, source_root=None):
     source = root / "app/src/main"
     constants = (source / "java/dev/aerove/lite/overrides/BundledMeowScript.kt").read_text(encoding="utf-8")
     expected_constants = {
-        "ASSET": "scripts/smart-config-kit-meow.js", "VERSION": "v6.0.21-meow.6",
-        "COMMIT": "3971964b4089b38c6a1233537e1cf2e44bf2be4d",
+        "ASSET": "scripts/smart-config-kit-meow.js", "VERSION": "v6.0.21-meow.7",
+        "COMMIT": "c18c314d94206eb6724d235ca0d590c3e14e9121",
         "SHA256": BUNDLED_SCRIPT_FILES["smart-config-kit-meow.js"][1],
         "UPDATE_URL": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
     }
     for key, value in expected_constants.items():
         if re.findall(r'const val ' + key + r' = "([^"\n]+)"', constants) != [value]:
             raise ValueError("Bundled script Kotlin/source constant mismatch: " + key)
-    if re.findall(r"const val BYTES = ([0-9]+)", constants) != ["116527"]:
+    if re.findall(r"const val BYTES = ([0-9]+)", constants) != ["116534"]:
         raise ValueError("Bundled script Kotlin byte count mismatch")
     return _validate_bundled_script_assets(archive, BUNDLED_SCRIPT_FILES, expected_constants, source)
 

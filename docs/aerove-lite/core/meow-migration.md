@@ -34,6 +34,8 @@
 
 标准版对照为 `common/xclash_defaults.dart` 的一次初始化，Lite 没有新增独有菜单。首次及旧安装保留已有脚本、编辑与配置选择；用户删除后不自动回填。接近既有容量上限的合法旧库暂缓加入，仍可读取、编辑和删除；释放空间或原子恢复后重试，不扩大容量上限，也不把暂缓标成初始化成功。
 
+当前内置 Smart-Config-Kit 固定 `c18c314d94206eb6724d235ca0d590c3e14e9121` / `v6.0.21-meow.7`，保留跟随 main 的更新地址；本次重新执行离线 Node `main(config)` 并核对同批官方投影，153 个规则资源及 Geo 等 158 个文件已保存读回，规则资源与 `.6` 输入逐字节相同。固定脚本、README、来源 manifest、完整性常量及 Android fixture 输入一同更新；这些证据不代表真实 Android QuickJS/JNI、Meow compiler 或新 APK 已通过。
+
 专版接线已有最小 SDK36 闭包、16 项原 JVM 及 Node 执行证据；容量修正新增 3 项实际 JVM 回归。原联调样本与内置脚本同字节，仍须分开核对生产接线。完整应用编译、新 APK asset 读回、真实 Android QuickJS 到 Meow 流程及整体首发验收仍待完成，不能以这些局部检查代替。
 
 切换前的功能与并行 CI 已保存在 `932d460f18fcb0df7fff83d399417e4de69e09a4`，树
