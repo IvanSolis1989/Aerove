@@ -24,6 +24,7 @@ class CoreAction extends _$CoreAction {
   }
 
   Future<void> startCore() async {
+    ref.read(setupActionProvider.notifier)._finishLanEnable(false);
     ref.read(coreStatusProvider.notifier).value = CoreStatus.connecting;
     try {
       final result = await startLifecycle();
@@ -98,6 +99,9 @@ class CoreAction extends _$CoreAction {
 
   Future<bool> restartCore() {
     _requestedRestartRevision++;
+    ref
+        .read(setupActionProvider.notifier)
+        ._onCoreRestartRequested(this, _requestedRestartRevision);
     final activeOperation = _restartOperation;
     if (activeOperation != null) {
       return activeOperation;

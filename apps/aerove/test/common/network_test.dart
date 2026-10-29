@@ -72,6 +72,24 @@ void main() {
   });
 
   group('getLocalIpAddress', () {
+    for (final name in [
+      '以太网',
+      '이더넷',
+      'Réseau local',
+      'Office wired',
+      'Fortune',
+    ]) {
+      test(
+        'keeps a valid localized or renamed wired interface: $name',
+        () async {
+          listing([
+            _FakeInterface(name, [_v4('192.168.10.23')]),
+          ]);
+          expect(await getLocalIpAddress(), '192.168.10.23');
+        },
+      );
+    }
+
     test('prefers a wireless interface over a wired one', () async {
       listing([
         _FakeInterface('utun0', [_v4('10.9.0.1')]),
@@ -85,8 +103,8 @@ void main() {
       'prefers an IPv4-carrying interface when neither is wireless',
       () async {
         listing([
-          _FakeInterface('utun0', [_v6('fe80::1')]),
-          _FakeInterface('utun1', [_v4('10.9.0.1')]),
+          _FakeInterface('en1', [_v6('2001:db8::1')]),
+          _FakeInterface('eth1', [_v4('10.9.0.1')]),
         ]);
 
         expect(await getLocalIpAddress(), '10.9.0.1');
@@ -104,7 +122,7 @@ void main() {
     test('skips an interface that carries no address at all', () async {
       listing([
         _FakeInterface('wlan0', const []),
-        _FakeInterface('utun0', [_v4('10.9.0.1')]),
+        _FakeInterface('eth1', [_v4('10.9.0.1')]),
       ]);
 
       expect(await getLocalIpAddress(), '10.9.0.1');
@@ -114,6 +132,43 @@ void main() {
       listing([]);
 
       expect(await getLocalIpAddress(), '');
+    });
+
+    test(
+      'excludes the configured TUN even when its name resembles LAN',
+      () async {
+        listing([
+          _FakeInterface('eth0', [_v4('10.1.0.1')]),
+          _FakeInterface('wlan0', [_v4('192.168.1.20')]),
+        ]);
+        expect(
+          await getLocalIpAddress(excludedInterface: 'eth0'),
+          '192.168.1.20',
+        );
+      },
+    );
+
+    test('never returns a tunnel or an unusable LAN address', () async {
+      listing([
+        _FakeInterface('tun0', [_v4('198.18.0.1')]),
+        _FakeInterface('utun2', [_v4('10.9.0.1')]),
+        _FakeInterface('Ethernet VPN', [_v4('10.9.0.2')]),
+        _FakeInterface('wlan0', [
+          _v4('127.0.0.1'),
+          _v4('0.0.0.0'),
+          _v4('169.254.1.2'),
+          _v6('::1'),
+          _v6('fe80::1'),
+        ]),
+      ]);
+      expect(await getLocalIpAddress(), '');
+    });
+
+    test('returns usable IPv6 when the physical LAN has no IPv4', () async {
+      listing([
+        _FakeInterface('wlan0', [_v6('fd00::23')]),
+      ]);
+      expect(await getLocalIpAddress(), 'fd00::23');
     });
 
     test('never asks for the loopback interface', () async {

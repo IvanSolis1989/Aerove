@@ -7,6 +7,7 @@ class SystemAction extends _$SystemAction {
   SystemExitCoordinator? _exitCoordinator;
   bool _localIpStale = false;
   bool _localIpUpdating = false;
+  Future<void>? _localIpTask;
   int _localIpGeneration = 0;
 
   @override
@@ -175,9 +176,19 @@ class SystemAction extends _$SystemAction {
   }
 
   @protected
-  Future<String?> readLocalIpAddress() => getLocalIpAddress();
+  Future<String?> readLocalIpAddress() => getLocalIpAddress(
+    excludedInterface: ref.read(patchClashConfigProvider).tun.device,
+  );
 
-  Future<void> _flushLocalIp() async {
+  Future<void> _flushLocalIp() =>
+      _localIpTask ??= _readLocalIp().whenComplete(() async {
+        _localIpTask = null;
+        if (_localIpStale && ref.mounted && ref.read(appVisibleProvider)) {
+          await _flushLocalIp();
+        }
+      });
+
+  Future<void> _readLocalIp() async {
     if (_localIpUpdating || !ref.mounted || !ref.read(appVisibleProvider)) {
       return;
     }
@@ -205,9 +216,6 @@ class SystemAction extends _$SystemAction {
       }
     } finally {
       _localIpUpdating = false;
-      if (_localIpStale && ref.mounted && ref.read(appVisibleProvider)) {
-        unawaited(_flushLocalIp());
-      }
     }
   }
 }

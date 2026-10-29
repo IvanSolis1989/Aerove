@@ -126,6 +126,68 @@ void main() {
     expect(container.read(localIpProvider), '192.0.2.1');
   });
 
+  testWidgets('an IP refresh caller waits for an existing lookup to finish', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [systemActionProvider.overrideWith(_LocalIpSystemAction.new)],
+    );
+    addTearDown(container.dispose);
+    final action =
+        container.read(systemActionProvider.notifier) as _LocalIpSystemAction;
+    final pending = action.pending = Completer<String?>();
+    final first = action.updateLocalIp();
+    await tester.pump(const Duration(seconds: 1));
+    var finished = false;
+    final second = action.updateLocalIp().then((_) => finished = true);
+    await tester.pump();
+    expect(finished, isFalse);
+    pending.complete('192.168.1.23');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await first;
+    await second;
+    expect(finished, isTrue);
+    expect(container.read(localIpProvider), '192.168.1.23');
+  });
+
+  testWidgets(
+    'a new foreground caller awaits the successor of an old IP epoch',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          systemActionProvider.overrideWith(_LocalIpSystemAction.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final action =
+          container.read(systemActionProvider.notifier) as _LocalIpSystemAction;
+      final oldReply = action.pending = Completer<String?>();
+      final oldUpdate = action.updateLocalIp();
+      await tester.pump(const Duration(seconds: 1));
+      expect(action.reads, 1);
+      container.read(appVisibleProvider.notifier).value = false;
+      container.read(appVisibleProvider.notifier).value = true;
+      final currentReply = action.pending = Completer<String?>();
+      var currentFinished = false;
+      final currentUpdate = action.updateLocalIp().then((_) {
+        currentFinished = true;
+      });
+      oldReply.complete('192.0.2.10');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(action.reads, 2);
+      expect(currentFinished, isFalse);
+      expect(container.read(localIpProvider), isNull);
+      currentReply.complete('192.168.1.23');
+      await tester.pump();
+      await oldUpdate;
+      await currentUpdate;
+      expect(currentFinished, isTrue);
+      expect(container.read(localIpProvider), '192.168.1.23');
+    },
+  );
+
   testWidgets('IP result crossing a background epoch is discarded', (
     tester,
   ) async {

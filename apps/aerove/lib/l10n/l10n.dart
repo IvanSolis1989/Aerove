@@ -410,6 +410,36 @@ class AppLocalizations {
     return Intl.message('Allow LAN', name: 'allowLan', desc: '', args: []);
   }
 
+  /// `LAN proxy address copied: {address}`
+  String lanAddressCopied(Object address) {
+    return Intl.message(
+      'LAN proxy address copied: $address',
+      name: 'lanAddressCopied',
+      desc: '',
+      args: [address],
+    );
+  }
+
+  /// `LAN proxy enabled. No LAN IP address is available.`
+  String get lanEnabledNoAddress {
+    return Intl.message(
+      'LAN proxy enabled. No LAN IP address is available.',
+      name: 'lanEnabledNoAddress',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `LAN proxy address: {address} (copy failed)`
+  String lanAddressCopyFailed(Object address) {
+    return Intl.message(
+      'LAN proxy address: $address (copy failed)',
+      name: 'lanAddressCopyFailed',
+      desc: '',
+      args: [address],
+    );
+  }
+
   /// `TUN`
   String get tun {
     return Intl.message('TUN', name: 'tun', desc: '', args: []);
@@ -705,10 +735,10 @@ class AppLocalizations {
     return Intl.message('Theme mode', name: 'themeMode', desc: '', args: []);
   }
 
-  /// `Solid theme color`
+  /// `Classic monochrome`
   String get solidThemeColor {
     return Intl.message(
-      'Solid theme color',
+      'Classic monochrome',
       name: 'solidThemeColor',
       desc: '',
       args: [],
@@ -7877,8 +7907,7 @@ class AppLocalizations {
   String customImportDroppedSubRules(num count, Object label) {
     return Intl.plural(
       count,
-      one:
-          '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
+      one: '1 SUB-RULE rule was dropped, since custom profiles do not support sub-rules',
       other:
           '$label SUB-RULE rules were dropped, since custom profiles do not support sub-rules',
       name: 'customImportDroppedSubRules',

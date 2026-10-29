@@ -11,14 +11,27 @@ import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
 
-Future<void> copyToClipboard(BuildContext context, String text) async {
+Future<void> copyToClipboard(
+  BuildContext context,
+  String text, {
+  String? message,
+  bool Function()? isCurrent,
+}) async {
+  if (isCurrent?.call() == false) return;
   await Clipboard.setData(ClipboardData(text: text));
-  if (context.mounted) {
+  if (context.mounted && isCurrent?.call() != false) {
     context.showNotifier(
-      context.appLocalizations.copySuccess,
+      message ?? context.appLocalizations.copySuccess,
       level: MessageLevel.success,
     );
   }
+}
+
+String? lanProxyAddress(String? ip, int port) {
+  if (ip == null || !isUsableLanAddress(ip) || port < 1 || port > 65535) {
+    return null;
+  }
+  return ip.contains(':') ? '[$ip]:$port' : '$ip:$port';
 }
 
 typedef _LanRowMetrics = ({
@@ -70,7 +83,7 @@ class IntranetIpCard extends ConsumerWidget {
     final address = localIp == null || localIp.isEmpty
         ? null
         : allowLan
-        ? '$localIp:$port'
+        ? lanProxyAddress(localIp, port)
         : localIp;
     void change(bool value) => ref
         .read(patchClashConfigProvider.notifier)

@@ -47,16 +47,35 @@ class SetupAction extends _$SetupAction {
   int _runtimeRevision = 0;
   final _setupScheduler = SerialTaskScheduler();
   final _listenerScheduler = SerialTaskScheduler();
+  final _updateScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
   DateTime? _startTime;
   _SetupInputs? _appliedInputs;
   var _pendingForceApply = false;
+  Completer<bool>? _lanEnableReceipt;
+  ProviderSubscription<CoreController>? _lanCoreSubscription;
+  ({Completer<bool> receipt, CoreAction owner, int revision})? _lanRestart;
+
+  bool get isLanEnableRestarting {
+    final restart = _lanRestart;
+    return restart != null &&
+        identical(restart.receipt, _lanEnableReceipt) &&
+        restart.owner._requestedRestartRevision == restart.revision;
+  }
 
   bool get _isRunning => _startTime != null && _startTime!.isBeforeNow;
 
   @override
   void build() {
     ref.onDispose(_stopRuntimeTicker);
+    ref.onDispose(() => _finishLanEnable(false));
+    ref.listen(updateParamsProvider, (_, _) => _finishLanEnable(false));
+    ref.listen(currentProfileIdProvider, (_, _) => _finishLanEnable(false));
+    ref.listen(coreStatusProvider, (_, status) {
+      if (status == CoreStatus.disconnected || !isLanEnableRestarting) {
+        _finishLanEnable(false);
+      }
+    });
     ref.listen(
       appVisibleProvider,
       (_, visible) => _syncRuntimeTicker(refresh: visible),
@@ -338,6 +357,9 @@ class SetupAction extends _$SetupAction {
   }
 
   _RunRequest _claim(bool running, {required bool initialize}) {
+    if (!(running && initialize && isLanEnableRestarting)) {
+      _finishLanEnable(false);
+    }
     final request = _RunRequest(
       running: running,
       initialize: initialize,
@@ -513,6 +535,57 @@ class SetupAction extends _$SetupAction {
     debouncer.call(FunctionTag.updateConfig, updateConfig);
   }
 
+  Future<bool> setAllowLan(bool enabled) {
+    _finishLanEnable(false);
+    final previous = ref.read(patchClashConfigProvider).allowLan;
+    ref
+        .read(patchClashConfigProvider.notifier)
+        .update((state) => state.copyWith(allowLan: enabled));
+    ref.read(updateParamsProvider);
+    if (!enabled || previous || ref.read(safeModeProvider)) {
+      return Future.value(false);
+    }
+    final receipt = Completer<bool>();
+    _lanEnableReceipt = receipt;
+    _lanCoreSubscription = ref.listen(
+      coreHandlerProvider,
+      (_, _) => _finishLanEnable(false),
+    );
+    return receipt.future;
+  }
+
+  void _finishLanEnable(bool applied) {
+    final receipt = _lanEnableReceipt;
+    _lanEnableReceipt = null;
+    _lanRestart = null;
+    _lanCoreSubscription?.close();
+    _lanCoreSubscription = null;
+    receipt?.complete(applied);
+  }
+
+  void _onCoreRestartRequested(CoreAction owner, int revision) {
+    final restart = _lanRestart;
+    if (restart == null ||
+        !identical(restart.owner, owner) ||
+        restart.revision != revision) {
+      _finishLanEnable(false);
+    }
+  }
+
+  Future<bool> _restartForLanEnable(Completer<bool> receipt) async {
+    final owner = ref.read(coreActionProvider.notifier);
+    _lanRestart = (
+      receipt: receipt,
+      owner: owner,
+      revision: owner._requestedRestartRevision + 1,
+    );
+    try {
+      return await _restartCoreAfterAuthorization();
+    } finally {
+      if (identical(_lanRestart?.receipt, receipt)) _lanRestart = null;
+    }
+  }
+
   @protected
   Future<bool> setCoreParked() => _core.parkListener();
 
@@ -531,12 +604,20 @@ class SetupAction extends _$SetupAction {
 
   @visibleForTesting
   Future<void> updateConfig() async {
-    await globalState.safeRun(() async {
+    await _updateScheduler.run(_updateConfig);
+  }
+
+  Future<void> _updateConfig() async {
+    final receipt = _lanEnableReceipt;
+    final params = ref.read(updateParamsProvider);
+    final applied = await globalState.safeRun(() async {
       final patchConfig = ref.read(patchClashConfigProvider);
       final shouldContinueSetup = await requestAdmin(patchConfig.tun.enable);
+      if (!ref.mounted) return false;
       if (!shouldContinueSetup) {
-        await _restartCoreAfterAuthorization();
-        return;
+        return receipt != null && identical(receipt, _lanEnableReceipt)
+            ? _restartForLanEnable(receipt)
+            : _restartCoreAfterAuthorization();
       }
       final networkSetting = ref.read(networkSettingProvider);
       final message = await _core.updateConfig(
@@ -546,7 +627,16 @@ class SetupAction extends _$SetupAction {
         ),
       );
       if (message.isNotEmpty) throw MessageException(message);
+      return true;
     });
+    if (receipt != null && identical(receipt, _lanEnableReceipt)) {
+      _finishLanEnable(
+        applied == true &&
+            ref.mounted &&
+            params == ref.read(updateParamsProvider) &&
+            ref.read(patchClashConfigProvider).allowLan,
+      );
+    }
   }
 
   void applyProfileDebounce({bool silence = false, bool force = false}) {

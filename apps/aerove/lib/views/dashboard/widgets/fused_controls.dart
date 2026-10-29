@@ -7,11 +7,13 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/label_breaks.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/widgets.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
+import 'intranet_ip.dart';
 
 /// The phone's network card: one row of up to three buttons, in this order,
 /// for the members a layout keeps.
@@ -43,7 +45,7 @@ class FusedNetworkControls extends StatelessWidget {
 
 enum _Control { mode, vpn, lan }
 
-class _NetworkControlRow extends ConsumerWidget {
+class _NetworkControlRow extends ConsumerStatefulWidget {
   const _NetworkControlRow({
     required this.mode,
     required this.vpn,
@@ -54,11 +56,111 @@ class _NetworkControlRow extends ConsumerWidget {
   final bool vpn;
   final bool lan;
 
+  @override
+  ConsumerState<_NetworkControlRow> createState() => _NetworkControlRowState();
+}
+
+class _NetworkControlRowState extends ConsumerState<_NetworkControlRow> {
+  int _lanGeneration = 0;
+  ValueListenable<bool>? _pageActivity;
+
+  bool get _active =>
+      mounted &&
+      ref.read(appVisibleProvider) &&
+      PageActivityScope.isActiveOf(context) &&
+      (ModalRoute.of(context)?.isCurrent ?? true);
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final activity = PageActivityScope.activityOf(context);
+    if (!identical(activity, _pageActivity)) {
+      _pageActivity?.removeListener(_onPageActivity);
+      _pageActivity = activity;
+      _pageActivity?.addListener(_onPageActivity);
+    }
+    if (!_active) _lanGeneration++;
+  }
+
+  void _onPageActivity() {
+    if (_pageActivity?.value == false) _lanGeneration++;
+  }
+
+  @override
+  void dispose() {
+    _pageActivity?.removeListener(_onPageActivity);
+    super.dispose();
+  }
+
+  Future<void> _toggleLan() async {
+    final coreSubscription = ref.listenManual(
+      coreHandlerProvider,
+      (_, _) => _lanGeneration++,
+    );
+    try {
+      final enabled = !ref.read(patchClashConfigProvider).allowLan;
+      final receipt = ref
+          .read(setupActionProvider.notifier)
+          .setAllowLan(enabled);
+      final generation = ++_lanGeneration;
+      final applied = await receipt;
+      bool current() =>
+          mounted &&
+          generation == _lanGeneration &&
+          _active &&
+          ref.read(patchClashConfigProvider).allowLan;
+      if (!mounted || !enabled || !applied || !current()) return;
+      final port = ref.read(patchClashConfigProvider).mixedPort;
+      try {
+        await ref.read(systemActionProvider.notifier).updateLocalIp();
+        if (!mounted ||
+            !current() ||
+            ref.read(patchClashConfigProvider).mixedPort != port) {
+          return;
+        }
+        final address = lanProxyAddress(ref.read(localIpProvider), port);
+        if (address == null) {
+          context.showNotifier(context.appLocalizations.lanEnabledNoAddress);
+          return;
+        }
+        await copyToClipboard(
+          context,
+          address,
+          message: context.appLocalizations.lanAddressCopied(address),
+          isCurrent: current,
+        );
+      } catch (_) {
+        if (!mounted || !current()) return;
+        final address = lanProxyAddress(ref.read(localIpProvider), port);
+        context.showNotifier(
+          address == null
+              ? context.appLocalizations.lanEnabledNoAddress
+              : context.appLocalizations.lanAddressCopyFailed(address),
+          level: MessageLevel.error,
+        );
+      }
+    } finally {
+      coreSubscription.close();
+    }
+  }
+
   static const _outer = 26.0;
   static const _inner = 12.0;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
+    ref.listen(appVisibleProvider, (_, visible) {
+      if (!visible) _lanGeneration++;
+    });
+    ref.listen(patchClashConfigProvider, (_, _) => _lanGeneration++);
+    ref.listen(currentProfileIdProvider, (_, _) => _lanGeneration++);
+    ref.listen(isStartProvider, (_, _) => _lanGeneration++);
+    ref.listen(coreStatusProvider, (_, status) {
+      if (status == CoreStatus.disconnected ||
+          !ref.read(setupActionProvider.notifier).isLanEnableRestarting) {
+        _lanGeneration++;
+      }
+    });
     final l10n = context.appLocalizations;
     final current = ref.watch(
       patchClashConfigProvider.select((state) => state.mode),
@@ -68,19 +170,19 @@ class _NetworkControlRow extends ConsumerWidget {
       patchClashConfigProvider.select((state) => state.allowLan),
     );
     final controls = [
-      if (mode) _Control.mode,
-      if (vpn) _Control.vpn,
-      if (lan) _Control.lan,
+      if (widget.mode) _Control.mode,
+      if (widget.vpn) _Control.vpn,
+      if (widget.lan) _Control.lan,
     ];
     if (controls.isEmpty) return const SizedBox.shrink();
     final next = Mode.values[(current.index + 1) % Mode.values.length];
     final tone = DashboardColors.of(context).tone;
     final scaler = MediaQuery.textScalerOf(context);
     final candidates = [
-      if (mode)
+      if (widget.mode)
         for (final item in Mode.values) item.label,
-      if (vpn) 'VPN',
-      if (lan) l10n.allowLan,
+      if (widget.vpn) 'VPN',
+      if (widget.lan) l10n.allowLan,
     ];
     Widget button(int index, _Control control, _ControlPlan plan) {
       final on = switch (control) {
@@ -117,10 +219,7 @@ class _NetworkControlRow extends ConsumerWidget {
             ref
                 .read(vpnSettingProvider.notifier)
                 .update((state) => state.copyWith(enable: !state.enable)),
-          _Control.lan =>
-            ref
-                .read(patchClashConfigProvider.notifier)
-                .update((state) => state.copyWith(allowLan: !state.allowLan)),
+          _Control.lan => _toggleLan(),
         },
         builder: (foreground) => _ControlFace(
           name: control.name,
