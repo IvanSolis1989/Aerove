@@ -13,19 +13,18 @@ import zipfile
 
 PACKAGE = "dev.aerove.fixture.socketowner"
 SOURCE = Path(__file__).with_name("process_owner_fixture")
+SDK_PLATFORM = "android-37.1"
+BUILD_TOOLS_VERSION = "37.0.0"
+SDK_TOOL_NAMES = ("aapt2", "aapt", "d8", "dexdump", "zipalign", "apksigner")
 
 
 def installed_tools(sdk):
-    def newest(paths):
-        values = list(paths)
-        if not values:
-            raise ValueError("Required tool is not already installed in the CI SDK")
-        return max(values, key=lambda path: tuple(int(x) for x in re.findall(r"\d+", str(path.parent.name))))
-    android = newest(sdk.glob("platforms/android-*/android.jar"))
-    aapt = newest(sdk.glob("build-tools/*/aapt2"))
-    tools = {name: aapt.parent / name for name in ("aapt2", "aapt", "d8", "dexdump", "zipalign", "apksigner")}
+    android = sdk / "platforms" / SDK_PLATFORM / "android.jar"
+    if not android.is_file():
+        raise ValueError("Required installed SDK platform is missing: " + SDK_PLATFORM + "; no version fallback")
+    tools = {name: sdk / "build-tools" / BUILD_TOOLS_VERSION / name for name in SDK_TOOL_NAMES}
     if not all(path.is_file() for path in tools.values()):
-        raise ValueError("Existing SDK build-tools are incomplete; never install a replacement")
+        raise ValueError("Required installed SDK build-tools are incomplete: " + BUILD_TOOLS_VERSION + "; no version fallback")
     for name in ("javac", "keytool"):
         found = shutil.which(name)
         if found is None:

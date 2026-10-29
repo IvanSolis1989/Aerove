@@ -30,7 +30,11 @@ public final class SocketOwnerService extends Service {
         super.onCreate();
         worker = new HandlerThread("socket-owner-fixture");
         worker.start();
-        messenger = new Messenger(new Handler(worker.getLooper(), this::handle));
+        messenger = new Messenger(new Handler(worker.getLooper(), new Handler.Callback() {
+            @Override public boolean handleMessage(Message message) {
+                return SocketOwnerService.this.handle(message);
+            }
+        }));
     }
 
     private boolean handle(Message message) {

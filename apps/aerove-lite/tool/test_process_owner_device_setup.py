@@ -2,9 +2,11 @@
 from pathlib import Path
 import json
 import socket
+import tempfile
 import zipfile
-from build_process_owner_fixture import PACKAGE, verify_compiled
+from build_process_owner_fixture import PACKAGE, SDK_PLATFORM, BUILD_TOOLS_VERSION, SDK_TOOL_NAMES, installed_tools, verify_compiled
 import unittest
+from unittest.mock import patch
 
 import instrumentation_shards as shards
 import instrumentation_results as results
@@ -14,6 +16,52 @@ import test_instrumentation_results as result_tests
 
 
 class OwnerScopeTests(unittest.TestCase):
+    def sdk_tree(self, directory, platform=SDK_PLATFORM, tools_version=BUILD_TOOLS_VERSION):
+        sdk = Path(directory)
+        android = sdk / "platforms" / platform / "android.jar"
+        android.parent.mkdir(parents=True, exist_ok=True)
+        android.touch()
+        for name in SDK_TOOL_NAMES:
+            tool = sdk / "build-tools" / tools_version / name
+            tool.parent.mkdir(parents=True, exist_ok=True)
+            tool.touch()
+        return sdk
+
+    @patch("build_process_owner_fixture.shutil.which", side_effect=lambda name: "/existing-jdk/bin/" + name)
+    def test_installed_tools_pin_exact_ci_platform_and_build_tools_even_when_beta_is_newer(self, which):
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = self.sdk_tree(directory)
+            self.sdk_tree(directory, "android-37.2-beta3", "38.0.0-rc1")
+            android, tools = installed_tools(sdk)
+            self.assertEqual(sdk / "platforms/android-37.1/android.jar", android)
+            for name in SDK_TOOL_NAMES:
+                self.assertEqual(sdk / "build-tools/37.0.0" / name, tools[name])
+            self.assertEqual(Path("/existing-jdk/bin/javac"), tools["javac"])
+            self.assertEqual(Path("/existing-jdk/bin/keytool"), tools["keytool"])
+
+    @patch("build_process_owner_fixture.shutil.which", return_value="/existing-jdk/bin/tool")
+    def test_installed_tools_reject_missing_pinned_inputs_instead_of_falling_back(self, which):
+        missing = ["platforms/android-37.1/android.jar"] + ["build-tools/37.0.0/" + name for name in SDK_TOOL_NAMES]
+        for relative in missing:
+            with self.subTest(missing=relative), tempfile.TemporaryDirectory() as directory:
+                sdk = self.sdk_tree(directory)
+                self.sdk_tree(directory, "android-37.2-beta3", "38.0.0-rc1")
+                (sdk / relative).unlink()
+                with self.assertRaisesRegex(ValueError, "no version fallback"):
+                    installed_tools(sdk)
+        with tempfile.TemporaryDirectory() as directory:
+            sdk = self.sdk_tree(directory, "android-37.2-beta3", "38.0.0-rc1")
+            with self.assertRaisesRegex(ValueError, "android-37.1; no version fallback"):
+                installed_tools(sdk)
+
+    def test_installed_tools_require_both_existing_jdk_commands(self):
+        for missing in ("javac", "keytool"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                sdk = self.sdk_tree(directory)
+                with patch("build_process_owner_fixture.shutil.which", side_effect=lambda name: None if name == missing else "/existing-jdk/bin/" + name):
+                    with self.assertRaisesRegex(ValueError, "Missing existing CI JDK tool: " + missing):
+                        installed_tools(sdk)
+
     def discovery(self):
         helper = shard_tests.ShardSelectionTests()
         helper.setUp()

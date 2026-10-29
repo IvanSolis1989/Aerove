@@ -543,6 +543,8 @@ jobs:
         sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
         test -f "$ANDROID_SDK_ROOT/platforms/android-37.1/android.jar"
     - name: Compile and inspect the separate-UID socket test dependency
+      id: owner_fixture_checks
+      continue-on-error: true
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |-
         python3 apps/aerove-lite/tool/build_process_owner_fixture.py \
@@ -553,20 +555,38 @@ jobs:
         cache-read-only: false
     - name: Kotlin data, lifecycle and UI compilation checks
       id: kotlin_checks
+      continue-on-error: true
       working-directory: apps/aerove-lite
       env:
         AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
       run: |-
         export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Daerove.age.fixtures=\"$GITHUB_WORKSPACE/apps/aerove-lite/regexp2/agebridge/testdata\" -Daerove.age.helper=\"$RUNNER_TEMP/lite-client-helper/bin/ageverify\""
-        gradle --no-daemon --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:checkReleaseAarMetadata :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
+        gradle --no-daemon --continue --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:checkReleaseAarMetadata :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
     - name: Inspect Android tasks after verification failure
-      if: ${{ failure() && steps.kotlin_checks.outcome == 'failure' }}
+      if: ${{ always() && steps.kotlin_checks.outcome == 'failure' }}
       timeout-minutes: 3
       working-directory: apps/aerove-lite
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
         mkdir -p app/build/reports
         gradle --no-daemon :app:tasks --all 2>&1 | tee app/build/reports/gradle-tasks.txt
+    - name: Require both independent preflight results
+      if: ${{ always() }}
+      env:
+        OWNER_FIXTURE_OUTCOME: ${{ steps.owner_fixture_checks.outcome }}
+        KOTLIN_CHECKS_OUTCOME: ${{ steps.kotlin_checks.outcome }}
+      run: |
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        results = {key: os.environ.get(key, '') for key in ('OWNER_FIXTURE_OUTCOME', 'KOTLIN_CHECKS_OUTCOME')}
+        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'], results=results,
+                       appApkBuilt=False, acceptance=False)
+        output = Path('apps/aerove-lite/app/build/reports/client-preflight-results.json')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(receipt, indent=2) + '\n')
+        assert all(value == 'success' for value in results.values()), results
+        PY
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: always()
       with:
