@@ -2,11 +2,14 @@ package dev.aerove.lite.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.res.Configuration
+import android.content.res.Resources
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.text.AnnotatedString
@@ -21,6 +24,7 @@ import dev.aerove.lite.notices.ClientNotices
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import java.util.Locale
 
 class DashboardLanFeedbackUiTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -30,6 +34,7 @@ class DashboardLanFeedbackUiTest {
     private val state = mutableStateOf(LiteState(localAddress = "192.0.2.8"))
     private val pageActive = mutableStateOf(true)
     private val mounted = mutableStateOf(true)
+    private val resourcesOverride = mutableStateOf<Resources?>(null)
     private var token = 0L
     private var enableCalls = 0
 
@@ -53,7 +58,8 @@ class DashboardLanFeedbackUiTest {
             }
             CompositionLocalProvider(LocalLitePageActive provides pageActive.value,
                 LocalDiagnosticsForeground provides pageActive.value, LocalLiteWindowFocused provides pageActive.value,
-                LocalClipboardManager provides testClipboard, LocalClientNotices provides notices) {
+                LocalClipboardManager provides testClipboard, LocalClientNotices provides notices,
+                LocalResources provides (resourcesOverride.value ?: LocalResources.current)) {
                 LiteTheme(LiteSettings(material = MaterialTier.Solid)) {
                     val backdrop = rememberLayerBackdrop()
                     Box(Modifier.fillMaxSize()) {
@@ -106,6 +112,26 @@ class DashboardLanFeedbackUiTest {
         open(); compose.onNodeWithTag("dashboard-intranet").performClick(); complete(ip = null)
         assertClipboard("keep existing")
         assertEquals(listOf(context.getString(R.string.lite_lan_enabled_no_address)), texts())
+    }
+
+    @Test fun aPendingEnableUsesTheLatestLocaleAndLocaleChangesNeverReplayTheCopy() {
+        fun localized(language: String) = context.createConfigurationContext(
+            Configuration(context.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) }).resources
+        val english = localized("en")
+        val chinese = localized("zh-CN")
+        compose.runOnUiThread { resourcesOverride.value = english }
+        open(); compose.onNodeWithTag("dashboard-intranet").performClick()
+        compose.runOnUiThread { resourcesOverride.value = chinese }; compose.waitForIdle()
+        complete()
+        val expected = chinese.getString(R.string.lite_lan_address_copied, "192.0.2.8:8899")
+        assertNotEquals(english.getString(R.string.lite_lan_address_copied, "192.0.2.8:8899"), expected)
+        assertEquals(listOf(expected), texts()); assertClipboard("192.0.2.8:8899")
+        compose.runOnUiThread {
+            clipboard.setPrimaryClip(ClipData.newPlainText("fixture", "after success"))
+            resourcesOverride.value = english
+        }
+        compose.waitForIdle()
+        assertClipboard("after success"); assertEquals(listOf(expected), texts())
     }
 
     @Test fun ipv6AndCopyFailureStillShowTheActualAddressWithoutASuccessClaim() {

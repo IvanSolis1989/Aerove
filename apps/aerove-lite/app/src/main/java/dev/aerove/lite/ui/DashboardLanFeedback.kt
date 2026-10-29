@@ -7,7 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -40,7 +40,7 @@ internal fun rememberDashboardLanEnable(state: LiteState, actions: LiteActions):
     val current by rememberUpdatedState(state)
     val clipboard = LocalClipboardManager.current
     val notices = LocalClientNotices.current
-    val context = LocalContext.current
+    val resources by rememberUpdatedState(LocalResources.current)
     DisposableEffect(intent, lifecycle, pageActive) {
         if (!pageActive) intent.invalidate()
         val observer = LifecycleEventObserver { _, _ ->
@@ -54,10 +54,10 @@ internal fun rememberDashboardLanEnable(state: LiteState, actions: LiteActions):
         if (intent.consume(snapshot.dashboardLanReceipt, snapshot.settings.network.allowLan,
                 snapshot.settings.network.ports.mixed, active && lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))) {
             val address = dashboardLanAddress(snapshot.localAddress, snapshot.settings.network.ports.mixed, true)
-            if (address == null) notices?.post(context.getString(R.string.lite_lan_enabled_no_address), NoticeLevel.Info)
+            if (address == null) notices?.post(resources.getString(R.string.lite_lan_enabled_no_address), NoticeLevel.Info)
             else {
                 val copied = try { clipboard.setText(AnnotatedString(address)); true } catch (_: Exception) { false }
-                notices?.post(context.getString(if (copied) R.string.lite_lan_address_copied else
+                notices?.post(resources.getString(if (copied) R.string.lite_lan_address_copied else
                     R.string.lite_lan_address_copy_failed, address), if (copied) NoticeLevel.Success else NoticeLevel.Warning)
             }
         }
