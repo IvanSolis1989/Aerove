@@ -20,7 +20,14 @@ data class NetworkRuntimeStatus(
     val applying: Boolean,
     val error: String? = null,
     val appliedIpv6: Boolean? = null,
+    val request: NetworkRuntimeRequest? = null,
 )
+
+enum class NetworkRuntimeOutcome { Applying, Applied, Failed }
+
+/** Identifies the actor's adopted target even when StateFlow conflates its applying frame. */
+data class NetworkRuntimeRequest(val id: Long, val network: NetworkSettings, val ipv6: Boolean,
+    val outcome: NetworkRuntimeOutcome)
 
 /** The Service owns this actor; saves conflate, but an accepted apply is awaited before its successor. */
 class NetworkRuntimeCoordinator(
@@ -30,13 +37,14 @@ class NetworkRuntimeCoordinator(
 ) {
     private class Binding(val endpoint: CoreEndpoint, val startup: Desired, var applied: Desired = startup) {
         var failed: InboundKey? = null
+        var failedError: String? = null
         var parked = false
     }
     private data class InboundKey(val ports: UserProxyPorts, val allowLan: Boolean, val ipv6: Boolean,
         val credentials: List<String>) {
         override fun toString(): String = "InboundKey(ports=$ports, allowLan=$allowLan, ipv6=$ipv6, credentials=<redacted>)"
     }
-    private data class Desired(val network: NetworkSettings, val ipv6: Boolean)
+    private data class Desired(val network: NetworkSettings, val ipv6: Boolean, val requestId: Long = 0)
     private class Active(val binding: Binding, val desired: Desired, val fields: InboundKey, val task: Deferred<Unit>)
     private val lock = Any()
     private val scope = CoroutineScope(parent.coroutineContext + SupervisorJob(parent.coroutineContext[Job]))
@@ -45,6 +53,7 @@ class NetworkRuntimeCoordinator(
     private var desired: Desired? = null
     private var active: Active? = null
     private var closed = false
+    private var requestSequence = 0L
     private val worker = scope.launch {
         for (ignored in signals) {
             while (isActive) {
@@ -65,12 +74,17 @@ class NetworkRuntimeCoordinator(
                             if (failure == null) {
                                 work.binding.applied = work.desired
                                 work.binding.failed = null
-                            } else work.binding.failed = work.fields
+                                work.binding.failedError = null
+                            } else {
+                                work.binding.failed = work.fields
+                                work.binding.failedError = failure?.let { it.message ?: it.javaClass.simpleName }
+                            }
                             val requested = desired?.let(::fields)
                             val pending = requested != null && requested != fields(work.binding.applied) &&
                                 requested != work.binding.failed
-                            publish(work.binding, pending,
-                                failure?.takeIf { requested == work.fields }?.let { it.message ?: it.javaClass.simpleName })
+                            publish(work.binding, pending, work.desired,
+                                if (failure == null) NetworkRuntimeOutcome.Applied else NetworkRuntimeOutcome.Failed,
+                                work.binding.failedError?.takeIf { requested == work.fields })
                         }
                     }
                 }
@@ -94,8 +108,9 @@ class NetworkRuntimeCoordinator(
     fun settings(network: NetworkSettings, ipv6: Boolean) {
         val snapshot = Desired(network.snapshot().requireValid(), ipv6)
         synchronized(lock) {
-            if (closed || desired == snapshot) return
-            desired = snapshot
+            if (closed) return
+            check(requestSequence < Long.MAX_VALUE)
+            desired = snapshot.copy(requestId = ++requestSequence)
             signals.trySend(Unit)
         }
     }
@@ -103,6 +118,7 @@ class NetworkRuntimeCoordinator(
     fun retry() = synchronized(lock) {
         if (!closed) {
             binding?.failed = null
+            binding?.failedError = null
             signals.trySend(Unit)
         }
     }
@@ -153,20 +169,29 @@ class NetworkRuntimeCoordinator(
         if (current.parked) return null
         val target = desired ?: return null
         val fields = fields(target)
-        if (fields == fields(current.applied) || fields == current.failed) return null
+        if (fields == fields(current.applied)) {
+            publish(current, false, target, NetworkRuntimeOutcome.Applied)
+            return null
+        }
+        if (fields == current.failed) {
+            publish(current, false, target, NetworkRuntimeOutcome.Failed, current.failedError)
+            return null
+        }
         val task = scope.async(start = CoroutineStart.LAZY) { apply(current.endpoint, target.network, target.ipv6) }
         return Active(current, target, fields, task).also {
             active = it
-            publish(current, true)
+            publish(current, true, target, NetworkRuntimeOutcome.Applying)
         }
     }
 
     private fun fields(value: Desired): InboundKey = InboundKey(value.network.ports, value.network.allowLan,
         value.ipv6 && value.network.allowLan, value.network.authentication.credentials)
 
-    private fun publish(binding: Binding, applying: Boolean, error: String? = null) {
+    private fun publish(binding: Binding, applying: Boolean, target: Desired, outcome: NetworkRuntimeOutcome,
+        error: String? = null) {
         val applied = binding.applied.network.copy(systemProxy = binding.startup.network.systemProxy,
             allowBypass = binding.startup.network.allowBypass, bypassDomains = binding.startup.network.bypassDomains.toList())
-        onStatus(NetworkRuntimeStatus(binding.endpoint, applied, applying, error, binding.applied.ipv6))
+        onStatus(NetworkRuntimeStatus(binding.endpoint, applied, applying, error, binding.applied.ipv6,
+            NetworkRuntimeRequest(target.requestId, target.network, target.ipv6, outcome)))
     }
 }

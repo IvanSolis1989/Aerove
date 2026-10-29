@@ -176,7 +176,10 @@
     <string name="lite_style_tinted">氛围</string>
     <string name="lite_style_soft">柔和</string>
     <string name="lite_style_monochrome">单色</string>
-    <string name="lite_normal_theme">随选单色</string>
+    <string name="lite_normal_theme">经典单色</string>
+    <string name="lite_lan_address_copied">局域网代理地址已复制：%1$s</string>
+    <string name="lite_lan_enabled_no_address">局域网代理已启用，暂未获取到局域网 IP</string>
+    <string name="lite_lan_address_copy_failed">局域网代理地址：%1$s（复制失败）</string>
     <string name="lite_aurora_colors">底图配色</string>
     <string name="lite_aurora_edit_color">编辑底图颜色 %1$d</string>
     <string name="lite_aurora_regenerate">换一张</string>

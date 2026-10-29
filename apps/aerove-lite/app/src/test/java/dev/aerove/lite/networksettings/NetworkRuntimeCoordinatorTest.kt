@@ -152,12 +152,34 @@ class NetworkRuntimeCoordinatorTest {
         coordinator.settings(changed(7900), false); runCurrent()
         assertEquals(initial, states.last().appliedNetwork)
         assertEquals("listener bind failed", states.last().error)
+        val failedRequest = states.last().request!!
+        assertEquals(NetworkRuntimeOutcome.Failed, failedRequest.outcome)
+        assertEquals(changed(7900), failedRequest.network)
         coordinator.settings(changed(7900), false); runCurrent()
         assertEquals(1, calls)
+        assertTrue(states.last().request!!.id > failedRequest.id)
+        assertEquals(NetworkRuntimeOutcome.Failed, states.last().request!!.outcome)
+        assertEquals("listener bind failed", states.last().error)
         coordinator.retry(); runCurrent()
         assertEquals(2, calls)
         assertEquals(changed(7900), states.last().appliedNetwork)
         assertNull(states.last().error)
+        assertEquals(NetworkRuntimeOutcome.Applied, states.last().request!!.outcome)
+        coordinator.close()
+    }
+
+    @Test fun adoptedNoOpGetsATerminalIdentityWithoutAnExtraCoreApply() = runTest {
+        var calls = 0
+        val states = mutableListOf<NetworkRuntimeStatus>()
+        val coordinator = NetworkRuntimeCoordinator(backgroundScope, { _, _, _ -> calls++ }, states::add)
+        coordinator.bind(CoreEndpoint(30000, "secret"), initial, false)
+        coordinator.settings(initial, false); runCurrent()
+        val first = states.last().request!!
+        assertEquals(NetworkRuntimeOutcome.Applied, first.outcome)
+        coordinator.settings(initial, false); runCurrent()
+        assertTrue(states.last().request!!.id > first.id)
+        assertEquals(NetworkRuntimeOutcome.Applied, states.last().request!!.outcome)
+        assertEquals(0, calls)
         coordinator.close()
     }
 

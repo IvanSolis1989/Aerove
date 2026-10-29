@@ -484,7 +484,10 @@
     <string name="lite_style_tinted">Tinted</string>
     <string name="lite_style_soft">Soft</string>
     <string name="lite_style_monochrome">Monochrome</string>
-    <string name="lite_normal_theme">Solid theme color</string>
+    <string name="lite_normal_theme">Classic monochrome</string>
+    <string name="lite_lan_address_copied">LAN proxy address copied: %1$s</string>
+    <string name="lite_lan_enabled_no_address">LAN proxy enabled. No LAN IP address is available.</string>
+    <string name="lite_lan_address_copy_failed">LAN proxy address: %1$s (copy failed)</string>
     <string name="lite_aurora_colors">Wallpaper colors</string>
     <string name="lite_aurora_edit_color">Edit wallpaper color %1$d</string>
     <string name="lite_aurora_regenerate">New wallpaper</string>

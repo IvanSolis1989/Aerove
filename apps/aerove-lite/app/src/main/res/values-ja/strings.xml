@@ -496,7 +496,10 @@
     <string name="lite_style_tinted">ティント</string>
     <string name="lite_style_soft">ソフト</string>
     <string name="lite_style_monochrome">モノクローム</string>
-    <string name="lite_normal_theme">通常のテーマカラー</string>
+    <string name="lite_normal_theme">クラシック単色</string>
+    <string name="lite_lan_address_copied">LAN プロキシのアドレスをコピーしました: %1$s</string>
+    <string name="lite_lan_enabled_no_address">LAN プロキシを有効にしました。LAN の IP アドレスを取得できません。</string>
+    <string name="lite_lan_address_copy_failed">LAN プロキシのアドレス: %1$s（コピーに失敗）</string>
     <string name="lite_aurora_colors">背景の配色</string>
     <string name="lite_aurora_edit_color">背景色 %1$d を編集</string>
     <string name="lite_aurora_regenerate">別の背景を生成</string>

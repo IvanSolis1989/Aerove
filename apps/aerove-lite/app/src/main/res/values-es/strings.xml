@@ -177,7 +177,10 @@
     <string name="lite_style_tinted">Tintado</string>
     <string name="lite_style_soft">Suave</string>
     <string name="lite_style_monochrome">Monocromo</string>
-    <string name="lite_normal_theme">Color de tema sólido</string>
+    <string name="lite_normal_theme">Monocromo clásico</string>
+    <string name="lite_lan_address_copied">Dirección del proxy LAN copiada: %1$s</string>
+    <string name="lite_lan_enabled_no_address">Proxy LAN activado. No hay ninguna dirección IP de la red local disponible.</string>
+    <string name="lite_lan_address_copy_failed">Dirección del proxy LAN: %1$s (error al copiar)</string>
     <string name="lite_aurora_colors">Colores del fondo</string>
     <string name="lite_aurora_regenerate">Nuevo fondo</string>
     <string name="lite_preview">Vista previa</string>

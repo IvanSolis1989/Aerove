@@ -496,7 +496,10 @@
     <string name="lite_style_tinted">틴트</string>
     <string name="lite_style_soft">부드러움</string>
     <string name="lite_style_monochrome">모노크롬</string>
-    <string name="lite_normal_theme">일반 테마 색상</string>
+    <string name="lite_normal_theme">클래식 단색</string>
+    <string name="lite_lan_address_copied">LAN 프록시 주소 복사됨: %1$s</string>
+    <string name="lite_lan_enabled_no_address">LAN 프록시를 사용 설정했지만 LAN IP 주소를 가져올 수 없습니다.</string>
+    <string name="lite_lan_address_copy_failed">LAN 프록시 주소: %1$s(복사 실패)</string>
     <string name="lite_aurora_colors">배경 색상</string>
     <string name="lite_aurora_edit_color">배경 색상 %1$d 편집</string>
     <string name="lite_aurora_regenerate">새 배경</string>

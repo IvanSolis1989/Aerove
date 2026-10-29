@@ -59,6 +59,7 @@ data class VpnSnapshot(
     val appliedDnsEnabled: Boolean? = null,
     val plannedBuilderSettings: LiteSettings? = null,
     val sessionGeneration: Long = 0L,
+    val networkRequest: dev.aerove.lite.networksettings.NetworkRuntimeRequest? = null,
 )
 
 interface TunnelSession {
@@ -364,7 +365,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         if (!closed && current.phase == VpnPhase.Running && current.endpoint === status.endpoint) {
             mutableState.value = current.copy(appliedNetwork = status.appliedNetwork.snapshot(),
                 appliedIpv6 = status.appliedIpv6 ?: current.appliedIpv6,
-                networkApplying = status.applying, networkError = status.error)
+                networkApplying = status.applying, networkError = status.error, networkRequest = status.request)
         }
     }
 

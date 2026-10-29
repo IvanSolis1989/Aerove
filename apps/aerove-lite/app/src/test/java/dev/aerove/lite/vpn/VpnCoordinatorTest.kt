@@ -3,6 +3,8 @@ package dev.aerove.lite.vpn
 import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.VpnPhase
 import dev.aerove.lite.networksettings.NetworkRuntimeStatus
+import dev.aerove.lite.networksettings.NetworkRuntimeRequest
+import dev.aerove.lite.networksettings.NetworkRuntimeOutcome
 import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.networksettings.UserProxyPorts
 import dev.aerove.lite.networksettings.ProxyAuthentication
@@ -188,12 +190,15 @@ class VpnCoordinatorTest {
         assertEquals(initial, coordinator.state.value.initialNetwork)
         assertEquals(true, coordinator.state.value.initialIpv6)
         val applied = initial.copy(ports = UserProxyPorts(7901))
-        coordinator.recordNetworkStatus(NetworkRuntimeStatus(CoreEndpoint(1234, "test-secret"), applied, true))
+        val request = NetworkRuntimeRequest(2, applied, true, NetworkRuntimeOutcome.Applied)
+        coordinator.recordNetworkStatus(NetworkRuntimeStatus(CoreEndpoint(1234, "test-secret"), applied, true, request = request))
         assertEquals(initial, coordinator.state.value.appliedNetwork)
+        assertNull(coordinator.state.value.networkRequest)
         coordinator.recordNetworkStatus(NetworkRuntimeStatus(session.endpoint, initial, true))
         assertTrue(coordinator.state.value.networkApplying)
-        coordinator.recordNetworkStatus(NetworkRuntimeStatus(session.endpoint, applied, false))
+        coordinator.recordNetworkStatus(NetworkRuntimeStatus(session.endpoint, applied, false, request = request))
         assertEquals(applied, coordinator.state.value.appliedNetwork)
+        assertEquals(request, coordinator.state.value.networkRequest)
         assertEquals(initial, coordinator.state.value.initialNetwork)
         coordinator.close()
         coordinator.recordNetworkStatus(NetworkRuntimeStatus(session.endpoint, initial, true))

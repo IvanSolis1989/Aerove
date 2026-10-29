@@ -860,6 +860,7 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
     val network = state.settings.network
     val enabled = state.busy.isEmpty() && state.phase != VpnPhase.Starting && state.phase != VpnPhase.Stopping
     val current by androidx.compose.runtime.rememberUpdatedState(state.settings)
+    val enableLan = rememberDashboardLanEnable(state, actions)
     DashboardPane(Modifier.testTag("dashboard-network-controls")) {
         DashboardHeader(FullGlyphs.split, stringResource(R.string.dashboard_network_control))
         Spacer(Modifier.height(12.dp))
@@ -930,7 +931,8 @@ private fun NetworkControlsCard(state: LiteState, actions: LiteActions) {
             NetworkControlPill(stringResource(R.string.network_allow_lan), FullGlyphs.devices, network.allowLan, enabled,
                 Modifier.weight(1f).testTag("dashboard-intranet"), toggle = true, plan = plan) {
                 val settings = current
-                actions.changeSettings(settings.copy(network = settings.network.copy(allowLan = !settings.network.allowLan)))
+                if (settings.network.allowLan) actions.changeSettings(settings.copy(network = settings.network.copy(allowLan = false)))
+                else enableLan()
             }
         }
         }

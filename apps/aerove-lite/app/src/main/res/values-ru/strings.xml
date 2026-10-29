@@ -319,7 +319,10 @@
     <string name="lite_no_profiles_detail">Импортируйте свою конфигурацию или добавьте подписку, чтобы начать.</string>
     <string name="lite_no_proxies">Нет прокси-групп</string>
     <string name="lite_no_proxies_detail">Подключите VPN, чтобы загрузить группы прокси из активной конфигурации.</string>
-    <string name="lite_normal_theme">Обычный цвет темы</string>
+    <string name="lite_normal_theme">Классический монохром</string>
+    <string name="lite_lan_address_copied">Адрес LAN-прокси скопирован: %1$s</string>
+    <string name="lite_lan_enabled_no_address">LAN-прокси включён. IP-адрес локальной сети недоступен.</string>
+    <string name="lite_lan_address_copy_failed">Адрес LAN-прокси: %1$s (не удалось скопировать)</string>
     <string name="lite_not_running">Не запущено</string>
     <string name="lite_not_updated">Еще не обновлено</string>
     <string name="lite_open_logs">Включить журналы</string>

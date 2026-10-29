@@ -75,6 +75,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
@@ -1139,6 +1140,34 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     private val dnsSaveAttempts = dev.aerove.lite.dnssettings.DnsSaveAttempts { receipt ->
         publishState { it.copy(dnsSaveReceipt = receipt) }
     }
+    private val dashboardLanAttempts = dev.aerove.lite.networksettings.DashboardLanAttempts { receipt ->
+        publishState { it.copy(dashboardLanReceipt = receipt) }
+    }
+
+    override fun enableDashboardLan(): Long {
+        cancelSettingsAuthorization()
+        val token = dashboardLanAttempts.begin()
+        val initial = application.vpn.value
+        queueSettings(onRejected = { dashboardLanAttempts.complete(token, null) }) {
+            dashboardLanAttempts.persist(token) {
+                fun current() = dashboardLanAttempts.current(token) && !application.maintenanceActive
+                if (!current()) throw CancellationException("Dashboard LAN intent expired")
+                val saved = settingsUpdates.update { latest ->
+                    if (!current() || latest.network.allowLan) throw CancellationException("Dashboard LAN intent changed")
+                    latest.copy(network = latest.network.copy(allowLan = true))
+                }
+                // Observe the Service's existing applied state; never issue a second core request or poll.
+                val result = combine(application.vpn, application.settings.changes, dashboardLanAttempts.tokens, visible) {
+                        runtime, settings, _, _ ->
+                    dev.aerove.lite.networksettings.dashboardLanCommit(initial, runtime, saved, settings, current() && visible.value.active)
+                }.first { it != dev.aerove.lite.networksettings.DashboardLanCommit.Wait }
+                if (result != dev.aerove.lite.networksettings.DashboardLanCommit.Applied)
+                    throw CancellationException("Dashboard LAN apply was superseded or failed")
+                saved.network.ports.mixed
+            }
+        }
+        return token
+    }
 
     override fun saveDnsPreferences(preferences: dev.aerove.lite.dnssettings.DnsPreferences): Long {
         val draft = preferences.snapshot().requireValid()
@@ -1153,6 +1182,9 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
     override fun changeSettings(settings: LiteSettings) {
         val baseline = state.value.settings
         val requested = settings.normalized()
+        if (baseline.network.allowLan != requested.network.allowLan || baseline.network.ports != requested.network.ports ||
+            baseline.network.authentication.credentials != requested.network.authentication.credentials || baseline.ipv6 != requested.ipv6)
+            dashboardLanAttempts.invalidate()
         val intent = modeIntents.reserve(baseline.mode != requested.mode)
         val routeOnly = intent != null && !requiresCoreReconfiguration(baseline, requested)
         queueSettings {

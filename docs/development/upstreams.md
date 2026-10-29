@@ -26,6 +26,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **许可证、署名与证据：** 保留历史版权与对应文件许可；`apps/aerove/core/mihomo-upstream.json` 中保留的双父与补丁来源记录；[固定源码 `lib/common/request.dart`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/lib/common/request.dart)、[GitHub Releases List API 文档](https://docs.github.com/en/rest/releases/releases#list-releases)
 
+局域网启用反馈另核对同固定提交的 [`intranet_ip.dart`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/lib/views/dashboard/widgets/intranet_ip.dart)，复用本仓库已保留的地址与混合端口格式、剪贴板及通知入口；本次仅增加显式开启的提交回执与消费接线，不引入新的复制或网络依赖。
+
 #### [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)
 
 **固定版本 / revision：** `v1.19.33` / `3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8`
@@ -115,6 +117,8 @@ Lite143 网络胶囊布局诊断另只读核对实际解析的 Google Maven 发�
 Lite 仪表盘组织单行适配另只读参考同固定提交的 `TextAutoSize.kt` 与 `MultiParagraphLayoutCache.kt`：复用既有 Compose `BasicText`、`TextAutoSize.StepBased`、`TextOverflow.Ellipsis` API，范围为 15sp 至 11sp、步长 0.5sp，保留 20sp 行高及字体、透色角色。省略号避碰另只读参考同提交的 `TextLayoutResult.kt`、`AndroidParagraph.android.kt` 和 `TextLayout.android.kt`，使用公开行边界、段落方向、拟合后文字样式和段落绘制 API，纳入合成尾省略号的实际墨迹边界；测试以独立原生段落栅格检查省略号。未复制源码或新增依赖；参考源码为 Apache-2.0。
 
 **许可证、署名与证据：** Apache-2.0；保留 Android Open Source Project 署名；[固定 `FlowExt.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/FlowExt.kt)、[固定 `AlignmentLine.kt`](https://github.com/androidx/androidx/blob/851a99e20723278101bfa110cc209021ba676748/compose/ui/ui/src/commonMain/kotlin/androidx/compose/ui/layout/AlignmentLine.kt)；本项目入口为 `GlobalResourceLibraryScreen.kt` 和 `OverviewScreen.kt`
+
+Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f9212fdba3a92c813d88c8b` 的 [`LifecycleEffect.kt`](https://android.googlesource.com/platform/frameworks/support/+/a6dd05ae754a1c807f9212fdba3a92c813d88c8b/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/LifecycleEffect.kt)，SHA256 `037bcfd89499ba68ff3520f5180b8c2b054486f293b02983dfe20fb619422e15`。复用项目已有 `LifecycleEventObserver`、`DisposableEffect`、Compose 剪贴板及通知能力，仅编写本项目设置回执与页面消费接线，未复制上游实现或新增依赖。保留 AOSP 2023 / Apache-2.0 原版权与许可头；参考源码身份不冒充实际发布依赖版本。
 
 #### [aosp-mirror/platform_external_skia](https://github.com/aosp-mirror/platform_external_skia)
 

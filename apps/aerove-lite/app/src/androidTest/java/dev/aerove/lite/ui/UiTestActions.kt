@@ -40,6 +40,11 @@ internal class UiTestActions(private val onSettings: (LiteSettings) -> Unit,
         events += "changeSettings"
         onSettings(settings)
     }
+    private var lanToken = 0L
+    override fun enableDashboardLan(): Long {
+        changeSettings(currentSettings.copy(network = currentSettings.network.copy(allowLan = true)))
+        return ++lanToken
+    }
     override fun saveDnsPreferences(preferences: dev.aerove.lite.dnssettings.DnsPreferences): Long =
         error("Unused UI fixture DNS preferences save; provide an explicit receipt owner")
     override fun changeHistoryTable(change: HistoryTableChange) {
