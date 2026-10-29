@@ -14,6 +14,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.aerove.lite.*
+import dev.aerove.lite.R
 import dev.aerove.lite.networksettings.DashboardLanReceipt
 import dev.aerove.lite.networksettings.UserProxyPorts
 import dev.aerove.lite.notices.ClientNotices
