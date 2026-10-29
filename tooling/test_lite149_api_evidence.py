@@ -22,7 +22,7 @@ class Lite149ApiEvidenceTest(unittest.TestCase):
 
     def test_usage_explicit_removal_and_absence_are_distinct(self):
         method = audit.CONTRACT['methods'][0]
-        for text in (method['owner']+'\n', method['owner']+':\n    public java.util.List getModifierInfo()\n'):
+        for text in (method['owner']+'\n', method['owner']+f":\n    public {method['returns']} {method['name']}()\n"):
             self.assertTrue(audit.usage_results(text, [method])[0]['explicitlyRemoved'])
         result = audit.usage_results(method['owner']+':\n    private int unrelated()\n', [method])[0]
         self.assertFalse(result['explicitlyRemoved'])

@@ -148,12 +148,6 @@
   "methods": [
     {
       "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "getModifierInfo",
-      "returns": "java.util.List",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
       "name": "getWidth",
       "returns": "int",
       "parameters": []
@@ -207,12 +201,6 @@
       "parameters": []
     },
     {
-      "owner": "androidx.compose.ui.layout.ModifierInfo",
-      "name": "getModifier",
-      "returns": "androidx.compose.ui.Modifier",
-      "parameters": []
-    },
-    {
       "owner": "com.kyant.backdrop.backdrops.LayerBackdrop",
       "name": "getGraphicsLayer",
       "returns": "androidx.compose.ui.graphics.layer.GraphicsLayer",
@@ -225,6 +213,6 @@
       "parameters": []
     }
   ],
-  "diagnosticPatchSha256": "6406ed46b6d479c4f6fc58c2f35fa285be64e7411851faafcdb12113da469bb8",
+  "diagnosticPatchSha256": "5edcc09a75e962bc6a9c984ccf8cc2220179581188f98f861134cd11b4d92e81",
   "selector": "dev.aerove.lite.ui.LiteSwitchRenderingTest#restingTrackAndThumbFollowTheMaterialIndependently[Clear_ordinary_light_off_disabled]"
 }
