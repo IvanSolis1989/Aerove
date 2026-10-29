@@ -147,72 +147,12 @@
   "signerSha256": "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8",
   "methods": [
     {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "getWidth",
-      "returns": "int",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "getHeight",
-      "returns": "int",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "getCoordinates",
-      "returns": "androidx.compose.ui.layout.LayoutCoordinates",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "isPlaced",
-      "returns": "boolean",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "getDensity",
-      "returns": "androidx.compose.ui.unit.Density",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "getLayoutDirection",
-      "returns": "androidx.compose.ui.unit.LayoutDirection",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.layout.LayoutInfo",
-      "name": "isAttached",
-      "returns": "boolean",
-      "parameters": []
-    },
-    {
       "owner": "androidx.compose.ui.semantics.SemanticsNode",
-      "name": "getLayoutInfo",
-      "returns": "androidx.compose.ui.layout.LayoutInfo",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.semantics.SemanticsNode",
-      "name": "getId",
-      "returns": "int",
-      "parameters": []
-    },
-    {
-      "owner": "com.kyant.backdrop.backdrops.LayerBackdrop",
-      "name": "getGraphicsLayer",
-      "returns": "androidx.compose.ui.graphics.layer.GraphicsLayer",
-      "parameters": []
-    },
-    {
-      "owner": "androidx.compose.ui.graphics.layer.GraphicsLayer",
-      "name": "getSize-YbymL2g",
-      "returns": "long",
+      "name": "getBoundsInRoot",
+      "returns": "androidx.compose.ui.geometry.Rect",
       "parameters": []
     }
   ],
-  "diagnosticPatchSha256": "5edcc09a75e962bc6a9c984ccf8cc2220179581188f98f861134cd11b4d92e81",
+  "diagnosticPatchSha256": "8392d0c8d43562c00c0220c8c10064560edb5c7db5753936242316c66c5cf296",
   "selector": "dev.aerove.lite.ui.LiteSwitchRenderingTest#restingTrackAndThumbFollowTheMaterialIndependently[Clear_ordinary_light_off_disabled]"
 }
