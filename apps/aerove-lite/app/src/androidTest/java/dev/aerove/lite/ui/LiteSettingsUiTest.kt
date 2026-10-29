@@ -126,7 +126,25 @@ class LiteSettingsUiTest {
     fun logsAreOptInPersistedAndTheirEntryTracksTheSetting() {
         val state = mutableStateOf(LiteState())
         val actions = UiTestActions { state.value = state.value.copy(settings = it) }
-        compose.replaceAppContent { LiteApp(state.value, actions) }
+        lateinit var controller: LiteController
+        compose.activityRule.scenario.onActivity { controller = ViewModelProvider(it)[LiteController::class.java] }
+        compose.replaceAppContent {
+            val scope = rememberCoroutineScope()
+            val feature = remember {
+                dev.aerove.lite.observability.ObservabilityFeature(scope, object : dev.aerove.lite.observability.HistoryDocuments {
+                    override suspend fun save(reference: String, lines: List<String>, isCurrent: () -> Boolean): Unit =
+                        error("Unused logs setting fixture export")
+                    override suspend fun deleteCreated(reference: String): Boolean = error("Unused logs setting fixture document cleanup")
+                }) { error("Unused logs setting fixture DNS cache clear") }
+            }
+            DisposableEffect(feature) { onDispose { feature.close() } }
+            val host = remember(feature) {
+                object : LiteFeatureHost by controller {
+                    override val observability get() = feature
+                }
+            }
+            CompositionLocalProvider(LocalLiteFeatures provides { host }) { LiteApp(state.value, actions) }
+        }
         val tab = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)
         compose.onNode(tab and hasText(text(R.string.lite_tab_tools))).performClick()
         compose.onNodeWithText(text(R.string.lite_logs)).assertDoesNotExist()
