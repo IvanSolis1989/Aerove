@@ -172,12 +172,25 @@ class GlobalRulePayloadRepositoryTest {
             server.enqueue(MockResponse().setBody("original.example"))
             val before = d.payloads.importUrl(d.library.snapshot(), "one", server.url("/old").toString())
             server.takeRequest()
+            val started = CountDownLatch(1); val release = CountDownLatch(1)
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse = when (request.path) {
+                    "/old" -> {
+                        started.countDown(); check(release.await(5, TimeUnit.SECONDS))
+                        MockResponse().setBody("late.example")
+                    }
+                    "/new" -> MockResponse().setBody("current.example")
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
             supervisorScope {
-                server.enqueue(MockResponse().setBody("late.example").setBodyDelay(1, java.util.concurrent.TimeUnit.SECONDS))
                 val old = async { runCatching { d.payloads.sync(before, before.id("one")) } }
-                withContext(Dispatchers.IO) { server.takeRequest() }
-                server.enqueue(MockResponse().setBody("current.example"))
-                val current = d.payloads.options(before, before.id("one"), "one", server.url("/new").toString())
+                val current = try {
+                    withContext(Dispatchers.IO) { assertTrue(started.await(3, TimeUnit.SECONDS)) }
+                    d.payloads.options(before, before.id("one"), "one", server.url("/new").toString()).also {
+                        assertFalse(old.isCompleted)
+                    }
+                } finally { release.countDown() }
                 assertTrue(old.await().exceptionOrNull() is IllegalArgumentException)
                 assertEquals(current.encoded, d.library.snapshot().encoded)
                 assertEquals("current.example", d.payloads.preview(current, current.id("one")).text)
@@ -185,6 +198,7 @@ class GlobalRulePayloadRepositoryTest {
                     // Old identity remains its last committed origin, never the rejected late download.
                     d.manager.withGlobalRule("one", it.url, it.behavior, it.format, null) { _, file -> file.readText() }
                 })
+                assertTrue(File(d.root, "runtime/global-rule-staging").listFiles().orEmpty().isEmpty())
             }
         }
     }
