@@ -6,6 +6,14 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
+## 0.11.0-beta.15 — 开发候选
+
+本候选尚未构建、验收或发行，安装编号由下一次实际构建生成。
+
+- 悬浮胶囊底栏沿用固定底栏的图标选态：未选中为描边，选中为实心，保留原有透色；图标动画服从既有失焦、隐藏和减少动态效果门禁。
+- 固定底栏按当前材质呈现柔光磨砂或流光清透，复用真实正文背景；保留原有高度、安全区与点击位置，材质切换保持单一底栏。
+- 内置分流脚本原样同步 Smart-Config-Kit 固定 `66a5eb6034bae4f2bda905669de788a418cacd9a` 的 `v6.0.21-flclash.25`，正文、完整性记录及来源联动，保留用户已有脚本的自主更新流程。
+
 ## 0.11.0-beta.14+2026102274 — 已发行
 
 此版本沿用原构建 [#74](https://github.com/IvanSolis1989/Aerove/actions/runs/40797508485) 的 ARM64 APK，经 [#78 第二次复验](https://github.com/IvanSolis1989/Aerove/actions/runs/40817573849/attempts/2) 通过 23 项检查及哈希、签名和包信息验证。用户真机确认开启局域网代理后提示并复制实际 IP:端口，卡片布局和高度不变；[推广 #80](https://github.com/IvanSolis1989/Aerove/actions/runs/40821861781) 已发布为 [Android 预览版](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.14%2B2026102274)，并完成 [Telegram 频道推送](https://t.me/IvanSolis89/63)。原源码、安装编号、签名和 APK 字节保持不变，没有重新编译；稳定版 latest 不变，Lite 独立继续验收。

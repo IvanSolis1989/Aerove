@@ -1,13 +1,13 @@
 {
   "repository": "https://github.com/IvanSolis1989/Smart-Config-Kit",
-  "revision": "3971964b4089b38c6a1233537e1cf2e44bf2be4d",
+  "revision": "66a5eb6034bae4f2bda905669de788a418cacd9a",
   "sourcePath": "Mihomo内核系/FlClash/FlClash(mihomo).js",
-  "gitBlob": "9dc3bb723779f835f94d0267aac401c735a2ac71",
-  "version": "v6.0.21-flclash.24",
-  "sha256": "8bbbe11ca809c1c49e56919e4aef4d4480683a7c9d843bd8875947d6c4cd9d9e",
+  "gitBlob": "02ac2030b0a190958ed590fc6475f83132aa1c4f",
+  "version": "v6.0.21-flclash.25",
+  "sha256": "f33ea7ef24043899d734f3174000b87f4f620cd35c4328af484c32775ea062bc",
   "updateUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js",
   "modifications": "None. Exact source Git blob bytes with LF line endings; source algorithm, license and header unchanged.",
-  "bytes": 149434,
-  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/3971964b4089b38c6a1233537e1cf2e44bf2be4d/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js",
-  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/3971964b4089b38c6a1233537e1cf2e44bf2be4d/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js"
+  "bytes": 156065,
+  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/66a5eb6034bae4f2bda905669de788a418cacd9a/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js",
+  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/66a5eb6034bae4f2bda905669de788a418cacd9a/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js"
 }
