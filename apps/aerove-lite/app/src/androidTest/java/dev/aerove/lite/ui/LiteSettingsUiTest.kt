@@ -2,6 +2,7 @@ package dev.aerove.lite.ui
 
 import android.util.Log
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasAnyDescendant

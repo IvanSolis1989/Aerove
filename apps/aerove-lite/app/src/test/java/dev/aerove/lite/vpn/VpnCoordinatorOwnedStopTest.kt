@@ -5,11 +5,13 @@ import dev.aerove.lite.VpnPhase
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -21,6 +23,13 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class VpnCoordinatorOwnedStopTest {
+    private fun assertFailureOrigin(original: Throwable, actual: Throwable) {
+        assertEquals(original.javaClass, actual.javaClass)
+        assertEquals(original.message, actual.message)
+        assertTrue("Original failure must survive coroutine stack recovery",
+            generateSequence(actual) { it.cause }.any { it === original })
+    }
+
     private class Session(val ready: CompletableDeferred<Unit> = CompletableDeferred(Unit),
         val joined: CompletableDeferred<Unit> = CompletableDeferred(Unit)) : TunnelSession {
         override val endpoint = CoreEndpoint(1234, "owned-test-secret")
@@ -141,28 +150,43 @@ class VpnCoordinatorOwnedStopTest {
 
     @Test fun openThatRetainsNativeResourcesAndThrowsCannotAcknowledgeTheirJoin() = runTest {
         val opening = CompletableDeferred<Unit>()
-        val failure = IllegalStateException("owner superseded").apply {
-            addSuppressed(IllegalStateException("native cleanup failed"))
-        }
+        val failure = IllegalStateException("owner superseded")
+        val cleanup = IllegalStateException("native cleanup failed")
         var retained = false
+        var cleanupAttempts = 0
         val coordinator = VpnCoordinator(backgroundScope, TunnelBackend {
-            retained = true
-            opening.await()
-            throw failure
+            withContext(NonCancellable) {
+                retained = true
+                opening.await()
+                try { throw failure }
+                catch (failed: IllegalStateException) {
+                    try { cleanupAttempts++; throw cleanup }
+                    catch (cleanupFailure: IllegalStateException) { failed.addSuppressed(cleanupFailure) }
+                    throw failed
+                }
+            }
         })
-        coordinator.start(VpnPlan("old", LiteSettings())); runCurrent()
-        val captured = coordinator.stopAndCapture()
-        opening.complete(Unit); runCurrent()
-        assertTrue(retained)
-        try { captured.await(); error("Non-returning open falsely acknowledged join") }
-        catch (expected: IllegalStateException) {
-            assertSame(failure, expected)
-            assertEquals("native cleanup failed", expected.suppressed.single().message)
+        try {
+            coordinator.start(VpnPlan("old", LiteSettings())); runCurrent()
+            val captured = coordinator.stopAndCapture()
+            runCurrent()
+            assertFalse(captured.isCompleted)
+            assertEquals(0, cleanupAttempts)
+            opening.complete(Unit); runCurrent()
+            assertTrue(retained)
+            assertEquals(1, cleanupAttempts)
+            try { captured.await(); error("Non-returning open falsely acknowledged join") }
+            catch (expected: IllegalStateException) {
+                assertFailureOrigin(failure, expected)
+                assertSame(cleanup, failure.suppressed.single())
+            }
+            val repeated = coordinator.stopAndCapture()
+            try { repeated.await(); error("Completed failed open lost its resource evidence") }
+            catch (expected: IllegalStateException) { assertFailureOrigin(failure, expected) }
+        } finally {
+            opening.complete(Unit)
+            coordinator.close()
         }
-        val repeated = coordinator.stopAndCapture()
-        try { repeated.await(); error("Completed failed open lost its resource evidence") }
-        catch (expected: IllegalStateException) { assertSame(failure, expected) }
-        coordinator.close()
     }
 
     @Test fun ordinaryOpenFailureRemainsUnconfirmedButDoesNotPermanentlyBlockANewStart() = runTest {
@@ -175,7 +199,7 @@ class VpnCoordinatorOwnedStopTest {
         coordinator.start(VpnPlan("invalid", LiteSettings())); runCurrent()
         val captured = coordinator.stopAndCapture()
         try { captured.await(); error("Failed open was reported as a successful resource join") }
-        catch (expected: IllegalArgumentException) { assertSame(failure, expected) }
+        catch (expected: IllegalArgumentException) { assertFailureOrigin(failure, expected) }
         coordinator.start(VpnPlan("valid", LiteSettings())); runCurrent()
         assertEquals(2, opened)
         assertEquals(VpnPhase.Running, coordinator.state.value.phase)
