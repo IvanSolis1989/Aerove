@@ -7,6 +7,30 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
+## 0.11.0-beta.17 — 未发行候选
+
+修复标准版对 Mihomo TUN 栈名称的大小写校验，接受内核原生使用的 `Mips`、`Mixed`、`System`、`Gvisor` 写法；保留未知值及跨内核不兼容值的错误提示，不改写用户的源配置。
+
+本候选包含 beta.16 的纯黑与材质独立切换修复。已完成14项直接相关客户端测试；新的 Android 构建、连接及真机验收仍待完成，不将此前 beta.16 的完整 CI 当作本候选通过。
+
+## 0.11.0-beta.16+2026102292 — 未发行
+
+标准版[原构建 #92](https://github.com/IvanSolis1989/Aerove/actions/runs/41032907391)使用源码 `9f2db578c9b5b61dfe9a5a0d1750602d9c0f4336`，完整 CI 已通过。用户真机验收发现客户端误拒绝 TUN 栈名称 `Mips`，本候选未通过，不发行；原包和失败记录保留。
+
+- 标准与纯黑模式均可使用柔光磨砂、流光清透和灵动极光，切换纯黑不再关闭这些效果。
+- 深色纯黑的极光底图比标准模式更暗，保留颜色和缓动；经典单色采用真正黑底，标准深色保留深灰底。
+- 浅色效果不变；主题页面与底图预览同步呈现当前选择。
+
+## 0.11.0-beta.15+2026102283 — 已发行
+
+本版本沿用原构建 [#83](https://github.com/IvanSolis1989/Aerove/actions/runs/40909988418)、源码 `a5565bf5d67b36426acf7505a2e4581a17fc7a4c` 的 ARM64 APK，完整 CI 和用户真机验收通过。[推广 #85](https://github.com/IvanSolis1989/Aerove/actions/runs/40935910513) 已发布为 [Android 预览版](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.15%2B2026102283)，原包 SHA-256 为 `15ef315bf47e77261ef971f7bd7200856178daa16ec971c6d89cda9e352a3046`；原源码、安装编号、签名和 APK 字节保持不变，没有重新编译。
+
+已完成 [Telegram 频道推送](https://t.me/IvanSolis89/66)，仅附原版 APK；官方完整发行列表已包含本版本及对应安装包。标准版稳定 latest 保持不变，Lite 独立继续迁移与验收。
+
+- 悬浮胶囊底栏沿用固定底栏的图标选态：未选中为描边，选中为实心，保留原有透色；图标动画服从既有失焦、隐藏和减少动态效果门禁。
+- 固定底栏按当前材质呈现柔光磨砂或流光清透，复用真实正文背景；保留原有高度、安全区与点击位置，材质切换保持单一底栏。
+- 内置分流脚本原样同步 Smart-Config-Kit 固定 `66a5eb6034bae4f2bda905669de788a418cacd9a` 的 `v6.0.21-flclash.25`，正文、完整性记录及来源联动，保留用户已有脚本的自主更新流程。
+
 ## 0.11.0-beta.14+2026102274 — 已发行
 
 此版本沿用原构建 [#74](https://github.com/IvanSolis1989/Aerove/actions/runs/40797508485) 的 ARM64 APK，经 [#78 第二次复验](https://github.com/IvanSolis1989/Aerove/actions/runs/40817573849/attempts/2) 通过 23 项检查及哈希、签名和包信息验证。用户真机确认开启局域网代理后提示并复制实际 IP:端口，卡片布局和高度不变；[推广 #80](https://github.com/IvanSolis1989/Aerove/actions/runs/40821861781) 已发布为 [Android 预览版](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.14%2B2026102274)，并完成 [Telegram 频道推送](https://t.me/IvanSolis89/63)。原源码、安装编号、签名和 APK 字节保持不变，没有重新编译；稳定版 latest 不变，Lite 独立继续验收。
