@@ -1226,6 +1226,8 @@ Lite 端口释放失败的证据采集另只读参考固定 `6de0b804ca086a6194a
 
 标准版原包诊断另只读核对[固定 `sdkmanager.sh`](https://android.googlesource.com/platform/tools/base/+/dcded801a4942d06805cc74b56dc2cecbece2f80/sdklib/wrappers/sdkmanager.sh)，提交为 `dcded801a4942d06805cc74b56dc2cecbece2f80`。该 wrapper 的 `--licenses` 警告并返回成功，用于解释 CI 新工具未生成旧 preview 许可记录的边界；参考源与运行二进制身份分别记录，不互相冒充。诊断流程改用环境中已存在且核版本为 12.0 的 Java SDKmanager 执行正式许可登记，保留实际退出码和原许可文件检查；未复制 wrapper 实现、未新增或伪造许可文件。原文件保留 AOSP 2026 的 Apache-2.0 版权头。
 
+另参考 Android tools/base 固定提交 [`44330ad8b855e38930c70ca44f65e781dd95d1ab`](https://android.googlesource.com/platform/tools/base/+/44330ad8b855e38930c70ca44f65e781dd95d1ab) 及其外部 Kotlin 构建脚本回归，定位 KT-89716 对已应用 KTS 的 FIR/UAST 分类问题。Lite 两入口在原有时点直接应用既有共同插件，移除多余脚本中转；未复制上游补丁、升级依赖或关闭 lint，实际 lint 结果仍由新源码 CI 核验。
+
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
 
 #### [cli/cli](https://github.com/cli/cli)
