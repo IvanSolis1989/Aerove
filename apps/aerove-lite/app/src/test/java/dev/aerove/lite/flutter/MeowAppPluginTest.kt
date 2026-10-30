@@ -16,7 +16,7 @@ class MeowAppPluginTest {
         val rows = JSONArray(meowPackagesJson(listOf(packageInfo)))
         val row = rows.getJSONObject(0)
         assertEquals(1, rows.length())
-        assertEquals(setOf("packageName", "label", "system", "internet", "lastUpdateTime"), row.keySet())
+        assertEquals(setOf("packageName", "label", "system", "internet", "lastUpdateTime"), row.keys().asSequence().toSet())
         assertEquals(packageInfo.packageName, row.getString("packageName"))
         assertEquals(packageInfo.label, row.getString("label"))
         assertTrue(row.getBoolean("system"))

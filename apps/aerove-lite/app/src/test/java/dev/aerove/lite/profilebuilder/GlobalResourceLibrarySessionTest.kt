@@ -1,6 +1,8 @@
 package dev.aerove.lite.profilebuilder
 
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -90,23 +92,22 @@ class GlobalResourceLibrarySessionTest {
         assertTrue(session.remove(BuilderResourceKind.Filter, session.state.value.snapshot!!.resources.enumerate().map { it.id }.toSet()))
     }
     @Test fun remoteIconsHonorExplicitNameAndSameUrlUpdatesExistingResource() = runBlocking<Unit> {
-        val server = com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1", 0), 0)
-        val requests = java.util.concurrent.atomic.AtomicInteger()
         val content = """{"name":"From JSON","icons":[{"name":"one","url":"https://example.com/one.png"}]}""".toByteArray()
-        server.createContext("/icons.json") { exchange ->
-            requests.incrementAndGet(); exchange.sendResponseHeaders(200, content.size.toLong())
-            exchange.responseBody.use { it.write(content) }; exchange.close()
-        }
-        server.start()
-        try {
+        MockWebServer().use { server ->
+            repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody(content.decodeToString())) }
+            server.start()
             val library = library(); val session = session(library); session.load()
-            val address = "http://127.0.0.1:${server.address.port}/icons.json"
+            val address = server.url("/icons.json").toString()
             assertTrue(session.importIconsUrl("Requested", address))
             assertEquals("Requested", library.snapshot().resources.iconSets.single().name)
             assertTrue(session.importIconsUrl("Updated", address))
             val actual = library.snapshot().resources.iconSets.single()
-            assertEquals("Updated", actual.name); assertEquals(address, actual.url); assertEquals(2, requests.get())
-        } finally { server.stop(0) }
+            assertEquals("Updated", actual.name); assertEquals(address, actual.url); assertEquals(2, server.requestCount)
+            repeat(2) {
+                val request = server.takeRequest()
+                assertEquals("GET", request.method); assertEquals("/icons.json", request.path)
+            }
+        }
     }
 
     @Test fun quickEditRenameUsesDeletionTransactionAndRetainsUnchangedIdentity() = runBlocking<Unit> {

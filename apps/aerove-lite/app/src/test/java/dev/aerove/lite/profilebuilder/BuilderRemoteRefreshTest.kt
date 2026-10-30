@@ -1,12 +1,13 @@
 package dev.aerove.lite.profilebuilder
 
-import com.sun.net.httpserver.HttpServer
-import java.net.InetSocketAddress
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.*
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -17,19 +18,19 @@ class BuilderRemoteRefreshTest {
     private fun icon(name: String, url: String) = BuilderIconSet(name, url, listOf(BuilderIcon("old", "https://example.com/old.png")))
     private suspend fun responseGate(expectedRequests: Int = 2, block: suspend (String, CountDownLatch, CountDownLatch, AtomicInteger) -> Unit) {
         val started = CountDownLatch(expectedRequests); val release = CountDownLatch(1); val count = AtomicInteger()
-        val executor = Executors.newCachedThreadPool(); val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        server.executor = executor
-        server.createContext("/") { exchange ->
-            val number = count.incrementAndGet(); started.countDown()
-            try {
+        val server = MockWebServer()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                check(request.method == "GET")
+                val number = count.incrementAndGet(); started.countDown()
                 check(release.await(5, TimeUnit.SECONDS))
-                val bytes = """{"name":"download","icons":[{"name":"new$number","url":"https://example.com/$number.png"}]}""".toByteArray()
-                exchange.sendResponseHeaders(200, bytes.size.toLong()); exchange.responseBody.use { it.write(bytes) }
-            } finally { exchange.close() }
+                val body = """{"name":"download","icons":[{"name":"new$number","url":"https://example.com/$number.png"}]}"""
+                return MockResponse().setResponseCode(200).setBody(body)
+            }
         }
         server.start()
-        try { block("http://127.0.0.1:${server.address.port}", started, release, count) }
-        finally { release.countDown(); server.stop(0); executor.shutdownNow() }
+        try { block(server.url("/").toString().trimEnd('/'), started, release, count) }
+        finally { release.countDown(); server.close() }
     }
     @Test fun differentIdsBothStartHttpAndMergeWithoutLosingEitherResult() = runBlocking<Unit> {
         responseGate { url, started, release, count ->

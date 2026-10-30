@@ -50,6 +50,7 @@ dependencies = [
  "meow-dns",
  "meow-listener",
  "meow-lwip",
+ "meow-proxy",
  "meow-transport",
  "meow-tunnel",
  "parking_lot",
