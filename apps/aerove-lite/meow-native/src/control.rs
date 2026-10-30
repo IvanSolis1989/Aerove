@@ -2264,13 +2264,49 @@ mod runtime_consume90 {
     async fn actual_check_routes_accepts_its_own_consumption_and_reports_the_new_real_stamp() {
         let (api,tunnel,scope,events)=fixture().await;let route=tunnel.route_snapshot();let c=&route.proxies["C"];
         let exit=format!("{:?} {} {}",c.name(),c.adapter_type(),c.addr());
-        let body=serde_json::json!({"hits":[[{"host":"http://127.0.0.1:9","proxy":"FB","exit":exit}]]}).to_string();
+        let body=serde_json::json!({"hits":[[{"host":"127.0.0.1:9","proxy":"FB","exit":exit}]]}).to_string();
         let before=api.control.stamp().unwrap();
+        let serial=api.control.consume_serial.load(std::sync::atomic::Ordering::Relaxed);
+        let intent=api.control.plane.gate.lock().selection_serial;
         let first=wire_request(&api,"POST","/aerove/check-routes",&body).await;
         assert_eq!(first["held"],serde_json::json!([true]));
         let after=api.control.stamp().unwrap();assert!(after.1>before.1);
         assert_eq!(first["core-epoch"],after.0.to_string());assert_eq!(first["route-version"],after.1.to_string());
+        assert_eq!(api.control.consume_serial.load(std::sync::atomic::Ordering::Relaxed),serial+1);
+        assert_eq!(route.proxies["FB"].selection().unwrap().fixed().as_deref(),Some(""));
+        assert_eq!(route.proxies["FB"].current().as_deref(),Some("A"));
+        assert_eq!(api.control.plane.gate.lock().selection_serial,intent);
         let next=wire_request(&api,"POST","/aerove/check-routes",&body).await;assert_eq!(next["held"],serde_json::json!([false]));
+        assert_eq!(api.control.consume_serial.load(std::sync::atomic::Ordering::Relaxed),serial+2);
+        assert_eq!(api.control.stamp().unwrap(),after);
+        assert_eq!(next["core-epoch"],after.0.to_string());assert_eq!(next["route-version"],after.1.to_string());
+        finish(api,scope,events).await;
+    }
+
+    #[tokio::test]
+    async fn actual_rule_check_routes_tracks_match_then_exit_in_one_owner_trace() {
+        let (api,tunnel,scope,events)=fixture().await;let route=tunnel.route_snapshot();
+        assert_eq!(tunnel.mode(),TunnelMode::Rule);
+        let origin=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host=origin.local_addr().unwrap().to_string();let a=&route.proxies["A"];
+        let exit=format!("{:?} {} {}",a.name(),a.adapter_type(),a.addr());
+        assert_eq!(route.proxies["FB"].current().as_deref(),Some("C"));
+        assert_eq!(route.proxies["FB"].selection().unwrap().fixed().as_deref(),Some("B"));
+        let before=api.control.stamp().unwrap();
+        let serial=api.control.consume_serial.load(std::sync::atomic::Ordering::Relaxed);
+        let intent=api.control.plane.gate.lock().selection_serial;
+        // MATCH,OUTER walks FB during matching (C), then Exit consumes the now-auto FB (A).
+        let body=serde_json::json!({"hits":[[{"host":host,"exit":exit}]]}).to_string();
+        let response=wire_request(&api,"POST","/aerove/check-routes",&body).await;
+        assert_eq!(response["held"],serde_json::json!([true]));
+        let after=api.control.stamp().unwrap();assert!(after.1>before.1);
+        assert_eq!(response["core-epoch"],after.0.to_string());assert_eq!(response["route-version"],after.1.to_string());
+        assert!(api.control.consume_serial.load(std::sync::atomic::Ordering::Relaxed)>=serial+2);
+        assert_eq!(api.control.plane.gate.lock().selection_serial,intent);
+        assert_eq!(route.proxies["FB"].selection().unwrap().fixed().as_deref(),Some(""));
+        assert_eq!(route.proxies["FB"].current().as_deref(),Some("A"));
+        assert_eq!(route.proxies["FB2"].selection().unwrap().fixed().as_deref(),Some("B"));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(40),origin.accept()).await.is_err(),"route recheck opened a target socket");
         finish(api,scope,events).await;
     }
 

@@ -381,9 +381,9 @@ async fn startup_dead_fallback_consumption_is_captured_then_actual_business_read
     api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
 }
 
-async fn startup_http(address: std::net::SocketAddr, secret: &str, method: &str, body: &str) -> String {
+async fn startup_http(address: std::net::SocketAddr, secret: &str, method: &str, path: &str, body: &str) -> String {
     let mut stream = TcpStream::connect(address).await.unwrap();
-    stream.write_all(format!("{method} /aerove/selection-cache HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {secret}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    stream.write_all(format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {secret}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
     let mut response = String::new();
     tokio::time::timeout(Duration::from_secs(5), stream.read_to_string(&mut response)).await.unwrap().unwrap(); response
 }
@@ -398,20 +398,24 @@ async fn startup_cache_real_private_http_is_cas_guarded_and_absent_from_user_con
     let token = CancellationToken::new();
     let private_task = { let api = api.clone(); let token = token.clone(); tokio::spawn(async move { api.serve_private(listener, token).await.unwrap(); }) };
     let user_task = { let api = api.clone(); let token = token.clone(); tokio::spawn(async move { api.serve_user(user, token).await.unwrap(); }) };
-    assert!(startup_http(user_address, USER, "GET", "").await.starts_with("HTTP/1.1 404"));
+    assert!(startup_http(user_address, USER, "GET", "/aerove/selection-cache", "").await.starts_with("HTTP/1.1 404"));
     let before = api.control.snapshot().await.unwrap();
     let body = serde_json::json!({"expectedCoreEpoch":before.core_epoch,"expectedRouteVersion":before.route_version,"expectedGraphToken":api.control.startup_selection_snapshot().unwrap().graph_token,"expectedSelectionIntent":api.control.startup_selection_snapshot().unwrap().selection_intent,"requested":{"AUTO":"DIRECT"}}).to_string();
-    // DELETE auto->auto is a newer intent even though it leaves the route version unchanged.
-    assert!(startup_http(address, PRIVATE, "DELETE", "").await.starts_with("HTTP/1.1 204"));
+    let intent = api.control.startup_selection_snapshot().unwrap().selection_intent;
+    // The existing unpin endpoint records auto->auto intent without changing the route.
+    assert!(startup_http(address, PRIVATE, "DELETE", "/proxies/AUTO", "").await.starts_with("HTTP/1.1 204"));
     assert_eq!(api.control.snapshot().await.unwrap(), before);
-    assert!(startup_http(address, PRIVATE, "POST", &body).await.starts_with("HTTP/1.1 409"));
+    let unpinned = api.control.startup_selection_snapshot().unwrap();
+    assert!(unpinned.selection_intent.parse::<u64>().unwrap() > intent.parse::<u64>().unwrap());
+    assert_eq!(unpinned.groups["AUTO"].fixed.as_deref(), Some(""));
+    assert!(startup_http(address, PRIVATE, "POST", "/aerove/selection-cache", &body).await.starts_with("HTTP/1.1 409"));
     let body = serde_json::json!({"expectedCoreEpoch":before.core_epoch,"expectedRouteVersion":before.route_version,
         "expectedGraphToken":api.control.startup_selection_snapshot().unwrap().graph_token,"expectedSelectionIntent":api.control.startup_selection_snapshot().unwrap().selection_intent,"requested":{"AUTO":"DIRECT"}}).to_string();
-    let response = startup_http(address, PRIVATE, "POST", &body).await; assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let response = startup_http(address, PRIVATE, "POST", "/aerove/selection-cache", &body).await; assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     let payload: serde_json::Value = serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap();
     assert_eq!(payload["requested"]["AUTO"], "DIRECT"); assert_eq!(payload["groups"]["AUTO"]["fixed"], "DIRECT");
-    let actual = startup_http(address, PRIVATE, "GET", "").await; assert!(actual.starts_with("HTTP/1.1 200"));
-    assert!(startup_http(address, PRIVATE, "POST", &body).await.starts_with("HTTP/1.1 409"));
+    let actual = startup_http(address, PRIVATE, "GET", "/aerove/selection-cache", "").await; assert!(actual.starts_with("HTTP/1.1 200"));
+    assert!(startup_http(address, PRIVATE, "POST", "/aerove/selection-cache", &body).await.starts_with("HTTP/1.1 409"));
     token.cancel(); api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); }
     private_task.await.unwrap(); user_task.await.unwrap(); api.join().await;
 }
