@@ -74,7 +74,7 @@ async fn forward(tunnel: Tunnel, success: bool) {
     }
 }
 
-#[tokio::test(flavor="multi_thread",worker_threads=3)]
+#[tokio::test(flavor="current_thread")]
 async fn file_provider_nested_select_real_route_refresh_derived_health_and_stop() {
     let files = Files::new(); files.write("feed.yaml","proxies:\n - {name: a, type: direct}\n - {name: b, type: direct}\n");
     files.write("spare.yaml","proxies:\n - {name: unused, type: direct}\n");
@@ -113,7 +113,7 @@ async fn file_provider_nested_select_real_route_refresh_derived_health_and_stop(
     assert_eq!(current.health().delay_history().len(),count);
 }
 
-#[tokio::test(flavor="multi_thread",worker_threads=3)]
+#[tokio::test(flavor="current_thread")]
 async fn http_provider_rejects_unintegrated_chain_before_cache_or_live_receipt_changes() {
     let files = Files::new(); let origin = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address = origin.local_addr().unwrap();
     let fetches = tokio::spawn(async move {

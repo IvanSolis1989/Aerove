@@ -177,7 +177,7 @@ async fn original_core_health_writer_carries_url_graph_and_latest_target_intent(
     stop(api, scope, cancel, serve, events).await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
 async fn epoch_retirement_releases_history_proofs_before_scope_join() {
     let (api, tunnel, scope, address, cancel, serve, events) = fixture().await;
     let target = tunnel.route_snapshot().proxies["DIRECT"].clone(); let baseline = Arc::strong_count(&target);
