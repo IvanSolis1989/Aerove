@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.compose")
+    id("aerove.lite-app-common") apply false
     id("dev.flutter.flutter-gradle-plugin")
 }
 

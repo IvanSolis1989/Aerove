@@ -606,7 +606,7 @@ class BuildStreamingTests(unittest.TestCase):
 
 class BuildPyRequirementTests(unittest.TestCase):
     """Native mirror of core-provider-v3 build-py-requirements.json; test_core_tests.BuildContractTests stays authoritative."""
-    def drive(self,mode):
+    def drive(self,mode,compile_error=False):
         import core_tests
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);(root/'Cargo.toml').write_text('[package]\nname="aerove-meow-core"\n[lib]\nname="aerove_meow_core"\n[dependencies]\n')
@@ -615,16 +615,22 @@ class BuildPyRequirementTests(unittest.TestCase):
             full=build_policy.full_native_suite(dict(coreTests=mode))
             policy=dict(resolveLock=False,expectedLockBeforeSha256=core_tests.digest(b'accepted lock\n'),policySha256='fixture policy',coreTests=mode,
                 coreTestLockSha256='a'*64,targets=list(build_policy.RESOURCE_HEALTH_TARGETS) if full else ['lib','proxy_runtime'])
+            (root/'tests').mkdir()
+            for target in policy['targets'][1:]:(root/'tests'/f'{target}.rs').write_text('// compile fixture only\n')
             output=''.join('test fixture::'+name+' ... ok\n' for cases in build.RESOURCE_HEALTH_CASES.values() for name in cases)
             calls=dict(gate=[],suite=[],core=[])
             def run(command,environment,capture=False):
                 if command[0]=='rustc':return 'rustc 1.98.1 fixture'
-                calls['suite'].append(capture);return output if capture else None
+                calls['suite'].append(capture)
+                if compile_error and '--keep-going' in command:raise subprocess.CalledProcessError(47,command)
+                return output if capture else None
             with mock.patch.object(build,'ROOT',root),mock.patch.object(build,'load_policy',return_value=policy),mock.patch.object(build,'prepare',return_value=upstream),\
                     mock.patch.object(build,'probe_libclang',return_value={'library':{'path':'unit-test-fixture-only'}}),mock.patch.object(build,'run',side_effect=run),\
                     mock.patch.object(build,'execute_core_tests',side_effect=lambda r,p,e,receipt:calls['core'].append(dict(receipt))),\
                     mock.patch.object(build,'verify_resource_jni_source',side_effect=calls['gate'].append),mock.patch('builtins.print'),mock.patch.object(sys,'argv',['build.py']):
-                build.main()
+                if compile_error:
+                    with self.assertRaises(subprocess.CalledProcessError):build.main()
+                else:build.main()
             return full,root,calls,json.loads((root/'build/host-receipt.json').read_text())
 
     def test_full_suite_modes_run_the_strict_jni_gate_and_record_native_passes_before_core_tests(self):
@@ -634,9 +640,19 @@ class BuildPyRequirementTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 full,root,calls,receipt=self.drive(mode)
                 self.assertEqual([root] if full else [],calls['gate'])
-                self.assertEqual([full],calls['suite'])
+                self.assertEqual([False,True] if full else [False],calls['suite'])
                 expected=build.RESOURCE_HEALTH_CASES if full else None
                 self.assertEqual(expected,receipt.get('addedNativeTests'));self.assertEqual(expected,calls['core'][0].get('addedNativeTests'))
+
+    def test_compile_aggregation_failure_cannot_run_tests_or_accept_a_lock(self):
+        full,root,calls,receipt=self.drive('policy-runtime-provider-reader-v1',compile_error=True)
+        self.assertTrue(full)
+        self.assertEqual([False],calls['suite'])
+        self.assertEqual([],calls['core'])
+        self.assertEqual(47,receipt['compileAggregationExit'])
+        self.assertEqual(47,receipt['commandExit'])
+        self.assertIs(receipt['acceptedLock'],False)
+        self.assertNotIn('addedNativeTests',receipt)
 
     def test_build_py_has_one_full_suite_predicate_and_no_literal_mode_tuple(self):
         source=(build.ROOT/'build.py').read_text()

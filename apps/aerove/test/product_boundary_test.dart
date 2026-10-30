@@ -79,18 +79,20 @@ void main() {
   testWidgets('shared assets and product payloads use separate bundles', (
     tester,
   ) async {
-    final shader = await rootBundle.load(ClientAssets.liquidGlassShader);
-    expect(shader.lengthInBytes, greaterThan(0));
-    final script = await rootBundle.loadString(
-      standardProduct.resources.defaultScriptAsset,
-    );
-    expect(script, contains('Mihomo'));
-    await expectLater(
-      rootBundle.load(
-        'packages/fl_clash/${standardProduct.resources.defaultScriptAsset}',
-      ),
-      throwsA(isA<FlutterError>()),
-    );
+    await tester.runAsync(() async {
+      final shader = await rootBundle.load(ClientAssets.liquidGlassShader);
+      expect(shader.lengthInBytes, greaterThan(0));
+      final script = await rootBundle.loadString(
+        standardProduct.resources.defaultScriptAsset,
+      );
+      expect(script, contains('Mihomo'));
+      await expectLater(
+        rootBundle.load(
+          'packages/fl_clash/${standardProduct.resources.defaultScriptAsset}',
+        ),
+        throwsA(isA<FlutterError>()),
+      );
+    });
     final shared =
         loadYaml(
               File(

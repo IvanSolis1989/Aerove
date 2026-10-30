@@ -264,6 +264,30 @@ class HostLockResolutionPlanTests(unittest.TestCase):
         self.assertEqual((42, 26, 75), (plan['nativeTargetCount'], plan['coreCommandCount'], plan['expectedCoreHits']))
         self.assertEqual('--resolve-lock', plan['command'][-1])
 
+    def test_history_resolution_requires_the_frozen_manifest_and_seed(self):
+        self.policy['coreTests'] = 'policy-runtime-provider-reader-v1'
+        self.write_policy()
+        pins = {key: self.policy[key] for key in ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS if key != 'sourceSpecSha256'}
+        pins['sourceSpecSha256'] = ci.digest(self.root / 'source.json')
+        with mock.patch.object(ci, 'HOST_LOCK_RESOLUTION_HISTORY_INPUTS', pins):
+            plan = ci.host_lock_resolution_plan('host', self.root, self.env)
+            self.assertEqual((42, 32, 179), (plan['nativeTargetCount'], plan['coreCommandCount'], plan['expectedCoreHits']))
+            self.assertIs(plan['acceptedLock'], False)
+            for name, key in [('Cargo.toml', 'manifestSha256'), ('Cargo.lock', 'expectedLockBeforeSha256')]:
+                path = self.root / name
+                original = path.read_bytes()
+                previous = self.policy[key]
+                path.write_bytes(b'changed but internally consistent')
+                self.policy[key] = ci.digest(path)
+                self.write_policy()
+                try:
+                    with self.subTest(file=name), self.assertRaises(ci.PromotionError):
+                        ci.host_lock_resolution_plan('host', self.root, self.env)
+                finally:
+                    path.write_bytes(original)
+                    self.policy[key] = previous
+                    self.write_policy()
+
     def test_phase_event_mode_and_all_conflicts_reject(self):
         for phase in (None, '', 'android', 'unknown'):
             with self.subTest(phase=phase), self.assertRaises(ci.PromotionError):

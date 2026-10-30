@@ -54,7 +54,7 @@ def added_native_test_proof(output):
 
 
 def run(command, environment, capture=False):
-    stem='rustc-version' if command[0]=='rustc' else 'feature-boundary' if '--no-default-features' in command else 'native-tests' if command[1]=='test' else 'native-link'
+    stem='rustc-version' if command[0]=='rustc' else 'feature-boundary' if '--no-default-features' in command else 'native-tests' if command[1]=='test' else 'native-compile' if '--keep-going' in command else 'native-link'
     result=run_logged(command,ROOT,environment,ROOT/'build'/(stem+'.stdout.log'),ROOT/'build'/(stem+'.stderr.log'),timeout=None)
     output=result.stdout.decode('utf-8').replace('\r\n','\n').replace('\r','\n')
     errors=result.stderr.decode('utf-8',errors='replace')
@@ -197,7 +197,19 @@ def main():
             receipt['ndkSourceProperties']=(args.ndk/'source.properties').read_text()
             receipt['bindgenEnvironment']={key:environment[key] for key in ['LIBCLANG_PATH','CLANG_PATH','BINDGEN_EXTRA_CLANG_ARGS_'+args.target]}
             command=['cargo','build','--locked','--release','--target',args.target]
-        output=run(command,environment,capture=True) if not args.target and full_native_suite(policy) else run(command,environment)
+        if not args.target and full_native_suite(policy):
+            if {p.stem for p in (ROOT/'tests').glob('*.rs')} != set(targets)-{'lib'}:
+                raise ValueError('Compile aggregation must match every approved Native test target')
+            receipt['compileAggregationCommand']=['cargo','build','--locked','--tests','--keep-going']
+            receipt['compileAggregationExit']=None
+            try:
+                run(receipt['compileAggregationCommand'],environment)
+                receipt['compileAggregationExit']=0
+            except BaseException as error:
+                receipt['compileAggregationExit']=getattr(error,'returncode',1);raise
+            output=run(command,environment,capture=True)
+        else:
+            output=run(command,environment)
         if not args.target and full_native_suite(policy):
             receipt["addedNativeTests"]=added_native_test_proof(output)
         if sha(lock)!=resolved:raise ValueError('Locked build mutated Cargo.lock')

@@ -462,6 +462,8 @@ class BuildContractTests(unittest.TestCase):
             targets=list(build_policy.RESOURCE_HEALTH_TARGETS) if full else ['lib','proxy_runtime']
             policy=dict(resolveLock=False,expectedLockBeforeSha256=core_tests.digest(b'accepted lock\n'),targets=targets,
                 policySha256='fixture policy',coreTests=mode,coreTestLockSha256='a'*64)
+            (root/'tests').mkdir()
+            for target in targets[1:]:(root/'tests'/f'{target}.rs').write_text('// compile fixture only\n')
             output=''.join('test fixture::'+name+' ... ok\n' for cases in build.RESOURCE_HEALTH_CASES.values() for name in cases)
             calls=dict(jni=[],suite=[],core=[])
             def run(command,environment,capture=False):
@@ -483,7 +485,10 @@ class BuildContractTests(unittest.TestCase):
                 build,root,full,calls,receipt=self.drive(mode)
                 self.assertEqual(full,build_policy.full_native_suite(dict(coreTests=mode)))
                 self.assertEqual([root] if full else [],calls['jni'],'build.py must run verify_resource_jni_source exactly for full-suite modes')
-                suite,capture=calls['suite'][0]
+                if full:
+                    self.assertEqual((['cargo','build','--locked','--tests','--keep-going'],False),calls['suite'][0])
+                    self.assertEqual(0,receipt['compileAggregationExit'])
+                suite,capture=calls['suite'][1 if full else 0]
                 self.assertEqual(full,capture,'build.py must capture the full Native suite output for the added-test proof')
                 self.assertEqual(sorted(build_policy.RESOURCE_HEALTH_TARGETS[1:]) if full else ['proxy_runtime'],sorted(suite[i+1] for i,arg in enumerate(suite) if arg=='--test'))
                 proof=build.RESOURCE_HEALTH_CASES if full else None

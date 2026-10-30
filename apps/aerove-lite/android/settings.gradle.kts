@@ -1,4 +1,5 @@
 pluginManagement {
+    includeBuild("../build-logic")
     val flutterSdkPath = run {
         val properties = java.util.Properties()
         val local = file("local.properties")

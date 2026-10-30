@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "manifestSha256": "2092489392fd24e9770908344f171ddf65c97f7e273bfc814b743202746e8417",
-  "resolveLock": false,
+  "manifestSha256": "b56e36493b3eae608be987f3f8a60f984500f5d0570c5709f1122e31fabb9802",
+  "resolveLock": true,
   "expectedLockBeforeSha256": "821af7e07190269a21f323dc59b86bb667da48de831641d775162cbbbd5c6fb0",
   "targets": [
     "lib",

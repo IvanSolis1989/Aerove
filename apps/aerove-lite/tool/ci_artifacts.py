@@ -262,6 +262,15 @@ HOST_LOCK_RESOLUTION_PROVIDER_INPUTS = {
 }
 
 
+HOST_LOCK_RESOLUTION_HISTORY_INPUTS = {
+    'manifestSha256': 'b56e36493b3eae608be987f3f8a60f984500f5d0570c5709f1122e31fabb9802',
+    'expectedLockBeforeSha256': '821af7e07190269a21f323dc59b86bb667da48de831641d775162cbbbd5c6fb0',
+    'overlaySha256': 'afdcf45c8659dd9cc705c075ac7b81b38f6927665beb0f48390646d39c9443bf',
+    'coreTestLockSha256': '96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58',
+    'sourceSpecSha256': 'f8f76d22b27f779f5b5d06a07366cd2597404fc01aa302745230cf9ee8c1220c',
+}
+
+
 def _host_resolution_inputs(phase, root, environment, *, check_seed):
     environment = os.environ if environment is None else environment
     conflicts = ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT',
@@ -287,7 +296,9 @@ def _host_resolution_inputs(phase, root, environment, *, check_seed):
     if policy.get('coreTests') == 'policy-runtime-resource-health-v1':
         contract = (HOST_LOCK_RESOLUTION_INPUTS, 26, 75)
     elif policy.get('coreTests') == 'policy-runtime-provider-reader-v1':
-        contract = (HOST_LOCK_RESOLUTION_PROVIDER_INPUTS, 31, 177)
+        contract = ((HOST_LOCK_RESOLUTION_HISTORY_INPUTS, 32, 179)
+                    if policy['manifestSha256'] == HOST_LOCK_RESOLUTION_HISTORY_INPUTS['manifestSha256']
+                    else (HOST_LOCK_RESOLUTION_PROVIDER_INPUTS, 31, 177))
     else:
         raise PromotionError('Pending host resolution requires an approved complete Core suite')
     inputs, core_count, core_hits = contract
