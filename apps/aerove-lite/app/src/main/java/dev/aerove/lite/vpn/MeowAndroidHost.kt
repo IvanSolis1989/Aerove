@@ -48,18 +48,12 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
                 val snapshot = checkNotNull(application.runtimeHandoffs.readCurrent()) { "runtime_snapshot_missing" }
                 check(snapshot.profileId == plan.profileId) { "runtime_start_superseded" }
                 resources.runtimeSnapshot = application.runtimeHandoffs.admit(snapshot.revision, snapshot.intentEpoch)
-                val paths = snapshot.handoff.resources.associate { it.sourcePath to File(snapshot.resourceDirectory, it.relativePath).path }
-                fun remap(value: Any?): Any? = when (value) {
-                    is Map<*, *> -> value.entries.associate { it.key to remap(it.value) }
-                    is List<*> -> value.map(::remap)
-                    is String -> paths[value] ?: value
-                    else -> value
-                }
-                @Suppress("UNCHECKED_CAST")
-                val projected = dev.aerove.lite.flutter.meowProjectGroupTestUrl(ConfigYaml.parse(snapshot.handoff.compiledYaml), service.startupFlutterTestUrl())
-                val yaml = ConfigYaml.dump(remap(projected) as Map<String, Any?>)
+                val relocated = FlutterRuntimeResources.create(application.filesDir, snapshot, resources::isCurrent)
+                resources.flutterResources = relocated
+                val projected = dev.aerove.lite.flutter.meowProjectGroupTestUrl(ConfigYaml.parse(relocated.yaml), service.startupFlutterTestUrl())
+                val yaml = ConfigYaml.dump(projected)
                 resources.preparedValue = PreparedProfile(plan.profileId, yaml, yaml, snapshot.revision,
-                    snapshot.handoff.compiledSha256, snapshot.resourceDirectory, null)
+                    snapshot.handoff.compiledSha256, relocated.readRoot, null)
             } else {
                 check(!application.runtimeHandoffs.hasAuthority) { "runtime_snapshot_required" }
                 resources.preparedValue = application.profiles.prepareForStart(plan.profileId)
@@ -104,13 +98,13 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             resources.cache = cache
             val baseline = plan.builderSettings()
             val startup = if (resources.runtimeSnapshot != null) plan.settings else runtimePoliciesForStart(plan.settings, application.settings.read())
-            resources.startupPolicies = MeowHostPolicyTarget.from(startup, application.requestPolicy.defaultUserAgent)
-            val composed = MeowRuntimeConfigComposer(runtime, application.requestPolicy.defaultUserAgent, cache)
+            resources.startupPolicies = MeowHostPolicyTarget.from(startup, resources.requestUserAgent)
+            val composed = MeowRuntimeConfigComposer(runtime, resources.requestUserAgent, cache)
                 .compose(resources.prepared, startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
                     TunRuntimeOptions(baseline.network.mtu, baseline.network.dnsHijacking, baseline.ipv6), parked,
                     captured.networkHandle, verifiedNativeFeatures().toSet())
             resources.configValue = resources.ruleResources?.configure(composed) ?: composed.withResources(
-                composed.engineYaml, checkNotNull(resources.runtimeSnapshot).resourceDirectory,
+                composed.engineYaml, checkNotNull(resources.prepared.resourceDirectory),
                 resources.prepared.revision, resources.prepared.generation)
             val appliedFile = File(directory, "meow-${UUID.randomUUID()}.yaml")
             resources.file = appliedFile
@@ -149,8 +143,10 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         @Volatile var failedAcquire = false
         var sharedCleaned = false
         var runtimeSnapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot? = null
+        val requestUserAgent get() = if (runtimeSnapshot != null) application.flutterDefaultUserAgent else application.requestPolicy.defaultUserAgent
         var profileLease: ProfileLease? = null
         var ruleResources: SessionRuleResources? = null
+        var flutterResources: FlutterRuntimeResources? = null
         var tun: ParcelFileDescriptor? = null
         var file: File? = null
         var cache: File? = null
@@ -173,7 +169,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         override val establishedBuilderSettings get() = startupPlan.builderSettings().takeIf { configuration.runtimeMode == NativeCore.RuntimeMode.Proxy || tun != null }
         override fun currentPolicies(fallback: dev.aerove.lite.LiteSettings) = MeowHostPolicyTarget.from(
             if (runtimeSnapshot != null) fallback else application.settings.changes.value ?: fallback,
-            application.requestPolicy.defaultUserAgent)
+            requestUserAgent)
         private inner class PhysicalReceipt(val captured: CapturedMeowPhysical) : MeowTunnelBackend.NetworkReceipt {
             val owner = this@Resources
             override val physical = MeowPhysicalNetwork(captured.networkHandle, captured.dns)
@@ -248,6 +244,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         override suspend fun release() = withContext(NonCancellable + Dispatchers.IO) { cleanup.withLock {
             admission.close()
             ruleResources?.closeAfterNativeJoin()
+            flutterResources?.closeAfterNativeJoin(); flutterResources = null
             resolver?.clearPackageCache()
             packageLoader?.close(); packageLoader = null
             try {

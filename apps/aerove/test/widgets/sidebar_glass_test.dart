@@ -44,7 +44,7 @@ void main() {
         tester.view.devicePixelRatio = 1;
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
-        final samples = <LiquidGlassMode, List<List<Color>>>{};
+        final samples = <(LiquidGlassMode, bool), List<List<Color>>>{};
         for (final (mode, highContrast, pureBlack, backdrop) in [
           (LiquidGlassMode.standard, false, false, const Color(0xFF2040C0)),
           (LiquidGlassMode.standard, false, false, const Color(0xFFC04020)),
@@ -54,6 +54,8 @@ void main() {
           (LiquidGlassMode.standard, true, false, const Color(0xFF2040C0)),
           if (brightness == Brightness.dark)
             (LiquidGlassMode.ultra, false, true, const Color(0xFF2040C0)),
+          if (brightness == Brightness.dark)
+            (LiquidGlassMode.ultra, false, true, const Color(0xFFC04020)),
         ]) {
           final container = ProviderContainer(
             overrides: [
@@ -99,9 +101,7 @@ void main() {
                         platform: TargetPlatform.android,
                         brightness: brightness,
                       ).withAppShapes.withAppSurfaces.copyWith(
-                        scaffoldBackgroundColor: pureBlack
-                            ? Colors.black
-                            : backdrop,
+                        scaffoldBackgroundColor: backdrop,
                       ),
                   localizationsDelegates: const [
                     AppLocalizations.delegate,
@@ -149,8 +149,7 @@ void main() {
             final paneRect = tester.getRect(pane);
             final selected = find.byKey(const ValueKey('Dashboard')).last;
             final selectedRect = tester.getRect(selected);
-            final glass =
-                mode != LiquidGlassMode.none && !highContrast && !pureBlack;
+            final glass = mode != LiquidGlassMode.none && !highContrast;
             expect(find.byType(LiquidGlassHost), findsOneWidget);
             final sidebarPanes = find.descendant(
               of: pane,
@@ -202,7 +201,7 @@ void main() {
                 ];
               }))!;
               if (glass) {
-                (samples[mode] ??= []).add(pixels);
+                (samples[(mode, pureBlack)] ??= []).add(pixels);
               } else {
                 final scheme = Theme.of(tester.element(sidebar)).colorScheme;
                 final expected = scheme.chromeSurface;

@@ -4,6 +4,7 @@ import dev.aerove.lite.data.PrivateStorage
 import dev.aerove.lite.data.readBounded
 import dev.aerove.lite.data.deletePrivateTree
 import org.json.JSONObject
+import kotlinx.coroutines.ensureActive
 import java.io.File
 import java.nio.file.Files
 import java.util.UUID
@@ -132,7 +133,11 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
     }
 
 
-    suspend fun commit(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?): MeowRuntimeSnapshot = storage.transaction {
+    suspend fun commit(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?): MeowRuntimeSnapshot =
+        commit(handoff, expectedEpoch, expectedRevision) {}
+
+    internal suspend fun commit(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?,
+        sourceIsCurrent: () -> Unit): MeowRuntimeSnapshot = storage.transaction {
         val (epoch, old) = load()
         check(epoch == expectedEpoch && old?.revision == expectedRevision) { "runtime_commit_superseded" }
         val frozen = RuntimeHandoff.fromJson(handoff.json()).also { it.validate(expectedCoreSha); validateProjection(it) }
@@ -141,9 +146,11 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
         try {
             var total = 0L
             frozen.resources.forEach { asset ->
-                val source = File(asset.sourcePath).canonicalFile
-                require(source.toPath().startsWith(privateRoot.toPath()) && source.isFile && !Files.isSymbolicLink(File(asset.sourcePath).toPath())) { "runtime_resource_outside_private_root" }
-                val bytes = source.inputStream().use { it.readBounded(64 * 1024 * 1024) }
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val source = File(asset.sourcePath).absoluteFile
+                require(source.toPath() == source.toPath().toRealPath() && source.toPath().startsWith(privateRoot.toPath()) &&
+                    Files.isRegularFile(source.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) { "runtime_resource_outside_private_root" }
+                val bytes = Files.newInputStream(source.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS).use { it.readBounded(64 * 1024 * 1024) }
                 total += bytes.size; require(total <= 256L * 1024 * 1024) { "runtime_resources_too_large" }
                 require(runtimeSha256(bytes) == asset.sha256) { "runtime_hash_mismatch: resource" }
                 val target = File(resources, asset.relativePath).apply { parentFile.mkdirs() }
@@ -151,6 +158,8 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
             }
             val next = MeowRuntimeSnapshot(revision, Math.addExact(epoch, 1), false, frozen, resources)
             verify(next)
+            sourceIsCurrent()
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
             save(next.intentEpoch, next)
             next
         } catch (failure: Throwable) {

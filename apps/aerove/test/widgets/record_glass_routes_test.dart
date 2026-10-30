@@ -124,7 +124,7 @@ void main() {
         tester.binding.handleAppLifecycleStateChanged(
           AppLifecycleState.resumed,
         );
-        final rendered = <LiquidGlassMode, List<Color>>{};
+        final rendered = <(LiquidGlassMode, bool), List<Color>>{};
         for (final (mode, highContrast, pureBlack, backdrop) in [
           (LiquidGlassMode.standard, false, false, const Color(0xFF2040C0)),
           (LiquidGlassMode.standard, false, false, const Color(0xFFC04020)),
@@ -133,6 +133,7 @@ void main() {
           (LiquidGlassMode.none, false, false, const Color(0xFF2040C0)),
           (LiquidGlassMode.standard, true, false, const Color(0xFF2040C0)),
           (LiquidGlassMode.ultra, false, true, const Color(0xFF2040C0)),
+          (LiquidGlassMode.ultra, false, true, const Color(0xFFC04020)),
         ]) {
           final tracker = TrackerInfo(
             id: 'record',
@@ -193,9 +194,7 @@ void main() {
                             ? Brightness.dark
                             : Brightness.light,
                       ).withAppShapes.withAppSurfaces.copyWith(
-                        scaffoldBackgroundColor: pureBlack
-                            ? Colors.black
-                            : backdrop,
+                        scaffoldBackgroundColor: backdrop,
                       ),
                   localizationsDelegates: const [
                     AppLocalizations.delegate,
@@ -241,8 +240,7 @@ void main() {
             await tester.pump(const Duration(milliseconds: 500));
             await tester.pump(const Duration(milliseconds: 500));
             await tester.pumpAndSettle();
-            final glass =
-                mode != LiquidGlassMode.none && !highContrast && !pureBlack;
+            final glass = mode != LiquidGlassMode.none && !highContrast;
             final table = entry == 'table';
             final record = table
                 ? find.byType(RecordTableRow).first
@@ -351,7 +349,7 @@ void main() {
                     bytes.getUint8(at + 2),
                   );
                 }))!;
-                (rendered[mode] ??= []).add(color);
+                (rendered[(mode, pureBlack)] ??= []).add(color);
               } finally {
                 image.dispose();
               }

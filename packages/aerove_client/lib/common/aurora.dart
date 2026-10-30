@@ -31,6 +31,7 @@ AuroraMesh generateAuroraMesh(
   int seed, {
   required List<Color> colors,
   required Brightness brightness,
+  bool pureBlack = false,
 }) {
   var state = seed & 0xFFFFFFFF;
   if (state == 0) state = 0x6D2B79F5;
@@ -55,6 +56,7 @@ AuroraMesh generateAuroraMesh(
   final base = auroraBaseColor(brightness);
   final palette = normalizeAuroraColors(colors);
   final dark = brightness == Brightness.dark;
+  final darkValueScale = dark && pureBlack ? 0.60 : 1.0;
   final sourceHsv = [for (final color in palette) HSVColor.fromColor(color)];
   final sourceIndices = [
     0,
@@ -130,7 +132,7 @@ AuroraMesh generateAuroraMesh(
         1,
         mix(a.hue, b.hue, c.hue, d.hue) % 360,
         mix(a.saturation, b.saturation, c.saturation, d.saturation),
-        mix(a.value, b.value, c.value, d.value),
+        mix(a.value, b.value, c.value, d.value) * darkValueScale,
       ).toColor();
     }
     var color = Color.lerp(

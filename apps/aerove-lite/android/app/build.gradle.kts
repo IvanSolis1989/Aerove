@@ -15,7 +15,7 @@ dependencies {
         compose.ui,
     )
 }
-apply(from = "../app-common.gradle.kts")
+apply(plugin = "aerove.lite-app-common")
 
 android {
     namespace = "dev.aerove.lite"

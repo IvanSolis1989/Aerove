@@ -304,6 +304,27 @@ struct ResourcePlan {
     #[serde(default)] offline:bool,
     physical_network:Option<crate::runtime_plan::PhysicalNetwork>,
     staging_root:Option<String>,resource_read_root:Option<String>,cache_root:Option<String>,
+    #[serde(default,deserialize_with="resource_http_policy")] http:Option<crate::resource_fetch::ResourceHttpPolicy>,
+    #[serde(default)] selection_cache:BTreeMap<String,String>,
+}
+fn resource_http_policy<'de,D:serde::Deserializer<'de>>(decoder:D)->Result<Option<crate::resource_fetch::ResourceHttpPolicy>,D::Error> {
+    <crate::resource_fetch::ResourceHttpPolicy as serde::Deserialize>::deserialize(decoder).map(Some)
+}
+#[cfg(test)]
+mod resource_plan_tests {
+    use super::*;
+    #[test]
+    fn factory_policy_is_optional_but_present_fields_are_strict() {
+        let legacy:ResourcePlan=serde_json::from_str(r#"{"schemaVersion":1}"#).unwrap();
+        assert!(legacy.http.is_none());assert!(legacy.selection_cache.is_empty());
+        let captured:ResourcePlan=serde_json::from_str(r#"{"schemaVersion":1,"http":{"userAgent":"AEROVE/captured","checkCertificate":false},"selectionCache":{"PICK":"NODE"}}"#).unwrap();
+        let http=captured.http.unwrap();assert_eq!(http.user_agent,"AEROVE/captured");assert!(!http.check_certificate);
+        assert_eq!(captured.selection_cache.get("PICK").map(String::as_str),Some("NODE"));
+        for body in [r#""http":null"#,r#""http":{"userAgent":"UA"}"#,r#""http":{"userAgent":"UA","checkCertificate":"false"}"#,
+            r#""http":{"userAgent":"UA","checkCertificate":true,"unknown":1}"#,r#""selectionCache":null"#,r#""selectionCache":{"PICK":false}"#] {
+            assert!(serde_json::from_str::<ResourcePlan>(&format!("{{\"schemaVersion\":1,{body}}}")).is_err(),"{body}");
+        }
+    }
 }
 struct ResourceHandle {
     fetch: Option<Arc<crate::resource_fetch::ResourceFetch>>,
@@ -363,11 +384,11 @@ fn resource_result<T>(env: &mut jni::Env<'_>, work:impl std::future::Future<Outp
 pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate<'local>(mut env:EnvUnowned<'local>,_class:JClass<'local>,plan:JString<'local>)->i64 {
     env.with_env(|env|->Result<i64,BridgeError>{
         let text=plan.try_to_string(env)?;if text.len()>65536 {return Err(BridgeError("resource plan limit".into()));}
-        let plan:ResourcePlan=serde_json::from_str(&text).map_err(|_|BridgeError("resource plan schema".into()))?;
+        let plan:ResourcePlan=serde_json::from_str(&text).map_err(|cause|BridgeError(format!("resource plan schema: {cause}")))?;
         if plan.schema_version!=1 {return Err(BridgeError("resource schemaVersion".into()));}
         let fetch = if plan.offline {
-            if plan.physical_network.is_some() || plan.staging_root.is_some() || plan.resource_read_root.is_some() || plan.cache_root.is_some() {
-                return Err(BridgeError("offline resource plan cannot contain network or roots".into()));
+            if plan.physical_network.is_some() || plan.staging_root.is_some() || plan.resource_read_root.is_some() || plan.cache_root.is_some() || plan.http.is_some() || !plan.selection_cache.is_empty() {
+                return Err(BridgeError("offline resource plan cannot contain network, roots, http or selectionCache".into()));
             }
             None
         } else {
@@ -376,9 +397,10 @@ pub extern "system" fn Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate<'
             let network=raw.parse::<u64>().ok().filter(|n|*n!=0&&n.to_string()==raw).ok_or_else(||BridgeError("physicalNetwork.handle".into()))?;
             let cancel=CancellationToken::new();let context=NetworkContext::platform_on_network(network,cancel.clone())?;
             let servers=crate::physical_dns::selected_servers(&physical.dns)?;
-            Some(crate::resource_fetch::ResourceFetch::create(context,servers,
+            Some(crate::resource_fetch::ResourceFetch::create_with_options(context,servers,
                 plan.staging_root.as_deref().ok_or_else(||BridgeError("stagingRoot: required".into()))?,
-                plan.resource_read_root.as_deref(),plan.cache_root.as_deref().ok_or_else(||BridgeError("cacheRoot: required".into()))?,cancel)?)
+                plan.resource_read_root.as_deref(),plan.cache_root.as_deref().ok_or_else(||BridgeError("cacheRoot: required".into()))?,cancel,
+                crate::resource_fetch::ResourceOptions { http:plan.http, selection_cache:plan.selection_cache })?)
         };
         let scope = Arc::new(ResourceHandle { fetch, reader: crate::resource_fetch::OfflineResourceOwner::new() });
         let handle=NEXT_RESOURCE_FETCH.fetch_update(std::sync::atomic::Ordering::AcqRel,std::sync::atomic::Ordering::Acquire,|n|n.checked_add(1)).map_err(|_|BridgeError("resource handles exhausted".into()))?;

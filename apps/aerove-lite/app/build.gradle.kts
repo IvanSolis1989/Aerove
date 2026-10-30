@@ -13,4 +13,4 @@ dependencies {
         compose.ui,
     )
 }
-apply(from = "../android/app-common.gradle.kts")
+apply(plugin = "aerove.lite-app-common")

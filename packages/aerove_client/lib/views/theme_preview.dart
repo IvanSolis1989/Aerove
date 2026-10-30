@@ -270,6 +270,7 @@ class MiniScreen extends StatelessWidget {
     final sketch = SizedBox.expand(
       child: CustomPaint(
         painter: _MiniScreenPainter(
+          pageColor: SurfaceLevel.page.colorOf(colorScheme),
           colorScheme: AuroraAppearance.enabledOf(context)
               ? auroraColorScheme(colorScheme.brightness)
               : colorScheme,
@@ -379,6 +380,7 @@ class _MiniGeometry {
 
 class _MiniScreenPainter extends CustomPainter {
   const _MiniScreenPainter({
+    required this.pageColor,
     required this.colorScheme,
     required this.floatingBar,
     required this.liquidGlass,
@@ -389,6 +391,7 @@ class _MiniScreenPainter extends CustomPainter {
   });
 
   final ColorScheme colorScheme;
+  final Color pageColor;
   final bool floatingBar;
   final LiquidGlassMode liquidGlass;
   final int selected;
@@ -440,10 +443,7 @@ class _MiniScreenPainter extends CustomPainter {
 
   void _paintPages(Canvas canvas, _MiniGeometry geometry) {
     final size = geometry.size;
-    canvas.drawRect(
-      Offset.zero & size,
-      Paint()..color = SurfaceLevel.page.colorOf(colorScheme),
-    );
+    canvas.drawRect(Offset.zero & size, Paint()..color = pageColor);
     canvas.save();
     canvas.clipRect(Offset.zero & size, doAntiAlias: false);
     final previous = this.previous;
@@ -629,7 +629,8 @@ class _MiniScreenPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_MiniScreenPainter oldDelegate) {
-    return oldDelegate.colorScheme != colorScheme ||
+    return oldDelegate.pageColor != pageColor ||
+        oldDelegate.colorScheme != colorScheme ||
         oldDelegate.floatingBar != floatingBar ||
         oldDelegate.liquidGlass != liquidGlass ||
         oldDelegate.selected != selected ||

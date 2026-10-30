@@ -428,6 +428,125 @@ class MeowSetupProtocolTest {
         } finally { server.shutdown() }
     }
 
+    @Test fun sharedHttpInputSealsBeforeValidationAndStoreOwnsLineageBeforeLeaseRelease() = runBlocking<Unit> {
+        val home = home(); val runtime = File(home, "runtime")
+        val file = File(home, "config.yaml").apply { writeText("global-ua: shared-exact-UA\nrule-providers: {r: {type: http, url: 'https://example.invalid/r', path: rules/r.yaml, behavior: domain, proxy: DIRECT, header: {X-Origin: [one, two]}}}\nrules: ['MATCH,DIRECT']\n") }
+        val original = file.readBytes()
+        val prepared = NativePreparedConfigValidator { yaml, directory ->
+            val row = (ConfigYaml.parse(yaml)["rule-providers"] as Map<*, *>)["r"] as Map<*, *>
+            assertEquals("file", row["type"]); assertTrue(File(row["path"] as String).isFile)
+            assertTrue(directory.isDirectory); null
+        }
+        val schema = dev.aerove.lite.data.CompatibilityValidator.forMeow(NativeConfigValidator { error("unsealed native conversion") }, runtime, prepared) { emptySet() }
+        var transportRoot: File? = null
+        val manager = dev.aerove.lite.data.ResourceBundleManager(runtime, schema, dev.aerove.lite.data.NativeResourceValidator { _, _, _, _ -> null },
+            dev.aerove.lite.data.ResourceDownloader(), providerDownloads = dev.aerove.lite.data.ProviderDownloadFactory { context ->
+                transportRoot = context.stagingRoot.parentFile
+                assertEquals("shared-exact-UA", context.http!!.userAgent); assertFalse(context.http!!.checkCertificate)
+                object : dev.aerove.lite.data.ProviderDownloadScope {
+                    override suspend fun download(request: dev.aerove.lite.data.ProviderDownloadRequest): dev.aerove.lite.data.ProviderDownloadResult {
+                        assertEquals("DIRECT", request.proxy); assertEquals(listOf("one", "two"), request.headers["X-Origin"])
+                        request.destination.writeText("payload: [example.com]\n")
+                        return dev.aerove.lite.data.ProviderDownloadResult(request.destination.length(), runtimeSha256(request.destination.readBytes()))
+                    }
+                    override suspend fun closeAndJoin() = Unit
+                }
+            })
+        var sawProtectedGeneration = false
+        val store = RuntimeHandoffStore(home, validateProjection = { handoff ->
+            manager.prune(emptyMap(), emptySet())
+            if (handoff.resources.isNotEmpty() && File(handoff.resources.first().sourcePath).isFile) sawProtectedGeneration = true
+        })
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, Effects(), prepared, { emptySet() }, NativeConfigValidator { null },
+                dev.aerove.lite.data.FlutterResourceSealer(manager, "fallback-UA"))
+            api.syncState(shared()); api.setupConfig(setup())
+            val next = api.staged()!!
+            assertTrue(sawProtectedGeneration); assertFalse(transportRoot!!.exists())
+            assertEquals(runtimeSha256(original), next.handoff.sourceSha256)
+            assertArrayEquals(original, file.readBytes())
+            assertEquals(record()["digest"], JSONObject(next.handoff.setupRecordJson).getString("digest"))
+            assertEquals("shared-exact-UA", JSONObject(next.handoff.runtimeSettingsJson).getJSONObject("requests").getString("globalUserAgent"))
+            assertEquals(file.readText(), File(next.resourceDirectory, "input.yaml").readText())
+            val manifest = JSONObject(File(next.resourceDirectory, "manifest.json").readText())
+            assertEquals(runtimeSha256(original), manifest.getString("compiledInputSha256"))
+            next.handoff.resources.forEach { asset -> assertEquals(asset.sha256, runtimeSha256(File(next.resourceDirectory, asset.relativePath).readBytes())) }
+            manager.prune(emptyMap(), emptySet())
+            assertTrue(File(next.resourceDirectory, "manifest.json").isFile)
+            assertNull(store.readLastApplied()); assertEquals(false, api.getAppliedSetup()["running"])
+            assertFalse(File(home, "profiles").exists()); assertFalse(File(home, "settings").exists())
+        }
+    }
+
+    @Test fun sourceAndEpochChangesDuringSealingKeepPreviousCandidate() = runBlocking<Unit> {
+        for (changeEpoch in listOf(false, true)) {
+            val home = home(); val runtime = File(home, "runtime"); val store = RuntimeHandoffStore(home)
+            val file = File(home, "config.yaml").apply { writeText("rules: ['MATCH,DIRECT']\n") }
+            config(home).use { config ->
+                val initial = MeowSetupProtocol(home, store, config, Effects(), verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+                initial.syncState(shared()); initial.setupConfig(setup())
+                val old = store.readCurrent()!!
+                file.writeText("rule-providers: {r: {type: http, url: 'https://example.invalid/r', path: r.yaml, behavior: domain, proxy: DIRECT}}\nrules: ['MATCH,DIRECT']\n")
+                val schema = dev.aerove.lite.data.CompatibilityValidator.forMeow(NativeConfigValidator { null }, runtime,
+                    NativePreparedConfigValidator { _, _ -> if (changeEpoch) store.invalidate() else file.appendText("# source changed\n"); null }) { emptySet() }
+                val manager = dev.aerove.lite.data.ResourceBundleManager(runtime, schema, dev.aerove.lite.data.NativeResourceValidator { _, _, _, _ -> null },
+                    dev.aerove.lite.data.ResourceDownloader(), providerDownloads = dev.aerove.lite.data.ProviderDownloadFactory {
+                        object : dev.aerove.lite.data.ProviderDownloadScope {
+                            override suspend fun download(request: dev.aerove.lite.data.ProviderDownloadRequest): dev.aerove.lite.data.ProviderDownloadResult {
+                                request.destination.writeText("payload: [example.com]\n")
+                                return dev.aerove.lite.data.ProviderDownloadResult(request.destination.length(), runtimeSha256(request.destination.readBytes()))
+                            }
+                            override suspend fun closeAndJoin() = Unit
+                        }
+                    })
+                val api = MeowSetupProtocol(home, store, config, Effects(), NativePreparedConfigValidator { _, _ -> null }, { emptySet() }, NativeConfigValidator { null },
+                    dev.aerove.lite.data.FlutterResourceSealer(manager, "fallback-UA"))
+                api.syncState(shared())
+                try { api.setupConfig(setup()); fail("superseded source was committed") } catch (failure: Exception) {
+                    assertTrue(failure.message.orEmpty().contains(if (changeEpoch) "superseded" else "changed"))
+                }
+                assertEquals(old.revision, store.readCurrent()!!.revision)
+                manager.prune(emptyMap(), emptySet())
+                assertTrue(File(runtime, "resources/bundles").walkTopDown().none { it.name == "manifest.json" })
+            }
+        }
+    }
+
+    @Test fun existingSealedFileInputBorrowsGenerationWithoutRedownloadOrLegacyDatabase() = runBlocking<Unit> {
+        val home = home(); val runtime = File(home, "runtime")
+        var downloads = 0
+        val prepared = NativePreparedConfigValidator { _, _ -> null }
+        val schema = dev.aerove.lite.data.CompatibilityValidator.forMeow(NativeConfigValidator { null }, runtime, prepared) { emptySet() }
+        val manager = dev.aerove.lite.data.ResourceBundleManager(runtime, schema, dev.aerove.lite.data.NativeResourceValidator { _, _, _, _ -> null },
+            dev.aerove.lite.data.ResourceDownloader(), providerDownloads = dev.aerove.lite.data.ProviderDownloadFactory {
+                object : dev.aerove.lite.data.ProviderDownloadScope {
+                    override suspend fun download(request: dev.aerove.lite.data.ProviderDownloadRequest): dev.aerove.lite.data.ProviderDownloadResult {
+                        downloads++; request.destination.writeText("payload: [example.com]\n")
+                        return dev.aerove.lite.data.ProviderDownloadResult(request.destination.length(), runtimeSha256(request.destination.readBytes()))
+                    }
+                    override suspend fun closeAndJoin() = Unit
+                }
+            })
+        val sealer = dev.aerove.lite.data.FlutterResourceSealer(manager, "fallback-UA")
+        val original = sealer.prepare("rule-providers: {r: {type: http, url: 'https://example.invalid/r', path: r.yaml, behavior: domain, proxy: DIRECT}}\nrules: ['MATCH,DIRECT']", true)
+        manager.committed(original.directory.parentFile.name, original.directory.name)
+        File(home, "config.yaml").writeText(original.yaml)
+        var protectedDuringCopy = false
+        val store = RuntimeHandoffStore(home, validateProjection = { manager.prune(emptyMap(), emptySet()); protectedDuringCopy = original.directory.isDirectory })
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, Effects(), prepared, { emptySet() }, NativeConfigValidator { null }, sealer)
+            api.syncState(shared()); api.setupConfig(setup())
+            assertEquals(1, downloads); assertTrue(protectedDuringCopy)
+            val snapshot = api.staged()!!
+            assertTrue(File(snapshot.resourceDirectory, "manifest.json").isFile)
+            manager.prune(emptyMap(), emptySet())
+            assertFalse(original.directory.exists())
+            assertTrue(File(snapshot.resourceDirectory, "input.yaml").isFile)
+            assertFalse(File(home, "profiles").exists()); assertFalse(File(home, "settings").exists())
+        }
+        original.closeAndJoin()
+    }
+
     private suspend fun expect(code: String, field: String?, work: suspend () -> Any?) {
         try { work(); fail("Expected $code") } catch (failure: MeowConfigProtocolException) {
             assertEquals(code, failure.code); if (field != null) assertEquals(field, failure.details["field"])

@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/shape.dart';
+import 'package:fl_clash/ui/color.dart';
+import 'package:fl_clash/ui/surface.dart';
 import 'package:fl_clash/ui/context.dart';
 import 'package:fl_clash/common/app_localizations.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -54,11 +56,11 @@ void main() {
           supportedLocales: AppLocalizations.delegate.supportedLocales,
           theme: ThemeData(
             platform: platform,
-            colorScheme: ColorScheme.fromSeed(
+            colorScheme: seededColorScheme(
               seedColor: Color(props.primaryColor ?? 0xFF007AFF),
               brightness: brightness,
-            ),
-          ),
+            ).toPureBlack(props.pureBlack),
+          ).withAppSurfaces,
           builder: (context, child) => MediaQuery(
             data: MediaQuery.of(context).copyWith(highContrast: highContrast),
             child: wrapAppScopes(
@@ -93,6 +95,188 @@ void main() {
       lessThan(0.5),
     );
   });
+
+  testWidgets('base brightness preserves each material and backdrop', (
+    tester,
+  ) async {
+    final wallpaperPixels = <(Brightness, bool), List<int>>{};
+    for (final brightness in Brightness.values) {
+      for (final pureBlack in [false, true]) {
+        for (final aurora in [false, true]) {
+          for (final mode in LiquidGlassMode.values) {
+            await pumpSurface(
+              tester,
+              brightness: brightness,
+              props: ThemeProps(
+                pureBlack: pureBlack,
+                auroraEnabled: aurora,
+                liquidGlass: mode,
+              ),
+            );
+            final context = tester.element(find.byType(CommonCard));
+            final reason = '$brightness black=$pureBlack aurora=$aurora $mode';
+            expect(AuroraAppearance.enabledOf(context), aurora, reason: reason);
+            expect(
+              LiquidGlassScope.foregroundOf(context),
+              aurora,
+              reason: reason,
+            );
+            expect(
+              LiquidGlassScope.of(context),
+              mode != LiquidGlassMode.none,
+              reason: reason,
+            );
+            expect(
+              LiquidGlassScope.qualityOf(context),
+              mode == LiquidGlassMode.ultra
+                  ? LiquidGlassQuality.ultra
+                  : LiquidGlassQuality.standard,
+              reason: reason,
+            );
+            expect(
+              find.byType(SeededAuroraWallpaper),
+              aurora ? findsOneWidget : findsNothing,
+              reason: reason,
+            );
+            final boundary = tester.renderObject<RenderRepaintBoundary>(
+              find.byKey(_surfaceCapture),
+            );
+            final pixels = (await tester.runAsync(() async {
+              final image = await boundary.toImage();
+              try {
+                final rgba = (await image.toByteData(
+                  format: ui.ImageByteFormat.rawRgba,
+                ))!;
+                final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+                if (output != null && output.isNotEmpty) {
+                  Directory(output).createSync(recursive: true);
+                  final png = (await image.toByteData(
+                    format: ui.ImageByteFormat.png,
+                  ))!;
+                  File(
+                    '$output/base-${brightness.name}-$pureBlack-$aurora-${mode.name}.png',
+                  ).writeAsBytesSync(png.buffer.asUint8List());
+                }
+                return rgba.buffer.asUint8List().toList();
+              } finally {
+                image.dispose();
+              }
+            }))!;
+            if (!aurora) {
+              final background = Color.fromARGB(
+                pixels[3],
+                pixels[0],
+                pixels[1],
+                pixels[2],
+              );
+              expect(
+                background,
+                brightness == Brightness.dark && pureBlack
+                    ? Colors.black
+                    : isNot(Colors.black),
+                reason: reason,
+              );
+            } else if (mode == LiquidGlassMode.none) {
+              wallpaperPixels[(brightness, pureBlack)] = pixels;
+            }
+          }
+        }
+      }
+    }
+    expect(
+      wallpaperPixels[(Brightness.light, true)],
+      wallpaperPixels[(Brightness.light, false)],
+    );
+    final standard = wallpaperPixels[(Brightness.dark, false)]!;
+    final black = wallpaperPixels[(Brightness.dark, true)]!;
+    for (var i = 0; i < 4; i++) {
+      expect(black[i], i == 3 ? 255 : lessThan(standard[i]));
+    }
+    expect(black.take(3).reduce((a, b) => a + b), greaterThan(0));
+  });
+
+  testWidgets('high contrast keeps its fallback for both dark bases', (
+    tester,
+  ) async {
+    for (final pureBlack in [false, true]) {
+      for (final aurora in [false, true]) {
+        for (final mode in LiquidGlassMode.values) {
+          await pumpSurface(
+            tester,
+            brightness: Brightness.dark,
+            highContrast: true,
+            props: ThemeProps(
+              pureBlack: pureBlack,
+              auroraEnabled: aurora,
+              liquidGlass: mode,
+            ),
+          );
+          final context = tester.element(find.byType(CommonCard));
+          expect(AuroraAppearance.enabledOf(context), isFalse);
+          expect(LiquidGlassScope.of(context), isFalse);
+          expect(LiquidGlassScope.foregroundOf(context), isFalse);
+          expect(find.byType(SeededAuroraWallpaper), findsNothing);
+          expect(find.byType(LiquidGlass), findsNothing);
+          expect(
+            ProviderScope.containerOf(context).read(themeSettingProvider),
+            ThemeProps(
+              pureBlack: pureBlack,
+              auroraEnabled: aurora,
+              liquidGlass: mode,
+            ),
+          );
+        }
+      }
+    }
+  });
+
+  testWidgets(
+    'pure black toggles keep the mounted wallpaper and saved choices',
+    (tester) async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final saved = container.read(themeSettingProvider);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MaterialApp(
+            theme: ThemeData(
+              platform: TargetPlatform.android,
+              brightness: Brightness.dark,
+            ),
+            builder: (_, child) =>
+                AuroraAppSurface(motion: false, child: child!),
+            home: const Scaffold(body: Text('Base switch')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final original = tester.state(find.byType(SeededAuroraWallpaper));
+      for (final pureBlack in [true, false, true]) {
+        container
+            .read(themeSettingProvider.notifier)
+            .update((state) => state.copyWith(pureBlack: pureBlack));
+        await tester.pumpAndSettle();
+        expect(
+          tester.state(find.byType(SeededAuroraWallpaper)),
+          same(original),
+        );
+        expect(
+          tester
+              .widget<SeededAuroraWallpaper>(find.byType(SeededAuroraWallpaper))
+              .pureBlack,
+          pureBlack,
+        );
+        expect(
+          container.read(themeSettingProvider),
+          saved.copyWith(pureBlack: pureBlack),
+        );
+        final context = tester.element(find.text('Base switch'));
+        expect(LiquidGlassScope.of(context), isTrue);
+        expect(AuroraAppearance.enabledOf(context), isTrue);
+      }
+    },
+  );
 
   for (final brightness in Brightness.values) {
     for (final mode in LiquidGlassMode.values) {
@@ -556,39 +740,35 @@ void main() {
     }
   });
 
-  testWidgets(
-    'disabled, high contrast, pure black and desktop keep opaque surfaces',
-    (tester) async {
-      await pumpSurface(
-        tester,
-        props: const ThemeProps(
-          auroraEnabled: false,
-          liquidGlass: LiquidGlassMode.none,
-        ),
-      );
-      expect(find.byType(SeededAuroraWallpaper), findsNothing);
-      await pumpSurface(tester, highContrast: true);
-      expect(find.byType(SeededAuroraWallpaper), findsNothing);
-      await pumpSurface(
-        tester,
-        brightness: Brightness.dark,
-        props: const ThemeProps(pureBlack: true),
-      );
-      expect(find.byType(SeededAuroraWallpaper), findsNothing);
-      await pumpSurface(
-        tester,
-        platform: TargetPlatform.windows,
-        props: const ThemeProps(liquidGlass: LiquidGlassMode.none),
-      );
-      expect(find.byType(SeededAuroraWallpaper), findsNothing);
-      final context = tester.element(find.byType(CommonCard));
-      expect(AuroraAppearance.surfaceColorOf(context, Colors.red), Colors.red);
-      expect(
-        Theme.of(context).colorScheme,
-        ColorScheme.fromSeed(seedColor: const Color(0xFF007AFF)),
-      );
-    },
-  );
+  testWidgets('disabled, high contrast and desktop keep opaque surfaces', (
+    tester,
+  ) async {
+    await pumpSurface(
+      tester,
+      props: const ThemeProps(
+        auroraEnabled: false,
+        liquidGlass: LiquidGlassMode.none,
+      ),
+    );
+    expect(find.byType(SeededAuroraWallpaper), findsNothing);
+    await pumpSurface(tester, highContrast: true);
+    expect(find.byType(SeededAuroraWallpaper), findsNothing);
+    await pumpSurface(
+      tester,
+      platform: TargetPlatform.windows,
+      props: const ThemeProps(liquidGlass: LiquidGlassMode.none),
+    );
+    expect(find.byType(SeededAuroraWallpaper), findsNothing);
+    final context = tester.element(find.byType(CommonCard));
+    expect(AuroraAppearance.surfaceColorOf(context, Colors.red), Colors.red);
+    expect(
+      Theme.of(context).colorScheme,
+      seededColorScheme(
+        seedColor: const Color(0xFF007AFF),
+        brightness: Brightness.light,
+      ),
+    );
+  });
 
   testWidgets('dark Android keeps a static saved wallpaper', (tester) async {
     await pumpSurface(tester, brightness: Brightness.dark);

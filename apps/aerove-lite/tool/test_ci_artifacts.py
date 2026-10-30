@@ -1,4 +1,5 @@
 import importlib.util
+import copy
 import json
 from pathlib import Path
 import tempfile
@@ -345,8 +346,52 @@ class HostLockResolutionPlanTests(unittest.TestCase):
             output.assert_not_called()
 
 
+    def _provider_reader_core_receipt(self):
+        import verify_apk as verifier
+        from core_tests import entries, entry_command
+        self.policy['coreTests'] = 'policy-runtime-provider-reader-v1'
+        gates = (verifier.CORE_MRS_READER_FORMAT_COMMAND, verifier.CORE_PROVIDER_READER_FORMAT_COMMAND)
+        files = {name.removeprefix('.upstream/meow-rs/'): ci.hashlib.sha256(name.encode()).hexdigest()
+                 for command in gates for name in command[4:]}
+        files['Cargo.lock'] = 'a' * 64
+        overlay = json.loads((self.root / 'overlay.json').read_text())
+        overlay.update(files=files, adaptedFileManifestSha256=ci.hashlib.sha256(
+            json.dumps(files, sort_keys=True, separators=(',', ':')).encode()).hexdigest())
+        (self.root / 'overlay.json').write_text(json.dumps(overlay))
+        self.policy['overlaySha256'] = ci.digest(self.root / 'overlay.json')
+        self.write_policy()
+        pins = {key: self.policy[key] for key in ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS if key != 'sourceSpecSha256'}
+        pins['sourceSpecSha256'] = ci.digest(self.root / 'source.json')
+        mock.patch.object(ci, 'HOST_LOCK_RESOLUTION_HISTORY_INPUTS', pins).start()
+        cases = entries(self.policy['coreTests'])
+        packages = tuple(sorted(set(verifier.CORE_PROVIDER_GENERAL_PACKAGES) | {'meow-rules'}))
+        features = {package: sorted({feature for case in cases if case['package'] == package
+                                    for feature in case['requiredFeatures']}) for package in packages}
+        commands = [dict(case, command=entry_command(case, features[case['package']]), exit=0,
+                         passed=case['expectedPass'], stdoutSha256='c' * 64, stderrSha256='d' * 64) for case in cases]
+        self.assertEqual((32, 179), (len(commands), sum(entry['passed'] for entry in commands)))
+        state = dict(mode=self.policy['coreTests'], accepted=True, upstreamLockRestored=True,
+                     upstreamLockBeforeSha256='a' * 64, seedSha256=self.policy['coreTestLockSha256'],
+                     resolvedLockSha256=self.policy['coreTestLockSha256'],
+                     bridgeMetadataCommand=['cargo', 'metadata', '--locked', '--format-version', '1'], bridgeMetadataExit=0,
+                     metadataCommand=['cargo', 'metadata', '--manifest-path', '.upstream/meow-rs/Cargo.toml', '--format-version', '1'],
+                     metadataExit=0, workspaceMembers=list(packages), features=features, commands=commands,
+                     compileCheck=dict(command=verifier.CORE_OBSERVABILITY_COMPILE_COMMAND, exit=0,
+                                       stdoutSha256='e' * 64, stderrSha256='f' * 64))
+        for key, command in zip(('formatCheck', 'providerFormatCheck'), gates):
+            state[key] = dict(command=command, exit=0, stdoutSha256='e' * 64, stderrSha256='f' * 64,
+                              files={name: files[name.removeprefix('.upstream/meow-rs/')] for name in command[4:]})
+        return state
+
+    def test_pending_provider_metadata_is_exact_and_does_not_relax_formal_acceptance(self):
+        self._assert_pending_producer_readback(provider_reader=True)
+
     def test_fake_producer_plan_save_and_pending_readback_never_becomes_accepted(self):
+        self._assert_pending_producer_readback()
+
+    def _assert_pending_producer_readback(self, provider_reader=False):
         # Host fixtures only: no Cargo command is executed.
+        provider_core = self._provider_reader_core_receipt() if provider_reader else None
         plan = ci.host_lock_resolution_plan('host', self.root, self.env)
         workflow = dict(sourceRevision='a' * 40, sourceTree='b' * 40, workflowRun='97', runAttempt=1, runNumber=97)
         plan['workflowIdentity'] = workflow
@@ -381,13 +426,19 @@ class HostLockResolutionPlanTests(unittest.TestCase):
                        featureBoundaryCommand=feature_boundary_command(self.policy), featureBoundaryExit=0,
                        source=dict(commit=ci.MEOW_SOURCE, tag='v0.26.1', archiveSha256='4273e027c5db3f7c052b255730f29165908772bf417ec89d9ab54478f81dcd9a',
                                    overlaySha256=self.policy['overlaySha256'], patchSha256=overlay['patchSha256'], fileManifestSha256=overlay['adaptedFileManifestSha256']),
-                       coreTests=dict(mode=self.policy['coreTests'], accepted=True, upstreamLockRestored=True,
+                       coreTests=provider_core or dict(mode=self.policy['coreTests'], accepted=True, upstreamLockRestored=True,
                                       seedSha256=self.policy['coreTestLockSha256'], resolvedLockSha256=self.policy['coreTestLockSha256'],
                                       commands=core_commands, compileCheck=dict(exit=0)))
+        if provider_reader:
+            receipt.update(addedNativeTests=ci.RESOURCE_HEALTH_CASES, toolchain='rustc 1.98.1 (fixture)')
+            receipt['source']['archiveHashBootstrapped'] = False
         receipt_path = build / 'host-receipt.json'; receipt_path.write_text(json.dumps(receipt))
         receipt_bytes = receipt_path.read_bytes()
         with mock.patch.object(ci, 'identity', return_value=workflow):
-            output = ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+            try:
+                output = ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+            except ValueError as error:
+                self.fail(f'Valid pending producer receipt was rejected: {error}')
             self.assertIs(output['archiveOnly'], True)
             self.assertIs(output['acceptedLock'], False)
             self.assertIs(output['producerAcceptedLock'], True)
@@ -400,6 +451,35 @@ class HostLockResolutionPlanTests(unittest.TestCase):
                 receipt_path.write_text(json.dumps(dict(receipt, **{key: value})))
                 with self.subTest(key=key), self.assertRaises(ci.PromotionError):
                     ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+            if provider_reader:
+                import verify_apk as verifier
+                with self.assertRaisesRegex(ValueError, 'complete approved Core unit proof'):
+                    verifier.validate_core_test_receipt(provider_core, self.policy, self.root)
+                # The formal entry stays locked even when handed a pending policy.
+                verifier.validate_core_test_receipt(dict(provider_core,
+                    metadataCommand=provider_core['metadataCommand'] + ['--locked']), self.policy, self.root)
+                invalid = []
+                for command in (provider_core['metadataCommand'] + ['--locked'], provider_core['metadataCommand'][:-1],
+                                provider_core['metadataCommand'] + ['--offline']):
+                    bad = copy.deepcopy(receipt); bad['coreTests']['metadataCommand'] = command; invalid.append(bad)
+                for field, value in [('commands', provider_core['commands'][:-1]), ('compileCheck', {}),
+                                     ('resolvedLockSha256', '0' * 64)]:
+                    bad = copy.deepcopy(receipt); bad['coreTests'][field] = value; invalid.append(bad)
+                bad = copy.deepcopy(receipt); bad['coreTests']['commands'][0]['command'].remove('--locked'); invalid.append(bad)
+                bad = copy.deepcopy(receipt); bad['source']['commit'] = '0' * 40; invalid.append(bad)
+                for index, bad in enumerate(invalid):
+                    receipt_path.write_text(json.dumps(bad))
+                    with self.subTest(pending_mutation=index), self.assertRaises((ValueError, ci.PromotionError)):
+                        ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+                receipt_path.write_bytes(receipt_bytes)
+                with self.assertRaises(ci.PromotionError):
+                    ci.host_lock_resolution_result(plan_path, 'host', self.root, dict(self.env, MEOW_HOST_ONLY='false'))
+                self.policy['resolveLock'] = False; self.write_policy()
+                try:
+                    with self.assertRaises((ValueError, ci.PromotionError)):
+                        ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
+                finally:
+                    self.policy['resolveLock'] = True; self.write_policy()
             receipt_path.write_bytes(receipt_bytes)
             (build / 'lock-before-resolution.lock').write_bytes(b'wrong seed')
             with self.assertRaises(ci.PromotionError):

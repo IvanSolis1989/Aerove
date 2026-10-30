@@ -160,7 +160,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                                 override suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection) = graph.applyFlutterRuntimeUpdate(expected, projection)
                                 override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String) = graph.refreshFlutterRuntimeSetup(expected, setupParamsJson)
                                 override suspend fun defaultTestUrl(expected: MeowSetupRuntime) = graph.flutterRuntimeDefaultTestUrl(expected)
-                            })
+                            }, resourceSealer = graph.flutterResourceSealer)
                     }
                     ""
                 }

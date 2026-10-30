@@ -109,7 +109,9 @@ class ResourceBundleManager(
 
     internal suspend fun prepare(profileId: String, source: String, previous: ResourceBundle? = null,
         refreshKeys: Set<String>? = null, logicalOriginalSource: String = source,
-        policyFingerprint: String = "", geoUrls: Map<String, String> = emptyMap()): ResourceBundle = state.preparation.withPermit {
+        policyFingerprint: String = "", geoUrls: Map<String, String> = emptyMap(),
+        requestPolicy: ProviderRequestPolicy? = null, selectedMap: Map<String, String> = emptyMap(),
+        sealedInputs: SealedResourceInputs? = null): ResourceBundle = state.preparation.withPermit {
         require(policyFingerprint.isEmpty() || policyFingerprint.matches(Regex("[0-9a-f]{64}"))) { "Invalid source policy fingerprint" }
         checkIdentifier(profileId)
         val generation = UUID.randomUUID().toString()
@@ -117,7 +119,7 @@ class ResourceBundleManager(
         synchronized(state) { state.candidates.add(identity) }
         var completed = false
         try {
-            val bundle = withContext(Dispatchers.IO) { build(profileId, source, generation, previous, refreshKeys, logicalOriginalSource, policyFingerprint, geoUrls) }
+            val bundle = withContext(Dispatchers.IO) { build(profileId, source, generation, previous, refreshKeys, logicalOriginalSource, policyFingerprint, geoUrls, requestPolicy, selectedMap, sealedInputs) }
             completed = true
             bundle
         } finally {
@@ -134,7 +136,7 @@ class ResourceBundleManager(
 
     private suspend fun build(profileId: String, source: String, generation: String,
         previous: ResourceBundle?, refreshKeys: Set<String>?, logicalOriginalSource: String, policyFingerprint: String,
-        geoUrls: Map<String, String>): ResourceBundle {
+        geoUrls: Map<String, String>, requestPolicy: ProviderRequestPolicy?, selectedMap: Map<String, String>, sealedInputs: SealedResourceInputs?): ResourceBundle {
         checkIdentifier(profileId)
         validator.validateManagedSource(source)
         val profileRoot = File(root, "bundles/$profileId").apply { mkdirs() }
@@ -151,11 +153,18 @@ class ResourceBundleManager(
             (0 until rows.length()).map { rows.getJSONObject(it) }.associateBy { it.getString("key") }
         } else emptyMap()
         var total = 0L
+        fun localSource(path: String): File = sealedInputs?.resolve(path)?.let { row ->
+            File(row.sourcePath).also { require(sha256(it) == row.sha256) { "Sealed input resource changed" } }
+        } ?: localFile(profileId, path)
         var downloadScope: ProviderDownloadScope? = null
+        var transportRevision = 0
+        var downloadRevision = -1
+        var downloadRoute: String? = null
         var transportReadRoot: File? = null
         suspend fun closeDownloadScope() {
             val closing = downloadScope ?: return
             downloadScope = null
+            downloadRevision = -1
             withContext(NonCancellable) {
                 closing.closeAndJoin()
                 transportReadRoot?.let { deletePrivateTree(candidate, it) }
@@ -164,8 +173,9 @@ class ResourceBundleManager(
         }
         suspend fun downloadProvider(url: String, file: File, limit: Long, policy: ProviderFetchPolicy): ResourceDigest {
             val factory = providerDownloads ?: throw problem("$.provider-download", "A captured Meow provider download owner is required")
+            if (downloadScope != null && (downloadRevision != transportRevision || downloadRoute != policy.proxy)) closeDownloadScope()
             val scope = downloadScope ?: run {
-                val transport = ConfigYaml.parse(ConfigYaml.dump(rootConfig))
+                val transport = ProviderBootstrapGraph.capture(rootConfig, policy.proxy)
                 val read = File(candidate, ".transport-read-${UUID.randomUUID()}").apply { check(mkdir()) }.canonicalFile
                 transportReadRoot = read
                 fun actualPath(path: String, key: String): String {
@@ -207,7 +217,9 @@ class ResourceBundleManager(
                 for (field in listOf("mmdb", "asn-mmdb", "geosite"))
                     (transport[field] as? String)?.let { transport[field] = actualPath(it, "$.$field") }
                 factory.open(ProviderDownloadContext(validator.providerDownloadInput(ConfigYaml.dump(transport)),
-                    assets.canonicalFile, read)).also { downloadScope = it }
+                    assets.canonicalFile, read, requestPolicy, selectedMap.toMap())).also {
+                    downloadScope = it; downloadRevision = transportRevision; downloadRoute = policy.proxy
+                }
             }
             currentCoroutineContext().ensureActive()
             val response = scope.download(ProviderDownloadRequest(url, policy.proxy, policy.headers, file, limit))
@@ -235,9 +247,13 @@ class ResourceBundleManager(
             currentCoroutineContext().ensureActive()
             val location = url ?: localPath ?: throw problem(key, "A resource URL or relative local file is required")
             val globalLocalId = if (kind == "ruleset" && url == null) globalRuleLocalId(localPath) else null
-            if (localPath != null && globalLocalId == null) localFile(profileId, localPath)
+            // Shared Dart's confined HTTP path is an output-cache hint, never a source file grant.
+            // Captured acquisition always writes a fresh owned assets child and preserves this hint only in lineage.
+            if (localPath != null && globalLocalId == null && (url == null || requestPolicy == null)) localSource(localPath)
             val sourceIdentity = materializedSourceIdentity(key, kind, location, behavior, format)
-            val identity = if (fetchPolicy == null) sourceIdentity else sha256(sourceIdentity + "\n" + fetchPolicy.identity())
+            val effectiveFetch = fetchPolicy ?: requestPolicy?.takeIf { url != null }?.let { ProviderFetchPolicy(null, emptyMap()) }
+            val identity = if (effectiveFetch == null) sourceIdentity else sha256(sourceIdentity + "\n" + effectiveFetch.identity() +
+                (requestPolicy?.let { "\n" + it.json().toString() } ?: ""))
             val file = File(assets, "$identity.bin")
             val limit = when (kind) {
                 "proxy-provider", "source-proxy" -> MAX_PROFILE_BYTES.toLong()
@@ -246,12 +262,12 @@ class ResourceBundleManager(
             }
             val override = overridePath(key, identity).takeIf { localFile(profileId, it).isFile }
             val forced = key in refreshKeys.orEmpty() || ("*" in refreshKeys.orEmpty() && kind in setOf("proxy-provider", "ruleset"))
-            val sharedKind = fetchPolicy == null && kind in setOf("ruleset", "mmdb", "geosite")
+            val sharedKind = effectiveFetch == null && kind in setOf("ruleset", "mmdb", "geosite")
             val libraryAtPreparation = if ((url != null || globalLocalId != null) && sharedKind)
                 library.snapshot(key, url ?: "", behavior, format, kind, globalLocalId) else null
             val effectiveFormat = libraryAtPreparation?.runtimeFormat ?: format
             val cached = reusable[key]?.takeIf { !forced && it.getString("sourceSha256") == identity &&
-                (fetchPolicy == null || it.optString("transportOrigin") in setOf("captured-transport", "verified-generation", "private-override")) &&
+                (effectiveFetch == null || it.optString("transportOrigin") in setOf("captured-transport", "verified-generation", "private-override")) &&
                 (it.optString("sharedCacheBaselineSha", it.getString("sha256")) == (libraryAtPreparation?.sha256 ?: "") ||
                     libraryAtPreparation == null || libraryAtPreparation.sha256 == it.getString("sha256")) }
             val digest = try {
@@ -265,13 +281,15 @@ class ResourceBundleManager(
                     val shared = if (sharedKind && (!forced || libraryAtPreparation?.runtimeFormat != null || globalLocalId != null))
                         library.copyInto(key, url ?: "", behavior, format, file, limit, kind, globalLocalId) else null
                     shared ?: if (globalLocalId != null) throw problem(key, "Global rule payload is missing")
-                    else if (fetchPolicy != null) downloadProvider(checkNotNull(url), file, limit, fetchPolicy)
+                    else if (effectiveFetch != null) downloadProvider(checkNotNull(url), file, limit, effectiveFetch)
                     else downloader.download(checkNotNull(url), file, limit)
                 }
                 else {
-                    val original = localFile(profileId, checkNotNull(localPath))
+                    val original = localSource(checkNotNull(localPath))
                     if (!original.isFile) throw problem(key, "Local resource is missing; import $localPath for this profile")
-                    original.inputStream().use { copyResource(it, file, limit) }
+                    original.inputStream().use { copyResource(it, file, limit) }.also { digest ->
+                        sealedInputs?.resolve(localPath)?.let { require(digest.sha256 == it.sha256) { "Sealed input resource changed during copy" } }
+                    }
                 }
             } catch (failure: ConfigValidationException) {
                 throw failure
@@ -285,7 +303,7 @@ class ResourceBundleManager(
             val record = Record(key, kind, identity, digest.sha256, digest.bytes, "assets/${file.name}", behavior, effectiveFormat, url,
                 override ?: localPath, interval, cached?.optLong("updatedAt", previousManifest?.getLong("createdAt") ?: clock()) ?: digest.sourceUpdatedAt ?: clock(),
                 if (cached != null && !cached.isNull("subscriptionUserInfo")) cached.getString("subscriptionUserInfo") else digest.subscriptionUserInfo, override != null,
-                if ((url != null || globalLocalId != null) && sharedKind) libraryAtPreparation?.sha256 ?: "" else null, format, globalLocalId, if (fetchPolicy == null) null else when {
+                if ((url != null || globalLocalId != null) && sharedKind) libraryAtPreparation?.sha256 ?: "" else null, format, globalLocalId, if (effectiveFetch == null) null else when {
                     cached != null -> "verified-generation"
                     override != null -> "private-override"
                     else -> "captured-transport"
@@ -324,9 +342,10 @@ class ResourceBundleManager(
                 if (records.none { it.key == "$.$key" } && (needed || rootConfig[key] != null || rootConfig["$key-download-url"] != null)) {
                     val local = rootConfig[key] as? String
                     val explicitUrl = rootConfig["$key-download-url"] as? String
-                    val url = explicitUrl ?: if (local == null || !localFile(profileId, local).isFile) defaultUrl else null
+                    val url = explicitUrl ?: if (local == null || !localSource(local).isFile) defaultUrl else null
                     val record = materialize("$.$key", if (key == "geosite") "geosite" else "mmdb", url, local)
                     rootConfig[key] = finalPath(record)
+                    transportRevision++
                 }
                 rootConfig.remove("$key-download-url")
             }
@@ -346,7 +365,8 @@ class ResourceBundleManager(
             materializeGeo()
             listOf("proxy-providers", "rule-providers").forEach namespaceLoop@ { namespace ->
                 val providers = rootConfig[namespace] as? Map<*, *> ?: return@namespaceLoop
-                providers.forEach providerLoop@ { (name, value) ->
+                val entries = if (namespace == "proxy-providers") ProviderBootstrapGraph.orderedProviders(rootConfig, providers) else providers.entries.toList()
+                entries.forEach providerLoop@ { (name, value) ->
                     @Suppress("UNCHECKED_CAST")
                     val provider = value as MutableMap<String, Any?>
                     val key = "$.$namespace.$name"
@@ -364,7 +384,7 @@ class ResourceBundleManager(
                         }
                     }
                     if (type == "inline") {
-                        if (provider["path"] != null) localFile(profileId, provider["path"] as String)
+                        if (provider["path"] != null) localSource(provider["path"] as String)
                         return@providerLoop
                     }
                     val seconds = (provider["interval"] as? Number)?.toLong() ?: 0
@@ -410,6 +430,7 @@ class ResourceBundleManager(
                     provider.remove("header")
                     if (rule) { provider["path"] = finalPath(record); provider["format"] = record.format }
                     provider["interval"] = 0
+                    if (!rule) transportRevision++
                 }
             }
 
@@ -419,6 +440,29 @@ class ResourceBundleManager(
                 derived("$.proxies", "proxy-provider", ConfigYaml.dump(mapOf("proxies" to proxies)))
             }
 
+            val sealedLineage = JSONArray()
+            sealedInputs?.origins?.forEach { origin ->
+                val directory = origin.lease.directory
+                val files = JSONArray()
+                origin.files.filter { it.relativePath in setOf("input.yaml", "config.yaml", "manifest.json") || it.relativePath.startsWith("lineage/") }.forEach { row ->
+                    val relative = if (row.relativePath.startsWith("lineage/")) row.relativePath else
+                        "lineage/${directory.parentFile.name}/${directory.name}/${row.relativePath}"
+                    val file = File(candidate, relative).apply { parentFile.mkdirs() }
+                    val existing = records.firstOrNull { it.file == relative }
+                    if (existing == null) {
+                        val digest = File(row.sourcePath).inputStream().use { copyResource(it, file, MAX_GEO_BYTES) }
+                        require(digest.sha256 == row.sha256) { "Sealed input lineage changed during copy" }
+                        total += digest.bytes
+                        records += Record("$.sealedInputs.$relative", "sealed-lineage", sha256(row.sourcePath), digest.sha256,
+                            digest.bytes, relative, "", "", null, row.sourcePath, 0, clock())
+                        if (total > MAX_BUNDLE_BYTES || records.size > MAX_RESOURCES) throw problem("$", "Resource bundle limit exceeded")
+                    } else require(existing.sha256 == row.sha256) { "Conflicting sealed input lineage" }
+                    files.put(JSONObject().put("sourceFile", row.relativePath).put("file", relative).put("sha256", row.sha256))
+                }
+                sealedLineage.put(JSONObject().put("profileId", directory.parentFile.name).put("generation", directory.name)
+                    .put("manifestSha256", origin.files.single { it.relativePath == "manifest.json" }.sha256).put("files", files))
+            }
+            sealedInputs?.verify()
             if (total > MAX_BUNDLE_BYTES || records.size > MAX_RESOURCES) throw problem("$", "Resource bundle limit exceeded")
             val prepared = ConfigYaml.dump(rootConfig)
             val store = PrivateStorage(candidate)
@@ -436,6 +480,9 @@ class ResourceBundleManager(
                 .put("configSha256", sha256(prepared)).put("createdAt", now)
                 .put("nextRefreshAt", next ?: JSONObject.NULL)
                 .put("records", recordJson)
+                .put("requestPolicy", requestPolicy?.json() ?: JSONObject.NULL)
+                .put("selectionCache", JSONObject(selectedMap))
+            if (sealedLineage.length() > 0) manifest.put("sealedInputs", sealedLineage)
             if (previous != null && refreshKeys != null && previous.compiledInputSha256 == sha256(source) &&
                 previous.sourcePolicyFingerprint == policyFingerprint && previous.policyFingerprint == effectiveFingerprint) {
                 val oldRecords = JSONObject(PrivateStorage(previous.directory).read("manifest.json", 1024 * 1024)).getJSONArray("records")
@@ -458,7 +505,7 @@ class ResourceBundleManager(
                 // Proxy loaders read referenced TLS files; validate after all final paths exist, before publishing the index.
                 for (record in records) {
                     currentCoroutineContext().ensureActive()
-                    if (record.kind != "private-file" && record.kind != "source-proxy") {
+                    if (record.kind !in setOf("private-file", "source-proxy", "sealed-lineage")) {
                         val file = File(destination, record.file)
                         // The preparation-only API decodes every byte, but may require this generation's Geo context.
                         // Both typed states still pass the mandatory full prepared converter below before admission.
@@ -616,7 +663,11 @@ class ResourceBundleManager(
         checkIdentifier(profileId)
         checkIdentifier(generation)
         synchronized(state) {
-            try { removeBundle(File(root, "bundles/$profileId/$generation")) }
+            try {
+                val identity = "$profileId/$generation"
+                if (identity in state.readers) state.pendingDiscards.add(identity)
+                else removeBundle(File(root, "bundles/$identity"))
+            }
             finally { state.candidates.remove("$profileId/$generation") }
         }
     }
@@ -624,6 +675,65 @@ class ResourceBundleManager(
     internal fun committed(profileId: String, generation: String) = synchronized(state) {
         state.candidates.remove("$profileId/$generation")
         if (profileId in state.importing) state.committedImports.add(profileId)
+    }
+
+    internal fun retainSealedInputs(config: Map<String, Any?>): SealedResourceInputs {
+        val retained = linkedMapOf<File, SealedResourceInputs.Origin>()
+        val prefix = File(root, "bundles").path.replace('\\', '/') + "/"
+        fun visit(value: Any?) {
+            when (value) {
+                is Map<*, *> -> value.values.forEach(::visit)
+                is List<*> -> value.forEach(::visit)
+                is String -> if (value.replace('\\', '/').startsWith(prefix)) {
+                    val parts = value.replace('\\', '/').removePrefix(prefix).split('/')
+                    require(parts.size >= 3) { "Invalid sealed resource path" }
+                    checkIdentifier(parts[0]); checkIdentifier(parts[1])
+                    val directory = File(root, "bundles/${parts[0]}/${parts[1]}").absoluteFile
+                    val origin = retained.getOrPut(directory) {
+                        val lease = retainGeneration(directory)
+                        try { SealedResourceInputs.Origin(lease, SealedResourceInputs.readFiles(directory)) }
+                        catch (failure: Throwable) { lease.close(); throw failure }
+                    }
+                    require(origin.files.any { it.relativePath.startsWith("assets/") && File(it.sourcePath).absoluteFile == File(value).absoluteFile }) {
+                        "Only manifest-authorized sealed assets may be used as resource input"
+                    }
+                }
+            }
+        }
+        try {
+            (config["proxies"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.forEach { proxy ->
+                listOf("tls-cert", "tls-key", "ca").forEach { visit(proxy[it]) }
+            }
+            listOf("mmdb", "asn-mmdb", "geosite").forEach { visit(config[it]) }
+            listOf("proxy-providers", "rule-providers").forEach { namespace ->
+                (config[namespace] as? Map<*, *>)?.values?.filterIsInstance<Map<*, *>>()
+                    ?.filter { it["type"] == "file" }?.forEach { visit(it["path"]) }
+            }
+            return SealedResourceInputs(retained.values.toList())
+        }
+        catch (failure: Throwable) { retained.values.toList().asReversed().forEach { it.lease.close() }; throw failure }
+    }
+
+    internal fun retainGeneration(directory: File): ResourceGenerationLease = synchronized(state) {
+        val profileId = directory.parentFile.name
+        val generation = directory.name
+        checkIdentifier(profileId); checkIdentifier(generation)
+        val expected = File(root, "bundles/$profileId/$generation").absoluteFile
+        require(directory.absoluteFile == expected && expected.toPath() == expected.toPath().toRealPath() && expected.isDirectory) {
+            "Only this manager's existing immutable generation may be borrowed"
+        }
+        val identity = "$profileId/$generation"
+        state.readers[identity] = Math.addExact(state.readers[identity] ?: 0, 1)
+        ResourceGenerationLease(expected) { synchronized(state) {
+            val count = checkNotNull(state.readers[identity])
+            if (count == 1) {
+                if (identity in state.pendingDiscards) {
+                    removeBundle(expected)
+                    state.pendingDiscards.remove(identity)
+                }
+                state.readers.remove(identity)
+            } else state.readers[identity] = count - 1
+        } }
     }
 
     internal suspend fun <T> importArchive(profileId: String, input: InputStream, accept: suspend (String) -> T): T =
@@ -693,7 +803,7 @@ class ResourceBundleManager(
     }
 
     internal fun prune(retained: Map<String, Set<String>>, importProfiles: Set<String>) = synchronized(state) {
-        val protectedGenerations = state.candidates + retained.flatMap { (id, generations) -> generations.map { "$id/$it" } }
+        val protectedGenerations = state.candidates + state.readers.keys + retained.flatMap { (id, generations) -> generations.map { "$id/$it" } }
         File(root, "bundles").listFiles()?.forEach { profile ->
             if (!isIdentifier(profile.name) || Files.isSymbolicLink(profile.toPath()) || !profile.isDirectory) return@forEach
             profile.listFiles()?.forEach generationLoop@ { directory ->
@@ -701,7 +811,7 @@ class ResourceBundleManager(
                 if (!isIdentifier(generation) || Files.isSymbolicLink(directory.toPath())) return@generationLoop
                 if ("${profile.name}/$generation" !in protectedGenerations) removeBundle(directory)
             }
-            if (profile.list()?.isEmpty() == true) profile.delete()
+            if (profile.list()?.isEmpty() == true && protectedGenerations.none { it.startsWith("${profile.name}/") }) profile.delete()
         }
         val imported = importProfiles + state.importing + state.candidates.map { it.substringBefore('/') }
         File(root, "imports").listFiles()?.forEach { directory ->
@@ -832,6 +942,8 @@ class ResourceBundleManager(
     private class BundleState {
         val preparation = Semaphore(1)
         val candidates = mutableSetOf<String>()
+        val readers = mutableMapOf<String, Int>()
+        val pendingDiscards = mutableSetOf<String>()
         val importing = mutableSetOf<String>()
         val committedImports = mutableSetOf<String>()
     }

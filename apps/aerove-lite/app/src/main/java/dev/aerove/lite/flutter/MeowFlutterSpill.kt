@@ -2,7 +2,11 @@ package dev.aerove.lite.flutter
 
 import java.io.File
 import java.io.IOException
+import java.io.BufferedWriter
+import java.io.OutputStream
+import java.io.OutputStreamWriter
 import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -14,6 +18,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.CoroutineContext
 
 class MeowConfigProtocolException(val code: String, message: String, val details: Map<String, Any?> = emptyMap(),
     cause: Throwable? = null) : IOException(message, cause)
@@ -35,6 +40,48 @@ class MeowFlutterSpill(homeDir: File, private val budget: MeowSpillBudget = Meow
         context.ensureActive()
         val bytes = text.toByteArray(Charsets.UTF_8)
         if (bytes.size > budget.maxFileBytes) failure("Response exceeds the file byte budget")
+        return writeOwned(extension, bytes.size.toLong()) { channel, _ ->
+            val buffer = ByteBuffer.wrap(bytes)
+            while (buffer.hasRemaining()) {
+                context.ensureActive()
+                val limit = buffer.limit()
+                buffer.limit(minOf(limit, buffer.position() + 64 * 1024))
+                channel.write(buffer)
+                buffer.limit(limit)
+            }
+        }
+    }
+
+    internal suspend fun writeJsonStringResult(id: String, text: String): String {
+        val context = currentCoroutineContext()
+        return writeOwned("json") { channel, remaining ->
+            var written = 0L
+            val output = object : OutputStream() {
+                override fun write(value: Int) = write(byteArrayOf(value.toByte()), 0, 1)
+                override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                    context.ensureActive()
+                    if (length > remaining - written) failure("Response exceeds the file or directory byte budget")
+                    val buffer = ByteBuffer.wrap(bytes, offset, length)
+                    while (buffer.hasRemaining()) { context.ensureActive(); channel.write(buffer) }
+                    written += length
+                }
+            }
+            val encoder = Charsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+            val writer = BufferedWriter(OutputStreamWriter(output, encoder), 8192)
+            writer.write("{\"result\":")
+            writer.jsonString(text, context)
+            writer.write(",\"id\":")
+            writer.jsonString(id, context)
+            writer.write("}")
+            writer.flush()
+        }
+    }
+
+    private suspend fun writeOwned(extension: String, expectedBytes: Long? = null,
+        produce: (FileChannel, Long) -> Unit): String {
+        val context = currentCoroutineContext()
+        context.ensureActive()
         require(extension in setOf("json", "yaml"))
         return synchronized(monitor) {
             checkOpen()
@@ -46,7 +93,8 @@ class MeowFlutterSpill(homeDir: File, private val budget: MeowSpillBudget = Meow
                 checkedDirectFile(it)
                 total = Math.addExact(total, Files.size(it.toPath()))
             }
-            if (entries.size >= budget.maxFiles || total + bytes.size > budget.maxDirectoryBytes)
+            val remaining = minOf(budget.maxFileBytes.toLong(), budget.maxDirectoryBytes - total)
+            if (entries.size >= budget.maxFiles || remaining < 0 || (expectedBytes != null && expectedBytes > remaining))
                 failure("Response directory budget exhausted")
             val identity = UUID.randomUUID().toString()
             val temporary = File(directory, ".$identity.tmp")
@@ -54,14 +102,8 @@ class MeowFlutterSpill(homeDir: File, private val budget: MeowSpillBudget = Meow
             try {
                 FileChannel.open(temporary.toPath(), CREATE_NEW, WRITE, NOFOLLOW_LINKS).use { channel ->
                     restrictPermissions(temporary)
-                    val buffer = ByteBuffer.wrap(bytes)
-                    while (buffer.hasRemaining()) {
-                        context.ensureActive()
-                        val limit = buffer.limit()
-                        buffer.limit(minOf(limit, buffer.position() + 64 * 1024))
-                        channel.write(buffer)
-                        buffer.limit(limit)
-                    }
+                    produce(channel, remaining)
+                    if (channel.size() > remaining) failure("Response exceeds the file or directory byte budget")
                     channel.force(true)
                 }
                 context.ensureActive()
@@ -79,6 +121,26 @@ class MeowFlutterSpill(homeDir: File, private val budget: MeowSpillBudget = Meow
                 throw failure
             }
         }
+    }
+
+    private fun BufferedWriter.jsonString(value: String, context: CoroutineContext) {
+        write('"'.code)
+        var start = 0
+        for (index in value.indices) {
+            if (index % 8192 == 0) context.ensureActive()
+            val escaped = when (val character = value[index]) {
+                '"' -> "\\\""; '\\' -> "\\\\"; '\b' -> "\\b"; '\t' -> "\\t"
+                '\n' -> "\\n"; '\u000c' -> "\\f"; '\r' -> "\\r"
+                else -> if (character < ' ') "\\u" + character.code.toString(16).padStart(4, '0') else null
+            }
+            if (escaped != null) {
+                write(value, start, index - start)
+                write(escaped)
+                start = index + 1
+            }
+        }
+        write(value, start, value.length - start)
+        write('"'.code)
     }
 
     fun discard(path: String): Unit = synchronized(monitor) {

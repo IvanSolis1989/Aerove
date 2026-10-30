@@ -9,6 +9,46 @@ import 'package:material_ui/material_ui.dart';
 void main() {
   const selected = [Color(0xFF6BD5D9), Color(0xFFC6ADE4), Color(0xFFA9DAC6)];
 
+  test(
+    'pure black dims only dark mesh values and preserves its composition',
+    () {
+      for (final brightness in Brightness.values) {
+        final standard = generateAuroraMesh(
+          8128,
+          colors: selected,
+          brightness: brightness,
+        );
+        final black = generateAuroraMesh(
+          8128,
+          colors: selected,
+          brightness: brightness,
+          pureBlack: true,
+        );
+        expect(black.positions, same(standard.positions));
+        expect(black.indices, same(standard.indices));
+        if (brightness == Brightness.light) {
+          expect(black.colors, standard.colors);
+          continue;
+        }
+        for (var i = 0; i < standard.colors.length; i++) {
+          final original = HSVColor.fromColor(standard.colors[i]);
+          final dimmed = HSVColor.fromColor(black.colors[i]);
+          expect(dimmed.value, lessThan(original.value));
+          expect(dimmed.value, greaterThan(0));
+          expect(dimmed.value, closeTo(original.value * 0.60, 1 / 255));
+          for (final (actual, source) in [
+            (black.colors[i].r, standard.colors[i].r),
+            (black.colors[i].g, standard.colors[i].g),
+            (black.colors[i].b, standard.colors[i].b),
+          ]) {
+            expect(actual, closeTo(source * 0.60, 1 / 255));
+          }
+        }
+        expect(black.colors.toSet().length, greaterThan(100));
+      }
+    },
+  );
+
   test('empty input uses the fresh cyan purple green palette', () {
     expect(normalizeAuroraColors([]), const [
       Color(0xFF65BDD2),

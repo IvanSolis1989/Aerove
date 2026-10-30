@@ -1,5 +1,5 @@
 #![cfg(any(target_os="linux",target_os="android",target_os="macos"))]
-use aerove_meow_core::{network_context::NetworkContext, resource_fetch::{ResourceFetch,DownloadRequest,validate_prepared}};
+use aerove_meow_core::{network_context::NetworkContext, resource_fetch::{ResourceFetch,ResourceOptions,ResourceHttpPolicy,DownloadRequest,validate_prepared}};
 use futures::FutureExt;
 use std::{collections::BTreeMap, path::PathBuf, sync::{Arc,atomic::{AtomicU64,Ordering}}, time::Duration};
 use tokio::{io::{AsyncReadExt,AsyncWriteExt},net::{TcpListener,TcpStream}};
@@ -16,6 +16,10 @@ impl Files {
     fn owner(&self)->Arc<ResourceFetch> {
         let cancel=CancellationToken::new();ResourceFetch::create(NetworkContext::platform(cancel.clone()),vec!["127.0.0.1:9".parse().unwrap()],
             self.path("stage").to_str().unwrap(),Some(self.path("read").to_str().unwrap()),self.path("cache").to_str().unwrap(),cancel).unwrap()
+    }
+    fn owner_with(&self,options:ResourceOptions)->Arc<ResourceFetch> {
+        let cancel=CancellationToken::new();ResourceFetch::create_with_options(NetworkContext::platform(cancel.clone()),vec!["127.0.0.1:9".parse().unwrap()],
+            self.path("stage").to_str().unwrap(),Some(self.path("read").to_str().unwrap()),self.path("cache").to_str().unwrap(),cancel,options).unwrap()
     }
 }
 impl Drop for Files {fn drop(&mut self){std::fs::remove_dir_all(&self.0).unwrap();}}
@@ -42,6 +46,138 @@ fn request(files:&Files,url:String,name:&str,max_bytes:usize)->DownloadRequest {
 fn load(owner:&Arc<ResourceFetch>,source:String)->std::pin::Pin<Box<dyn std::future::Future<Output=std::io::Result<()>>+Send+'_>> {
     Box::pin(owner.load(source))
 }
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn captured_policy_uses_selected_nonfirst_proxy_and_preserves_explicit_headers() {
+    let files=Files::new();let ingress=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=ingress.local_addr().unwrap();
+    let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=origin.local_addr().unwrap();
+    let unused=TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let default=files.owner();load(&default,yaml(address,unused.local_addr().unwrap())).await.unwrap();
+    let options=ResourceOptions {http:Some(ResourceHttpPolicy {user_agent:"AEROVE/captured".into(),check_certificate:true}),
+        selection_cache:BTreeMap::from([("PICK".into(),"NODE".into())])};
+    let captured=files.owner_with(options);
+    load(&captured,yaml(address,unused.local_addr().unwrap()).replace("[NODE,REJECT]","[REJECT,NODE]")).await.unwrap();
+    assert!(ingress.accept().now_or_never().is_none());
+    let forwarding=tokio::spawn(proxy(ingress,3));
+    let serving=tokio::spawn(async move {
+        let mut headers=Vec::new();for _ in 0..3 {
+            let(mut socket,_)=origin.accept().await.unwrap();headers.push(head(&mut socket).await);
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await.unwrap();
+        }headers
+    });
+    for (owner,name,explicit) in [(&default,"default",false),(&captured,"captured",false),(&captured,"explicit",true)] {
+        let mut input=request(&files,format!("http://{target}/body"),name,64);
+        if !explicit {input.headers.remove("User-Agent");} else {input.headers.insert("user-agent".into(),vec!["Provider/explicit".into()]);input.headers.remove("User-Agent");}
+        tokio::time::timeout(Duration::from_secs(5),owner.download(input)).await.unwrap().unwrap();
+        assert_eq!(std::fs::read(files.path(&format!("stage/{name}"))).unwrap(),b"ok");
+    }
+    let headers=tokio::time::timeout(Duration::from_secs(5),serving).await.unwrap().unwrap();
+    assert!(headers[0].lines().any(|line|line.starts_with("User-Agent: clash.meta/")));
+    assert!(headers[1].contains("User-Agent: AEROVE/captured\r\n"));
+    assert!(headers[2].contains("user-agent: Provider/explicit\r\n"));
+    assert!(!headers[2].contains("AEROVE/captured"));
+    for header in headers {assert!(header.contains("X-Proof: first\r\n"));assert!(header.contains("X-Proof: second\r\n"));}
+    default.close_and_join().await.unwrap();captured.close_and_join().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5),forwarding).await.unwrap().unwrap();assert!(unused.accept().now_or_never().is_none());
+}
+
+#[tokio::test]
+async fn unsupported_cached_selection_is_diagnosed_before_any_download() {
+    let files=Files::new();let ingress=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=ingress.local_addr().unwrap();
+    for (name,member) in [("NODE","NODE")] {
+        let owner=files.owner_with(ResourceOptions {http:None,selection_cache:BTreeMap::from([(name.into(),member.into())])});
+        let failure=load(&owner,yaml(address,address)).await.unwrap_err().to_string();
+        assert!(failure.contains(&format!("$.selectionCache.{name}:")),"{failure}");
+        let input=request(&files,format!("http://{address}/forbidden"),"forbidden",64);
+        assert!(owner.download(input).await.is_err());owner.close_and_join().await.unwrap();
+    }
+    assert!(ingress.accept().now_or_never().is_none());assert!(!files.path("stage/forbidden").exists());
+}
+
+async fn restored_cache_http(kind:&str,requested:&str,deleted:bool,second_selected:bool) {
+    let files=Files::new();let first=TcpListener::bind("127.0.0.1:0").await.unwrap();let second=TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut cache=BTreeMap::from([("PICK".into(),requested.into())]);if deleted {cache.insert("DELETED".into(),"OLD".into());}
+    let owner=files.owner_with(ResourceOptions {http:None,selection_cache:cache});
+    let source=format!("proxies: [{{name: FIRST,type: http,server: '127.0.0.1',port: {}}},{{name: SECOND,type: http,server: '127.0.0.1',port: {}}}]\nproxy-groups: [{{name: PICK,type: {kind},proxies: [FIRST,SECOND],url: 'http://127.0.0.1:9',interval: 0}}]\nrules: ['MATCH,PICK']\n",first.local_addr().unwrap().port(),second.local_addr().unwrap().port());
+    load(&owner,source).await.unwrap();assert!(first.accept().now_or_never().is_none());assert!(second.accept().now_or_never().is_none());
+    let(selected,unused)=if second_selected {(second,first)} else {(first,second)};let forwarding=tokio::spawn(proxy(selected,1));
+    let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=origin.local_addr().unwrap();
+    let serving=tokio::spawn(async move {let(mut socket,_)=origin.accept().await.unwrap();let _=head(&mut socket).await;
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\nrestore").await.unwrap();});
+    tokio::time::timeout(Duration::from_secs(5),owner.download(request(&files,format!("http://{address}/body"),"restored",64))).await.unwrap().unwrap();
+    assert_eq!(std::fs::read(files.path("stage/restored")).unwrap(),b"restore");owner.close_and_join().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5),serving).await.unwrap().unwrap();tokio::time::timeout(Duration::from_secs(5),forwarding).await.unwrap().unwrap();
+    assert!(unused.accept().now_or_never().is_none());assert!(!files.path("cache/selector-cache.json").exists());
+}
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn deleted_cache_group_is_skipped_and_valid_nonfirst_selection_reaches_http() {
+    restored_cache_http("select","SECOND",true,true).await;
+}
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn stale_or_empty_selector_cache_uses_the_actual_first_http_member() {
+    for member in ["STALE",""] {restored_cache_http("select",member,false,false).await;}
+}
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn stale_or_empty_urltest_cache_resumes_automatic_real_http() {
+    for member in ["STALE",""] {restored_cache_http("url-test",member,false,false).await;}
+}
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn stale_or_empty_fallback_cache_restores_fixed_standard_real_http() {
+    for member in ["STALE",""] {restored_cache_http("fallback",member,false,false).await;}
+}
+
+#[tokio::test]
+async fn automatic_candidate_pin_and_unfix_are_memory_only_and_invalid_policy_is_rejected() {
+    let files=Files::new();
+    for member in ["REJECT",""] {
+        let owner=files.owner_with(ResourceOptions {http:None,selection_cache:BTreeMap::from([("AUTO".into(),member.into())])});
+        load(&owner,"proxy-groups: [{name: AUTO,type: url-test,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,AUTO']\n".into()).await.unwrap();
+        owner.close_and_join().await.unwrap();assert!(!files.path("cache/selector-cache.json").exists());
+    }
+    for agent in [""," \t","injected\r\nHeader: true"] {
+        let cancel=CancellationToken::new();let result=ResourceFetch::create_with_options(NetworkContext::platform(cancel.clone()),vec!["127.0.0.1:9".parse().unwrap()],
+            files.path("stage").to_str().unwrap(),Some(files.path("read").to_str().unwrap()),files.path("cache").to_str().unwrap(),cancel,
+            ResourceOptions {http:Some(ResourceHttpPolicy {user_agent:agent.into(),check_certificate:false}),selection_cache:BTreeMap::new()});
+        let cause=match result {Ok(_)=>panic!("invalid policy accepted"),Err(cause)=>cause};assert!(cause.to_string().contains("$.http.userAgent:"));
+    }
+}
+
+fn resource_tls_acceptor()->boring::ssl::SslAcceptor {
+    use boring::{asn1::Asn1Time,bn::BigNum,hash::MessageDigest,pkey::PKey,rsa::Rsa,x509::{X509,X509NameBuilder}};
+    let key=PKey::from_rsa(Rsa::generate(2048).unwrap()).unwrap();let mut name=X509NameBuilder::new().unwrap();
+    name.append_entry_by_text("CN","localhost").unwrap();let name=name.build();let mut cert=X509::builder().unwrap();cert.set_version(2).unwrap();
+    let serial=BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap();cert.set_serial_number(&serial).unwrap();
+    cert.set_subject_name(&name).unwrap();cert.set_issuer_name(&name).unwrap();cert.set_pubkey(&key).unwrap();
+    let before=Asn1Time::days_from_now(0).unwrap();let after=Asn1Time::days_from_now(1).unwrap();
+    cert.set_not_before(&before).unwrap();cert.set_not_after(&after).unwrap();cert.sign(&key,MessageDigest::sha256()).unwrap();
+    let mut acceptor=boring::ssl::SslAcceptor::mozilla_intermediate_v5(boring::ssl::SslMethod::tls()).unwrap();
+    acceptor.set_certificate(&cert.build()).unwrap();acceptor.set_private_key(&key).unwrap();acceptor.build()
+}
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn candidate_certificate_policy_reaches_real_tls_and_default_still_verifies() {
+    let files=Files::new();let ingress=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=ingress.local_addr().unwrap();
+    let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=origin.local_addr().unwrap();
+    let acceptor=resource_tls_acceptor();let forwarding=tokio::spawn(proxy(ingress,3));
+    let serving=tokio::spawn(async move {
+        let mut completed=0;for _ in 0..3 {
+            let(socket,_)=origin.accept().await.unwrap();if let Ok(mut socket)=tokio_boring::accept(&acceptor,socket).await {
+                let mut header=Vec::new();while !header.ends_with(b"\r\n\r\n") {header.push(socket.read_u8().await.unwrap());assert!(header.len()<65536);}
+                assert!(String::from_utf8(header).unwrap().contains("User-Agent: AEROVE/tls\r\n"));
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\ntls").await.unwrap();completed+=1;
+            }
+        }completed
+    });
+    for (index,check) in [None,Some(true),Some(false)].into_iter().enumerate() {
+        let owner=files.owner_with(ResourceOptions {http:check.map(|check_certificate|ResourceHttpPolicy {user_agent:"AEROVE/tls".into(),check_certificate}),selection_cache:BTreeMap::new()});
+        load(&owner,yaml(address,address)).await.unwrap();let name=format!("tls-{index}");let mut input=request(&files,format!("https://{target}/body"),&name,64);input.headers.remove("User-Agent");
+        let result=tokio::time::timeout(Duration::from_secs(5),owner.download(input)).await.unwrap();
+        if check==Some(false) {assert_eq!(result.unwrap().bytes,3);assert_eq!(std::fs::read(files.path(&format!("stage/{name}"))).unwrap(),b"tls");}
+        else {assert!(result.is_err());assert!(!files.path(&format!("stage/{name}")).exists());}
+        owner.close_and_join().await.unwrap();
+    }
+    assert_eq!(tokio::time::timeout(Duration::from_secs(5),serving).await.unwrap().unwrap(),1);
+    tokio::time::timeout(Duration::from_secs(5),forwarding).await.unwrap().unwrap();
+}
+
 #[tokio::test(flavor="multi_thread",worker_threads=2)]
 async fn materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache() {
     let files=Files::new();let owner=files.owner();
@@ -100,7 +236,9 @@ async fn named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_ru
 }
 #[tokio::test(flavor="multi_thread",worker_threads=2)]
 async fn cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success() {
-    let files=Files::new();let owner=files.owner();let ingress=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=ingress.local_addr().unwrap();
+    let files=Files::new();let owner=files.owner_with(ResourceOptions {http:Some(ResourceHttpPolicy {user_agent:"AEROVE/cancel".into(),check_certificate:false}),
+        selection_cache:BTreeMap::from([("PICK".into(),"NODE".into())])});
+    let ingress=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=ingress.local_addr().unwrap();
     let origin=TcpListener::bind("127.0.0.1:0").await.unwrap();let target=origin.local_addr().unwrap();let unused=TcpListener::bind("127.0.0.1:0").await.unwrap();
     load(&owner,yaml(address,unused.local_addr().unwrap())).await.unwrap();let forwarding=tokio::spawn(proxy(ingress,1));
     let request=request(&files,format!("http://{target}/held"),"cancelled",64);let running=owner.clone();let download=tokio::spawn(async move {running.download(request).await});

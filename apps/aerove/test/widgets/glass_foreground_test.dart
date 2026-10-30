@@ -368,7 +368,7 @@ void main() {
       (LiquidGlassMode.standard, false, false, true),
       (LiquidGlassMode.ultra, false, false, true),
       (LiquidGlassMode.ultra, true, false, false),
-      (LiquidGlassMode.ultra, false, true, false),
+      (LiquidGlassMode.ultra, false, true, true),
     ]) {
       final inputTheme = ThemeData(
         colorScheme: auroraColorScheme(Brightness.dark),

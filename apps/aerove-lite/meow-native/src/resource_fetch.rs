@@ -10,6 +10,21 @@ use tokio_util::sync::CancellationToken;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 fn error(reason: impl Into<String>) -> io::Error { io::Error::other(reason.into()) }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct ResourceHttpPolicy { pub user_agent: String, pub check_certificate: bool }
+#[derive(Default)]
+pub struct ResourceOptions {
+    pub http: Option<ResourceHttpPolicy>, pub selection_cache: BTreeMap<String, String>,
+}
+struct CapturedRequestPolicy { policy: Arc<meow_common::request_policy::RequestPolicy>, cancel: CancellationToken }
+impl meow_common::request_policy::PolicySource for CapturedRequestPolicy {
+    fn snapshot(&self) -> io::Result<Arc<meow_common::request_policy::RequestPolicy>> {
+        if self.cancel.is_cancelled() { return Err(error("resourceScopeClosed")); }
+        Ok(self.policy.clone())
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase", deny_unknown_fields)]
 pub struct DownloadRequest {
@@ -25,6 +40,7 @@ pub struct ResourceFetch {
     state: Mutex<State>, cancel: CancellationToken, scope: Arc<OwnedLoadScope>, tasks: Arc<TransportTasks>,
     network: NetworkContext, network_slot: Arc<NetworkContextSlot>, physical: Arc<PhysicalResolver>,
     staging: PathBuf, read_root: Option<PathBuf>, close_gate: tokio::sync::Mutex<()>,
+    selection_cache: BTreeMap<String, String>,
 }
 
 /// The producer's cached join result, retained without changing the primary error.
@@ -84,9 +100,66 @@ async fn receive_operation<T>(rx: oneshot::Receiver<io::Result<T>>, producer: Ar
 struct CancelRequest(CancellationToken);
 impl Drop for CancelRequest { fn drop(&mut self) { self.0.cancel(); } }
 
+fn restore_selection_cache(config: &Config, cache: &BTreeMap<String, String>) -> io::Result<BTreeMap<String, String>> {
+    use meow_common::AdapterType;
+    let mut effective = BTreeMap::new();
+    for (name, requested) in cache {
+        let Some(group) = config.proxies.get(name.as_str()) else { continue; };
+        let fail = |reason: &str| error(format!("$.selectionCache.{name}: {reason}"));
+        if group.selection().is_none() { return Err(fail("group does not support selection")); }
+        let members = group.members().filter(|members| !members.is_empty()).ok_or_else(|| fail("group has no actual members"))?;
+        let valid = members.iter().any(|member| member == requested);
+        let target = match group.adapter_type() {
+            AdapterType::Selector => if valid { requested.clone() } else { members[0].clone() },
+            AdapterType::UrlTest => if valid { requested.clone() } else { String::new() },
+            AdapterType::Fallback => if valid { requested.clone() } else if requested.is_empty() { String::new() } else { members[0].clone() },
+            _ => return Err(fail("unsupported cache selection group")),
+        };
+        effective.insert(name.clone(), target);
+    }
+    Ok(effective)
+}
+
+fn apply_selections(config: &Config, selected: &BTreeMap<String, String>) -> io::Result<()> {
+    // This graph is private and unpublished. Validate every intent before applying
+    // memory-only selections; never probe, flush a store or touch the live graph.
+    for (name, member) in selected {
+        let fail = |reason: &str| error(format!("$.selectionCache.{name}: {reason}"));
+        let group = config.proxies.get(name.as_str()).ok_or_else(|| fail("unknown group"))?;
+        let selection = group.selection().ok_or_else(|| fail("group does not support selection"))?;
+        if member.is_empty() {
+            if !selection.can_unfix() { return Err(fail("empty selection requires an automatic group")); }
+        } else if !group.members().is_some_and(|members| members.iter().any(|value| value == member)) {
+            return Err(fail("unknown member"));
+        }
+    }
+    for (name, member) in selected {
+        let group = config.proxies.get(name.as_str()).ok_or_else(|| error(format!("$.selectionCache.{name}: group disappeared")))?;
+        let selection = group.selection().ok_or_else(|| error(format!("$.selectionCache.{name}: selection disappeared")))?;
+        let result = if member.is_empty() { selection.unfix_memory() } else { selection.commit_memory(member) };
+        result.map_err(|cause| error(format!("$.selectionCache.{name}: {cause}")))?;
+        let applied = if selection.can_unfix() { selection.fixed().as_deref() == Some(member.as_str()) }
+            else { group.current().as_deref() == Some(member.as_str()) };
+        if !applied { return Err(error(format!("$.selectionCache.{name}: selection readback mismatch"))); }
+    }
+    Ok(())
+}
+
 impl ResourceFetch {
     pub fn create(network: NetworkContext, servers: Vec<std::net::SocketAddr>, staging: &str, read_root: Option<&str>,
         cache: &str, cancel: CancellationToken) -> io::Result<Arc<Self>> {
+        Self::create_with_options(network, servers, staging, read_root, cache, cancel, ResourceOptions::default())
+    }
+    pub fn create_with_options(network: NetworkContext, servers: Vec<std::net::SocketAddr>, staging: &str, read_root: Option<&str>,
+        cache: &str, cancel: CancellationToken, options: ResourceOptions) -> io::Result<Arc<Self>> {
+        let network = match options.http {
+            Some(http) => {
+                let policy = meow_common::request_policy::RequestPolicy::new(http.user_agent, http.check_certificate)
+                    .map_err(|cause| error(format!("$.http.userAgent: {cause}")))?;
+                network.with_request_policy(Arc::new(CapturedRequestPolicy { policy: Arc::new(policy), cancel: cancel.clone() }))
+            },
+            None => network,
+        };
         let roots = Arc::new(ResourceRoots::validate(read_root, Some(cache))?);
         let read_root = roots.provider_roots()?.resource_read_root;
         let staging = Path::new(staging);
@@ -99,7 +172,7 @@ impl ResourceFetch {
         let scope = OwnedLoadScope::with_context(Arc::new(network.clone()));
         load_slot.set(Arc::downgrade(&scope)).map_err(|_| error("resource scope registration failed"))?;
         Ok(Arc::new(Self { state:Mutex::new(State::default()),cancel,scope,tasks,network,network_slot:slot,physical,
-            staging:staging.to_path_buf(),read_root,close_gate:tokio::sync::Mutex::new(()) }))
+            staging:staging.to_path_buf(),read_root,close_gate:tokio::sync::Mutex::new(()),selection_cache:options.selection_cache }))
     }
     async fn operation<T: Send + 'static>(self: &Arc<Self>, work: impl Future<Output=io::Result<T>> + Send + 'static) -> io::Result<T> {
         let request = self.cancel.child_token(); let _cancel = CancelRequest(request.clone());
@@ -171,6 +244,8 @@ impl ResourceFetch {
             }
             let yaml=serde_yaml::to_string(&raw).map_err(|cause|error(cause.to_string()))?;
             let config=meow_config::load_config_from_str_owned(&yaml,&owner.scope).await.map_err(|cause|error(format!("resource transport graph: {cause:#}")))?;
+            let selections = restore_selection_cache(&config, &owner.selection_cache)?;
+            apply_selections(&config, &selections)?;
             let pair=ResolverPair { main:config.dns.resolver.clone(),proxy:config.dns.proxy_resolver.clone() };
             let hook=Arc::new(meow_dns::ResolverHostHook::new_with_proxy_resolver(pair.main.clone(),pair.proxy.clone()));
             let next=owner.network.with_resolver(hook).with_resolver_pair(pair);

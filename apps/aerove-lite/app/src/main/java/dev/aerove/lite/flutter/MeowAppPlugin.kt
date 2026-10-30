@@ -206,7 +206,7 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
     private fun excludeFromRecents(exclude: Boolean): Boolean {
         val activity = activityBinding?.activity ?: return false
         val manager = context.getSystemService(ActivityManager::class.java) ?: return false
-        val task = manager.appTasks.firstOrNull { it.taskInfo.taskId == activity.taskId } ?: return false
+        val task = manager.appTasks.firstOrNull { it.taskInfo?.taskId == activity.taskId } ?: return false
         task.setExcludeFromRecents(exclude)
         return true
     }

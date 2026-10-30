@@ -320,6 +320,14 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
 
 def validate_core_test_receipt(state, policy, root):
     """Require the producer's fixed dependency tests and separately accepted locked graph."""
+    if not isinstance(state, dict) or state.get("metadataCommand") != ["cargo", "metadata", "--manifest-path",
+            ".upstream/meow-rs/Cargo.toml", "--format-version", "1", "--locked"]:
+        raise ValueError("Meow host receipt lacks complete approved Core unit proof")
+    _validate_core_test_proof(state, policy, root)
+
+
+def _validate_core_test_proof(state, policy, root):
+    """Shared complete proof after the entry point checks its exact metadata command."""
     def reject():
         raise ValueError("Meow host receipt lacks complete approved Core unit proof")
     def is_hash(value):
@@ -349,8 +357,6 @@ def validate_core_test_receipt(state, policy, root):
             or state.get("resolvedLockSha256") != policy["coreTestLockSha256"]
             or state.get("bridgeMetadataCommand") != ["cargo", "metadata", "--locked", "--format-version", "1"]
             or not exited(state.get("bridgeMetadataExit"))
-            or state.get("metadataCommand") != ["cargo", "metadata", "--manifest-path",
-                ".upstream/meow-rs/Cargo.toml", "--format-version", "1", "--locked"]
             or not exited(state.get("metadataExit"))):
         reject()
     members, features, commands = state.get("workspaceMembers"), state.get("features"), state.get("commands")

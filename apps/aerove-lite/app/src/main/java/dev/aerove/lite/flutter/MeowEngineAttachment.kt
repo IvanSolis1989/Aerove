@@ -5,6 +5,8 @@ import dev.aerove.lite.data.ConfigYaml
 import dev.aerove.lite.data.ControlEndpoint
 import dev.aerove.lite.data.CoreApiClient
 import dev.aerove.lite.data.NativePreparedConfigValidator
+import dev.aerove.lite.data.NativeRulePayloadInspector
+import dev.aerove.lite.data.MAX_RULE_TEXT_BYTES
 import dev.aerove.lite.vpn.CoreEndpoint
 import dev.aerove.lite.vpn.VpnSnapshot
 import java.io.File
@@ -18,16 +20,19 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     private val vpn: StateFlow<VpnSnapshot>, private val scope: CoroutineScope,
     preparedValidator: NativePreparedConfigValidator, private val verifyCapabilities: () -> Unit,
     private val emit: (MeowEngineAttachment, List<Map<String, Any?>>) -> Unit,
-    private val warning: (Throwable) -> Unit, private val actions: MeowFlutterRuntime) : MeowSetupEffects {
+    private val warning: (Throwable) -> Unit, private val actions: MeowFlutterRuntime,
+    resourceSealer: dev.aerove.lite.data.FlutterResourceSealer? = null,
+    rulePayloadInspector: NativeRulePayloadInspector = nativeRulePayloadInspector()) : MeowSetupEffects {
     private val home = MeowFlutterSpill.checkedHome(homeDir)
     private val config = MeowConfigProtocol(home)
     private val offline = MeowOfflineMethods(home)
+    private val ruleSets = MeowRuleSetProtocol(home, rulePayloadInspector)
     private val sessionGate = Mutex()
     private var initialized = false
     @Volatile private var closed = false
     private var uiActive = false
     private var session: Session? = null
-    val setup = MeowSetupProtocol(home, store, config, this, preparedValidator)
+    val setup = MeowSetupProtocol(home, store, config, this, preparedValidator, resourceSealer = resourceSealer)
     val dispatcher: MeowProtocolDispatcher
     private data class Session(val identity: RuntimeAppliedIdentity, val endpoint: CoreEndpoint,
         val client: CoreApiClient, val protocol: MeowProtocolSession)
@@ -38,6 +43,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
             methods[method] = MeowProtocolMethod { config.invoke(method, it) }
         }
         offline.methods.forEach { method -> methods[method] = MeowProtocolMethod { offline.invoke(method, it) } }
+        methods["dumpRuleSet"] = MeowProtocolMethod { ruleSets.dump(it) }
         QUERY_METHODS.forEach { method -> methods[method] = MeowProtocolMethod { query(method, it) } }
         methods["initClash"] = MeowProtocolMethod { args ->
             val row = meowObject(args)
@@ -62,7 +68,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
             if (method in setOf("getConfig", "buildProfile") && result is String) config.discard(result)
         }, translateFailure = { failure -> (failure as? MeowQueryException)?.let {
             MeowProtocolFailure(it.code, it.message ?: it.code, it.details, it)
-        } })
+        } }, stringResponseBudgets = mapOf("dumpRuleSet" to MeowStringResponseBudget(MAX_RULE_TEXT_BYTES.toInt())))
     }
 
     override fun isInitialized(): Boolean = initialized && !closed

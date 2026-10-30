@@ -72,6 +72,8 @@ object JniResourceFetch {
                             .put("physicalNetwork", MeowPhysicalNetwork(captured.networkHandle, captured.dns).json())
                             .put("stagingRoot", staging.path).put("resourceReadRoot", read?.path ?: JSONObject.NULL)
                             .put("cacheRoot", cache.path)
+                        input.http?.let { plan.put("http", it.json()) }
+                        if (input.selectionCache.isNotEmpty()) plan.put("selectionCache", JSONObject(input.selectionCache))
                         val scope = NativeScope(nativeCreate(plan.toString()), cache)
                         allocated = scope
                         scope.call { nativeLoad(scope.handle, input.candidateYaml) }

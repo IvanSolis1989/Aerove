@@ -80,9 +80,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
         ),
       ),
     );
-    final opaque =
-        MediaQuery.highContrastOf(context) ||
-        (settings.pureBlack && theme.brightness == Brightness.dark);
+    final opaque = MediaQuery.highContrastOf(context);
     final enabled =
         theme.platform == TargetPlatform.android && settings.enabled && !opaque;
     final glassMode = settings.liquidGlass;
@@ -130,6 +128,7 @@ class _AuroraAppSurfaceState extends ConsumerState<AuroraAppSurface>
                                   ],
                                   seed: settings.seed,
                                   brightness: theme.brightness,
+                                  pureBlack: settings.pureBlack,
                                   motion: widget.motion,
                                 ),
                               ),
@@ -515,6 +514,7 @@ class SeededAuroraWallpaper extends StatefulWidget {
     required this.colors,
     required this.seed,
     required this.brightness,
+    this.pureBlack = false,
     this.motion = false,
     this.motionTime,
   });
@@ -522,6 +522,7 @@ class SeededAuroraWallpaper extends StatefulWidget {
   final List<Color> colors;
   final int seed;
   final Brightness brightness;
+  final bool pureBlack;
   final bool motion;
   final Duration? motionTime;
 
@@ -610,6 +611,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
       colors: normalizeAuroraColors(widget.colors),
       seed: widget.seed,
       brightness: widget.brightness,
+      pureBlack: widget.pureBlack,
     );
   }
 
@@ -621,6 +623,7 @@ class _SeededAuroraWallpaperState extends State<SeededAuroraWallpaper>
     }
     if (widget.seed != oldWidget.seed ||
         widget.brightness != oldWidget.brightness ||
+        widget.pureBlack != oldWidget.pureBlack ||
         !listEquals(widget.colors, oldWidget.colors)) {
       _painter.dispose();
       _updatePainter();
@@ -827,11 +830,13 @@ class _AuroraPainter extends CustomPainter {
     required this.colors,
     required this.seed,
     required this.brightness,
+    required this.pureBlack,
   }) {
     final mesh = generateAuroraMesh(
       seed,
       colors: colors,
       brightness: brightness,
+      pureBlack: pureBlack,
     );
     _vertices = Vertices(
       VertexMode.triangles,
@@ -844,6 +849,7 @@ class _AuroraPainter extends CustomPainter {
   final List<Color> colors;
   final int seed;
   final Brightness brightness;
+  final bool pureBlack;
   late final Vertices _vertices;
   final _paint = Paint()..isAntiAlias = false;
 
@@ -862,6 +868,7 @@ class _AuroraPainter extends CustomPainter {
   bool shouldRepaint(_AuroraPainter oldDelegate) =>
       seed != oldDelegate.seed ||
       brightness != oldDelegate.brightness ||
+      pureBlack != oldDelegate.pureBlack ||
       !listEquals(colors, oldDelegate.colors);
 }
 

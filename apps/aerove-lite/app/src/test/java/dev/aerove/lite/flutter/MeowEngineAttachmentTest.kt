@@ -6,6 +6,9 @@ import dev.aerove.lite.VpnPhase
 import dev.aerove.lite.backgroundpolicy.BackgroundPolicyJson
 import dev.aerove.lite.controllerprefs.encodeExternalController
 import dev.aerove.lite.data.NativePreparedConfigValidator
+import dev.aerove.lite.data.NativeJsonRulePayloadInspector
+import dev.aerove.lite.data.NativeRulePayloadInspector
+import dev.aerove.lite.core.ownedOfflineResourceRead
 import dev.aerove.lite.dnssettings.DnsPreferencesJson
 import dev.aerove.lite.networksettings.NetworkSettings
 import dev.aerove.lite.networksettings.NetworkSettingsJson
@@ -24,6 +27,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
@@ -40,11 +44,85 @@ import org.junit.rules.TemporaryFolder
 class MeowEngineAttachmentTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun home() = temporary.newFolder().canonicalFile
+
+    @Test fun ruleSetPreviewValidatesTheSharedPathWithoutRequiringARunningCore() = runBlocking<Unit> {
+        val home = home()
+        val store = RuntimeHandoffStore(home)
+        val engine = attachment(home, store, MutableStateFlow(VpnSnapshot()), this)
+        try {
+            val failure = rpc(engine, "dumpRuleSet", "relative.mrs").getJSONObject("error")
+            assertEquals("path_error", failure.getString("code"))
+            assertFalse(store.hasAuthority)
+        } finally { assertTrue(engine.closeAndJoin()) }
+    }
+
+    @Test fun sharedRuleSetPathReturnsTheActualReaderTextWithoutBorrowingTheVpnEpoch() = runBlocking<Unit> {
+        val home = home()
+        val source = File(home, "provider.mrs").apply { writeText("opaque Native callback fixture") }
+        val store = RuntimeHandoffStore(home)
+        val vpn = MutableStateFlow(VpnSnapshot())
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val inspector = NativeJsonRulePayloadInspector({ """{"format":"mrs","behavior":"domain","count":1}""" }, { _, behavior, format ->
+            assertEquals("domain", behavior); assertEquals("mrs", format)
+            entered.complete(Unit); release.await(); "+.example.test\n"
+        })
+        val engine = attachment(home, store, vpn, this, rules = inspector)
+        try {
+            val pending = async { rpc(engine, "dumpRuleSet", source.path) }
+            withTimeout(4000) { entered.await() }
+            val nextEpoch = store.invalidate()
+            vpn.value = VpnSnapshot(phase = VpnPhase.Failed, sessionGeneration = 12, serviceOwner = 9)
+            release.complete(Unit)
+            val response = withTimeout(4000) { pending.await() }
+            assertEquals("test-dumpRuleSet", response.getString("id"))
+            assertEquals("+.example.test\n", response.getString("result"))
+            assertEquals(nextEpoch, store.currentEpoch())
+            assertNull(store.readAppliedIdentity())
+            assertEquals(VpnPhase.Failed, vpn.value.phase)
+        } finally { release.complete(Unit); assertTrue(engine.closeAndJoin()) }
+    }
+
+    @Test fun attachmentCloseWaitsForTheOwnedRuleReaderBeforeRemovingItsSnapshot() = runBlocking<Unit> {
+        val home = home()
+        val source = File(home, "provider.mrs").apply { writeText("opaque Native callback fixture") }
+        val store = RuntimeHandoffStore(home)
+        val vpn = MutableStateFlow(VpnSnapshot())
+        val entered = CompletableDeferred<Unit>()
+        val cancelled = CompletableDeferred<Unit>()
+        val release = CountDownLatch(1)
+        val snapshot = AtomicReference<File>()
+        var joined = false
+        val inspector = NativeJsonRulePayloadInspector({ """{"format":"mrs","behavior":"domain","count":1}""" }, { path, _, _ ->
+            ownedOfflineResourceRead(create = { 1L }, cancel = { cancelled.complete(Unit) }, closeJoin = {
+                assertEquals(0L, release.count); assertTrue(snapshot.get().exists()); joined = true
+            }, work = {
+                snapshot.set(File(path)); entered.complete(Unit)
+                check(release.await(5, TimeUnit.SECONDS)); "+.example.test\n"
+            })
+        })
+        val engine = attachment(home, store, vpn, this, rules = inspector)
+        val pending = async { rpc(engine, "dumpRuleSet", source.path) }
+        try {
+            withTimeout(4000) { entered.await() }
+            val closing = async { engine.closeAndJoin() }
+            withTimeout(4000) { cancelled.await() }
+            assertFalse(closing.isCompleted); assertFalse(joined)
+            assertTrue(snapshot.get().exists())
+            release.countDown()
+            assertTrue(withTimeout(4000) { closing.await() }); assertTrue(joined)
+            assertEquals("cancelled", withTimeout(4000) { pending.await() }.getJSONObject("error").getString("code"))
+            assertFalse(snapshot.get().exists())
+            assertEquals(VpnSnapshot(), vpn.value)
+        } finally { release.countDown(); assertTrue(engine.closeAndJoin()); pending.join() }
+    }
+
     private fun attachment(home: File, store: RuntimeHandoffStore, vpn: MutableStateFlow<VpnSnapshot>, scope: CoroutineScope,
         owner: MeowFlutterRuntime = UnavailableOwner,
-        verify: () -> Unit = {}) = MeowEngineAttachment(home, store, vpn, scope,
+        rules: NativeRulePayloadInspector = nativeRulePayloadInspector(), verify: () -> Unit = {}) = MeowEngineAttachment(home, store, vpn, scope,
         NativePreparedConfigValidator { _, _ -> error("Native prepared validation is outside this attachment test") }, verify,
-        { _, _ -> error("No telemetry producer is requested in this test") }, { throw AssertionError("Unexpected asynchronous warning", it) }, owner)
+        { _, _ -> error("No telemetry producer is requested in this test") }, { throw AssertionError("Unexpected asynchronous warning", it) }, owner,
+        rulePayloadInspector = rules)
 
     private object UnavailableOwner : MeowFlutterRuntime {
         override fun identityIsCurrent(identity: RuntimeAppliedIdentity) = false

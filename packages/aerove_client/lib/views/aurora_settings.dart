@@ -124,14 +124,17 @@ class AuroraSettings extends ConsumerWidget {
   }
 }
 
-class _AuroraPreview extends StatelessWidget {
+class _AuroraPreview extends ConsumerWidget {
   const _AuroraPreview({required this.colors, required this.seed});
 
   final List<int> colors;
   final int seed;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pureBlack = ref.watch(
+      themeSettingProvider.select((state) => state.pureBlack),
+    );
     return Semantics(
       label: context.appLocalizations.preview,
       image: true,
@@ -143,6 +146,7 @@ class _AuroraPreview extends StatelessWidget {
             colors: colors.map(Color.new).toList(),
             seed: seed,
             brightness: Theme.of(context).brightness,
+            pureBlack: pureBlack,
           ),
         ),
       ),

@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 from lite_release import download_artifact, _gh_json, PromotionError
-from verify_apk import RESOURCE_HEALTH_CASES, validate_core_test_receipt, native_identity, validate_native_receipt, CORE_LIBRARY, MEOW_ROOT, CORE_JNI_SYMBOLS, exported_functions, valid_elf64_shared_object, MEOW_SOURCE
+from verify_apk import RESOURCE_HEALTH_CASES, _validate_core_test_proof, native_identity, validate_native_receipt, CORE_LIBRARY, MEOW_ROOT, CORE_JNI_SYMBOLS, exported_functions, valid_elf64_shared_object, MEOW_SOURCE
 
 
 HOST_ASSESSMENT_ROOT = Path(__file__).with_name('regexp2-assessment')
@@ -405,7 +405,10 @@ def host_lock_resolution_result(plan_path, phase, root=MEOW_ROOT, environment=No
                 or not str(receipt.get('toolchain', '')).startswith('rustc 1.98.1 ')
                 or source.get('archiveHashBootstrapped') is not False):
             raise PromotionError('Pending provider resolution lacks the fixed Native/toolchain proof')
-        validate_core_test_receipt(core, policy, root)
+        if core.get('metadataCommand') != ['cargo', 'metadata', '--manifest-path',
+                '.upstream/meow-rs/Cargo.toml', '--format-version', '1']:
+            raise PromotionError('Pending Core metadata command differs from the resolution producer')
+        _validate_core_test_proof(core, policy, root)
     return dict(schema=1, archiveOnly=True, lockAcceptance='pending', acceptedLock=False, workflowIdentity=current,
                 readbackScope='pending-producer-shape-and-locks-only', planSha256=digest(plan_path), producerReceiptSha256=digest(receipt_path), seedLockSha256=digest(before),
                 resolvedLockSha256=resolved, nativeTargetCount=42, coreCommandCount=core_count,

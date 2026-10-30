@@ -598,7 +598,19 @@ void main() {
   });
 
   group('pure black', () {
-    testWidgets('switches both ways', (tester) async {
+    testWidgets('switches both ways without resetting material or wallpaper', (
+      tester,
+    ) async {
+      container
+          .read(themeSettingProvider.notifier)
+          .update(
+            (state) => state.copyWith(
+              liquidGlass: LiquidGlassMode.standard,
+              auroraEnabled: true,
+              auroraSeed: 8128,
+            ),
+          );
+      final saved = readTheme();
       await pumpThemeView(tester);
 
       expect(readTheme().pureBlack, isFalse);
@@ -606,10 +618,12 @@ void main() {
       await tester.tap(find.text('Pure black'));
       await tester.pumpAndSettle();
       expect(readTheme().pureBlack, isTrue);
+      expect(readTheme(), saved.copyWith(pureBlack: true));
 
       await tester.tap(find.text('Standard').first);
       await tester.pumpAndSettle();
       expect(readTheme().pureBlack, isFalse);
+      expect(readTheme(), saved);
     });
   });
 

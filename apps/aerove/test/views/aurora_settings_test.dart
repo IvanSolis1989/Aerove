@@ -58,6 +58,24 @@ void main() {
   }
 
   for (final brightness in Brightness.values) {
+    testWidgets('wallpaper preview follows the saved dark base $brightness', (
+      tester,
+    ) async {
+      await pumpSettings(tester, brightness: brightness);
+      for (final pureBlack in [true, false]) {
+        container
+            .read(themeSettingProvider.notifier)
+            .update((state) => state.copyWith(pureBlack: pureBlack));
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<SeededAuroraWallpaper>(find.byType(SeededAuroraWallpaper))
+              .pureBlack,
+          pureBlack,
+        );
+        expect(readTheme().pureBlack, pureBlack);
+      }
+    });
     for (final mode in LiquidGlassMode.values) {
       testWidgets('wallpaper swatches retain their RGBA throughout the fill '
           '($brightness, $mode, DPR 3)', (tester) async {

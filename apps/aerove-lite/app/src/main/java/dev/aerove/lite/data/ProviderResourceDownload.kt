@@ -2,7 +2,13 @@ package dev.aerove.lite.data
 
 import java.io.File
 
-data class ProviderDownloadContext(val candidateYaml: String, val stagingRoot: File, val resourceReadRoot: File?)
+data class ProviderRequestPolicy(val userAgent: String, val checkCertificate: Boolean) {
+    init { require(dev.aerove.lite.requests.RequestPreferences.validUserAgent(userAgent)) { "Invalid resource User-Agent" } }
+    internal fun json() = org.json.JSONObject().put("userAgent", userAgent).put("checkCertificate", checkCertificate)
+}
+
+data class ProviderDownloadContext(val candidateYaml: String, val stagingRoot: File, val resourceReadRoot: File?,
+    val http: ProviderRequestPolicy? = null, val selectionCache: Map<String, String> = emptyMap())
 data class ProviderDownloadRequest(val url: String, val proxy: String?, val headers: Map<String, List<String>>,
     val destination: File, val maxBytes: Long)
 data class ProviderDownloadResult(val bytes: Long, val sha256: String, val subscriptionUserInfo: String? = null)

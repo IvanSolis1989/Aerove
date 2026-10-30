@@ -167,15 +167,19 @@ class LiteApplication : Application() {
             { path -> dev.aerove.lite.core.JniResourceFetch.offlineRead { MeowNativeCore.inspectRuleSet(it, path) } },
             { path, behavior, format -> dev.aerove.lite.core.JniResourceFetch.offlineRead { MeowNativeCore.dumpRuleSet(it, path, behavior, format) } })
     }
-    val resourceBundles by lazy {
+    val resourceBundles by lazy { resourceBundleManager(resourceDownloader) }
+    private fun resourceBundleManager(downloader: ResourceDownloader) =
         ResourceBundleManager(File(filesDir, "runtime"), profileValidator, NativeResourceValidator { kind, path, behavior, format ->
             dev.aerove.lite.core.JniResourceFetch.offlineRead { MeowNativeCore.validateResource(it, kind, path, behavior, format) }
-        }, downloader = resourceDownloader, offlineRules = rulePayloadInspector,
+        }, downloader = downloader, offlineRules = rulePayloadInspector,
             providerDownloads = dev.aerove.lite.data.ProviderDownloadFactory { context ->
                 dev.aerove.lite.core.JniResourceFetch.factory(this).open(context)
             })
-    }
     val builderResourceLibrary by lazy { dev.aerove.lite.profilebuilder.BuilderResourceLibrary(filesDir, subscriptionDownloader) }
+    val flutterResourceSealer by lazy {
+        dev.aerove.lite.data.FlutterResourceSealer(resourceBundleManager(ResourceDownloader()), flutterDefaultUserAgent)
+    }
+    val flutterDefaultUserAgent get() = dev.aerove.lite.requests.productUserAgent("AEROVE Lite", BuildConfig.VERSION_NAME)
     val globalRulePayloads by lazy {
         dev.aerove.lite.data.GlobalRulePayloadRepository(filesDir, builderResourceLibrary, resourceBundles,
             rulePayloadInspector, profiles, resourceDownloader)

@@ -54,8 +54,13 @@ class MeowProfileValidatorTest {
         assertEquals(1, calls)
     }
 
+    @Test fun sourceTunEnableRequiresHostReconciliation() {
+        val failure = assertThrows(ConfigValidationException::class.java) { schema().managedBlocking("tun: {enable: true}") }
+        assertEquals("$.tun.enable", failure.issues.single().path)
+    }
+
     @Test fun sourceHostOwnershipAndLegacyConstructorRemainSeparate() {
-        val source = "tun: {enable: true, auto-route: true}"
+        val source = "tun: {enable: false, auto-route: true}"
         val failure = assertThrows(ConfigValidationException::class.java) { schema().managedBlocking(source) }
         assertEquals("$.tun.auto-route", failure.issues.single().path)
         val legacy = CompatibilityValidator(NativeConfigValidator { null })

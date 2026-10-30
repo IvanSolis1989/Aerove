@@ -9,6 +9,63 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RuntimeHandoffStoreTest {
+    @Test fun sessionRelocationRewritesNestedTlsPathsWithoutMutatingStoreOrNeedingProducerGeneration() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("flutter-relocation").toRealPath().toFile()
+        val ca = File(root, "original-ca.pem").apply { writeText("certificate fixture bytes") }
+        val payload = File(root, "original-provider.yaml").apply {
+            writeText("proxies: [{name: private, type: socks5, server: 127.0.0.1, port: 1080, ca: '${ca.path.replace('\\', '/')}'}]\n")
+        }
+        val rows = listOf(RuntimeHandoffResource("assets/ca.pem", ca.path.replace('\\', '/'), runtimeSha256(ca.readBytes())),
+            RuntimeHandoffResource("assets/proxies.yaml", payload.path.replace('\\', '/'), runtimeSha256(payload.readBytes())))
+        // Use identical canonical spelling in payload/YAML and receipt, as the producer does.
+        val yaml = "proxy-providers: {p: {type: file, path: '${rows[1].sourcePath}'}}\nrules: ['MATCH,DIRECT']\n"
+        val store = RuntimeHandoffStore(root)
+        val snapshot = store.commit(handoff(yaml, rows), 0, null)
+        val storedPayload = File(snapshot.resourceDirectory, rows[1].relativePath).readBytes()
+        assertTrue(ca.delete()); assertTrue(payload.delete())
+        val lease = dev.aerove.lite.data.FlutterRuntimeResources.create(root, snapshot) { true }
+        try {
+            val provider = ((dev.aerove.lite.data.ConfigYaml.parse(lease.yaml)["proxy-providers"] as Map<*, *>)["p"] as Map<*, *>)["path"] as String
+            assertTrue(File(provider).toPath().startsWith(lease.readRoot.toPath()))
+            val nodes = dev.aerove.lite.data.ConfigYaml.parse(File(provider).readText())["proxies"] as List<*>
+            val relocatedCa = (nodes.single() as Map<*, *>)["ca"] as String
+            assertEquals(File(lease.readRoot, "assets/ca.pem").path, relocatedCa)
+            assertEquals("certificate fixture bytes", File(relocatedCa).readText())
+            assertArrayEquals(storedPayload, File(snapshot.resourceDirectory, rows[1].relativePath).readBytes())
+            assertEquals(snapshot.handoff.compiledSha256, JSONObject(File(lease.readRoot, "relocation-receipt.json").readText()).getString("compiledSha256"))
+        } finally { lease.closeAfterNativeJoin() }
+        assertFalse(lease.readRoot.exists())
+        var checks = 0
+        rejects { dev.aerove.lite.data.FlutterRuntimeResources.create(root, snapshot) { ++checks < 2 } }
+        assertTrue(File(root, "runtime/meow-read").listFiles().orEmpty().isEmpty())
+        assertEquals(snapshot.revision, store.readCurrent()!!.revision)
+    }
+
+    @Test fun finalSourceGuardFailureRollsBackCopiedCandidateAndRetainsLastGood() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("handoff-final-source").toRealPath().toFile()
+        val store = RuntimeHandoffStore(root)
+        val old = store.commit(handoff(), 0, null)
+        val resource = File(root, "resource.yaml").apply { writeText("payload: [example.com]\n") }
+        val next = handoff(resources = listOf(RuntimeHandoffResource("assets/r.yaml", resource.path, runtimeSha256(resource.readBytes()))))
+        rejects { store.commit(next, old.intentEpoch, old.revision) { error("source changed during Store copy") } }
+        assertEquals(old.revision, store.readCurrent()!!.revision)
+        assertEquals(listOf(old.resourceDirectory.name), File(root, "runtime-handoffs/resources").listFiles()!!.map { it.name })
+    }
+
+    @Test fun cancellationAfterCopyBeforePublishRetainsLastGoodAndRemovesCandidateFiles() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("handoff-copy-cancel").toRealPath().toFile()
+        val store = RuntimeHandoffStore(root); val old = store.commit(handoff(), 0, null)
+        val asset = File(root, "resource.yaml").apply { writeText("payload: [example.com]\n") }
+        val next = handoff(resources = listOf(RuntimeHandoffResource("assets/r.yaml", asset.path, runtimeSha256(asset.readBytes()))))
+        val writer = async {
+            val owner = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!
+            store.commit(next, old.intentEpoch, old.revision) { owner.cancel(kotlinx.coroutines.CancellationException("cancel after verified copy")) }
+        }
+        try { writer.await(); fail("cancelled copy published") } catch (_: kotlinx.coroutines.CancellationException) { }
+        assertEquals(old.revision, store.readCurrent()!!.revision)
+        assertEquals(listOf(old.resourceDirectory.name), File(root, "runtime-handoffs/resources").listFiles()!!.map { it.name })
+    }
+
     private fun handoff(yaml: String = "rules: ['MATCH,DIRECT']\n", resources: List<RuntimeHandoffResource> = emptyList()): RuntimeHandoff {
         val settings = JSONObject().put("network", JSONObject()).put("requests", JSONObject()).put("backgroundPolicy", JSONObject())
             .put("externalController", JSONObject()).put("dnsPreferences", JSONObject()).put("geoResources", JSONObject())

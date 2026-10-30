@@ -20,6 +20,7 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.StandardOpenOption.READ
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -42,7 +43,8 @@ interface MeowSetupEffects {
 class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, private val config: MeowConfigProtocol,
     private val effects: MeowSetupEffects, private val preparedValidator: NativePreparedConfigValidator? = null,
     private val verifiedFeatures: () -> Set<String> = { MeowNativeCore.readVerifiedFeatures() },
-    private val validator: NativeConfigValidator = NativeConfigValidator { yaml -> JniResourceFetch.offlineRead { MeowNativeCore.validate(it, yaml) } }) {
+    private val validator: NativeConfigValidator = NativeConfigValidator { yaml -> JniResourceFetch.offlineRead { MeowNativeCore.validate(it, yaml) } },
+    private val resourceSealer: dev.aerove.lite.data.FlutterResourceSealer? = null) {
     private val home = MeowFlutterSpill.checkedHome(homeDir)
     private val gate = Mutex()
     private var settings = LiteSettings()
@@ -140,6 +142,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         val before = store.readCurrent()
         if (before != null && before.intentEpoch != expectedEpoch) throw MeowConfigProtocolException("superseded", "Runtime intent changed before staging")
         var temporary: String? = null
+        var resourceLease: dev.aerove.lite.data.FlutterResourceLease? = null
         try {
             val sourceFile: File
             val sourceBytes: ByteArray
@@ -153,24 +156,48 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                 sourceBytes = Files.newInputStream(sourceFile.toPath(), READ, NOFOLLOW_LINKS).use { it.readBounded(4 * 1024 * 1024) }
                 config.buildProfile(sourceFile.path, base.getString("overlay")).also { temporary = it }
             }
-            val yaml = read(checkedFile(File(path)), 4 * 1024 * 1024)
-            val setupUpdate = updateFromYaml(yaml, params)
-            val projected = decodeUpdate(setupUpdate, null)
-            val resources = resources(yaml)
+            val input = read(checkedFile(File(path)), 4 * 1024 * 1024)
+            val setupUpdate = updateFromYaml(input, params)
+            val decoded = decodeUpdate(setupUpdate, null)
+            val inputRoot = ConfigYaml.parse(input)
+            val sourceUa = inputRoot["global-ua"]?.let {
+                if (it !is String || !dev.aerove.lite.requests.RequestPreferences.validUserAgent(it)) bad("$.global-ua", "Invalid HTTP User-Agent")
+                it
+            }
+            val projected = decoded.copy(requests = decoded.requests.copy(globalUserAgent = sourceUa))
+            val selections = params.getJSONObject("selected-map").let { row -> row.keys().asSequence().associateWith { row.getString(it) } }
+            val hasRemoteProviders = listOf("proxy-providers", "rule-providers").any { namespace ->
+                (inputRoot[namespace] as? Map<*, *>)?.values?.any { (it as? Map<*, *>)?.get("type") == "http" } == true
+            }
+            if (hasRemoteProviders) resourceLease = resourceSealer?.prepare(input, projected.requests.checkCertificate, selections)
+            val yaml = resourceLease?.yaml ?: input
+            val existing = if (resourceLease == null) resources(yaml) else null
+            if (resourceLease == null && existing?.second != null) resourceLease = resourceSealer?.borrow(yaml, checkNotNull(existing.second))
+            val resources = resourceLease?.let { lease ->
+                lease.resources.map { RuntimeHandoffResource(it.relativePath, it.sourcePath, it.sha256) } to lease.directory
+            } ?: checkNotNull(existing)
             val prepared = preparedValidator ?: NativePreparedConfigValidator { _, _ -> blocked("$.resources", "Prepared native validation is required for sealed resources") }
             MeowProfileValidator(validator, prepared, home, verifiedFeatures).validate(yaml, resources.second != null, resources.second)
             val runtimeSettings = MeowRuntimeSnapshotSettings.encode(projected).put("flutterSetup", params).put("flutterUpdate", setupUpdate)
             val sourceSha = runtimeSha256(sourceBytes)
-            if (runtimeSha256(Files.newInputStream(checkedFile(sourceFile).toPath(), READ, NOFOLLOW_LINKS).use { it.readBounded(4 * 1024 * 1024) }) != sourceSha)
-                throw MeowConfigProtocolException("superseded", "Compiled source changed while staging")
+            fun checkSource() {
+                if (read(checkedFile(File(path)), 4 * 1024 * 1024) != input)
+                    throw MeowConfigProtocolException("superseded", "Compiled input changed while sealing resources")
+                if (runtimeSha256(Files.newInputStream(checkedFile(sourceFile).toPath(), READ, NOFOLLOW_LINKS).use { it.readBounded(4 * 1024 * 1024) }) != sourceSha)
+                    throw MeowConfigProtocolException("superseded", "Compiled source changed while staging")
+            }
+            checkSource()
             val handoff = RuntimeHandoff(MEOW_RUNTIME_CORE_SHA, sourceFile.path, sourceSha, sourceSha,
                 yaml, runtimeSha256(yaml.toByteArray()), applied.toString(), runtimeSettings.toString(), state.getJSONObject("vpnOptions").toString(),
                 notification(state).toString(), resources.first)
             MeowRuntimeSnapshotSettings.validate(handoff)
-            store.commit(handoff, expectedEpoch, before?.revision)
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            store.commit(handoff, expectedEpoch, before?.revision, ::checkSource)
             setup = params; settings = projected; update = setupUpdate
             ""
-        } finally { temporary?.let(config::discard) }
+        } finally {
+            try { resourceLease?.closeAndJoin() } finally { temporary?.let(config::discard) }
+        }
     }
 
     suspend fun staged(): MeowRuntimeSnapshot? = store.readCurrent()
