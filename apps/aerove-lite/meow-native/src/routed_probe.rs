@@ -58,7 +58,10 @@ fn exit_through(mut adapter: Arc<dyn ProxyAdapter>, metadata: &Metadata) -> Stri
     loop {
         if !visited.insert(Arc::as_ptr(&adapter) as *const () as usize) { return String::new(); }
         if adapter.adapter_type() == AdapterType::LoadBalance { return exit_name(adapter.as_ref()); }
-        let Some(next) = adapter.unwrap_proxy(metadata, false) else { return exit_name(adapter.as_ref()); };
+        let next = match adapter.unwrap_proxy_owned(metadata, meow_common::adapter::SelectionOperation::Exit, false) {
+            Ok(next) => next, Err(_) => return String::new(),
+        };
+        let Some(next) = next else { return exit_name(adapter.as_ref()); };
         adapter = next as Arc<dyn ProxyAdapter>;
     }
 }
@@ -109,6 +112,7 @@ impl Probe {
             return failure(StatusCode::BAD_REQUEST, "invalid_route_hits");
         }
         let Ok(stamp) = probe.stamp() else { return failure(StatusCode::CONFLICT, "route_changed"); };
+        let Ok(trace) = probe.control.begin_consumption_trace(stamp) else { return failure(StatusCode::CONFLICT,"route_changed"); };
         let work = async {
             let mut resolved = BTreeMap::new();
             let mut held = Vec::with_capacity(params.hits.len());
@@ -126,8 +130,8 @@ impl Probe {
             }
             Ok::<_, io::Error>(held)
         };
-        let held = tokio::select! { biased; _ = probe.cancel().cancelled() => return failure(StatusCode::GONE,"session_stopped"), result = tokio::time::timeout(Duration::from_secs(3),work) => result };
-        if probe.stamp().ok() != Some(stamp) { return failure(StatusCode::CONFLICT,"route_changed"); }
+        let held = tokio::select! { biased; _ = probe.cancel().cancelled() => return failure(StatusCode::GONE,"session_stopped"), result = tokio::time::timeout(Duration::from_secs(3),trace.clone().scope(work)) => result };
+        let Ok(stamp) = probe.control.finish_consumption_trace(&trace) else { return failure(StatusCode::CONFLICT,"route_changed"); };
         match held { Ok(Ok(held)) => Json(json!({"core-epoch":stamp.0.to_string(),"route-version":stamp.1.to_string(),"held":held})).into_response(),
             _ => failure(StatusCode::GATEWAY_TIMEOUT,"route_timeout") }
     }

@@ -59,6 +59,10 @@ pub struct RouteControl {
     pub(crate) state: Arc<AppState>,
     pub plane: Arc<ControlPlane>,
     groups: parking_lot::Mutex<Option<Arc<meow_config::owned_load::OwnedLoadScope>>>,
+    startup_graph: parking_lot::Mutex<StartupGraphState>,
+    // Written only under plane.gate; distinguishes external no-op consumers.
+    consume_serial: std::sync::atomic::AtomicU64,
+    graph_serial: std::sync::atomic::AtomicU64,
     observed_members: parking_lot::Mutex<BTreeMap<usize, std::sync::Weak<dyn Proxy>>>,
     groups_changed: tokio::sync::Notify,
     groups_events: tokio::sync::broadcast::Sender<(u64, u64)>,
@@ -74,13 +78,15 @@ impl RouteControl {
 
     pub fn with_plane(state: Arc<AppState>, plane: Arc<ControlPlane>) -> Arc<Self> {
         let (groups_events, _) = tokio::sync::broadcast::channel(128);
-        Arc::new(Self { state, plane, groups: parking_lot::Mutex::new(None),
+        Arc::new(Self { state, plane, groups: parking_lot::Mutex::new(None), startup_graph: parking_lot::Mutex::new(StartupGraphState::default()), consume_serial: std::sync::atomic::AtomicU64::new(0), graph_serial: std::sync::atomic::AtomicU64::new(0),
             observed_members: parking_lot::Mutex::new(BTreeMap::new()),
             groups_changed: tokio::sync::Notify::new(), groups_events })
     }
 
     pub fn cancel(&self) {
         self.plane.cancel();
+        let retired = self.startup_graph.lock().proof.take();
+        drop(retired);
     }
 
     fn check_live(&self, gate: &PlaneState) -> Result<(), ControlError> {
@@ -120,10 +126,55 @@ impl RouteControl {
         Ok((gate.core_epoch, gate.revision))
     }
 
+    /// Explicit route observation; internal snapshot_locked stays read-only.
     pub async fn snapshot(&self) -> Result<RouteSnapshot, ControlError> {
-        let gate = self.plane.gate.lock();
-        self.check_live(&gate)?;
-        Ok(self.snapshot_locked(&gate))
+        let scope = self.groups.lock().clone();
+        let mut gate = self.plane.gate.lock(); self.check_live(&gate)?; self.check_graph_idle(&gate)?;
+        let Some(scope) = scope else { return Ok(self.snapshot_locked(&gate)); };
+        if scope.is_cancelled() { return Err(ControlError::Cancelled); }
+        let route = self.state.tunnel.route_snapshot();
+        gate.revision.checked_add(route.proxies.len() as u64).ok_or(ControlError::RevisionExhausted)?;
+        gate.groups_sequence.checked_add(route.proxies.len() as u64).ok_or(ControlError::RevisionExhausted)?;
+        self.consume_serial.load(std::sync::atomic::Ordering::Relaxed).checked_add(route.proxies.len() as u64).ok_or(ControlError::RevisionExhausted)?;
+        let revision_before = gate.revision;
+        let mut consumed = BTreeMap::new();
+        for (name, proxy) in route.proxies.iter() {
+            if let Some(member) = self.consume_locked(&mut gate, proxy, meow_common::adapter::SelectionOperation::Route,
+                &meow_common::Metadata::default())? { consumed.insert(name.to_string(), member.name().to_owned()); }
+        }
+        let mut snapshot = self.snapshot_locked(&gate); snapshot.picks.extend(consumed);
+        let changed = gate.revision != revision_before;
+        drop(gate); if changed { self.groups_changed.notify_one(); }
+        Ok(snapshot)
+    }
+    pub(crate) fn begin_consumption_trace(self: &Arc<Self>, expected: (u64,u64))
+        -> Result<Arc<meow_common::adapter::ConsumptionTrace>, ControlError> {
+        let gate = self.plane.gate.lock(); self.check_live(&gate)?; self.check_graph_idle(&gate)?;
+        if (gate.core_epoch,gate.revision) != expected { return Err(ControlError::Superseded); }
+        Ok(meow_common::adapter::ConsumptionTrace::new(Arc::as_ptr(self) as usize,
+            (gate.core_epoch,gate.revision,gate.groups_sequence,self.consume_serial.load(std::sync::atomic::Ordering::Relaxed)), gate.selection_serial))
+    }
+    pub(crate) fn finish_consumption_trace(self: &Arc<Self>, trace: &meow_common::adapter::ConsumptionTrace)
+        -> Result<(u64,u64), ControlError> {
+        if !trace.belongs_to(Arc::as_ptr(self) as usize) { return Err(ControlError::Superseded); }
+        let (expected,intent) = trace.verified_stamp().map_err(|_| ControlError::Superseded)?;
+        let gate = self.plane.gate.lock(); self.check_live(&gate)?; self.check_graph_idle(&gate)?;
+        if (gate.core_epoch,gate.revision,gate.groups_sequence,self.consume_serial.load(std::sync::atomic::Ordering::Relaxed)) != expected
+            || gate.selection_serial != intent { return Err(ControlError::Superseded); }
+        Ok((expected.0,expected.1))
+    }
+    fn consume_locked(&self, gate: &mut PlaneState, proxy: &Arc<dyn Proxy>,
+        operation: meow_common::adapter::SelectionOperation, metadata: &meow_common::Metadata)
+        -> Result<Option<Arc<dyn Proxy>>, ControlError> {
+        let Some(selection) = proxy.selection() else { return Ok(None); };
+        let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+        let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+        let serial = self.consume_serial.load(std::sync::atomic::Ordering::Relaxed).checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+        let before = selection.fixed();
+        let member = selection.consume_runtime_memory(operation, metadata).map_err(|_| ControlError::InvalidSelection)?;
+        if before != selection.fixed() { gate.revision = next; gate.groups_sequence = sequence; }
+        if member.is_some() { self.consume_serial.store(serial,std::sync::atomic::Ordering::Relaxed); }
+        Ok(member)
     }
 
     pub async fn set_mode(&self, mode: TunnelMode) -> Result<RouteSnapshot, ControlError> {
@@ -233,6 +284,11 @@ pub fn router(control: Arc<RouteControl>) -> axum::Router {
         }))
         .route("/aerove/mode", patch(|State(control): State<Arc<RouteControl>>, Json(body): Json<ModeRequest>| async move {
             control.set_mode(body.mode).await.map(Json).map_err(ControlError::response)
+        }))
+        .route("/aerove/selection-cache", get(|State(control): State<Arc<RouteControl>>| async move {
+            control.startup_selection_snapshot().map(Json).map_err(ControlError::response)
+        }).post(|State(control): State<Arc<RouteControl>>, Json(body): Json<StartupSelectionRequest>| async move {
+            control.restore_startup_selection(body).map(Json).map_err(StartupSelectionError::response)
         }))
         .route("/aerove/selection/{group}", put(|State(control): State<Arc<RouteControl>>, Path(group): Path<String>, Json(body): Json<SelectRequest>| async move {
             control.select(&group, &body.name).await.map(Json).map_err(ControlError::response)
@@ -503,8 +559,69 @@ pub(crate) struct ProviderGroupCommit {
     retained: ManagedGraph, _candidate: ManagedGraph, picks: BTreeMap<String, String>, fixed: Vec<Option<String>>,
 }
 
-struct GroupHealthObserver(std::sync::Weak<RouteControl>);
+struct GroupHealthObserver(std::sync::Weak<RouteControl>, std::sync::Weak<meow_config::owned_load::OwnedLoadScope>);
 impl meow_common::adapter::HealthObserver for GroupHealthObserver {
+    fn consume_selection(&self, health: &meow_common::ProxyHealth, operation: meow_common::adapter::SelectionOperation,
+        metadata: &meow_common::Metadata) -> meow_common::Result<Option<meow_common::adapter::OwnedSelection>> {
+        let error = || meow_common::MeowError::Proxy("selection owner superseded or closed".into());
+        let control = self.0.upgrade().ok_or_else(error)?;
+        let scope = self.1.upgrade().ok_or_else(error)?;
+        let live_scope = control.groups.lock().clone().ok_or_else(error)?;
+        if !Arc::ptr_eq(&scope, &live_scope) { return Err(error()); }
+        if scope.is_cancelled() { return Err(error()); }
+        let mut gate = control.plane.gate.lock();
+        control.check_live(&gate).and_then(|_| control.check_graph_idle(&gate)).map_err(|_| error())?;
+        if scope.is_cancelled() || !control.groups.lock().as_ref().is_some_and(|current| Arc::ptr_eq(current, &scope)) { return Err(error()); }
+        if meow_common::probe_policy::operation_epoch().is_some_and(|e| e != gate.core_epoch) { return Err(error()); }
+        let graph = control.group_members().map_err(|_| error())?;
+        if !graph.is_current() { return Err(error()); }
+        let proxy = graph.iter().find(|p| std::ptr::eq(p.health(), health)).cloned().ok_or_else(error)?;
+        let route = control.state.tunnel.route_snapshot();
+        let epoch = gate.core_epoch; let intent = gate.selection_serial; let revision_before = gate.revision;
+        let trace = meow_common::adapter::ConsumptionTrace::current();
+        let owner = Arc::as_ptr(&control) as usize;
+        let trace_before = (gate.core_epoch,gate.revision,gate.groups_sequence,control.consume_serial.load(std::sync::atomic::Ordering::Relaxed));
+        if let Some(trace) = trace.as_ref() { trace.admit(owner, trace_before, intent)?; }
+
+        let Some(member) = control.consume_locked(&mut gate, &proxy, operation, metadata).map_err(|_| error())? else { return Ok(None); };
+        let lease_graph_serial = control.graph_serial.load(std::sync::atomic::Ordering::Relaxed);
+        let passive_graph = graph.clone(); let passive_route = route.clone();
+        let passive_control = self.0.clone(); let passive_scope = Arc::downgrade(&scope);
+        // This validator is safe inside plane.gate: it never reacquires that gate.
+        let passive_validate: Arc<dyn Fn() -> meow_common::Result<()> + Send + Sync> = Arc::new(move || {
+            let control = passive_control.upgrade().ok_or_else(error)?;
+            let scope = passive_scope.upgrade().ok_or_else(error)?;
+            if scope.is_cancelled() || !control.groups.lock().as_ref().is_some_and(|current| Arc::ptr_eq(current,&scope))
+                || !passive_graph.is_current() || !Arc::ptr_eq(&passive_route,&control.state.tunnel.route_snapshot()) { return Err(error()); }
+            Ok(())
+        });
+        let weak = self.0.clone(); let weak_scope = Arc::downgrade(&scope);
+        let validate: Arc<dyn Fn() -> meow_common::Result<()> + Send + Sync> = Arc::new(move || {
+            let control = weak.upgrade().ok_or_else(error)?;
+            // Preserve the established scope-before-plane lock order.
+            let live_scope = control.groups.lock().clone().ok_or_else(error)?;
+            let scope = weak_scope.upgrade().ok_or_else(error)?;
+            if scope.is_cancelled() || !Arc::ptr_eq(&scope, &live_scope) { return Err(error()); }
+            let gate = control.plane.gate.lock();
+            control.check_live(&gate).and_then(|_| control.check_graph_idle(&gate)).map_err(|_| error())?;
+            if gate.core_epoch != epoch || gate.selection_serial != intent || control.graph_serial.load(std::sync::atomic::Ordering::Relaxed) != lease_graph_serial || !graph.is_current()
+                || !Arc::ptr_eq(&route, &control.state.tunnel.route_snapshot()) { return Err(error()); }
+            Ok(())
+        });
+        if let Some(trace) = trace { trace.record(owner, trace_before,
+            (gate.core_epoch,gate.revision,gate.groups_sequence,control.consume_serial.load(std::sync::atomic::Ordering::Relaxed)), intent, passive_validate)?; }
+        let retain_scope = Arc::downgrade(&scope);
+        let retain_operation = Box::new(move || retain_scope.upgrade().and_then(|scope| scope.retain_operation()).ok_or_else(error));
+        let cancel = control.plane.cancel.clone(); let changed = gate.revision != revision_before;
+        drop(gate); if changed { control.groups_changed.notify_one(); }
+        let cancel_scope = Arc::downgrade(&scope);
+        Ok(Some(meow_common::adapter::OwnedSelection { member, validate, retain_operation,
+            cancelled: Box::pin(async move {
+                let Some(scope) = cancel_scope.upgrade() else { return; };
+                tokio::select! { biased; () = cancel.cancelled() => (), () = scope.cancelled() => () }
+            }) }))
+    }
+
     fn begin_url_probe(&self, proxy: &Arc<dyn Proxy>) -> std::io::Result<Option<meow_common::adapter::UrlProbeStamp>> {
         let control = self.0.upgrade().ok_or_else(|| std::io::Error::other("group owner retired"))?;
         let scope = control.groups.lock().clone();
@@ -650,6 +767,7 @@ impl RouteControl {
     }
     pub(crate) fn prepare_projected_provider_commit(self:&Arc<Self>, projection:&meow_config::ProxyProviderProjection, gate:&PlaneState)
         -> Result<ProviderGroupCommit,String> {
+        self.graph_serial.load(std::sync::atomic::Ordering::Relaxed).checked_add(1).ok_or("providerGraphSerialExhausted")?;
         let candidate=self.validate_projected_provider_graph(projection,gate)?.0;
         let retained=self.group_members().map_err(|_|"managedProxyGraphNotIntegrated".to_owned())?;
         if !retained.is_current() { return Err("staleManagedProxyGraph".into()); }
@@ -678,6 +796,11 @@ impl RouteControl {
     }
 
     fn observe_members(self: &Arc<Self>, members: &[Arc<dyn Proxy>]) -> Result<(), ControlError> {
+        let scope = self.groups.lock().clone().ok_or(ControlError::Cancelled)?;
+        self.observe_members_in_scope(members, &scope)
+    }
+    fn observe_members_in_scope(self: &Arc<Self>, members: &[Arc<dyn Proxy>], scope: &Arc<meow_config::owned_load::OwnedLoadScope>) -> Result<(), ControlError> {
+
         let mut registered = self.observed_members.lock();
         registered.retain(|_, member| member.strong_count() > 0);
         for member in members {
@@ -687,7 +810,7 @@ impl RouteControl {
                 return Err(ControlError::InvalidSelection);
             }
         }
-        let observer: Arc<dyn meow_common::adapter::HealthObserver> = Arc::new(GroupHealthObserver(Arc::downgrade(self)));
+        let observer: Arc<dyn meow_common::adapter::HealthObserver> = Arc::new(GroupHealthObserver(Arc::downgrade(self), Arc::downgrade(scope)));
         let mut installed=std::collections::BTreeSet::new();
         for member in members {
             let key = member.health() as *const _ as usize;
@@ -705,6 +828,7 @@ impl RouteControl {
     // exactly the groups requiring post-install selection reconciliation.
     pub(crate) fn prepare_provider_commit(self: &Arc<Self>, provider_name: &str, members: &[Arc<dyn Proxy>], gate: &PlaneState)
         -> Result<ProviderGroupCommit, String> {
+        self.graph_serial.load(std::sync::atomic::Ordering::Relaxed).checked_add(1).ok_or("providerGraphSerialExhausted")?;
         self.check_live(gate).map_err(|_| "cancelled".to_owned())?;
         if self.groups.lock().as_ref().is_none_or(|scope| scope.is_cancelled()) { return Err("groupOwnerCancelled".into()); }
         let retained = self.group_members().map_err(|_| "managedProxyGraphNotIntegrated".to_owned())?;
@@ -727,6 +851,10 @@ impl RouteControl {
 
     pub(crate) fn finish_provider_commit(&self, prepared: &ProviderGroupCommit, gate: &mut PlaneState,
         revision: u64, sequence: u64) {
+        // Both prepare paths checked this under the same admission gate before installation.
+        let serial = self.graph_serial.load(std::sync::atomic::Ordering::Relaxed);
+        debug_assert!(serial < u64::MAX);
+        self.graph_serial.store(serial + 1,std::sync::atomic::Ordering::Relaxed);
         for proxy in &prepared.retained {
             if let Some(selection) = proxy.selection() { selection.reconcile_health(); }
         }
@@ -746,7 +874,7 @@ impl RouteControl {
         if proxies.iter().any(|proxy| !proxy.delay_history().is_empty()) {
             gate.delay_history_error = Some("preActivationHistoryUnowned");
         }
-        self.observe_members(&proxies)?;
+        self.observe_members_in_scope(&proxies, scope)?;
         *self.groups.lock() = Some(scope.clone());
         gate.group_control = Some(Arc::downgrade(self));
         drop(gate);
@@ -759,6 +887,7 @@ impl RouteControl {
         loop {
             let changed = self.groups_changed.notified();
             tokio::pin!(changed); changed.as_mut().enable();
+            self.retire_stale_startup_graph();
             let delivery = {
                 let mut gate = self.plane.gate.lock();
                 if gate.closed || self.plane.cancel.is_cancelled() { return; }
@@ -1663,4 +1792,518 @@ mod delay_history_tests {
             close(api, scope, events).await;
         }
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StartupSelectionRequest {
+    pub expected_core_epoch: String,
+    pub expected_route_version: String,
+    pub expected_selection_intent: String,
+    pub expected_graph_token: String,
+    pub requested: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StartupSelectionReceipt {
+    #[serde(rename = "startup-consumption")]
+    pub consumed: BTreeMap<String, crate::selection_cache::StartupConsumption>,
+    #[serde(rename = "selection-intent")]
+    pub selection_intent: String,
+    #[serde(rename = "graph-token")]
+    pub graph_token: String,
+    pub requested: BTreeMap<String, String>,
+    pub route: RouteSnapshot,
+    pub groups: BTreeMap<String, crate::selection_cache::SelectionReadback>,
+}
+
+#[derive(Debug)]
+pub enum StartupSelectionError {
+    Control(ControlError),
+    Unsupported { group: String, reason: &'static str },
+}
+impl From<ControlError> for StartupSelectionError {
+    fn from(value: ControlError) -> Self { Self::Control(value) }
+}
+impl From<crate::selection_cache::CacheError> for StartupSelectionError {
+    fn from(value: crate::selection_cache::CacheError) -> Self {
+        Self::Unsupported { group: value.group, reason: value.reason }
+    }
+}
+impl StartupSelectionError {
+    fn response(self) -> axum::response::Response {
+        use axum::response::IntoResponse;
+        match self {
+            Self::Control(value) => value.response(),
+            Self::Unsupported { group, reason } => (axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                axum::Json(serde_json::json!({"error":"selectionCacheUnsupported", "group":group, "reason":reason}))).into_response(),
+        }
+    }
+}
+
+impl RouteControl {
+    fn selection_readback_locked(&self, gate: &PlaneState, requested: BTreeMap<String, String>, graph_token: &str) -> StartupSelectionReceipt {
+        let route = self.state.tunnel.route_snapshot();
+        let groups = route.proxies.iter().filter_map(|(name, group)| {
+            crate::selection_cache::readback(group).map(|value| (name.to_string(), value))
+        }).collect();
+        StartupSelectionReceipt { consumed: BTreeMap::new(), selection_intent: gate.selection_serial.to_string(), graph_token: graph_token.to_owned(), requested, route: self.snapshot_locked(gate), groups }
+    }
+
+    pub fn startup_selection_snapshot(&self) -> Result<StartupSelectionReceipt, ControlError> {
+        let (receipt, retired) = {
+            let gate = self.plane.gate.lock();
+            self.check_live(&gate)?;
+            self.check_graph_idle(&gate)?;
+            let scope = self.groups.lock().clone().ok_or(ControlError::SelectionMemberNotIntegrated)?;
+            if scope.is_cancelled() { return Err(ControlError::Cancelled); }
+            let graph = self.group_members()?;
+            let (token, retired) = self.startup_graph_token(&graph, true)?;
+            (self.selection_readback_locked(&gate, BTreeMap::new(), &token), retired)
+        };
+        drop(retired);
+        Ok(receipt)
+    }
+
+    /// Linearizes pure startup history inside the existing route owner, without
+    /// Set/prepare, network IO, store flush, a second task owner or a public endpoint.
+    pub fn restore_startup_selection(&self, request: StartupSelectionRequest)
+        -> Result<StartupSelectionReceipt, StartupSelectionError> {
+        fn number(value: &str, positive: bool) -> Result<u64, ControlError> {
+            value.parse::<u64>().ok().filter(|number| (!positive || *number > 0) && number.to_string() == value)
+                .ok_or(ControlError::InvalidEpoch)
+        }
+        let epoch = number(&request.expected_core_epoch, true)?;
+        let version = number(&request.expected_route_version, false)?;
+        let intent = number(&request.expected_selection_intent, false)?;
+        number(&request.expected_graph_token, true)?;
+        if request.requested.len() > 12000 || request.requested.iter().any(|(name, member)|
+            name.is_empty() || name.len() > 16384 || member.len() > 16384 || name.chars().chain(member.chars()).any(char::is_control)) {
+            return Err(ControlError::InvalidSelection.into());
+        }
+        let receipt = {
+            let mut gate = self.plane.gate.lock();
+            self.check_live(&gate)?;
+            self.check_graph_idle(&gate)?;
+            if (gate.core_epoch, gate.revision, gate.selection_serial) != (epoch, version, intent) { return Err(ControlError::Superseded.into()); }
+            let scope = self.groups.lock().clone().ok_or(ControlError::SelectionMemberNotIntegrated)?;
+            if scope.is_cancelled() { return Err(ControlError::Cancelled.into()); }
+            let retained = self.group_members()?;
+            let (graph_token, _) = self.startup_graph_token(&retained, false)?;
+            if graph_token != request.expected_graph_token { return Err(ControlError::Superseded.into()); }
+            let route = self.state.tunnel.route_snapshot();
+            let plan = meow_common::probe_policy::DiagnosticToken::measurement().run(|| {
+                crate::selection_cache::prepare(&request.requested, |name| route.proxies.get(name).cloned(), true)
+            })?;
+            // Allocate every counter before the first memory mutation.
+            let ticket = gate.selection_serial.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let revision = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let before = self.selection_readback_locked(&gate, BTreeMap::new(), &graph_token);
+            let consumed = crate::selection_cache::apply_memory(&plan)?;
+            for group in &retained {
+                if let Some(selection) = group.selection() { selection.reconcile_health(); }
+            }
+            gate.selection_serial = ticket;
+            for intent in &plan { gate.selection_intents.insert(intent.name.clone(), ticket); }
+            let after = self.selection_readback_locked(&gate, BTreeMap::new(), &graph_token);
+            if before.groups != after.groups || before.route.picks != after.route.picks ||
+                consumed.iter().any(|(name, value)| value.fixed_before != value.fixed_after || after.route.picks.get(name) != Some(&value.selected)) {
+                gate.revision = revision;
+                gate.groups_sequence = sequence;
+            }
+            let mut receipt = self.selection_readback_locked(&gate, request.requested, &graph_token);
+            receipt.consumed = consumed;
+            receipt
+        };
+        self.groups_changed.notify_one();
+        Ok(receipt)
+    }
+}
+
+
+#[derive(Default)]
+struct StartupGraphState { next: u64, proof: Option<StartupGraphProof> }
+struct StartupGraphProof {
+    token: u64,
+    route: std::sync::Weak<meow_tunnel::tunnel::RouteTable>,
+    members: Vec<std::sync::Weak<dyn Proxy>>,
+    guards: Vec<meow_config::ManagedProbeDependencies>,
+}
+impl StartupGraphProof {
+    fn matches(&self, route: &Arc<meow_tunnel::tunnel::RouteTable>, graph: &ManagedGraph) -> bool {
+        std::sync::Weak::ptr_eq(&self.route, &Arc::downgrade(route)) &&
+            self.guards.iter().all(|guard| guard.is_current()) && self.members.len() == graph.len() &&
+            graph.iter().all(|member| self.members.iter().any(|old| std::sync::Weak::ptr_eq(old, &Arc::downgrade(member))))
+    }
+}
+impl RouteControl {
+    // Only the existing plane gate calls this. Keep weak object identities;
+    // strip proxy Arcs from dependency guards and retire old guards outside the gate.
+    fn startup_graph_token(&self, graph: &ManagedGraph, issue: bool)
+        -> Result<(String, Option<StartupGraphProof>), ControlError> {
+        if !graph.is_current() { return Err(ControlError::Superseded); }
+        let route = self.state.tunnel.route_snapshot();
+        let mut state = self.startup_graph.lock();
+        if let Some(proof) = &state.proof {
+            if proof.matches(&route, graph) { return Ok((proof.token.to_string(), None)); }
+        }
+        if !issue { return Err(ControlError::Superseded); }
+        let token = state.next.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+        let guards = graph.dependencies.iter().cloned().map(|mut proof| { proof.proxies.clear(); proof }).collect();
+        let proof = StartupGraphProof { token, route: Arc::downgrade(&route),
+            members: graph.iter().map(Arc::downgrade).collect(), guards };
+        state.next = token;
+        let retired = state.proof.replace(proof);
+        Ok((token.to_string(), retired))
+    }
+
+    fn retire_stale_startup_graph(&self) {
+        let retired = {
+            let _gate = self.plane.gate.lock();
+            let route = self.state.tunnel.route_snapshot();
+            let graph = self.group_members();
+            let mut state = self.startup_graph.lock();
+            if state.proof.as_ref().is_some_and(|proof| graph.as_ref().is_ok_and(|graph| proof.matches(&route, graph))) {
+                None
+            } else { state.proof.take() }
+        };
+        drop(retired);
+    }
+}
+
+
+#[cfg(test)]
+mod fallback_startup_cancel89 {
+    use super::*;
+    async fn fixture() -> (crate::api::CoreApi, meow_tunnel::Tunnel, Arc<meow_config::owned_load::OwnedLoadScope>, tokio::task::JoinHandle<()>) {
+        let scope = meow_config::owned_load::OwnedLoadScope::new();
+        let config = meow_config::load_config_from_str_owned("strict: true\nproxy-groups: [{name: FB,type: fallback,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,FB']\n", &scope).await.unwrap();
+        let tunnel = meow_tunnel::Tunnel::new_with_slot(config.dns.resolver_slot.clone());
+        tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
+        let api = crate::api::CoreApi::assemble_with_epoch(&config, tunnel.clone(), "127.0.0.1:12345".parse().unwrap(),
+            "startup-cancel-private-secret-00000001", None, axum::Router::new(), 77, CancellationToken::new()).unwrap();
+        tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
+        let events = api.control.activate_groups(&scope).unwrap();
+        (api, tunnel, scope, events)
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancellation_while_waiting_for_the_existing_gate_installs_no_raw_pin_and_consumes_nothing() {
+        let (api, tunnel, scope, events) = fixture().await;
+        let before = api.control.startup_selection_snapshot().unwrap();
+        let command = StartupSelectionRequest { expected_core_epoch: before.route.core_epoch.clone(), expected_route_version: before.route.route_version.clone(),
+            expected_selection_intent: before.selection_intent, expected_graph_token: before.graph_token,
+            requested: BTreeMap::from([("FB".to_owned(), "REMOVED".to_owned())]) };
+        let gate = api.control.plane.gate.lock();
+        let ready = Arc::new(std::sync::Barrier::new(2)); let worker_ready = ready.clone(); let control = api.control.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || { worker_ready.wait(); send.send(control.restore_startup_selection(command)).unwrap(); });
+        ready.wait(); api.control.plane.cancel.cancel(); drop(gate);
+        let result = receive.recv_timeout(std::time::Duration::from_secs(5)).unwrap(); worker.join().unwrap();
+        assert!(matches!(result, Err(StartupSelectionError::Control(ControlError::Cancelled))));
+        assert_eq!(tunnel.route_snapshot().proxies["FB"].selection().unwrap().fixed().as_deref(), Some(""));
+        api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+    }
+
+    #[tokio::test]
+    async fn unsupported_leaf_batch_is_rejected_before_any_fallback_raw_install_or_consumption() {
+        let (api, tunnel, scope, events) = fixture().await;
+        let before = api.control.startup_selection_snapshot().unwrap();
+        let command = StartupSelectionRequest { expected_core_epoch: before.route.core_epoch.clone(), expected_route_version: before.route.route_version.clone(),
+            expected_selection_intent: before.selection_intent.clone(), expected_graph_token: before.graph_token.clone(),
+            requested: BTreeMap::from([("FB".to_owned(), "REMOVED".to_owned()), ("DIRECT".to_owned(), "DIRECT".to_owned())]) };
+        assert!(matches!(api.control.restore_startup_selection(command), Err(StartupSelectionError::Unsupported { reason: "groupDoesNotSupportSelection", .. })));
+        let after = api.control.startup_selection_snapshot().unwrap();
+        assert_eq!(after.route, before.route); assert_eq!(after.selection_intent, before.selection_intent); assert_eq!(after.groups, before.groups);
+        assert_eq!(tunnel.route_snapshot().proxies["FB"].selection().unwrap().fixed().as_deref(), Some(""));
+        api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+    }
+}
+
+#[cfg(test)]
+mod runtime_consume90 {
+    use super::*;
+    use meow_common::{Metadata, ProxyAdapter};
+    use meow_common::adapter::SelectionOperation as Op;
+    async fn fixture() -> (crate::api::CoreApi, meow_tunnel::Tunnel, Arc<meow_config::owned_load::OwnedLoadScope>, tokio::task::JoinHandle<()>) {
+        let scope = meow_config::owned_load::OwnedLoadScope::new();
+        let yaml = "strict: true\nproxies: [{name: FRONT,type: direct},{name: A,type: http,server: 127.0.0.1,port: 9,dialer-proxy: FRONT},{name: B,type: http,server: 127.0.0.1,port: 9,dialer-proxy: FRONT},{name: C,type: http,server: 127.0.0.1,port: 9,dialer-proxy: FRONT}]\nproxy-groups: [{name: FB,type: fallback,proxies: [A,B,C],url: 'http://127.0.0.1:9',interval: 0},{name: FB2,type: fallback,proxies: [A,B,C],url: 'http://127.0.0.1:9',interval: 0},{name: OUTER,type: select,proxies: [FB]}]\nrules: ['MATCH,OUTER']\n";
+        let config = meow_config::load_config_from_str_owned(yaml, &scope).await.unwrap();
+        let tunnel = meow_tunnel::Tunnel::new_with_slot(config.dns.resolver_slot.clone());
+        tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
+        let api = crate::api::CoreApi::assemble_with_epoch(&config,tunnel.clone(),"127.0.0.1:12345".parse().unwrap(),
+            "runtime-consume-private-secret-00001",None,axum::Router::new(),90,CancellationToken::new()).unwrap();
+        tunnel.update_routing(config.proxies,config.rules,config.dialer_registry);
+        let events = api.control.activate_groups(&scope).unwrap();
+        let before = api.control.startup_selection_snapshot().unwrap();
+        api.control.restore_startup_selection(StartupSelectionRequest { expected_core_epoch: before.route.core_epoch,
+            expected_route_version: before.route.route_version, expected_selection_intent: before.selection_intent,
+            expected_graph_token: before.graph_token, requested: BTreeMap::from([("FB".into(),"B".into()),("FB2".into(),"B".into())]) }).unwrap();
+        tunnel.route_snapshot().proxies["B"].health().set_alive(false);
+        (api,tunnel,scope,events)
+    }
+    async fn finish(api:crate::api::CoreApi, scope:Arc<meow_config::owned_load::OwnedLoadScope>, events:tokio::task::JoinHandle<()>) {
+        api.cancel();scope.close().await.unwrap();if let Err(e)=events.await{assert!(e.is_cancelled());}api.join().await;
+    }
+    #[tokio::test]
+    async fn passive_reads_never_consume_and_route_first_then_dial_keeps_standard_order_without_reentry() {
+        let (api,tunnel,scope,events)=fixture().await;let route=tunnel.route_snapshot();let fb=&route.proxies["FB"];
+        for _ in 0..8 { assert_eq!(fb.current().as_deref(),Some("C"));assert_eq!(fb.unwrap_proxy(&Metadata::default(),false).unwrap().name(),"C");assert_eq!(fb.selection().unwrap().fixed().as_deref(),Some("B")); }
+        let snapshot=tokio::time::timeout(std::time::Duration::from_secs(2),api.control.snapshot()).await.unwrap().unwrap();
+        assert_eq!(snapshot.picks["FB"],"C");assert_eq!(fb.selection().unwrap().fixed().as_deref(),Some(""));
+        let lease=fb.consume_proxy(&Metadata::default(),Op::Tcp).unwrap().unwrap();
+        assert!(Arc::ptr_eq(&lease.member,&route.proxies["A"]));(lease.validate)().unwrap();drop(lease);
+        finish(api,scope,events).await;
+    }
+    #[tokio::test(flavor="multi_thread",worker_threads=2)]
+    async fn two_concurrent_explicit_consumers_only_one_gets_c_and_old_lease_does_not_reselect() {
+        let (api,tunnel,scope,events)=fixture().await;let fb=tunnel.route_snapshot().proxies["FB"].clone();
+        let barrier=Arc::new(std::sync::Barrier::new(3));let mut threads=Vec::new();
+        for _ in 0..2 {let fb=fb.clone();let barrier=barrier.clone();threads.push(std::thread::spawn(move||{barrier.wait();fb.consume_proxy(&Metadata::default(),Op::Tcp).unwrap().unwrap()}));}
+        barrier.wait();let leases:Vec<_>=threads.into_iter().map(|t|t.join().unwrap()).collect();
+        let mut names:Vec<_>=leases.iter().map(|l|l.member.name().to_owned()).collect();names.sort();assert_eq!(names,["A","C"]);
+        for l in &leases {(l.validate)().unwrap();}assert_eq!(fb.current().as_deref(),Some("A"));drop(leases);
+        finish(api,scope,events).await;
+    }
+    #[tokio::test]
+    async fn old_arc_is_denied_after_intent_epoch_provider_publication_and_scope_replacement() {
+        for change in 0..5 {
+            let (api,tunnel,scope,events)=fixture().await;let route=tunnel.route_snapshot();let fb=route.proxies["FB"].clone();
+            let lease=fb.consume_proxy(&Metadata::default(),Op::Udp).unwrap().unwrap();assert_eq!(lease.member.name(),"C");
+            match change {
+                0=>api.control.plane.gate.lock().selection_serial+=1,
+                1=>api.control.plane.gate.lock().core_epoch+=1,
+                2=>route.dialer_registry.publish(route.proxies.clone()),
+                3=>*api.control.groups.lock()=Some(meow_config::owned_load::OwnedLoadScope::new()),
+                _=>{let _gate=api.control.plane.gate.lock();api.control.graph_serial.fetch_add(1,std::sync::atomic::Ordering::Relaxed);},
+            }
+            assert!((lease.validate)().is_err());
+            let started=Arc::new(std::sync::atomic::AtomicBool::new(false));let flag=started.clone();
+            let result=lease.run(async move {flag.store(true,std::sync::atomic::Ordering::SeqCst);Ok(())}).await;
+            assert!(result.is_err());assert!(!started.load(std::sync::atomic::Ordering::SeqCst));
+            if change==3 {
+                assert!(fb.consume_proxy(&Metadata::default(),Op::Tcp).is_err());
+                let replacement=api.control.groups.lock().take().unwrap();replacement.close().await.unwrap();
+            }
+            finish(api,scope,events).await;
+        }
+    }
+    #[tokio::test]
+    async fn cancel_closes_the_lease_future_and_old_arc_cannot_start_a_new_operation() {
+        let (api,tunnel,scope,events)=fixture().await;let fb=tunnel.route_snapshot().proxies["FB"].clone();
+        let lease=fb.consume_proxy(&Metadata::default(),Op::Tcp).unwrap().unwrap();
+        let cancel=api.control.plane.cancel.clone();
+        let work=async move {cancel.cancel();std::future::pending::<meow_common::Result<()>>().await};
+        assert!(tokio::time::timeout(std::time::Duration::from_secs(2),lease.run(work)).await.unwrap().is_err());
+        assert!(fb.consume_proxy(&Metadata::default(),Op::Tcp).is_err());
+        finish(api,scope,events).await;
+    }
+    struct WireNode { name: &'static str, address: std::net::SocketAddr, health: meow_common::ProxyHealth }
+    struct WirePacket { socket: tokio::net::UdpSocket, target: std::net::SocketAddr }
+    #[async_trait::async_trait]
+    impl meow_common::ProxyPacketConn for WirePacket {
+        async fn read_packet(&self, bytes:&mut [u8])->meow_common::Result<(usize,std::net::SocketAddr)> {Ok(self.socket.recv_from(bytes).await?)}
+        async fn write_packet(&self, bytes:&[u8], _target:&std::net::SocketAddr)->meow_common::Result<usize> {Ok(self.socket.send_to(bytes,self.target).await?)}
+        fn local_addr(&self)->meow_common::Result<std::net::SocketAddr>{Ok(self.socket.local_addr()?)}
+        fn close(&self)->meow_common::Result<()>{Ok(())}
+    }
+    #[async_trait::async_trait]
+    impl ProxyAdapter for WireNode {
+        fn name(&self)->&str{self.name}
+        fn adapter_type(&self)->AdapterType{AdapterType::Direct}
+        fn addr(&self)->&str{""}
+        fn support_udp(&self)->bool{true}
+        fn health(&self)->&meow_common::ProxyHealth{&self.health}
+        async fn dial_tcp(&self,_:&Metadata)->meow_common::Result<Box<dyn meow_common::ProxyConn>> {Ok(Box::new(tokio::net::TcpStream::connect(self.address).await?))}
+        async fn dial_udp(&self,_:&Metadata)->meow_common::Result<Box<dyn meow_common::ProxyPacketConn>> {Ok(Box::new(WirePacket{socket:tokio::net::UdpSocket::bind("127.0.0.1:0").await?,target:self.address}))}
+    }
+    impl Proxy for WireNode {
+        fn alive(&self)->bool{self.health.alive()}
+        fn alive_for_url(&self,_:&str)->bool{self.health.alive()}
+        fn last_delay(&self)->u16{self.health.last_delay()}
+        fn last_delay_for_url(&self,_:&str)->u16{self.health.last_delay()}
+        fn delay_history(&self)->Vec<meow_common::DelayHistory>{self.health.delay_history()}
+    }
+    #[tokio::test(flavor="multi_thread",worker_threads=3)]
+    async fn actual_nested_tcp_and_udp_use_the_owned_member_for_both_consumer_schedules() {
+        use tokio::io::{AsyncReadExt,AsyncWriteExt};
+        for udp in [false,true] {for route_first in [false,true] {for nested_fallback in [false,true] {
+            let mut tasks=Vec::new();let mut nodes:Vec<Arc<dyn Proxy>>=Vec::new();
+            for name in ["A","B","C"] {
+                let byte=name.as_bytes()[0];
+                let address=if udp {
+                    let socket=tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();let address=socket.local_addr().unwrap();
+                    tasks.push(tokio::spawn(async move {let mut buf=[0;8];loop{let(_,peer)=socket.recv_from(&mut buf).await.unwrap();socket.send_to(&[byte],peer).await.unwrap();}}));address
+                } else {
+                    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();
+                    tasks.push(tokio::spawn(async move {loop{let(mut stream,_)=listener.accept().await.unwrap();stream.write_all(&[byte]).await.unwrap();}}));address
+                };
+                nodes.push(Arc::new(WireNode{name,address,health:meow_common::ProxyHealth::new()}));
+            }
+            let scope=meow_config::owned_load::OwnedLoadScope::new();
+            let mut config=meow_config::load_config_from_str_owned("strict: true\nrules: ['MATCH,DIRECT']\n",&scope).await.unwrap();
+            let fb:Arc<dyn Proxy>=Arc::new(meow_proxy::FallbackGroup::new("FB",nodes.clone()));
+            let outer:Arc<dyn Proxy>=if nested_fallback {
+                Arc::new(meow_proxy::FallbackGroup::new("OUTER",vec![fb.clone()]))
+            } else {Arc::new(meow_proxy::SelectorGroup::new("OUTER",vec![fb.clone()]))};
+            for node in &nodes {config.proxies.insert(node.name().into(),node.clone());}
+            config.proxies.insert("FB".into(),fb.clone());config.proxies.insert("OUTER".into(),outer.clone());
+            let tunnel=meow_tunnel::Tunnel::new_with_slot(config.dns.resolver_slot.clone());
+            tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
+            let api=crate::api::CoreApi::assemble_with_epoch(&config,tunnel.clone(),"127.0.0.1:12345".parse().unwrap(),"runtime-consume-wire-secret-000001",None,axum::Router::new(),90,CancellationToken::new()).unwrap();
+            tunnel.update_routing(config.proxies,config.rules,config.dialer_registry);
+            let events=api.control.activate_groups(&scope).unwrap();
+            // The same live owner memory commit used by manual selection; no probes or fake receipt.
+            api.control.select("FB","B").await.unwrap();nodes[1].health().set_alive(false);
+            for _ in 0..3 {assert_eq!(fb.current().as_deref(),Some("C"));assert_eq!(fb.selection().unwrap().fixed().as_deref(),Some("B"));}
+            if route_first {assert_eq!(api.control.snapshot().await.unwrap().picks["FB"],"C");}
+            for index in 0..2 {
+                let expected=if !route_first && index==0{b'C'}else{b'A'};
+                let mut bytes=[0;1];let metadata=Metadata {network:if udp {meow_common::Network::Udp}else{meow_common::Network::Tcp},..Default::default()};
+                if udp {
+                    let selected=outer.clone();let packet=scope.run_captured(Box::pin(async move {selected.dial_udp(&metadata).await})).await.unwrap().unwrap();
+                    packet.write_packet(b"ping",&"127.0.0.1:9".parse().unwrap()).await.unwrap();
+                    tokio::time::timeout(std::time::Duration::from_secs(2),packet.read_packet(&mut bytes)).await.unwrap().unwrap();packet.close().unwrap();
+                } else {
+                    let selected=outer.clone();let mut stream=scope.run_captured(Box::pin(async move {selected.dial_tcp(&metadata).await})).await.unwrap().unwrap();
+                    tokio::time::timeout(std::time::Duration::from_secs(2),stream.read_exact(&mut bytes)).await.unwrap().unwrap();
+                }
+                assert_eq!(bytes,[expected]);assert_eq!(fb.selection().unwrap().fixed().as_deref(),Some(""));
+            }
+            finish(api,scope,events).await;for task in tasks{task.abort();let _=task.await;}
+        }}}
+    }
+
+    async fn json_request(api:&crate::api::CoreApi, path:&str)->serde_json::Value { wire_request(api,"GET",path,"").await }
+    async fn wire_request(api:&crate::api::CoreApi, method:&str, path:&str, body:&str)->serde_json::Value {
+        use tokio::io::{AsyncReadExt,AsyncWriteExt};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();let router=api.private_router();
+        let task=tokio::spawn(async move {let(stream,_)=listener.accept().await.unwrap();crate::api::serve_connection(stream,router).await;});
+        let mut stream=tokio::net::TcpStream::connect(address).await.unwrap();
+        stream.write_all(format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer runtime-consume-private-secret-00001\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+        let mut bytes=Vec::new();tokio::time::timeout(std::time::Duration::from_secs(3),stream.read_to_end(&mut bytes)).await.unwrap().unwrap();task.await.unwrap();
+        let text=String::from_utf8(bytes).unwrap();assert!(text.starts_with("HTTP/1.1 200"),"{text}");serde_json::from_str(text.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+    #[tokio::test]
+    async fn actual_json_query_reports_first_c_with_cleared_fixed_then_next_a() {
+        for path in ["/proxies/FB", "/group/FB"] {
+            let (api,_tunnel,scope,events)=fixture().await;
+            let first=json_request(&api,path).await;assert_eq!(first["now"],"C");assert_eq!(first["fixed"],"");
+            let next=json_request(&api,path).await;assert_eq!(next["now"],"A");assert_eq!(next["fixed"],"");
+            finish(api,scope,events).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn idle_unpolled_owned_handle_does_not_block_scope_close_or_allow_old_arc_to_start() {
+        let (api,tunnel,scope,events)=fixture().await;let fb=tunnel.route_snapshot().proxies["FB"].clone();
+        let idle=fb.consume_proxy(&Metadata::default(),Op::Tcp).unwrap().unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2),scope.close()).await.unwrap().unwrap();
+        let weak_scope=Arc::downgrade(&scope);api.cancel();if let Err(e)=events.await{assert!(e.is_cancelled());}api.join().await;
+        drop(api);drop(tunnel);drop(scope);assert!(weak_scope.upgrade().is_none(),"idle handle must not retain the owner scope");
+        let started=Arc::new(std::sync::atomic::AtomicBool::new(false));let flag=started.clone();
+        assert!(idle.run(async move{flag.store(true,std::sync::atomic::Ordering::SeqCst);Ok(())}).await.is_err());
+        assert!(!started.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(fb.consume_proxy(&Metadata::default(),Op::Tcp).is_err());
+    }
+    struct Dropped(Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Dropped {fn drop(&mut self){self.0.store(true,std::sync::atomic::Ordering::SeqCst);}}
+    #[tokio::test(flavor="multi_thread",worker_threads=2)]
+    async fn scope_close_waits_for_running_future_drop_and_error_paths_release_existing_jobs_guard() {
+        for fail in [false,true] {
+            let (api,tunnel,scope,events)=fixture().await;let fb=tunnel.route_snapshot().proxies["FB"].clone();
+            let lease=fb.consume_proxy(&Metadata::default(),Op::Tcp).unwrap().unwrap();
+            let dropped=Arc::new(std::sync::atomic::AtomicBool::new(false));let flag=dropped.clone();
+            let started=Arc::new(tokio::sync::Notify::new());let notify=started.clone();
+            let task=tokio::spawn(async move {lease.run(async move {
+                let _drop=Dropped(flag);notify.notify_one();
+                if fail {return Err::<(),_>(meow_common::MeowError::Proxy("fixture dial error".into()));}
+                std::future::pending::<meow_common::Result<()>>().await
+            }).await});
+            started.notified().await;
+            if fail {assert!(task.await.unwrap().is_err());tokio::time::timeout(std::time::Duration::from_secs(2),scope.close()).await.unwrap().unwrap();}
+            else {tokio::time::timeout(std::time::Duration::from_secs(2),scope.close()).await.unwrap().unwrap();assert!(task.await.unwrap().is_err());}
+            assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+            finish(api,scope,events).await;
+        }
+    }
+    #[tokio::test]
+    async fn trace_absorbs_only_this_requests_contiguous_owner_commands_and_rejects_external_noop() {
+        let (api,tunnel,scope,events)=fixture().await;let fb=tunnel.route_snapshot().proxies["FB"].clone();
+        let trace=api.control.begin_consumption_trace(api.control.stamp().unwrap()).unwrap();
+        trace.clone().scope(async {
+            let first=fb.consume_proxy(&Metadata::default(),Op::Match).unwrap().unwrap();assert_eq!(first.member.name(),"C");drop(first);
+            let next=fb.consume_proxy(&Metadata::default(),Op::Exit).unwrap().unwrap();assert_eq!(next.member.name(),"A");drop(next);
+        }).await;
+        let after=api.control.finish_consumption_trace(&trace).unwrap();assert_eq!(after,api.control.stamp().unwrap());
+        // An external no-op consumer leaves revision unchanged, but is not this request's operation.
+        let unrelated=fb.consume_proxy(&Metadata::default(),Op::Json).unwrap().unwrap();assert_eq!(unrelated.member.name(),"A");drop(unrelated);
+        assert_eq!(after,api.control.stamp().unwrap());assert!(api.control.finish_consumption_trace(&trace).is_err());
+        finish(api,scope,events).await;
+    }
+    #[tokio::test]
+    async fn trace_rejects_external_health_intent_epoch_provider_and_stop_without_consuming_again() {
+        for change in 0..5 {
+            let (api,tunnel,scope,events)=fixture().await;let route=tunnel.route_snapshot();let fb=route.proxies["FB"].clone();
+            let trace=api.control.begin_consumption_trace(api.control.stamp().unwrap()).unwrap();
+            trace.clone().scope(async {let lease=fb.consume_proxy(&Metadata::default(),Op::Exit).unwrap().unwrap();assert_eq!(lease.member.name(),"C");}).await;
+            match change {
+                0=>route.proxies["C"].health().set_alive(false),
+                1=>api.control.plane.gate.lock().selection_serial+=1,
+                2=>api.control.plane.gate.lock().core_epoch+=1,
+                3=>route.dialer_registry.publish(route.proxies.clone()),
+                _=>api.cancel(),
+            }
+            assert!(api.control.finish_consumption_trace(&trace).is_err());
+            assert!(trace.scope(async {fb.consume_proxy(&Metadata::default(),Op::Exit)}).await.is_err());
+            finish(api,scope,events).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn actual_check_routes_accepts_its_own_consumption_and_reports_the_new_real_stamp() {
+        let (api,tunnel,scope,events)=fixture().await;let route=tunnel.route_snapshot();let c=&route.proxies["C"];
+        let exit=format!("{:?} {} {}",c.name(),c.adapter_type(),c.addr());
+        let body=serde_json::json!({"hits":[[{"host":"http://127.0.0.1:9","proxy":"FB","exit":exit}]]}).to_string();
+        let before=api.control.stamp().unwrap();
+        let first=wire_request(&api,"POST","/aerove/check-routes",&body).await;
+        assert_eq!(first["held"],serde_json::json!([true]));
+        let after=api.control.stamp().unwrap();assert!(after.1>before.1);
+        assert_eq!(first["core-epoch"],after.0.to_string());assert_eq!(first["route-version"],after.1.to_string());
+        let next=wire_request(&api,"POST","/aerove/check-routes",&body).await;assert_eq!(next["held"],serde_json::json!([false]));
+        finish(api,scope,events).await;
+    }
+
+    #[tokio::test]
+    async fn aborted_or_panicking_running_operation_releases_the_guard_and_never_reports_clean_panic_close() {
+        for panic in [false,true] {
+            let (api,tunnel,scope,events)=fixture().await;let fb=tunnel.route_snapshot().proxies["FB"].clone();
+            let lease=fb.consume_proxy(&Metadata::default(),Op::Tcp).unwrap().unwrap();
+            let dropped=Arc::new(std::sync::atomic::AtomicBool::new(false));let flag=dropped.clone();
+            let started=Arc::new(tokio::sync::Notify::new());let notify=started.clone();
+            let task=tokio::spawn(async move {lease.run(async move {
+                let _drop=Dropped(flag);notify.notify_one();
+                if panic {panic!("intentional owned operation unwind fixture");}
+                std::future::pending::<meow_common::Result<()>>().await
+            }).await});
+            started.notified().await;if !panic {task.abort();}assert!(task.await.is_err());
+            assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+            let close=tokio::time::timeout(std::time::Duration::from_secs(2),scope.close()).await.unwrap();
+            if panic {assert!(close.is_err());}else{close.unwrap();}
+            api.cancel();if let Err(error)=events.await{assert!(error.is_cancelled());}api.join().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn one_trace_accepts_multiple_real_pin_transitions_and_keeps_no_transient_override() {
+        let (api,tunnel,scope,events)=fixture().await;let route=tunnel.route_snapshot();
+        let trace=api.control.begin_consumption_trace(api.control.stamp().unwrap()).unwrap();
+        trace.clone().scope(async {
+            for name in ["FB","FB2"] {let lease=route.proxies[name].consume_proxy(&Metadata::default(),Op::Exit).unwrap().unwrap();assert_eq!(lease.member.name(),"C");}
+        }).await;
+        api.control.finish_consumption_trace(&trace).unwrap();
+        for name in ["FB","FB2"] {assert_eq!(route.proxies[name].selection().unwrap().fixed().as_deref(),Some(""));assert_eq!(route.proxies[name].current().as_deref(),Some("A"));}
+        finish(api,scope,events).await;
+    }
+
 }

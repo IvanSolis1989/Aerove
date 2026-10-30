@@ -27,6 +27,12 @@ RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCr
 RESOURCE_JNI_SYMBOLS = tuple(RESOURCE_JNI_DESCRIPTORS)
 RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default', 'prepared_validation_forwards_the_owner_token_into_geodata_reading', 'transport_load_forwards_the_fetch_token_into_dns_geodata_reading', 'a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children', 'zstd_geo_expansion_observes_cancellation_between_chunks_not_only_around_the_resource', 'interrupted_reads_are_retried_like_read_to_end_and_other_errors_stay_specific', 'text_rule_entries_stop_at_either_entry_bound_before_they_are_collected', 'yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it', 'streaming_text_admission_checks_the_entry_before_retaining_the_tail', 'streaming_yaml_admission_counts_events_before_the_rest_is_read', 'streaming_rule_admission_keeps_utf8_size_and_cancel_ahead_of_semantic_errors'], 'config_validation': ['zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder', 'official_mrs_text_between_8m_and_64m_stays_previewable', 'official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds', 'text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds']}
 
+# Preserve the historical receipt table; selection-owner adds its required passes independently.
+SELECTION_OWNER_CASES = {target: list(cases) for target, cases in RESOURCE_HEALTH_CASES.items()}
+SELECTION_OWNER_CASES.setdefault('lib', []).extend(['cancellation_while_waiting_for_the_existing_gate_installs_no_raw_pin_and_consumes_nothing', 'unsupported_leaf_batch_is_rejected_before_any_fallback_raw_install_or_consumption', 'passive_reads_never_consume_and_route_first_then_dial_keeps_standard_order_without_reentry', 'two_concurrent_explicit_consumers_only_one_gets_c_and_old_lease_does_not_reselect', 'old_arc_is_denied_after_intent_epoch_provider_publication_and_scope_replacement', 'cancel_closes_the_lease_future_and_old_arc_cannot_start_a_new_operation', 'actual_nested_tcp_and_udp_use_the_owned_member_for_both_consumer_schedules', 'actual_json_query_reports_first_c_with_cleared_fixed_then_next_a', 'idle_unpolled_owned_handle_does_not_block_scope_close_or_allow_old_arc_to_start', 'scope_close_waits_for_running_future_drop_and_error_paths_release_existing_jobs_guard', 'trace_absorbs_only_this_requests_contiguous_owner_commands_and_rejects_external_noop', 'trace_rejects_external_health_intent_epoch_provider_and_stop_without_consuming_again', 'actual_check_routes_accepts_its_own_consumption_and_reports_the_new_real_stamp', 'aborted_or_panicking_running_operation_releases_the_guard_and_never_reports_clean_panic_close', 'one_trace_accepts_multiple_real_pin_transitions_and_keeps_no_transient_override'])
+SELECTION_OWNER_CASES.setdefault('general_groups', []).extend(['startup_history_memory_commit_reads_real_urltest_and_fallback_fixed_without_probing', 'startup_stale_fallback_and_urltest_restore_together_with_real_raw_consumption', 'startup_cache_epoch_route_and_terminal_cancel_are_checked_before_any_mutation', 'startup_urltest_dead_then_revived_pin_keeps_fixed_while_actual_route_recovers', 'startup_dead_fallback_consumption_is_captured_then_actual_business_read_is_auto', 'startup_cache_real_private_http_is_cas_guarded_and_absent_from_user_controller', 'startup_same_arc_registry_republication_invalidates_the_original_graph_token', 'startup_fallback_first_consumption_then_actual_nested_http_uses_the_standard_business_member'])
+
+
 def verify_resource_jni_source(root):
     source=(Path(root)/'src/meow_jni.rs').read_text()
     for symbol,expected in RESOURCE_JNI_DESCRIPTORS.items():
@@ -43,14 +49,18 @@ def verify_resource_jni_source(root):
     jni_abi.verify(root,{**RUNTIME_JNI_DESCRIPTORS,**SCRIPT_JNI_DESCRIPTORS,**RESOURCE_JNI_DESCRIPTORS})
     return dict(RESOURCE_JNI_DESCRIPTORS)
 
-def added_native_test_proof(output):
+def native_test_cases(mode):
+    return SELECTION_OWNER_CASES if mode == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES
+
+
+def added_native_test_proof(output, mode=None):
     # Require real libtest pass lines. Mentioning a case in stderr/source is insufficient.
     names=re.findall(r'^test (\S+) \.\.\. ok$',output,re.MULTILINE)
-    for target,cases in RESOURCE_HEALTH_CASES.items():
+    for target,cases in native_test_cases(mode).items():
         for name in cases:
             if sum(actual.split('::')[-1]==name for actual in names)!=1:
                 raise ValueError('Missing or duplicate authored Native test pass: '+target+'::'+name)
-    return dict(RESOURCE_HEALTH_CASES)
+    return {target: list(cases) for target, cases in native_test_cases(mode).items()}
 
 
 def run(command, environment, capture=False):
@@ -211,7 +221,7 @@ def main():
         else:
             output=run(command,environment)
         if not args.target and full_native_suite(policy):
-            receipt["addedNativeTests"]=added_native_test_proof(output)
+            receipt["addedNativeTests"]=added_native_test_proof(output, policy["coreTests"])
         if sha(lock)!=resolved:raise ValueError('Locked build mutated Cargo.lock')
         if not args.target and feature_boundary_command(policy):
             receipt['featureBoundaryCommand']=feature_boundary_command(policy)

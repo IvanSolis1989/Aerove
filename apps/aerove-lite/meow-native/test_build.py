@@ -459,6 +459,21 @@ class ResourceHealthContractTests(unittest.TestCase):
 
 class ResourceHealthTableTests(unittest.TestCase):
     """build.py's receipt table and verify_apk.py's acceptance table must name the same cases in the same order."""
+    def test_selection_owner_requires_all55_passes_and_preserves_historical32(self):
+        verify_apk=_load_verify_apk()
+        self.assertEqual(build.SELECTION_OWNER_CASES,verify_apk.SELECTION_OWNER_CASES)
+        self.assertEqual(32,sum(map(len,build.RESOURCE_HEALTH_CASES.values())))
+        names=[n for cases in build.SELECTION_OWNER_CASES.values() for n in cases]
+        self.assertEqual(55,len(names));self.assertEqual(55,len(set(names)))
+        output='\n'.join('test fixture::'+n+' ... ok' for n in names)
+        self.assertEqual(build.SELECTION_OWNER_CASES,build.added_native_test_proof(output,"policy-runtime-selection-owner-v1"))
+        for n in names:
+            for bad in [output.replace('test fixture::'+n+' ... ok',''),output+'\ntest duplicate::'+n+' ... ok',output.replace(n+' ... ok',n+' ... ignored')]:
+                with self.subTest(name=n),self.assertRaisesRegex(ValueError,'Native test pass'):
+                    build.added_native_test_proof(bad,"policy-runtime-selection-owner-v1")
+        for target,cases in build.RESOURCE_HEALTH_CASES.items():
+            self.assertEqual(cases,build.SELECTION_OWNER_CASES[target][:len(cases)])
+
     def test_build_and_apk_verification_tables_are_identical(self):
         verify_apk=_load_verify_apk()
         self.assertEqual(build.RESOURCE_HEALTH_CASES,verify_apk.RESOURCE_HEALTH_CASES)
@@ -617,7 +632,7 @@ class BuildPyRequirementTests(unittest.TestCase):
                 coreTestLockSha256='a'*64,targets=list(build_policy.RESOURCE_HEALTH_TARGETS) if full else ['lib','proxy_runtime'])
             (root/'tests').mkdir()
             for target in policy['targets'][1:]:(root/'tests'/f'{target}.rs').write_text('// compile fixture only\n')
-            output=''.join('test fixture::'+name+' ... ok\n' for cases in build.RESOURCE_HEALTH_CASES.values() for name in cases)
+            output=''.join('test fixture::'+name+' ... ok\n' for cases in build.native_test_cases(mode).values() for name in cases)
             calls=dict(gate=[],suite=[],core=[])
             def run(command,environment,capture=False):
                 if command[0]=='rustc':return 'rustc 1.98.1 fixture'
@@ -641,7 +656,7 @@ class BuildPyRequirementTests(unittest.TestCase):
                 full,root,calls,receipt=self.drive(mode)
                 self.assertEqual([root] if full else [],calls['gate'])
                 self.assertEqual([False,True] if full else [False],calls['suite'])
-                expected=build.RESOURCE_HEALTH_CASES if full else None
+                expected=build.native_test_cases(mode) if full else None
                 self.assertEqual(expected,receipt.get('addedNativeTests'));self.assertEqual(expected,calls['core'][0].get('addedNativeTests'))
 
     def test_compile_aggregation_failure_cannot_run_tests_or_accept_a_lock(self):

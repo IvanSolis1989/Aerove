@@ -155,7 +155,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
             original=b'actual-upstream-lock';bridge=b'accepted-bridge-lock';resolved=b'actual-cargo-core-lock'
             (up/'Cargo.lock').write_bytes(original);(root/'Cargo.lock').write_bytes(bridge)
             policy=dict(resolveLock=True,coreTests=contract)
-            provider=contract==core_tests.MODE_PROVIDER_READER
+            provider=contract in (core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER)
             if provider:policy['targets']=list(build_policy.RESOURCE_HEALTH_TARGETS)
             if mode in ['locked','bad-seed']:
                 (root/'core-tests.lock').write_bytes(resolved if mode=='locked' else b'wrong seed')
@@ -427,9 +427,23 @@ class CoreTestAdmissionTests(unittest.TestCase):
         self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_MRS_READER),core_tests.packages_for_mode(core_tests.MODE_PROVIDER_READER))
         self.assertEqual(['rustfmt','--check','--edition','2021','.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs','.upstream/meow-rs/crates/meow-rules/src/rule_set.rs'],core_tests.MRS_FORMAT_COMMAND)
         self.assertEqual(['rustfmt','--check','--edition','2021']+['.upstream/meow-rs/crates/meow-config/src/'+name for name in ['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs']],core_tests.PROVIDER_READER_FORMAT_COMMAND)
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in ['success','locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','raise','empty-host-admission','extra-host-admission','duplicate-host-admission']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_PROVIDER_READER)
+
+    def test_selection_owner_extends_unchanged_reader_contract_and_reuses_strict_execution(self):
+        old=core_tests.entries(core_tests.MODE_PROVIDER_READER)
+        new=core_tests.entries(core_tests.MODE_SELECTION_OWNER)
+        self.assertEqual((32,179),(len(old),sum(row['expectedPass'] for row in old)))
+        self.assertEqual(old,new[:len(old)])
+        self.assertEqual((35,182),(len(new),sum(row['expectedPass'] for row in new)))
+        self.assertEqual([{'package': 'meow-proxy', 'filter': 'group::fallback::tests::startup_stale_raw_cache_selects_the_real_dead_first_for_nested_tcp_and_udp', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}, {'package': 'meow-proxy', 'filter': 'group::fallback::tests::startup_owner_consumes_dead_middle_once_then_business_reads_and_dials_use_auto', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}, {'package': 'meow-proxy', 'filter': 'group::fallback::tests::startup_compatibility_does_not_change_native_unpinned_auto_or_explicit_unfix', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}],new[32:])
+        self.assertEqual(3,len(new[len(old):]))
+        for row in new[len(old):]:
+            self.assertTrue(row['exact']);self.assertEqual(1,row['expectedPass'])
+            self.assertEqual('meow-proxy',row['package']);self.assertEqual('lib',row['target'])
+        for outcome in ['locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','empty-host-admission','extra-host-admission','duplicate-host-admission']:
+            with self.subTest(outcome=outcome):self.run_fixture(outcome,core_tests.MODE_SELECTION_OWNER)
 
     def test_format_gate_files_are_exactly_what_rustfmt_follows_or_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -464,7 +478,7 @@ class BuildContractTests(unittest.TestCase):
                 policySha256='fixture policy',coreTests=mode,coreTestLockSha256='a'*64)
             (root/'tests').mkdir()
             for target in targets[1:]:(root/'tests'/f'{target}.rs').write_text('// compile fixture only\n')
-            output=''.join('test fixture::'+name+' ... ok\n' for cases in build.RESOURCE_HEALTH_CASES.values() for name in cases)
+            output=''.join('test fixture::'+name+' ... ok\n' for cases in build.native_test_cases(mode).values() for name in cases)
             calls=dict(jni=[],suite=[],core=[])
             def run(command,environment,capture=False):
                 if command[0]=='rustc':return 'rustc 1.98.1 fixture'
@@ -479,7 +493,7 @@ class BuildContractTests(unittest.TestCase):
             return build,root,full,calls,json.loads((root/'build/host-receipt.json').read_text())
 
     def test_each_full_suite_mode_runs_the_jni_source_gate_native_proof_and_all42_targets_before_core_tests(self):
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in core_tests.FULL_NATIVE_SUITE_MODES+(core_tests.MODE_PROVIDER_GENERAL,):
             with self.subTest(mode=mode):
                 build,root,full,calls,receipt=self.drive(mode)
@@ -491,7 +505,7 @@ class BuildContractTests(unittest.TestCase):
                 suite,capture=calls['suite'][1 if full else 0]
                 self.assertEqual(full,capture,'build.py must capture the full Native suite output for the added-test proof')
                 self.assertEqual(sorted(build_policy.RESOURCE_HEALTH_TARGETS[1:]) if full else ['proxy_runtime'],sorted(suite[i+1] for i,arg in enumerate(suite) if arg=='--test'))
-                proof=build.RESOURCE_HEALTH_CASES if full else None
+                proof=build.native_test_cases(mode) if full else None
                 self.assertEqual(proof,receipt.get('addedNativeTests'),'build.py must record addedNativeTests for full-suite modes')
                 self.assertEqual(1,len(calls['core']));self.assertEqual(proof,calls['core'][0].get('addedNativeTests'))
                 self.assertEqual((0,True),(receipt['commandExit'],receipt['acceptedLock']))
@@ -510,7 +524,10 @@ class BuildContractTests(unittest.TestCase):
                 targets=list(build_policy.RESOURCE_HEALTH_TARGETS),overlay='source-metadata/m.json',overlaySha256=core_tests.digest(metadata),coreTestLockSha256='a'*64)
             for mode in core_tests.FULL_NATIVE_SUITE_MODES:
                 (root/'build-policy.json').write_text(json.dumps(dict(base,coreTests=mode)))
-                self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
+                if mode == core_tests.MODE_SELECTION_OWNER:
+                    with patch.object(build_policy,'SELECTION_OWNER_OVERLAY_SHA256',core_tests.digest(metadata)):
+                        self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
+                else:self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
                 for omitted in build_policy.RESOURCE_HEALTH_TARGETS[1:]:
                     (root/'build-policy.json').write_text(json.dumps(dict(base,coreTests=mode,targets=[t for t in base['targets'] if t!=omitted])))
                     with self.subTest(mode=mode,omitted=omitted),self.assertRaisesRegex(ValueError,'every approved Native target'):build_policy.load_policy(root)

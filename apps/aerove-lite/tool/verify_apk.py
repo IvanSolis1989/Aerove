@@ -1,13 +1,17 @@
 """Inspect Lite APK identity, ABI and verified signing output before promotion."""
 
 import argparse
+import gzip
 import hashlib
+import io
 import json
+import math
 from pathlib import Path
 import re
 import shutil
 import struct
 import zipfile
+import zlib
 
 HELPER_LIBRARIES = ("libaerove_filter_helper.so", "libaerove_filter_jni.so")
 HELPER_LICENSE_PREFIX = "assets/licenses/client-helper/"
@@ -25,6 +29,7 @@ _ORIGINAL19_CORE_JNI_SYMBOLS = tuple("Java_dev_aerove_lite_core_MeowNativeCore_"
 RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCreate': '(Ljava/lang/String;)J', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeLoad': '(JLjava/lang/String;)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeDownload': '(JLjava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCancel': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeCloseJoin': '(J)V', 'Java_dev_aerove_lite_core_JniResourceFetch_nativeValidatePrepared': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;', 'Java_dev_aerove_lite_core_JniResourceFetch_nativePreflightRuleResource': '(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;'}
 RESOURCE_JNI_SYMBOLS = tuple(RESOURCE_JNI_DESCRIPTORS)
 RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default', 'prepared_validation_forwards_the_owner_token_into_geodata_reading', 'transport_load_forwards_the_fetch_token_into_dns_geodata_reading', 'a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children', 'zstd_geo_expansion_observes_cancellation_between_chunks_not_only_around_the_resource', 'interrupted_reads_are_retried_like_read_to_end_and_other_errors_stay_specific', 'text_rule_entries_stop_at_either_entry_bound_before_they_are_collected', 'yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it', 'streaming_text_admission_checks_the_entry_before_retaining_the_tail', 'streaming_yaml_admission_counts_events_before_the_rest_is_read', 'streaming_rule_admission_keeps_utf8_size_and_cancel_ahead_of_semantic_errors'], 'config_validation': ['zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder', 'official_mrs_text_between_8m_and_64m_stays_previewable', 'official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds', 'text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds']}
+SELECTION_OWNER_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default', 'prepared_validation_forwards_the_owner_token_into_geodata_reading', 'transport_load_forwards_the_fetch_token_into_dns_geodata_reading', 'a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children', 'zstd_geo_expansion_observes_cancellation_between_chunks_not_only_around_the_resource', 'interrupted_reads_are_retried_like_read_to_end_and_other_errors_stay_specific', 'text_rule_entries_stop_at_either_entry_bound_before_they_are_collected', 'yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it', 'streaming_text_admission_checks_the_entry_before_retaining_the_tail', 'streaming_yaml_admission_counts_events_before_the_rest_is_read', 'streaming_rule_admission_keeps_utf8_size_and_cancel_ahead_of_semantic_errors', 'cancellation_while_waiting_for_the_existing_gate_installs_no_raw_pin_and_consumes_nothing', 'unsupported_leaf_batch_is_rejected_before_any_fallback_raw_install_or_consumption', 'passive_reads_never_consume_and_route_first_then_dial_keeps_standard_order_without_reentry', 'two_concurrent_explicit_consumers_only_one_gets_c_and_old_lease_does_not_reselect', 'old_arc_is_denied_after_intent_epoch_provider_publication_and_scope_replacement', 'cancel_closes_the_lease_future_and_old_arc_cannot_start_a_new_operation', 'actual_nested_tcp_and_udp_use_the_owned_member_for_both_consumer_schedules', 'actual_json_query_reports_first_c_with_cleared_fixed_then_next_a', 'idle_unpolled_owned_handle_does_not_block_scope_close_or_allow_old_arc_to_start', 'scope_close_waits_for_running_future_drop_and_error_paths_release_existing_jobs_guard', 'trace_absorbs_only_this_requests_contiguous_owner_commands_and_rejects_external_noop', 'trace_rejects_external_health_intent_epoch_provider_and_stop_without_consuming_again', 'actual_check_routes_accepts_its_own_consumption_and_reports_the_new_real_stamp', 'aborted_or_panicking_running_operation_releases_the_guard_and_never_reports_clean_panic_close', 'one_trace_accepts_multiple_real_pin_transitions_and_keeps_no_transient_override'], 'config_validation': ['zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder', 'official_mrs_text_between_8m_and_64m_stays_previewable', 'official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds', 'text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds'], 'general_groups': ['startup_history_memory_commit_reads_real_urltest_and_fallback_fixed_without_probing', 'startup_stale_fallback_and_urltest_restore_together_with_real_raw_consumption', 'startup_cache_epoch_route_and_terminal_cancel_are_checked_before_any_mutation', 'startup_urltest_dead_then_revived_pin_keeps_fixed_while_actual_route_recovers', 'startup_dead_fallback_consumption_is_captured_then_actual_business_read_is_auto', 'startup_cache_real_private_http_is_cas_guarded_and_absent_from_user_controller', 'startup_same_arc_registry_republication_invalidates_the_original_graph_token', 'startup_fallback_first_consumption_then_actual_nested_http_uses_the_standard_business_member']}
 
 CORE_JNI_SYMBOLS = _ORIGINAL19_CORE_JNI_SYMBOLS + RESOURCE_JNI_SYMBOLS
 
@@ -205,6 +210,7 @@ CORE_POLICY_TEST_CASES_PROVIDER_READER = CORE_POLICY_TEST_CASES_MRS_READER + (
     ('meow-config', 'rule_provider::reader::tests::reader15_', 15, 'lib', (), False),
     ('meow-config', 'rule_provider::tests::', 41, 'lib', (), False))
 CORE_POLICY_TEST_CASES_PROVIDER_READER += (('meow-rules', 'mrs_parser::host_admission_index_tests::', 2, 'lib', (), False),)
+CORE_POLICY_TEST_CASES_SELECTION_OWNER = CORE_POLICY_TEST_CASES_PROVIDER_READER + (('meow-proxy', 'group::fallback::tests::startup_stale_raw_cache_selects_the_real_dead_first_for_nested_tcp_and_udp', 1, 'lib', (), True), ('meow-proxy', 'group::fallback::tests::startup_owner_consumes_dead_middle_once_then_business_reads_and_dials_use_auto', 1, 'lib', (), True), ('meow-proxy', 'group::fallback::tests::startup_compatibility_does_not_change_native_unpinned_auto_or_explicit_unfix', 1, 'lib', (), True))
 CORE_PROVIDER_READER_FORMAT_COMMAND = ['rustfmt','--check','--edition','2021',
     '.upstream/meow-rs/crates/meow-config/src/rule_provider.rs',
     '.upstream/meow-rs/crates/meow-config/src/rule_pages.rs',
@@ -214,6 +220,16 @@ CORE_PROVIDER_GENERAL_PACKAGES = tuple(sorted(set(CORE_OBSERVABILITY_PACKAGES)|{
 
 CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLICY_TEST_CASES}))
 
+
+SELECTION_OWNER_MODE = "policy-runtime-selection-owner-v1"
+SELECTION_OWNER_OVERLAY_SHA256 = "ed52066f30c5067b1a95f78e4dfd2a4bd69ac10f4fc882e76965f88b1198afb4"
+
+def validate_selection_owner_source(policy):
+    """The fixed selection overlay and its stronger proof mode must travel together."""
+    selection = policy.get("coreTests") == SELECTION_OWNER_MODE
+    selection_source = policy.get("overlaySha256") == SELECTION_OWNER_OVERLAY_SHA256
+    if selection != selection_source:
+        raise ValueError("Selection owner source requires its exact approved proof mode/overlay")
 
 def native_identity(root=MEOW_ROOT):
     root = Path(root)
@@ -233,7 +249,8 @@ def native_identity(root=MEOW_ROOT):
             "policy-runtime-provider-general-v1": HOST_POLICY_RUNTIME_PROVIDER_GENERAL_TARGETS,
             "policy-runtime-resource-health-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
             "policy-runtime-mrs-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
-            "policy-runtime-provider-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-provider-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
+            "policy-runtime-selection-owner-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
@@ -253,6 +270,7 @@ def native_identity(root=MEOW_ROOT):
         raise ValueError("Meow policy/overlay/manifest identity changed")
     if "coreTests" in policy and sha256(owned("core-tests.lock")) != policy["coreTestLockSha256"]:
         raise ValueError("Meow Core unit test lock identity changed")
+    validate_selection_owner_source(policy)
     return dict(meow_source=MEOW_SOURCE, meow_version="v0.26.1", core_library=CORE_LIBRARY, meow_source_spec_sha256=sha256(root / "source.json"),
         meow_lock_sha256=sha256(root / "Cargo.lock"), meow_manifest_sha256=sha256(root / "Cargo.toml"),
         meow_policy_sha256=sha256(root / "build-policy.json"), meow_overlay_sha256=policy["overlaySha256"],
@@ -295,7 +313,7 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
         command += ["--", "--test-threads=1", "--nocapture"]
         if receipt.get("command") != command or receipt.get("androidTarget") is not None or receipt.get("representativeTargets") != targets:
             raise ValueError("Meow host receipt did not run the complete approved suite")
-        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") and receipt.get("addedNativeTests") != RESOURCE_HEALTH_CASES:
+        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") and receipt.get("addedNativeTests") != (SELECTION_OWNER_CASES if policy.get("coreTests") == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES):
             raise ValueError("Meow host receipt lacks authored resource/health Native test proof")
         if "featureBoundary" in policy:
             boundary_command = ["cargo", "test", "--locked", "--no-default-features", "--lib",
@@ -339,17 +357,18 @@ def _validate_core_test_proof(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
         if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_OBSERVABILITY
         if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_CASES_V2)
-    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
     if mode == "policy-runtime-mrs-reader-v1":cases = CORE_POLICY_TEST_CASES_MRS_READER
     if mode == "policy-runtime-provider-reader-v1":cases = CORE_POLICY_TEST_CASES_PROVIDER_READER
+    if mode == "policy-runtime-selection-owner-v1":cases = CORE_POLICY_TEST_CASES_SELECTION_OWNER
     cases = tuple(r if len(r)==6 else r+(False,) for r in cases)
-    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
-    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
+    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
     if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
@@ -384,17 +403,17 @@ def _validate_core_test_proof(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if exact:command += ["--exact"]
-        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
+        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
             reject()
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1") and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
                 or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):
+    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
         compile_check = state.get("compileCheck")
         if (not isinstance(compile_check, dict)
                 or compile_check.get("command") != CORE_OBSERVABILITY_COMPILE_COMMAND
@@ -403,7 +422,7 @@ def _validate_core_test_proof(state, policy, root):
                 or not is_hash(compile_check.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1"):
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
         format_check = state.get("formatCheck")
         if (not isinstance(format_check, dict)
                 or format_check.get("command") != CORE_MRS_READER_FORMAT_COMMAND
@@ -412,7 +431,7 @@ def _validate_core_test_proof(state, policy, root):
                 or not is_hash(format_check.get("stderrSha256"))):
             reject()
 
-    if mode == "policy-runtime-provider-reader-v1":
+    if mode in ("policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
         provider_format = state.get("providerFormatCheck")
         if (not isinstance(provider_format, dict)
                 or provider_format.get("command") != CORE_PROVIDER_READER_FORMAT_COMMAND
@@ -429,12 +448,21 @@ def _validate_core_test_proof(state, policy, root):
 
 def exported_functions(image):
     """Read defined dynamic ELF functions; strings or undefined imports do not qualify."""
+    return _exported_symbols(image, (2,))
+
+
+def _exported_symbols(image, symbol_types, require_loaded=False):
     try:
         offset = struct.unpack_from("<Q", image, 40)[0]
         size, count = struct.unpack_from("<HH", image, 58)
         if size < 64 or count < 1 or offset + size * count > len(image):
             raise ValueError("Invalid ELF section table")
         sections = [struct.unpack_from("<IIQQQQIIQQ", image, offset + i * size) for i in range(count)]
+        loads = []
+        if require_loaded:
+            start = struct.unpack_from("<Q", image, 32)[0]
+            stride, number = struct.unpack_from("<HH", image, 54)
+            loads = [struct.unpack_from("<IIQQQQQQ", image, start + i * stride) for i in range(number)]
         result = set()
         for section in sections:
             if section[1] != 11: continue  # SHT_DYNSYM
@@ -445,7 +473,18 @@ def exported_functions(image):
             table = image[strings[4]:strings[4]+strings[5]]
             for index in range(0, length, entry):
                 name, info, other, defined, _value, _size = struct.unpack_from("<IBBHQQ", image, start + index)
-                if info & 15 == 2 and info >> 4 in (1, 2) and other & 3 in (0, 3) and defined:
+                if info & 15 in symbol_types and info >> 4 in (1, 2) and other & 3 in (0, 3) and defined:
+                    if require_loaded:
+                        if not 0 < defined < count or _size <= 0:
+                            continue
+                        target = sections[defined]
+                        if (not target[2] & 2 or not target[3] <= _value < _value + _size <= target[3] + target[5]
+                                or target[4] + _value - target[3] + _size > len(image)):
+                            continue
+                        if not any(segment[0] == 1 and (info & 15 != 2 or segment[1] & 1)
+                                and segment[3] <= _value < _value + _size <= segment[3] + segment[5]
+                                and segment[2] + _value - segment[3] == target[4] + _value - target[3] for segment in loads):
+                            continue
                     if name >= len(table) or b"\0" not in table[name:]: raise ValueError("Invalid ELF symbol name")
                     result.add(table[name:table.index(b"\0",name)].decode("ascii"))
         return result
@@ -497,6 +536,11 @@ def verify_identity(badging, signature, product, channel):
         raise ValueError("Unexpected package identity or version")
     if not re.search(r"^sdkVersion:'33'$", badging, re.MULTILINE):
         raise ValueError("Unexpected minimum SDK")
+    launcher_lines = [line for line in badging.splitlines() if line.startswith("launchable-activity:")]
+    launcher = re.fullmatch(r"launchable-activity: name='([^']+)'(?: .*)?", launcher_lines[0]) if len(launcher_lines) == 1 else None
+    if (launcher is None or launcher[1] != FLUTTER_LAUNCHER
+            or len(re.findall(r"(?:^| )name='[^']*'", launcher_lines[0])) != 1):
+        raise ValueError("Expected exactly one Flutter launchable activity")
     lines = signature.splitlines()
     legacy_signers = re.findall(r"^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.MULTILINE)
     modern_signers = re.findall(r"^V2 Signer: certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.MULTILINE)
@@ -520,7 +564,8 @@ def verify_identity(badging, signature, product, channel):
     if len(signer) != 1 or (channel != "development" and signer[0] != product["signerSha256"]):
         raise ValueError("Unexpected or ambiguous verified signing certificate")
     return {"application_id": expected_id, "version": expected_version,
-        "version_code": int(product["versionCode"]), "min_sdk": 33, "signer_sha256": signer[0]}
+        "version_code": int(product["versionCode"]), "min_sdk": 33, "signer_sha256": signer[0],
+        "launcher_activity": launcher[1]}
 
 
 BUNDLED_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
@@ -590,6 +635,136 @@ def verify_bundled_script_apk(apk, *, expected_bundle=None):
         return _validate_bundled_script_assets(archive, files, expected)
 
 
+FLUTTER_LAUNCHER = "dev.aerove.lite.FlutterMainActivity"
+FLUTTER_ASSET_PREFIX = "assets/flutter_assets/"
+FLUTTER_RELEASE_ASSETS = ("AssetManifest.bin", "FontManifest.json", "NativeAssetsManifest.json", "NOTICES.Z")
+FLUTTER_AOT_SYMBOLS = ("_kDartSnapshotData", "_kDartSnapshotText", "_kDartSnapshotBuildId")
+FORBIDDEN_CORE_LIBRARIES = {"libaerove_core.so", "libclash.so", "libclash_rs.so", "libclash-rs.so", "libmihomo.so"}
+
+
+def flutter_asset_manifest(raw):
+    """Decode the string/list/map/double subset Flutter 3.47.6 writes to AssetManifest.bin."""
+    offset = 0
+    remaining = 50000
+
+    def take(size):
+        nonlocal offset
+        if size < 0 or offset + size > len(raw):
+            raise ValueError("Truncated Flutter asset manifest")
+        value = raw[offset:offset + size]
+        offset += size
+        return value
+
+    def size():
+        tag = take(1)[0]
+        return tag if tag < 254 else int.from_bytes(take(2 if tag == 254 else 4), "little")
+
+    def read(depth=0):
+        nonlocal remaining
+        remaining -= 1
+        if depth > 12 or remaining < 0:
+            raise ValueError("Flutter asset manifest limit exceeded")
+        tag = take(1)[0]
+        if tag == 7:
+            return take(size()).decode("utf-8")
+        if tag == 6:
+            take((-offset) % 8)
+            return struct.unpack("<d", take(8))[0]
+        if tag in (12, 13):
+            count = size()
+            if count > remaining:
+                raise ValueError("Flutter asset manifest limit exceeded")
+            if tag == 12:
+                return [read(depth + 1) for _ in range(count)]
+            result = {}
+            for _ in range(count):
+                key = read(depth + 1)
+                if not isinstance(key, str) or key in result:
+                    raise ValueError("Invalid or duplicate Flutter asset manifest key")
+                result[key] = read(depth + 1)
+            return result
+        raise ValueError("Unsupported Flutter asset manifest value")
+
+    try:
+        result = read()
+        if offset != len(raw) or not isinstance(result, dict) or not result:
+            raise ValueError("Invalid Flutter asset manifest")
+        return result
+    except (IndexError, UnicodeDecodeError, struct.error) as error:
+        raise ValueError("Invalid Flutter asset manifest") from error
+
+
+def verify_flutter_packaging(archive, abi):
+    machine = {"arm64-v8a": 183, "x86_64": 62}[abi]
+    names = set(archive.namelist())
+    forbidden = sorted(name for name in names if name.rsplit("/", 1)[-1].lower() in FORBIDDEN_CORE_LIBRARIES)
+    if forbidden:
+        raise ValueError("Mihomo/legacy clash-rs library must not be packaged with Meow: " + ", ".join(forbidden))
+    libraries = {}
+    for library in ("libflutter.so", "libapp.so"):
+        path = f"lib/{abi}/{library}"
+        if path not in names:
+            raise ValueError("Required Flutter release library is missing: " + path)
+        raw = archive.read(path)
+        if not valid_elf64_shared_object(raw, machine):
+            raise ValueError("Wrong Flutter ELF architecture or 16KiB alignment: " + path)
+        expected = {"JNI_OnLoad"} if library == "libflutter.so" else set(FLUTTER_AOT_SYMBOLS)
+        symbols = _exported_symbols(raw, (2,) if library == "libflutter.so" else (1,), require_loaded=True)
+        if not expected <= symbols:
+            raise ValueError("Flutter release exports missing: " + path)
+        libraries[path] = {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(), "exports": sorted(expected)}
+    if any(FLUTTER_ASSET_PREFIX + name in names for name in ("kernel_blob.bin", "vm_snapshot_data", "isolate_snapshot_data")):
+        raise ValueError("Debug/JIT Flutter assets must not be packaged in a release APK")
+    assets = {}
+    for name in FLUTTER_RELEASE_ASSETS:
+        path = FLUTTER_ASSET_PREFIX + name
+        if path not in names or not 0 < archive.getinfo(path).file_size <= 8 * 1024 * 1024:
+            raise ValueError("Required Flutter release asset is missing or invalid: " + path)
+        raw = archive.read(path)
+        assets[path] = {"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
+
+    def asset(path):
+        if (not isinstance(path, str) or not path or path.startswith("/") or "\\" in path or ":" in path
+                or any(part in ("", ".", "..") for part in path.split("/"))):
+            raise ValueError("Unsafe Flutter asset path")
+        full = FLUTTER_ASSET_PREFIX + path
+        if full not in names or archive.getinfo(full).is_dir() or archive.getinfo(full).file_size <= 0:
+            raise ValueError("Flutter asset manifest references a missing or empty asset: " + path)
+
+    manifest = flutter_asset_manifest(archive.read(FLUTTER_ASSET_PREFIX + "AssetManifest.bin"))
+    for key, variants in manifest.items():
+        asset(key)
+        if not isinstance(variants, list) or not variants:
+            raise ValueError("Invalid Flutter asset variants")
+        for variant in variants:
+            if not isinstance(variant, dict) or not {"asset"} <= variant.keys() <= {"asset", "dpr"}:
+                raise ValueError("Invalid Flutter asset variant")
+            asset(variant["asset"])
+            if "dpr" in variant and (type(variant["dpr"]) is not float or not math.isfinite(variant["dpr"]) or variant["dpr"] <= 0):
+                raise ValueError("Invalid Flutter asset pixel ratio")
+    try:
+        fonts = json.loads(archive.read(FLUTTER_ASSET_PREFIX + "FontManifest.json"))
+        if not isinstance(fonts, list) or not fonts:
+            raise ValueError("Invalid Flutter font manifest")
+        for family in fonts:
+            if not isinstance(family, dict) or not isinstance(family.get("family"), str) or not family.get("fonts"):
+                raise ValueError("Invalid Flutter font manifest")
+            for font in family["fonts"]:
+                asset(font["asset"])
+        native = json.loads(archive.read(FLUTTER_ASSET_PREFIX + "NativeAssetsManifest.json"))
+        if not isinstance(native, dict) or native.get("format-version") != [1, 0, 0] or not isinstance(native.get("native-assets"), dict):
+            raise ValueError("Invalid Flutter native assets manifest")
+        with gzip.GzipFile(fileobj=io.BytesIO(archive.read(FLUTTER_ASSET_PREFIX + "NOTICES.Z"))) as notices:
+            text = notices.read(32 * 1024 * 1024 + 1)
+            if not text or len(text) > 32 * 1024 * 1024:
+                raise ValueError("Invalid Flutter release notices")
+            text.decode("utf-8")
+    except (KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError, OSError, EOFError, zlib.error) as error:
+        raise ValueError("Invalid Flutter release asset contents") from error
+    return {"schema": 1, "client_kind": "flutter-aot", "abi": abi,
+        "libraries": libraries, "assets": assets, "asset_manifest_entries": len(manifest)}
+
+
 def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflow=None):
     machine = {"arm64-v8a": 183, "x86_64": 62}[abi]
     with zipfile.ZipFile(apk) as archive:
@@ -603,8 +778,6 @@ def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflo
         if library not in names:
             raise ValueError("The actual Rust core is missing")
         core = archive.read(library)
-        if f"lib/{abi}/libaerove_core.so" in names:
-            raise ValueError("Legacy clash-rs library must not be packaged with Meow")
         if not valid_elf64_shared_object(core, machine):
             raise ValueError("Wrong Meow ELF architecture or 16KiB alignment")
         missing = set(CORE_JNI_SYMBOLS) - exported_functions(core)
@@ -648,14 +821,24 @@ def verify(apk, abi, helper_source_root, helper_receipt, native_receipt, workflo
                 raise ValueError(f"Client helper build receipt does not match APK: {helper_name}")
         if "AndroidManifest.xml" not in names or not any(name.endswith(".dex") for name in names):
             raise ValueError("Not a complete Android application")
+        flutter_packaging = verify_flutter_packaging(archive, abi)
         return {**core_identity, "abi": abi, "jni_libraries": libraries, "core_sha256": hashlib.sha256(archive.read(library)).hexdigest(),
             "client_helpers": helper_readback, "client_helper_license_assets": licenses,
-            "client_helper_source_sha256": helper_provenance["source_sha256"], "bundled_meow_script": bundled_script}
+            "client_helper_source_sha256": helper_provenance["source_sha256"], "bundled_meow_script": bundled_script,
+            "flutter_packaging": flutter_packaging}
 
 
 def build_info(identity, result, source, tree, workflow, run_number, run_attempt, apk_path, channel="preview"):
     if type(run_number) is not int or run_number < 1 or type(run_attempt) is not int or run_attempt < 1:
         raise ValueError("Positive workflow run number and attempt are required")
+    proof = result.get("flutter_packaging", {})
+    if (identity.get("launcher_activity") != FLUTTER_LAUNCHER or not isinstance(proof, dict)
+            or proof.get("schema") != 1 or proof.get("client_kind") != "flutter-aot"
+            or proof.get("abi") != result.get("abi")
+            or not isinstance(proof.get("libraries"), dict) or not isinstance(proof.get("assets"), dict)
+            or set(proof.get("libraries", {})) != {f"lib/{result.get('abi')}/{name}" for name in ("libapp.so", "libflutter.so")}
+            or set(proof.get("assets", {})) != {FLUTTER_ASSET_PREFIX + name for name in FLUTTER_RELEASE_ASSETS}):
+        raise ValueError("BUILD_INFO requires verified Flutter release packaging and launcher evidence")
     return {
         "product": "AEROVE Lite", "channel": channel, **identity,
         "source": source, "tree": tree, "workflow": workflow,

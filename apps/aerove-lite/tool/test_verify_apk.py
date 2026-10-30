@@ -1,4 +1,5 @@
 import importlib.util
+import gzip
 import hashlib
 import json
 from pathlib import Path
@@ -43,7 +44,8 @@ class ApkInspectionTests(unittest.TestCase):
             "channel": "preview", "signerSha256": "a" * 64}
 
     def badging(self, package="dev.aerove.lite", version="0.1.0-beta.1", sdk=33, version_code="1"):
-        return f"package: name='{package}' versionCode='{version_code}' versionName='{version}'\nsdkVersion:'{sdk}'\n"
+        return (f"package: name='{package}' versionCode='{version_code}' versionName='{version}'\nsdkVersion:'{sdk}'\n"
+            f"launchable-activity: name='{module.FLUTTER_LAUNCHER}' label='AEROVE Lite' icon=''\n")
 
     def read_product(self, **changes):
         product = {**self.product(), **changes}
@@ -93,16 +95,19 @@ class ApkInspectionTests(unittest.TestCase):
 
     def test_build_info_preserves_acceptance_run_number_and_attempt(self):
         with tempfile.TemporaryDirectory() as root:
-            apk = Path(root) / "apk"
-            apk.write_bytes(b"original APK bytes")
-            info = module.build_info({"version": "0.1.0-beta.1", "version_code": 1},
-                {"abi": "arm64-v8a"}, "a" * 40, "b" * 40,
+            apk = self.make_apk(root)
+            result = self.verify(apk, "arm64-v8a")
+            identity = {"version": "0.1.0-beta.1", "version_code": 1, "launcher_activity": module.FLUTTER_LAUNCHER}
+            info = module.build_info(identity,
+                result, "a" * 40, "b" * 40,
                 "https://github.com/IvanSolis1989/Aerove/actions/runs/123", 123, 2, apk)
             self.assertEqual((info["run_number"], info["run_attempt"]), (123, 2))
             self.assertEqual(info["apk_sha256"], hashlib.sha256(apk.read_bytes()).hexdigest())
             for number, attempt in ((0, 2), (1, 0), (True, 2)):
                 with self.subTest(number=number, attempt=attempt), self.assertRaisesRegex(ValueError, "run number"):
                     module.build_info({}, {}, "a" * 40, "b" * 40, "workflow", number, attempt, apk)
+            with self.assertRaisesRegex(ValueError, "Flutter release packaging"):
+                module.build_info(identity, {"abi": "arm64-v8a"}, "a"*40, "b"*40, "workflow", 123, 2, apk)
 
     def test_preview_rejects_other_signing_certificate(self):
         with self.assertRaisesRegex(ValueError, "signing certificate"):
@@ -179,6 +184,10 @@ class ApkInspectionTests(unittest.TestCase):
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr("AndroidManifest.xml", b"manifest fixture")
             archive.writestr("classes.dex", b"dex fixture")
+            for name, data in self.flutter_assets().items():
+                archive.writestr(module.FLUTTER_ASSET_PREFIX + name, data)
+            archive.writestr(f"lib/{abi}/libflutter.so", self.core_elf(machine, symbols=["JNI_OnLoad"], loaded=True))
+            archive.writestr(f"lib/{abi}/libapp.so", self.core_elf(machine, symbols=module.FLUTTER_AOT_SYMBOLS, symbol_type=1, loaded=True))
             for name in module.BUNDLED_SCRIPT_FILES:
                 archive.writestr("assets/scripts/" + name, (module.BUNDLED_SCRIPT_ROOT / "app/src/main/assets/scripts" / name).read_bytes())
             if include_core:
@@ -205,22 +214,154 @@ class ApkInspectionTests(unittest.TestCase):
         struct.pack_into("<IIQQQQQQ", image, 64, 1 if loadable else 4, 5, 0, 0, 0, len(image), len(image), p_align)
         return bytes(image)
 
-    def core_elf(self, machine=183, symbols=None, undefined=False):
+    def core_elf(self, machine=183, symbols=None, undefined=False, symbol_type=2, loaded=False):
         symbols = module.CORE_JNI_SYMBOLS if symbols is None else symbols
         image = bytearray(self.elf64(machine))
         strings = b"\0" + b"".join(name.encode()+b"\0" for name in symbols)
         string_offset = len(image); image.extend(strings)
         symbol_offset = len(image); image.extend(bytes(24))
+        payload_offset = symbol_offset + (len(symbols) + 1) * 24
         cursor = 1
         for name in symbols:
-            image.extend(struct.pack("<IBBHQQ", cursor, 18, 0, 0 if undefined else 1, 1, 1))
+            image.extend(struct.pack("<IBBHQQ", cursor, 16 + symbol_type, 0,
+                0 if undefined else (3 if loaded else 1), payload_offset if loaded else 1, 32 if loaded else 1))
             cursor += len(name)+1
+        if loaded: image.extend(bytes(32))
         section_offset = len(image); image.extend(bytes(64))
         image.extend(struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, string_offset, len(strings), 0, 0, 1, 0))
         image.extend(struct.pack("<IIQQQQIIQQ", 0, 11, 0, 0, symbol_offset, (len(symbols)+1)*24, 1, 0, 8, 24))
+        if loaded:
+            image.extend(struct.pack("<IIQQQQIIQQ", 0, 1, 6, payload_offset, payload_offset, 32, 0, 0, 8, 0))
+            struct.pack_into("<QQ", image, 96, len(image), len(image))
         struct.pack_into("<Q", image, 40, section_offset)
-        struct.pack_into("<HH", image, 58, 64, 3)
+        struct.pack_into("<HH", image, 58, 64, 4 if loaded else 3)
         return bytes(image)
+
+    def asset_manifest(self, value):
+        data = bytearray()
+        def size(length):
+            if length < 254: data.append(length)
+            elif length <= 65535: data.extend(b"\xfe" + struct.pack("<H", length))
+            else: data.extend(b"\xff" + struct.pack("<I", length))
+        def write(item):
+            if isinstance(item, str):
+                raw = item.encode(); data.append(7); size(len(raw)); data.extend(raw)
+            elif isinstance(item, float):
+                data.append(6); data.extend(bytes((-len(data)) % 8)); data.extend(struct.pack("<d", item))
+            elif isinstance(item, list):
+                data.append(12); size(len(item))
+                for child in item: write(child)
+            elif isinstance(item, dict):
+                data.append(13); size(len(item))
+                for key, child in item.items(): write(key); write(child)
+            else: raise TypeError(item)
+        write(value)
+        return bytes(data)
+
+    def flutter_assets(self):
+        return {
+            "AssetManifest.bin": self.asset_manifest({"images/ribbon.png": [{"asset": "images/ribbon.png", "dpr": 1.0}]}),
+            "images/ribbon.png": b"ribbon fixture",
+            "FontManifest.json": json.dumps([{"family": "MaterialIcons", "fonts": [{"asset": "fonts/icons.otf"}]}]).encode(),
+            "fonts/icons.otf": b"font fixture",
+            "NativeAssetsManifest.json": b'{"format-version":[1,0,0],"native-assets":{}}',
+            "NOTICES.Z": gzip.compress(b"Flutter fixture license notices"),
+        }
+
+    def rewrite(self, apk, changes):
+        with zipfile.ZipFile(apk) as archive:
+            entries = {name: archive.read(name) for name in archive.namelist()}
+        entries.update(changes)
+        with zipfile.ZipFile(apk, "w") as archive:
+            for name, data in entries.items():
+                if data is not None: archive.writestr(name, data)
+
+    def test_flutter_launcher_must_be_unique_exact_and_present(self):
+        signature = "Signer #1 certificate SHA-256 digest: " + "a" * 64
+        good = self.badging()
+        launcher = good.splitlines()[-1] + "\n"
+        for bad in (good.replace(launcher, ""), good + launcher,
+                    good.replace(module.FLUTTER_LAUNCHER, "dev.aerove.lite.MainActivity"),
+                    good.replace(" label=", " name='dev.aerove.lite.MainActivity' label="),
+                    good + "launchable-activity: name='dev.aerove.lite.MainActivity'\n",
+                    good.replace(launcher, "launchable-activity: label='invalid'\n")):
+            with self.subTest(badging=bad), self.assertRaisesRegex(ValueError, "one Flutter launchable"):
+                module.verify_identity(bad, signature, self.product(), "preview")
+        self.assertEqual(module.verify_identity(good, signature, self.product(), "preview")["launcher_activity"], module.FLUTTER_LAUNCHER)
+
+    def test_flutter_release_container_and_build_info_keep_actual_packaging_proof(self):
+        for abi, machine in (("arm64-v8a", 183), ("x86_64", 62)):
+            with self.subTest(abi=abi), tempfile.TemporaryDirectory() as root:
+                apk = self.make_apk(root, abi=abi, machine=machine)
+                result = self.verify(apk, abi)
+                proof = result["flutter_packaging"]
+                self.assertEqual((proof["schema"], proof["client_kind"], proof["abi"]), (1, "flutter-aot", abi))
+                self.assertEqual(set(proof["libraries"]), {f"lib/{abi}/libapp.so", f"lib/{abi}/libflutter.so"})
+                self.assertEqual(len(proof["assets"]), 4)
+                with zipfile.ZipFile(apk) as archive:
+                    for path, item in {**proof["libraries"], **proof["assets"]}.items():
+                        raw = archive.read(path)
+                        self.assertEqual(item["sha256"], hashlib.sha256(raw).hexdigest())
+                        self.assertEqual(item["bytes"], len(raw))
+                identity = module.verify_identity(self.badging(), "Signer #1 certificate SHA-256 digest: " + "a"*64, self.product(), "preview")
+                info = module.build_info(identity, result, "a"*40, "b"*40, "workflow", 9, 1, apk)
+                self.assertEqual(info["flutter_packaging"], proof)
+                self.assertEqual(info["launcher_activity"], module.FLUTTER_LAUNCHER)
+
+    def test_flutter_required_libraries_and_assets_cannot_be_missing_or_empty(self):
+        required = ["lib/arm64-v8a/libapp.so", "lib/arm64-v8a/libflutter.so"] + [
+            module.FLUTTER_ASSET_PREFIX + name for name in module.FLUTTER_RELEASE_ASSETS]
+        for path in required:
+            for missing in (None, b""):
+                with self.subTest(path=path, missing=missing), tempfile.TemporaryDirectory() as root:
+                    apk = self.make_apk(root); self.rewrite(apk, {path: missing})
+                    with self.assertRaises(ValueError): self.verify(apk, "arm64-v8a")
+
+    def test_flutter_dso_rejects_wrong_abi_alignment_imports_and_marker_strings(self):
+        for library, symbols, symbol_type in (("libflutter.so", ["JNI_OnLoad"], 2), ("libapp.so", module.FLUTTER_AOT_SYMBOLS, 1)):
+            for raw in (self.elf64() + b"".join(name.encode() for name in symbols),
+                        self.core_elf(symbols=symbols, symbol_type=symbol_type),
+                        self.core_elf(symbols=symbols, undefined=True, symbol_type=symbol_type),
+                        self.core_elf(machine=62, symbols=symbols, symbol_type=symbol_type),
+                        self.elf64(p_align=4096)):
+                with self.subTest(library=library, image=raw[:20]), tempfile.TemporaryDirectory() as root:
+                    apk = self.make_apk(root); self.rewrite(apk, {"lib/arm64-v8a/" + library: raw})
+                    with self.assertRaises(ValueError): self.verify(apk, "arm64-v8a")
+
+    def test_mihomo_and_legacy_core_libraries_are_rejected_at_any_packaged_path(self):
+        for name in module.FORBIDDEN_CORE_LIBRARIES:
+            for prefix in ("lib/arm64-v8a/", "assets/old/"):
+                with self.subTest(name=name, prefix=prefix), tempfile.TemporaryDirectory() as root:
+                    apk = self.make_apk(root); self.rewrite(apk, {prefix + name: self.elf64()})
+                    with self.assertRaisesRegex(ValueError, "Mihomo/legacy clash-rs"):
+                        self.verify(apk, "arm64-v8a")
+
+    def test_flutter_manifests_notices_and_referenced_payloads_fail_closed(self):
+        prefix = module.FLUTTER_ASSET_PREFIX
+        cases = [
+            {prefix + "AssetManifest.bin": b"placeholder"},
+            {prefix + "AssetManifest.bin": self.asset_manifest({})},
+            {prefix + "AssetManifest.bin": self.flutter_assets()["AssetManifest.bin"] + b"tail"},
+            {prefix + "AssetManifest.bin": self.asset_manifest({"images/ribbon.png": [{"asset": "../escape"}]})},
+            {prefix + "AssetManifest.bin": self.asset_manifest({"images/ribbon.png": [{"asset": "images/ribbon.png", "dpr": float("nan")}]})},
+            {prefix + "images/ribbon.png": None}, {prefix + "fonts/icons.otf": None},
+            {prefix + "FontManifest.json": b"[]"}, {prefix + "FontManifest.json": b"invalid"},
+            {prefix + "NativeAssetsManifest.json": b"{}"},
+            {prefix + "NOTICES.Z": b"not gzip"}, {prefix + "NOTICES.Z": gzip.compress(b"")},
+            {prefix + "NOTICES.Z": gzip.compress(b"notices")[:-1]},
+            {prefix + "kernel_blob.bin": b"debug kernel"},
+        ]
+        for changes in cases:
+            with self.subTest(paths=list(changes)), tempfile.TemporaryDirectory() as root:
+                apk = self.make_apk(root); self.rewrite(apk, changes)
+                with self.assertRaises(ValueError): self.verify(apk, "arm64-v8a")
+
+    def test_asset_manifest_codec_extended_sizes_and_bad_binary(self):
+        for size in (253, 254, 65536):
+            value = {"x" * size: [{"asset": "x" * size, "dpr": 2.0}]}
+            self.assertEqual(module.flutter_asset_manifest(self.asset_manifest(value)), value)
+        for raw in (b"", b"\r\xff\xff\xff\xff\xff", b"\r\x01\x07\x03ab", b"\r\x01\x00", b"\r\x02\x07\x01a\x0c\x00\x07\x01a\x0c\x00"):
+            with self.subTest(raw=raw), self.assertRaises(ValueError): module.flutter_asset_manifest(raw)
 
     def test_core_exports_require_defined_dynamic_functions_not_strings_or_imports(self):
         self.assertEqual(set(module.CORE_JNI_SYMBOLS), module.exported_functions(self.core_elf()))
@@ -686,13 +827,102 @@ class ApkInspectionTests(unittest.TestCase):
             producer.MODE_PROVIDER_GENERAL:module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL,
             producer.MODE_RESOURCE_HEALTH:module.CORE_POLICY_TEST_CASES_PROVIDER_GENERAL,
             producer.MODE_MRS_READER:module.CORE_POLICY_TEST_CASES_MRS_READER,
-            producer.MODE_PROVIDER_READER:module.CORE_POLICY_TEST_CASES_PROVIDER_READER}
+            producer.MODE_PROVIDER_READER:module.CORE_POLICY_TEST_CASES_PROVIDER_READER,
+            producer.MODE_SELECTION_OWNER:module.CORE_POLICY_TEST_CASES_SELECTION_OWNER}
         for mode,approved in tables.items():
             normalized=tuple(row if len(row)==6 else row+(False,) for row in approved)
             authored=tuple((row['package'],row['filter'],row['expectedPass'],row['target'],tuple(row['requiredFeatures']),row.get('exact',False)) for row in producer.entries(mode))
             with self.subTest(mode=mode):self.assertEqual(authored,normalized)
         specs=tables[producer.MODE_PROVIDER_READER]
         self.assertEqual((32,179),(len(specs),sum(row[2] for row in specs)))
+
+    def _selection_owner_proof(self):
+        root=module.MEOW_ROOT
+        policy=json.loads((root/'build-policy.json').read_text())
+        self.assertEqual('policy-runtime-selection-owner-v1',policy['coreTests'])
+        cases=module.CORE_POLICY_TEST_CASES_SELECTION_OWNER
+        packages=tuple(sorted(set(module.CORE_PROVIDER_GENERAL_PACKAGES)|{'meow-rules'}))
+        features={p:sorted({f for package,_,_,_,required,_ in cases if package==p for f in required}) for p in packages}
+        commands=[]
+        for package,name,count,target,_,exact in cases:
+            args=['cargo','test','--manifest-path','.upstream/meow-rs/Cargo.toml','--locked','--package',package]
+            args+=['--lib'] if target=='lib' else ['--test','transport_scope_compat']
+            args+=['--no-default-features']
+            if features[package]:args+=['--features',','.join(package+'/'+f for f in features[package])]
+            if name is not None:args+=[name]
+            args+=['--','--test-threads=1','--nocapture']
+            if exact:args+=['--exact']
+            commands.append(dict(package=package,filter=name,target=target,exact=exact,command=args,exit=0,expectedPass=count,passed=count,stdoutSha256='c'*64,stderrSha256='d'*64))
+        overlay=json.loads((root/policy['overlay']).read_text())
+        def gate(command):
+            return dict(command=command,exit=0,stdoutSha256='e'*64,stderrSha256='f'*64,
+                files={name:overlay['files'][name.removeprefix('.upstream/meow-rs/')] for name in command[4:]})
+        state=dict(mode=policy['coreTests'],accepted=True,upstreamLockRestored=True,upstreamLockBeforeSha256=overlay['files']['Cargo.lock'],
+            seedSha256=policy['coreTestLockSha256'],resolvedLockSha256=policy['coreTestLockSha256'],
+            bridgeMetadataCommand=['cargo','metadata','--locked','--format-version','1'],bridgeMetadataExit=0,
+            metadataCommand=['cargo','metadata','--manifest-path','.upstream/meow-rs/Cargo.toml','--format-version','1','--locked'],metadataExit=0,
+            workspaceMembers=list(packages),features=features,commands=commands,
+            compileCheck=dict(command=module.CORE_OBSERVABILITY_COMPILE_COMMAND,exit=0,stdoutSha256='e'*64,stderrSha256='f'*64),
+            formatCheck=gate(module.CORE_MRS_READER_FORMAT_COMMAND),providerFormatCheck=gate(module.CORE_PROVIDER_READER_FORMAT_COMMAND))
+        identity=module.native_identity(root)
+        command=['cargo','test','--locked','--no-fail-fast']
+        for target in policy['targets']:command+=['--lib'] if target=='lib' else ['--test',target]
+        command+=['--','--test-threads=1','--nocapture']
+        receipt=dict(schema=1,command=command,commandExit=0,acceptedLock=True,bootstrapRequested=False,resolveLockRequested=False,
+            lockUnchangedDuringLockedCommand=True,toolchain='rustc 1.98.1 (synthetic receipt contract fixture)',androidTarget=None,
+            representativeTargets=policy['targets'],declaredSourceSpecSha256=identity['meow_source_spec_sha256'],bridgeManifestSha256=identity['meow_manifest_sha256'],
+            buildPolicySha256=identity['meow_policy_sha256'],lockSha256Before=identity['meow_lock_sha256'],resolvedLockSha256=identity['meow_lock_sha256'],lockSha256After=identity['meow_lock_sha256'],
+            source=dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveHashBootstrapped=False,archiveSha256=identity['meow_archive_sha256'],
+                fileManifestSha256=identity['meow_file_manifest_sha256'],overlaySha256=identity['meow_overlay_sha256'],patchSha256=identity['meow_patch_sha256']),
+            coreTests=state,addedNativeTests=module.SELECTION_OWNER_CASES,
+            featureBoundaryCommand=['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture'],featureBoundaryExit=0)
+        return policy,state,receipt
+
+    def test_selection_owner_requires_35_core_commands_and_all55_native_passes(self):
+        import copy
+        policy,state,receipt=self._selection_owner_proof();root=module.MEOW_ROOT
+        self.assertEqual((35,182),(len(state['commands']),sum(c['passed'] for c in state['commands'])))
+        self.assertEqual(module.CORE_POLICY_TEST_CASES_PROVIDER_READER,module.CORE_POLICY_TEST_CASES_SELECTION_OWNER[:32])
+        self.assertEqual(55,sum(map(len,receipt['addedNativeTests'].values())))
+        module.validate_native_receipt(receipt,root=root)
+        for index in range(32,35):
+            bad=copy.deepcopy(receipt);del bad['coreTests']['commands'][index]
+            with self.subTest(missing_core=index),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
+        for target,cases in module.SELECTION_OWNER_CASES.items():
+            for name in cases:
+                bad=copy.deepcopy(receipt);bad['addedNativeTests'][target].remove(name)
+                with self.subTest(missing_native=name),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
+        for key,value in [('compileCheck',None),('formatCheck',None),('providerFormatCheck',None),('commands',state['commands'][:32]),('mode','policy-runtime-provider-reader-v1')]:
+            bad=copy.deepcopy(receipt);bad['coreTests'][key]=value
+            with self.subTest(core_gate=key),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
+        for index in range(32,35):
+            for key,value in [('exact',False),('passed',0),('expectedPass',2),('target','other'),('exit',False),('command',state['commands'][index]['command'][:-1])]:
+                bad=copy.deepcopy(receipt);bad['coreTests']['commands'][index][key]=value
+                with self.subTest(core=index,key=key),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
+        bad=copy.deepcopy(receipt);bad['coreTests']['commands'].append(copy.deepcopy(state['commands'][-1]))
+        with self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
+
+    def test_current_selection_overlay_cannot_be_downgraded_to_historical_reader_mode(self):
+        import shutil
+        policy,_,receipt=self._selection_owner_proof()
+        producer_spec=importlib.util.spec_from_file_location('selection_build_policy',module.MEOW_ROOT/'build_policy.py')
+        import sys
+        sys.path.insert(0,str(module.MEOW_ROOT))
+        self.addCleanup(lambda:sys.path.remove(str(module.MEOW_ROOT)))
+        producer=importlib.util.module_from_spec(producer_spec);producer_spec.loader.exec_module(producer)
+        producer.load_policy(module.MEOW_ROOT)
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            overlay=json.loads((module.MEOW_ROOT/policy['overlay']).read_text())
+            for name in ['build-policy.json','source.json','Cargo.toml','Cargo.lock','core-tests.lock',policy['overlay'],overlay['patch']]:
+                target=root/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(module.MEOW_ROOT/name,target)
+            for mode in ['policy-runtime-provider-reader-v1','policy-runtime-mrs-reader-v1','policy-runtime-resource-health-v1']:
+                (root/'build-policy.json').write_text(json.dumps(dict(policy,coreTests=mode)))
+                for guard in [module.native_identity,producer.load_policy]:
+                    with self.subTest(mode=mode,guard=guard.__name__),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):guard(root)
+                with self.assertRaises(ValueError):module.validate_native_receipt(receipt,root=root)
+        for guard in [module.validate_selection_owner_source,producer.validate_selection_owner_source]:
+            with self.assertRaises(ValueError):guard(dict(policy,overlaySha256='0'*64))
 
     def test_provider_reader_requires_all_mrs_commands_51_provider_tests_both_format_proofs_and42_native_targets(self):
         self._provider_general_receipt_contract(resource_health=True,mrs_reader=True,provider_reader=True)

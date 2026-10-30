@@ -254,6 +254,12 @@ class HostLockResolutionPlanTests(unittest.TestCase):
     def write_policy(self):
         (self.root / 'build-policy.json').write_text(json.dumps(self.policy))
 
+    def test_selection_owner_cannot_opt_into_historical_pending_resolution(self):
+        self.policy['coreTests']='policy-runtime-selection-owner-v1'
+        self.write_policy()
+        with self.assertRaises((ValueError,ci.PromotionError)):
+            ci.host_lock_resolution_plan('host',self.root,self.env)
+
     def test_pending_plan_does_not_accept_lock_or_run_cargo(self):
         with mock.patch.object(ci.subprocess, 'run') as run:
             plan = ci.host_lock_resolution_plan('host', self.root, self.env)

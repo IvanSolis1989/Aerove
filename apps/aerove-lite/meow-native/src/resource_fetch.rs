@@ -100,49 +100,10 @@ async fn receive_operation<T>(rx: oneshot::Receiver<io::Result<T>>, producer: Ar
 struct CancelRequest(CancellationToken);
 impl Drop for CancelRequest { fn drop(&mut self) { self.0.cancel(); } }
 
-fn restore_selection_cache(config: &Config, cache: &BTreeMap<String, String>) -> io::Result<BTreeMap<String, String>> {
-    use meow_common::AdapterType;
-    let mut effective = BTreeMap::new();
-    for (name, requested) in cache {
-        let Some(group) = config.proxies.get(name.as_str()) else { continue; };
-        let fail = |reason: &str| error(format!("$.selectionCache.{name}: {reason}"));
-        if group.selection().is_none() { return Err(fail("group does not support selection")); }
-        let members = group.members().filter(|members| !members.is_empty()).ok_or_else(|| fail("group has no actual members"))?;
-        let valid = members.iter().any(|member| member == requested);
-        let target = match group.adapter_type() {
-            AdapterType::Selector => if valid { requested.clone() } else { members[0].clone() },
-            AdapterType::UrlTest => if valid { requested.clone() } else { String::new() },
-            AdapterType::Fallback => if valid { requested.clone() } else if requested.is_empty() { String::new() } else { members[0].clone() },
-            _ => return Err(fail("unsupported cache selection group")),
-        };
-        effective.insert(name.clone(), target);
-    }
-    Ok(effective)
-}
-
-fn apply_selections(config: &Config, selected: &BTreeMap<String, String>) -> io::Result<()> {
-    // This graph is private and unpublished. Validate every intent before applying
-    // memory-only selections; never probe, flush a store or touch the live graph.
-    for (name, member) in selected {
-        let fail = |reason: &str| error(format!("$.selectionCache.{name}: {reason}"));
-        let group = config.proxies.get(name.as_str()).ok_or_else(|| fail("unknown group"))?;
-        let selection = group.selection().ok_or_else(|| fail("group does not support selection"))?;
-        if member.is_empty() {
-            if !selection.can_unfix() { return Err(fail("empty selection requires an automatic group")); }
-        } else if !group.members().is_some_and(|members| members.iter().any(|value| value == member)) {
-            return Err(fail("unknown member"));
-        }
-    }
-    for (name, member) in selected {
-        let group = config.proxies.get(name.as_str()).ok_or_else(|| error(format!("$.selectionCache.{name}: group disappeared")))?;
-        let selection = group.selection().ok_or_else(|| error(format!("$.selectionCache.{name}: selection disappeared")))?;
-        let result = if member.is_empty() { selection.unfix_memory() } else { selection.commit_memory(member) };
-        result.map_err(|cause| error(format!("$.selectionCache.{name}: {cause}")))?;
-        let applied = if selection.can_unfix() { selection.fixed().as_deref() == Some(member.as_str()) }
-            else { group.current().as_deref() == Some(member.as_str()) };
-        if !applied { return Err(error(format!("$.selectionCache.{name}: selection readback mismatch"))); }
-    }
-    Ok(())
+fn apply_selection_cache(config: &Config, cache: &BTreeMap<String, String>) -> io::Result<()> {
+    let failure = |cause: crate::selection_cache::CacheError| error(format!("$.selectionCache.{}: {}", cause.group, cause.reason));
+    let plan = crate::selection_cache::prepare(cache, |name| config.proxies.get(name).cloned(), false).map_err(failure)?;
+    crate::selection_cache::apply_memory(&plan).map(|_| ()).map_err(failure)
 }
 
 impl ResourceFetch {
@@ -244,8 +205,7 @@ impl ResourceFetch {
             }
             let yaml=serde_yaml::to_string(&raw).map_err(|cause|error(cause.to_string()))?;
             let config=meow_config::load_config_from_str_owned(&yaml,&owner.scope).await.map_err(|cause|error(format!("resource transport graph: {cause:#}")))?;
-            let selections = restore_selection_cache(&config, &owner.selection_cache)?;
-            apply_selections(&config, &selections)?;
+            apply_selection_cache(&config, &owner.selection_cache)?;
             let pair=ResolverPair { main:config.dns.resolver.clone(),proxy:config.dns.proxy_resolver.clone() };
             let hook=Arc::new(meow_dns::ResolverHostHook::new_with_proxy_resolver(pair.main.clone(),pair.proxy.clone()));
             let next=owner.network.with_resolver(hook).with_resolver_pair(pair);

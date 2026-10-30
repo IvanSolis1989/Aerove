@@ -9,6 +9,16 @@ from core_tests import FULL_NATIVE_SUITE_MODES, validate_policy as validate_core
 HASH = re.compile('[0-9a-f]{64}')
 RESOURCE_HEALTH_TARGETS = ('lib', 'anytls_owned_shutdown', 'api_lifecycle', 'config_validation', 'control_plane', 'dns_construction', 'ech_lazy', 'ech_response_binding', 'general_groups', 'group_delay', 'health_round_context', 'host_policy_runtime', 'native_ech_context', 'native_observability', 'native_telemetry', 'node_delay', 'offline_scope', 'owned_runtime', 'owned_spawn', 'packet_fd', 'physical_dns', 'provider_events', 'provider_files', 'provider_groups', 'provider_projection_gate', 'provider_rules', 'proxy_runtime', 'request_policy', 'resource_fetch', 'resource_roots', 'runtime_admission', 'runtime_dialers', 'runtime_general_groups', 'runtime_provider_projection', 'runtime_providers', 'runtime_transports', 'statistics_actual_outcome', 'tcp_dns', 'transport_tasks', 'tun_driver', 'urltest_gate', 'user_request_context')
 
+SELECTION_OWNER_MODE = "policy-runtime-selection-owner-v1"
+SELECTION_OWNER_OVERLAY_SHA256 = "ed52066f30c5067b1a95f78e4dfd2a4bd69ac10f4fc882e76965f88b1198afb4"
+
+def validate_selection_owner_source(policy):
+    """The fixed selection overlay and its stronger proof mode must travel together."""
+    selection = policy.get("coreTests") == SELECTION_OWNER_MODE
+    selection_source = policy.get("overlaySha256") == SELECTION_OWNER_OVERLAY_SHA256
+    if selection != selection_source:
+        raise ValueError("Selection owner source requires its exact approved proof mode/overlay")
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -71,6 +81,7 @@ def load_policy(root, *, check_resolution_seed=True):
         if value['beforeSha256'] is not None and (not isinstance(value['beforeSha256'],str) or not HASH.fullmatch(value['beforeSha256'])):raise ValueError('Invalid previous source hash')
     actual=digest(json.dumps(overlay['files'],sort_keys=True,separators=(',',':')).encode())
     if actual!=overlay['adaptedFileManifestSha256']:raise ValueError('Adapted file manifest identity mismatch')
+    validate_selection_owner_source(policy)
     return dict(policy,policySha256=digest(raw),overlayMetadata=overlay)
 
 

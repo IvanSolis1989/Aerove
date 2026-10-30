@@ -48,8 +48,8 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "afdcf45c8659dd9cc705c075ac7b81b38f6927665beb0f48390646d39c9443bf",
+  "overlaySha256": "ed52066f30c5067b1a95f78e4dfd2a4bd69ac10f4fc882e76965f88b1198afb4",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-provider-reader-v1",
+  "coreTests": "policy-runtime-selection-owner-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
 }

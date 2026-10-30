@@ -266,3 +266,202 @@ async fn actual_injected_dialer_same_arc_publication_invalidates_slow_measuremen
     route.dialer_registry.publish(route.proxies.clone());assert!(!proof.is_current());exit.release.notify_one();let response=tokio::time::timeout(Duration::from_secs(5),pending).await.unwrap().unwrap();assert!(response.starts_with("HTTP/1.1 409"),"{response}");assert_eq!(api.control.snapshot().await.unwrap(),before);assert_eq!(serde_json::to_value(node.health().delay_history()).unwrap(),history);assert!(front.targets.lock().unwrap().iter().all(|value|value==&exit.address.to_string()));
     token.cancel();api.cancel();scope.close().await.unwrap();if let Err(error)=groups.await{assert!(error.is_cancelled());}serving.await.unwrap();api.join().await;servers.close().await;
 }
+
+fn startup_request(control: &aerove_meow_core::control::RouteControl, before: &aerove_meow_core::control::RouteSnapshot, entries: &[(&str, &str)])
+    -> aerove_meow_core::control::StartupSelectionRequest {
+    aerove_meow_core::control::StartupSelectionRequest {
+        expected_core_epoch: before.core_epoch.clone(), expected_route_version: before.route_version.clone(),
+        expected_selection_intent: control.startup_selection_snapshot().unwrap().selection_intent,
+        expected_graph_token: control.startup_selection_snapshot().unwrap().graph_token,
+        requested: entries.iter().map(|(group, member)| (group.to_string(), member.to_string())).collect(),
+    }
+}
+
+#[tokio::test]
+async fn startup_history_memory_commit_reads_real_urltest_and_fallback_fixed_without_probing() {
+    let yaml = "strict: true\nproxy-groups:\n - {name: UT,type: url-test,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}\n - {name: FB,type: fallback,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}\nrules: ['MATCH,UT']\n";
+    let (api, tunnel, scope, _) = fixture(yaml).await;
+    let events = api.control.activate_groups(&scope).unwrap();
+    let direct = tunnel.route_snapshot().proxies["DIRECT"].clone();
+    let history = serde_json::to_value(direct.health().delay_history()).unwrap();
+    let before = api.control.snapshot().await.unwrap();
+    let request = startup_request(&api.control, &before, &[("UT", "DIRECT"), ("FB", "DIRECT"), ("DELETED", "OLD")]);
+    let raw = request.requested.clone();
+    let receipt = api.control.restore_startup_selection(request).unwrap();
+    assert_eq!(receipt.requested, raw);
+    assert_eq!(receipt.groups["UT"].fixed.as_deref(), Some("DIRECT"));
+    assert_eq!(receipt.groups["FB"].fixed.as_deref(), Some("DIRECT"));
+    assert_eq!(receipt.route.picks["UT"], receipt.groups["UT"].current);
+    assert_eq!(serde_json::to_value(direct.health().delay_history()).unwrap(), history, "startup cache must not invoke Fallback Set/probe");
+    let next = api.control.restore_startup_selection(startup_request(&api.control, &receipt.route, &[("UT", "REMOVED"), ("FB", "")])).unwrap();
+    assert_eq!(next.requested["UT"], "REMOVED");
+    assert_eq!(next.groups["UT"].fixed.as_deref(), Some(""));
+    assert_eq!(next.groups["FB"].fixed.as_deref(), Some(""));
+    api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+}
+
+#[tokio::test]
+async fn startup_stale_fallback_and_urltest_restore_together_with_real_raw_consumption() {
+    let yaml = "strict: true\nproxy-groups:\n - {name: AUTO,type: url-test,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}\n - {name: FB,type: fallback,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}\nrules: ['MATCH,AUTO']\n";
+    let (api, tunnel, scope, _) = fixture(yaml).await;
+    let events = api.control.activate_groups(&scope).unwrap();
+    tunnel.route_snapshot().proxies["DIRECT"].health().set_alive(false);
+    let before = api.control.startup_selection_snapshot().unwrap();
+    let applied = api.control.restore_startup_selection(startup_request(&api.control, &before.route, &[("AUTO", "REJECT"), ("FB", "REMOVED")])).unwrap();
+    assert_eq!(applied.requested["FB"], "REMOVED");
+    assert_eq!(applied.groups["AUTO"].fixed.as_deref(), Some("REJECT"));
+    assert_eq!(applied.consumed["FB"].selected, "DIRECT");
+    assert_eq!(applied.consumed["FB"].fixed_before, "REMOVED"); assert_eq!(applied.consumed["FB"].fixed_after, "REMOVED");
+    let actual = api.control.startup_selection_snapshot().unwrap();
+    assert_eq!(actual.groups["FB"].fixed.as_deref(), Some("REMOVED")); assert_eq!(actual.groups["FB"].current, "DIRECT");
+    assert_eq!(actual.route, applied.route); assert_eq!(actual.selection_intent, applied.selection_intent);
+    api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+}
+
+#[tokio::test]
+async fn startup_cache_epoch_route_and_terminal_cancel_are_checked_before_any_mutation() {
+    let yaml = "strict: true\nproxy-groups: [{name: AUTO,type: url-test,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,AUTO']\n";
+    let (api, _tunnel, scope, _) = fixture(yaml).await;
+    let events = api.control.activate_groups(&scope).unwrap();
+    let before = api.control.snapshot().await.unwrap();
+    let mut old = startup_request(&api.control, &before, &[("AUTO", "REJECT")]); old.expected_core_epoch = "76".into();
+    assert!(matches!(api.control.restore_startup_selection(old), Err(aerove_meow_core::control::StartupSelectionError::Control(ControlError::Superseded))));
+    let mut old = startup_request(&api.control, &before, &[("AUTO", "REJECT")]); old.expected_route_version = "999".into();
+    assert!(matches!(api.control.restore_startup_selection(old), Err(aerove_meow_core::control::StartupSelectionError::Control(ControlError::Superseded))));
+    assert_eq!(api.control.snapshot().await.unwrap(), before);
+    let stopped_request = startup_request(&api.control, &before, &[("AUTO", "REJECT")]);
+    api.cancel();
+    assert!(matches!(api.control.restore_startup_selection(stopped_request), Err(aerove_meow_core::control::StartupSelectionError::Control(ControlError::Cancelled))));
+    scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+}
+
+#[tokio::test]
+async fn startup_urltest_dead_then_revived_pin_keeps_fixed_while_actual_route_recovers() {
+    let yaml = "strict: true\nproxy-groups: [{name: AUTO,type: url-test,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,AUTO']\n";
+    let (api, tunnel, scope, _) = fixture(yaml).await;
+    let events = api.control.activate_groups(&scope).unwrap();
+    tunnel.route_snapshot().proxies["REJECT"].health().record_delay(10);
+    let before = api.control.snapshot().await.unwrap();
+    api.control.restore_startup_selection(startup_request(&api.control, &before, &[("AUTO", "DIRECT")])).unwrap();
+    let direct = tunnel.route_snapshot().proxies["DIRECT"].clone();
+    direct.health().set_alive(false);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let actual = api.control.startup_selection_snapshot().unwrap();
+            assert_eq!(actual.groups["AUTO"].fixed.as_deref(), Some("DIRECT"));
+            if actual.groups["AUTO"].current == "REJECT" { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    direct.health().record_delay(20);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let actual = api.control.startup_selection_snapshot().unwrap();
+            assert_eq!(actual.groups["AUTO"].fixed.as_deref(), Some("DIRECT"));
+            if actual.groups["AUTO"].current == "DIRECT" { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+}
+
+#[tokio::test]
+async fn startup_dead_fallback_consumption_is_captured_then_actual_business_read_is_auto() {
+    let yaml = "strict: true\nproxy-groups: [{name: FB,type: fallback,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,FB']\n";
+    let (api, tunnel, scope, _) = fixture(yaml).await;
+    let direct = tunnel.route_snapshot().proxies["DIRECT"].clone(); direct.health().set_alive(false);
+    let events = api.control.activate_groups(&scope).unwrap();
+    let before = api.control.startup_selection_snapshot().unwrap();
+    let applied = api.control.restore_startup_selection(startup_request(&api.control, &before.route, &[("FB", "DIRECT")])).unwrap();
+    assert_eq!(applied.consumed["FB"].fixed_before, "DIRECT"); assert_eq!(applied.consumed["FB"].fixed_after, "");
+    assert_eq!(applied.consumed["FB"].selected, "REJECT");
+    let after = api.control.startup_selection_snapshot().unwrap();
+    assert_eq!(after.groups["FB"].fixed.as_deref(), Some("")); assert_eq!(after.groups["FB"].current, "REJECT");
+    assert_eq!(after.route, applied.route); assert_eq!(after.selection_intent, applied.selection_intent);
+    api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+}
+
+async fn startup_http(address: std::net::SocketAddr, secret: &str, method: &str, body: &str) -> String {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    stream.write_all(format!("{method} /aerove/selection-cache HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {secret}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(Duration::from_secs(5), stream.read_to_string(&mut response)).await.unwrap().unwrap(); response
+}
+
+#[tokio::test]
+async fn startup_cache_real_private_http_is_cas_guarded_and_absent_from_user_controller() {
+    let yaml = "strict: true\nproxy-groups: [{name: AUTO,type: url-test,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,AUTO']\n";
+    let (api, _tunnel, scope, _) = fixture(yaml).await;
+    let events = api.control.activate_groups(&scope).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address = listener.local_addr().unwrap();
+    let user = TcpListener::bind("127.0.0.1:0").await.unwrap(); let user_address = user.local_addr().unwrap();
+    let token = CancellationToken::new();
+    let private_task = { let api = api.clone(); let token = token.clone(); tokio::spawn(async move { api.serve_private(listener, token).await.unwrap(); }) };
+    let user_task = { let api = api.clone(); let token = token.clone(); tokio::spawn(async move { api.serve_user(user, token).await.unwrap(); }) };
+    assert!(startup_http(user_address, USER, "GET", "").await.starts_with("HTTP/1.1 404"));
+    let before = api.control.snapshot().await.unwrap();
+    let body = serde_json::json!({"expectedCoreEpoch":before.core_epoch,"expectedRouteVersion":before.route_version,"expectedGraphToken":api.control.startup_selection_snapshot().unwrap().graph_token,"expectedSelectionIntent":api.control.startup_selection_snapshot().unwrap().selection_intent,"requested":{"AUTO":"DIRECT"}}).to_string();
+    // DELETE auto->auto is a newer intent even though it leaves the route version unchanged.
+    assert!(startup_http(address, PRIVATE, "DELETE", "").await.starts_with("HTTP/1.1 204"));
+    assert_eq!(api.control.snapshot().await.unwrap(), before);
+    assert!(startup_http(address, PRIVATE, "POST", &body).await.starts_with("HTTP/1.1 409"));
+    let body = serde_json::json!({"expectedCoreEpoch":before.core_epoch,"expectedRouteVersion":before.route_version,
+        "expectedGraphToken":api.control.startup_selection_snapshot().unwrap().graph_token,"expectedSelectionIntent":api.control.startup_selection_snapshot().unwrap().selection_intent,"requested":{"AUTO":"DIRECT"}}).to_string();
+    let response = startup_http(address, PRIVATE, "POST", &body).await; assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let payload: serde_json::Value = serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(payload["requested"]["AUTO"], "DIRECT"); assert_eq!(payload["groups"]["AUTO"]["fixed"], "DIRECT");
+    let actual = startup_http(address, PRIVATE, "GET", "").await; assert!(actual.starts_with("HTTP/1.1 200"));
+    assert!(startup_http(address, PRIVATE, "POST", &body).await.starts_with("HTTP/1.1 409"));
+    token.cancel(); api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); }
+    private_task.await.unwrap(); user_task.await.unwrap(); api.join().await;
+}
+
+
+#[tokio::test]
+async fn startup_same_arc_registry_republication_invalidates_the_original_graph_token() {
+    let yaml = "strict: true\nproxies:\n - {name: FRONT,type: direct}\n - {name: NODE,type: http,server: 127.0.0.1,port: 9,dialer-proxy: FRONT}\nproxy-groups: [{name: AUTO,type: url-test,proxies: [NODE,DIRECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,AUTO']\n";
+    let (api, tunnel, scope, _) = fixture(yaml).await;
+    let events = api.control.activate_groups(&scope).unwrap();
+    let before = api.control.startup_selection_snapshot().unwrap();
+    let request = startup_request(&api.control, &before.route, &[("AUTO", "DIRECT")]);
+    let route = tunnel.route_snapshot(); route.dialer_registry.publish(route.proxies.clone());
+    assert!(matches!(api.control.restore_startup_selection(request), Err(aerove_meow_core::control::StartupSelectionError::Control(ControlError::Superseded))));
+    let after = api.control.startup_selection_snapshot().unwrap();
+    assert_ne!(after.graph_token, before.graph_token); assert_eq!(after.groups["AUTO"].fixed, before.groups["AUTO"].fixed);
+    api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
+}
+
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
+async fn startup_fallback_first_consumption_then_actual_nested_http_uses_the_standard_business_member() {
+    for stale in [true, false] {
+        let mut servers = pure_servers::Servers::new();
+        let a = servers.proxy().await; let b = servers.proxy().await; let c = servers.proxy().await;
+        let target = servers.origin().await;
+        let yaml = format!("strict: true\nproxies:\n - {{name: A,type: http,server: 127.0.0.1,port: {}}}\n - {{name: B,type: http,server: 127.0.0.1,port: {}}}\n - {{name: C,type: http,server: 127.0.0.1,port: {}}}\nproxy-groups:\n - {{name: FB,type: fallback,proxies: [A,B,C],url: 'http://127.0.0.1:9',interval: 0}}\n - {{name: OUTER,type: select,proxies: [FB,REJECT]}}\nrules: ['MATCH,OUTER']\n", a.address.port(), b.address.port(), c.address.port());
+        let (api, tunnel, scope, _) = fixture(&yaml).await;
+        let events = api.control.activate_groups(&scope).unwrap();
+        let route = tunnel.route_snapshot();
+        route.proxies[if stale { "A" } else { "B" }].health().set_alive(false);
+        let before = api.control.startup_selection_snapshot().unwrap();
+        let raw = if stale { "REMOVED" } else { "B" };
+        let applied = api.control.restore_startup_selection(startup_request(&api.control, &before.route, &[("FB", raw)])).unwrap();
+        assert_eq!(applied.requested["FB"], raw);
+        assert_eq!(applied.consumed["FB"].selected, if stale { "A" } else { "C" });
+        assert_eq!(applied.groups["FB"].fixed.as_deref(), Some(if stale { "REMOVED" } else { "" }));
+        assert_eq!(applied.groups["FB"].current, "A");
+        let after = api.control.startup_selection_snapshot().unwrap(); assert_eq!(after.route, applied.route);
+        assert!(a.targets.lock().unwrap().is_empty()); assert!(b.targets.lock().unwrap().is_empty()); assert!(c.targets.lock().unwrap().is_empty());
+        let meta = meow_common::Metadata { dst_ip: Some(target.ip()), dst_port: target.port(), ..Default::default() };
+        let selected = route.proxies["OUTER"].clone();
+        let work = Box::pin(async move { selected.dial_tcp(&meta).await });
+        let mut stream = tokio::time::timeout(Duration::from_secs(5), scope.run_captured(work)).await.unwrap().unwrap().unwrap();
+        stream.write_all(b"GET /business HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut body = Vec::new(); tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut body)).await.unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&body).starts_with("HTTP/1.1 204")); drop(stream);
+        assert_eq!(a.targets.lock().unwrap().as_slice(), [target.to_string()]);
+        assert!(b.targets.lock().unwrap().is_empty()); assert!(c.targets.lock().unwrap().is_empty(), "setup's C is a consumed Now result, not a cached override of the later business dial");
+        api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await; servers.close().await;
+    }
+}
