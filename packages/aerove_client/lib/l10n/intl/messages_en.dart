@@ -1168,6 +1168,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "listenRoutingMarkDesc": MessageLookupByLibrary.simpleMessage(
       "Listen routing mark works only on Linux.",
     ),
+    "liteDesc": MessageLookupByLibrary.simpleMessage(
+      "An Android 13+ proxy client based on meow-rs, simple and easy to use, open-source and ad-free.",
+    ),
+    "liteDisclaimerLicenseContent": MessageLookupByLibrary.simpleMessage(
+      "The Software is open source under the GPL-3.0 license. You may use, modify, and distribute it freely as long as you comply with that license, which requires derivative works to be released under GPL-3.0 as well and the original copyright notices to be kept.\n\nThird-party components in the Software, including the meow-rs core, follow their own licenses. The original authors are not responsible for any issue arising from modified or redistributed versions.",
+    ),
+    "liteDisclaimerSoftwareContent": MessageLookupByLibrary.simpleMessage(
+      "The Software is an open-source network proxy client for Android 13 and later, built on the meow-rs core. It only provides local tooling such as configuration management, rule-based routing, and traffic forwarding.",
+    ),
     "liveConnections": MessageLookupByLibrary.simpleMessage("Live connections"),
     "loading": MessageLookupByLibrary.simpleMessage("Loading…"),
     "local": MessageLookupByLibrary.simpleMessage("Local"),

@@ -908,6 +908,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "listenRoutingMarkDesc": MessageLookupByLibrary.simpleMessage(
       "监听路由标记仅在 Linux 生效。",
     ),
+    "liteDesc": MessageLookupByLibrary.simpleMessage(
+      "基于 meow-rs 的 Android 13 及以上版本代理客户端，简单易用，开源无广告。",
+    ),
+    "liteDisclaimerLicenseContent": MessageLookupByLibrary.simpleMessage(
+      "本软件以 GPL-3.0 协议开源。你可以在遵守该协议的前提下自由使用、修改和分发本软件，但须同样以 GPL-3.0 协议开源并保留原作者的版权声明。\n\n本软件包含的第三方组件（包括 meow-rs 内核）分别遵循其各自的开源协议。基于本软件修改或分发的版本所产生的任何问题，与原作者无关。",
+    ),
+    "liteDisclaimerSoftwareContent": MessageLookupByLibrary.simpleMessage(
+      "本软件是基于 meow-rs 内核、适用于 Android 13 及以上版本的开源网络代理客户端，仅提供配置管理、规则分流与流量转发等本地工具功能。",
+    ),
     "liveConnections": MessageLookupByLibrary.simpleMessage("实时连接"),
     "loading": MessageLookupByLibrary.simpleMessage("加载中…"),
     "local": MessageLookupByLibrary.simpleMessage("本地"),

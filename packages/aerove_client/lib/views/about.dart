@@ -1,3 +1,4 @@
+import 'package:fl_clash/common/product_core_copy.dart';
 import 'package:fl_clash/product.dart';
 
 import 'dart:async';
@@ -190,7 +191,10 @@ class _AboutHero extends StatelessWidget {
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: GlassText(
-              appLocalizations.desc,
+              productCoreCopy(
+                ClientProduct.current.expectedCoreId,
+                appLocalizations,
+              ).description,
               textAlign: TextAlign.center,
               style: AppTextStyle.subheadline
                   .of(context)

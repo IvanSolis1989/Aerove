@@ -1003,6 +1003,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "listenRoutingMarkDesc": MessageLookupByLibrary.simpleMessage(
       "リッスンのルーティングマークは Linux でのみ有効です。",
     ),
+    "liteDesc": MessageLookupByLibrary.simpleMessage(
+      "meow-rsベースのAndroid 13以降向けプロキシクライアント。シンプルで使いやすく、オープンソースで広告もありません。",
+    ),
+    "liteDisclaimerLicenseContent": MessageLookupByLibrary.simpleMessage(
+      "本ソフトウェアは GPL-3.0 ライセンスのもとでオープンソースとして公開されています。同ライセンスを遵守する限り、自由に使用、改変、再配布できますが、派生物も GPL-3.0 で公開し、原著作者の著作権表示を保持する必要があります。\n\n本ソフトウェアに含まれるサードパーティのコンポーネント（meow-rs コアを含む）は、それぞれのライセンスに従います。改変版や再配布版に起因する問題について、原著作者は責任を負いません。",
+    ),
+    "liteDisclaimerSoftwareContent": MessageLookupByLibrary.simpleMessage(
+      "本ソフトウェアは meow-rs コアをベースとした Android 13 以降向けのオープンソースのネットワークプロキシクライアントであり、設定管理、ルールによる振り分け、トラフィック転送などのローカルツール機能のみを提供します。",
+    ),
     "liveConnections": MessageLookupByLibrary.simpleMessage("リアルタイム接続"),
     "loading": MessageLookupByLibrary.simpleMessage("読み込み中…"),
     "local": MessageLookupByLibrary.simpleMessage("ローカル"),

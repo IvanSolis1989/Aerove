@@ -142,14 +142,14 @@ val legacySourceTasks = if (flutterHost) {
 } else {
     mapOf(
         "main" to tasks.register<Sync>("prepareLegacyMainSources") {
-            from(platformAppRoot.resolve("src/main/java"), platformAppRoot.resolve("src/main/kotlin")) {
+            from(listOf(platformAppRoot.resolve("src/main/java"), platformAppRoot.resolve("src/main/kotlin"))) {
                 include("**/*.java", "**/*.kt")
                 exclude("**/FlutterMainActivity.kt", "**/MeowFlutterHost.kt", "**/MeowAppPlugin.kt")
             }
             into(layout.buildDirectory.dir("generated/legacySources/main"))
         },
         "test" to tasks.register<Sync>("prepareLegacyTestSources") {
-            from(platformAppRoot.resolve("src/test/java"), platformAppRoot.resolve("src/test/kotlin")) {
+            from(listOf(platformAppRoot.resolve("src/test/java"), platformAppRoot.resolve("src/test/kotlin"))) {
                 include("**/*.java", "**/*.kt")
                 exclude("**/MeowAppPluginTest.kt")
             }

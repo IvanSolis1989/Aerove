@@ -221,6 +221,6 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
         val QUERY_METHODS = setOf("getProxies", "getProxyDefinition", "getConnections", "getConnectionCount",
             "closeConnection", "closeConnections", "resetConnections", "clearDnsCache", "getTraffic", "getTotalTraffic",
             "getMemoryStats", "getLatestDelays", "asyncTestDelay", "changeProxy", "watchRoute", "checkRoutes",
-            "getExternalProviders", "getExternalProvider", "startLog", "stopLog", "resetTraffic", "probe", "outboundIp")
+            "getExternalProviders", "getExternalProvider", "startLog", "stopLog", "resetTraffic", "probe", "outboundIp", "serviceCheck")
     }
 }

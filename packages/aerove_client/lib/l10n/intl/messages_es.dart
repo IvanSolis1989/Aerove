@@ -1248,6 +1248,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "listenRoutingMarkDesc": MessageLookupByLibrary.simpleMessage(
       "La marca de enrutamiento de escucha solo funciona en Linux.",
     ),
+    "liteDesc": MessageLookupByLibrary.simpleMessage(
+      "Un cliente proxy para Android 13 o posterior basado en meow-rs, sencillo de usar, de código abierto y sin anuncios.",
+    ),
+    "liteDisclaimerLicenseContent": MessageLookupByLibrary.simpleMessage(
+      "El Software es de código abierto bajo la licencia GPL-3.0. Puedes usarlo, modificarlo y distribuirlo libremente siempre que cumplas dicha licencia, que exige que las obras derivadas se publiquen también bajo GPL-3.0 y que se conserven los avisos de derechos de autor originales.\n\nLos componentes de terceros del Software, incluido el núcleo meow-rs, siguen sus propias licencias. Los autores originales no se hacen responsables de ningún problema derivado de versiones modificadas o redistribuidas.",
+    ),
+    "liteDisclaimerSoftwareContent": MessageLookupByLibrary.simpleMessage(
+      "El Software es un cliente proxy de red de código abierto para Android 13 o posterior, basado en el núcleo meow-rs. Solo ofrece herramientas locales como la gestión de configuración, el enrutamiento basado en reglas y el reenvío de tráfico.",
+    ),
     "liveConnections": MessageLookupByLibrary.simpleMessage(
       "Conexiones activas",
     ),

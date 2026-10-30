@@ -165,12 +165,7 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S,
                 let previous;
                 let output = if let Some(decoder) = decoder.as_mut() {
                     previous = decoder.get_ref().bytes.len();
-                    match decoder.write_all(&chunk) {
-                        Ok(()) => {},
-                        Err(_) if decoder.get_ref().stopped => break,
-                        Err(error) => return Err(error),
-                    }
-                    if decoder.get_ref().stopped { break; }
+                    if !write_decoded_chunk(decoder, &chunk)? { break; }
                     &decoder.get_ref().bytes
                 } else {
                     previous = bytes.len();
@@ -183,10 +178,7 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S,
                     && until(&String::from_utf8_lossy(&output[previous.saturating_sub(256)..])) { break; }
             }
         }
-        if let Some(mut decoder) = decoder {
-            if !decoder.get_ref().stopped { decoder.try_finish()?; }
-            bytes = std::mem::take(&mut decoder.get_mut().bytes);
-        }
+        if let Some(decoder) = decoder { bytes = finish_decoded_body(decoder)?; }
         Ok(ProbeResult { url: probe.url.clone(), status, headers, body: bytes, delay, chains: Vec::new(), rule: String::new(), rule_payload: String::new() })
     };
     tokio::pin!(read, connection);
@@ -198,15 +190,130 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S,
 
 struct LimitedBody { bytes: Vec<u8>, limit: usize, until: Option<fn(&str) -> bool>, stopped: bool, truncate: bool }
 
+impl LimitedBody {
+    fn completed_prefix(&self) -> bool { self.stopped && self.bytes.len() <= self.limit }
+}
+
+fn write_decoded_chunk(decoder: &mut flate2::write::GzDecoder<LimitedBody>, bytes: &[u8]) -> io::Result<bool> {
+    match decoder.write_all(bytes) {
+        Ok(()) => Ok(!decoder.get_ref().completed_prefix()),
+        Err(_) if decoder.get_ref().completed_prefix() => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+fn finish_decoded_body(mut decoder: flate2::write::GzDecoder<LimitedBody>) -> io::Result<Vec<u8>> {
+    if !decoder.get_ref().completed_prefix() {
+        // flate2 may flush its first decoded output only during try_finish.
+        // A requested prefix is complete then too; other decode and CRC errors fail.
+        match decoder.try_finish() {
+            Ok(()) => {},
+            Err(_) if decoder.get_ref().completed_prefix() => {},
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(std::mem::take(&mut decoder.get_mut().bytes))
+}
+
 impl io::Write for LimitedBody {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        if self.stopped { return Err(io::Error::other("probe scan complete")); }
         let previous = self.bytes.len();
-        let count = bytes.len().min(self.limit - previous);
+        let remaining = self.limit.checked_sub(previous)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "probe decoded body exceeded its limit"))?;
+        if bytes.is_empty() { return Ok(0); }
+        if self.stopped { return Err(io::Error::other("probe scan complete")); }
+        let count = bytes.len().min(remaining);
         if !self.truncate && count != bytes.len() { return Err(io::Error::other("probe decoded body limit reached")); }
-        self.bytes.extend_from_slice(bytes);
+        self.bytes.extend_from_slice(&bytes[..count]);
         self.stopped = (self.truncate && self.bytes.len() == self.limit) || self.until.is_some_and(|until| until(&String::from_utf8_lossy(&self.bytes[previous.saturating_sub(256)..])));
         Ok(count)
     }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
+#[cfg(test)]
+mod limited_body_tests {
+    use super::*;
+    use std::io::Write as _;
+
+    fn sink(limit: usize, truncate: bool) -> LimitedBody {
+        LimitedBody { bytes: Vec::new(), limit, until: None, stopped: false, truncate }
+    }
+
+    fn gzip(bytes: &[u8]) -> Vec<u8> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(bytes).unwrap(); encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn one_oversized_write_retains_exactly_the_reported_prefix_then_stops() {
+        let input = vec![b'x'; 32768];
+        for limit in [0, 8] {
+            let mut body = sink(limit, true);
+            assert_eq!(body.write(&input).unwrap(), limit);
+            assert_eq!(body.bytes.as_slice(), &input[..limit]); assert!(body.completed_prefix());
+            assert!(body.write(b"more").is_err()); assert_eq!(body.bytes.len(), limit);
+            assert_eq!(body.write(b"").unwrap(), 0); assert_eq!(body.bytes.len(), limit);
+        }
+    }
+
+    #[test]
+    fn nontruncating_oversize_and_broken_invariant_fail_without_mutation() {
+        let mut body = sink(8, false); body.write_all(b"ab").unwrap();
+        assert!(body.write(b"0123456789").is_err()); assert_eq!(body.bytes.as_slice(), b"ab"); assert!(!body.stopped);
+        let mut invalid = sink(1, true); invalid.bytes = b"invalid".to_vec(); invalid.stopped = true;
+        assert_eq!(invalid.write(b"x").unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert!(!invalid.completed_prefix()); assert_eq!(invalid.bytes.as_slice(), b"invalid");
+    }
+
+    #[test]
+    fn one_large_real_gzip_input_chunk_caps_decoded_dump_and_drop_safely() {
+        let input = vec![b'x'; 128 * 1024]; let compressed = gzip(&input);
+        assert!(compressed.len() < 4096);
+        let mut decoder = flate2::write::GzDecoder::new(sink(8, true));
+        assert!(!write_decoded_chunk(&mut decoder, &compressed).unwrap());
+        assert_eq!(decoder.get_ref().bytes.as_slice(), &input[..8]); assert!(decoder.get_ref().completed_prefix());
+        assert_eq!(finish_decoded_body(decoder).unwrap(), input[..8].to_vec());
+    }
+
+    #[test]
+    fn finalization_can_reach_the_requested_cap_without_turning_it_into_failure() {
+        let mut decoder = flate2::write::GzDecoder::new(sink(8, true));
+        assert!(write_decoded_chunk(&mut decoder, &gzip(b"abcdefghijklmnop")).unwrap());
+        assert!(!decoder.get_ref().stopped);
+        assert_eq!(finish_decoded_body(decoder).unwrap(), b"abcdefgh".to_vec());
+    }
+
+    #[test]
+    fn an_uncapped_valid_stream_finishes_but_bad_crc_is_not_a_successful_prefix() {
+        for corrupt in [false, true] {
+            let mut compressed = gzip(b"complete body");
+            if corrupt { let crc = compressed.len() - 8; compressed[crc] ^= 1; }
+            let mut decoder = flate2::write::GzDecoder::new(sink(1024, true));
+            assert!(write_decoded_chunk(&mut decoder, &compressed).unwrap());
+            let result = finish_decoded_body(decoder);
+            if corrupt { assert!(result.is_err()); } else { assert_eq!(result.unwrap(), b"complete body".to_vec()); }
+        }
+    }
+
+    #[test]
+    fn real_gzip_expansion_over_nontruncating_limit_remains_an_error() {
+        let compressed = gzip(&vec![b'x'; 128 * 1024]);
+        assert!(compressed.len() < 4096);
+        let mut decoder = flate2::write::GzDecoder::new(sink(4096, false));
+        assert!(write_decoded_chunk(&mut decoder, &compressed).is_err());
+        assert!(decoder.get_ref().bytes.len() <= 4096); assert!(!decoder.get_ref().stopped);
+    }
+
+    #[test]
+    fn requested_scan_marker_stops_a_real_gzip_stream_within_budget() {
+        fn found(text: &str) -> bool { text.contains("scan-marker") }
+        let input = [b"scan-marker".as_slice(), &vec![b'x'; 128 * 1024]].concat();
+        let mut body = sink(65536, false); body.until = Some(found);
+        let mut decoder = flate2::write::GzDecoder::new(body);
+        assert!(!write_decoded_chunk(&mut decoder, &gzip(&input)).unwrap());
+        let prefix = finish_decoded_body(decoder).unwrap();
+        assert!(prefix.starts_with(b"scan-marker"));
+        assert!(prefix.len() <= 65536); assert!(prefix.len() < input.len());
+    }
 }

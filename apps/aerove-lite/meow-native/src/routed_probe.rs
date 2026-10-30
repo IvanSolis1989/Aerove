@@ -662,7 +662,8 @@ mod tests {
             let (mut socket, head) = accepted_head(&origin).await;
             assert!(head.to_ascii_lowercase().contains("accept-encoding: gzip\r\n"));
             let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-            std::io::Write::write_all(&mut encoder, b"abcdefghijklmnop").unwrap();
+            let body = [b"abcdefgh".as_slice(), &vec![b'i'; 128 * 1024]].concat();
+            std::io::Write::write_all(&mut encoder, &body).unwrap();
             let compressed = encoder.finish().unwrap();
             socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", compressed.len()).as_bytes()).await.unwrap();
             socket.write_all(&compressed).await.unwrap();

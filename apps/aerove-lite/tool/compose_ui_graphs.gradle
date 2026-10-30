@@ -7,6 +7,19 @@ import org.gradle.api.artifacts.result.ResolvedDependencyResult
 import org.gradle.api.artifacts.result.UnresolvedDependencyResult
 import java.security.MessageDigest
 
+final File proofSource = initscript.sourceFile?.canonicalFile
+if (proofSource == null || proofSource.name != 'compose_ui_graphs.gradle' || proofSource.parentFile.name != 'tool') {
+    throw new GradleException('Compose UI proof requires its canonical product script')
+}
+final File productRoot = proofSource.parentFile.parentFile.canonicalFile
+final File productAppDirectory = new File(productRoot, 'app').canonicalFile
+final File buildLogicDirectory = new File(productRoot, 'build-logic').canonicalFile
+if (productRoot.name != 'aerove-lite' || productRoot.parentFile.name != 'apps' ||
+    productAppDirectory.parentFile != productRoot || buildLogicDirectory.parentFile != productRoot ||
+    !new File(productRoot, 'version.properties').isFile() || !new File(productRoot, 'settings.gradle.kts').isFile()) {
+    throw new GradleException('Compose UI proof product path identity is invalid')
+}
+
 final String uiVersion = '1.13.0-beta01'
 final Set<String> uiConstraints = [
     'ui-geometry', 'ui-graphics', 'ui-graphics-lint', 'ui-lint', 'ui-test',
@@ -30,8 +43,24 @@ final Closure<Map> requestRecord = { selector ->
 }
 
 gradle.projectsEvaluated {
+    final File evaluatedRoot = gradle.rootProject.projectDir.canonicalFile
+    if (evaluatedRoot == buildLogicDirectory) {
+        def parentBuild = gradle.parent
+        if (gradle.rootProject.name != 'aerove-lite-build-logic' || parentBuild == null ||
+            parentBuild.rootProject.projectDir.canonicalFile != productRoot ||
+            parentBuild.rootProject.name != 'AEROVE Lite' || gradle.rootProject.findProject(':app') != null) {
+            throw new GradleException('Compose UI proof encountered an unexpected build-logic identity')
+        }
+        return
+    }
+    if (evaluatedRoot != productRoot || gradle.rootProject.name != 'AEROVE Lite') {
+        throw new GradleException('Compose UI proof invoked outside the canonical Lite product build')
+    }
     def app = gradle.rootProject.findProject(':app')
     if (app == null) throw new GradleException('Compose UI proof requires :app')
+    if (app.projectDir.canonicalFile != productAppDirectory) {
+        throw new GradleException('Compose UI proof :app project path does not match the product')
+    }
     def reportFile = app.layout.buildDirectory.file('reports/compose-ui-resolution.json').get().asFile
     def reportTask = app.tasks.register('reportComposeUiResolution') {
         group = 'verification'

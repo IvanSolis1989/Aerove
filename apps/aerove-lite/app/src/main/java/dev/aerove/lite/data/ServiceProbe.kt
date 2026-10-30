@@ -60,20 +60,23 @@ enum class ServiceCheckFailure(val code: String) {
 class ServiceCheckException(val statusCode: Int, val reason: ServiceCheckFailure?) :
     IOException("Core service check returned HTTP $statusCode${reason?.let { ": ${it.code}" }.orEmpty()}")
 
+internal class ServiceCheckRequestException(val field: String, message: String) : IllegalArgumentException(message)
+
 internal fun serviceCheckFailure(statusCode: Int, body: String): ServiceCheckException {
     val code = try { JSONObject(body).opt("error") as? String } catch (_: JSONException) { null }
     return ServiceCheckException(statusCode, ServiceCheckFailure.entries.firstOrNull { it.code == code })
 }
 
 internal fun serviceCheckBody(targets: List<ServiceTarget>, proxyName: String, timeoutMillis: Int): JSONObject {
-    require(targets.isNotEmpty() && targets.size <= ServiceTarget.entries.size && targets.distinct().size == targets.size) {
-        "Service checks require explicit, unique targets"
-    }
-    require(timeoutMillis in 1..60000) { "Service timeout must be between 1 and 60000 milliseconds" }
-    require(proxyName.toByteArray(Charsets.UTF_8).size <= 4096) { "Service proxy name is too long" }
+    if (targets.isEmpty()) throw ServiceCheckRequestException("names", "Service checks require explicit targets")
+    if (timeoutMillis !in 1..60000)
+        throw ServiceCheckRequestException("timeout", "Service timeout must be between 1 and 60000 milliseconds")
+    if (proxyName.toByteArray(Charsets.UTF_8).size > 4096)
+        throw ServiceCheckRequestException("proxy-name", "Service proxy name is too long")
     return JSONObject().put("names", JSONArray(targets.map { it.id }))
         .put("proxy-name", proxyName).put("timeout", timeoutMillis).also {
-            require(it.toString().toByteArray(Charsets.UTF_8).size <= 8192) { "Service request is too large" }
+            if (it.toString().toByteArray(Charsets.UTF_8).size > 8192)
+                throw ServiceCheckRequestException("arguments", "Encoded service request exceeds 8192 UTF-8 bytes")
         }
 }
 

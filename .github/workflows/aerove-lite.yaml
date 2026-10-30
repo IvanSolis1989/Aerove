@@ -653,11 +653,11 @@ jobs:
         import json, os
         from pathlib import Path
         output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
-        roots = [Path('apps/aerove-lite/android/app/build/outputs/apk'), Path('apps/aerove-lite/app/build/outputs/apk')]
-        apks = [str(p) for root in roots if root.exists() for p in root.rglob('*.apk')]
+        roots = [Path('apps/aerove-lite/build'), Path('apps/aerove-lite/android/app/build'), Path('apps/aerove-lite/app/build')]
+        apks = sorted({str(p) for root in roots if root.exists() for p in root.rglob('*.apk')})
         receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
                        buildRoot='apps/aerove-lite/android', requestedTasks=['compileReleaseKotlin', 'compileReleaseUnitTestKotlin'],
-                       appApkBuilt=bool(apks), apks=apks, acceptance=False)
+                       checkedOutputRoots=[str(root) for root in roots], appApkBuilt=bool(apks), apks=apks, acceptance=False)
         (output / 'scope.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert not apks, 'Compile-only preflight unexpectedly packaged an application'
         PY
@@ -667,6 +667,8 @@ jobs:
         name: AEROVE-Lite-Flutter-host-compilation
         path: |-
           ${{ runner.temp }}/lite-flutter-host/
+          apps/aerove-lite/build/app/reports/
+          apps/aerove-lite/build/app/test-results/
           apps/aerove-lite/android/app/build/reports/
           apps/aerove-lite/android/app/build/test-results/
         if-no-files-found: error

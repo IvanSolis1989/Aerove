@@ -982,6 +982,15 @@ class MessageLookup extends MessageLookupByLibrary {
     "listenRoutingMarkDesc": MessageLookupByLibrary.simpleMessage(
       "수신 라우팅 마크는 Linux에서만 작동합니다.",
     ),
+    "liteDesc": MessageLookupByLibrary.simpleMessage(
+      "meow-rs 기반의 Android 13 이상용 프록시 클라이언트로, 간편하게 사용할 수 있으며 오픈 소스이고 광고가 없습니다.",
+    ),
+    "liteDisclaimerLicenseContent": MessageLookupByLibrary.simpleMessage(
+      "본 소프트웨어는 GPL-3.0 라이선스로 공개된 오픈 소스입니다. 파생 저작물도 GPL-3.0으로 배포하고 원저작권 고지를 유지해야 하는 라이선스 조건을 준수하는 한 자유롭게 사용, 수정, 배포할 수 있습니다.\n\nmeow-rs 코어를 포함한 본 소프트웨어의 제3자 구성 요소는 각자의 라이선스를 따릅니다. 원저작자는 수정 또는 재배포된 버전에서 발생하는 어떠한 문제에도 책임을 지지 않습니다.",
+    ),
+    "liteDisclaimerSoftwareContent": MessageLookupByLibrary.simpleMessage(
+      "본 소프트웨어는 meow-rs 코어를 기반으로 한 Android 13 이상용 오픈 소스 네트워크 프록시 클라이언트입니다. 구성 관리, 규칙 기반 라우팅, 트래픽 전달과 같은 로컬 도구만 제공합니다.",
+    ),
     "liveConnections": MessageLookupByLibrary.simpleMessage("실시간 연결"),
     "loading": MessageLookupByLibrary.simpleMessage("로드 중…"),
     "local": MessageLookupByLibrary.simpleMessage("로컬"),

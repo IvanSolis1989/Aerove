@@ -306,6 +306,14 @@ Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f921
 
 **许可证、署名与证据：** BSD-3-Clause；[Isolate.kill API](https://api.dart.dev/dart-isolate/Isolate/kill.html)、固定Dart SDK版本/source
 
+#### [dart-lang/test · matcher](https://github.com/dart-lang/test/tree/master/pkgs/matcher)
+
+**固定版本 / revision：** Pub `matcher 0.12.20`；锁定包 SHA256 `31bd099b47c10cd1aeb55146a2d46ce0277630ecef3f7dae54ad7873f36696cd`
+
+**用途与采用方式：** 共享资源边界测试只读核对 `Throws.matchAsync` 对零参数函数、同步异常和返回 Future 的处理；沿用现有 `throwsA` 断言，传入真实资源加载函数，不复制 matcher 实现、不模拟资源或增加依赖。
+
+**许可证、署名与证据：** BSD-3-Clause；保留 Dart project authors 署名、现有锁文件与安装包 `LICENSE`；[固定版本 API](https://pub.dev/documentation/matcher/0.12.20/matcher/throwsA.html)。
+
 #### [simolus3/drift](https://github.com/simolus3/drift)
 
 **固定版本 / revision：** `2.35.1` / tag `drift-2.35.1` / `f7e4c72bd10d92b9e1a8bfb768730ca1096b1341`；现有 Pub 锁定包 SHA256 `a21a6a7a9e6a0bcabdf47a9af4247c556d38dc9bfe9f05c4fdf72a488bb57eab`
@@ -945,7 +953,9 @@ Lite 当前内置专版为 `v6.0.21-meow.7`，按固定提交 `c18c314d94206eb67
 
 **固定版本 / revision：** 候选精确依赖 `flate2 =1.1.10`；registry checksum `6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb`
 
-**用途与采用方式：** Meow 离线资源校验候选采用有界 `MultiGzDecoder`，复用旧 Lite `native/upstream/resources.rs` 的多成员 gzip 解码经验；新候选 Cargo 明确 `default-features=false, features=[rust_backend]`。成功 [Run19](https://github.com/IvanSolis1989/Aerove/actions/runs/40002589911) 锁 `333699a8…` 已固定该依赖，配置与资源目标 16 项实际通过（含 gzip 与 FIFO 回归）；当前全图 103 主测试及 17 个 feature 边界测试通过，尚无 APK/ART 验收。
+**用途与采用方式：** Meow 离线资源校验候选采用有界 `MultiGzDecoder`，复用旧 Lite `native/upstream/resources.rs` 的多成员 gzip 解码经验；新候选 Cargo 明确 `default-features=false, features=[rust_backend]`。成功 [Run19](https://github.com/IvanSolis1989/Aerove/actions/runs/40002589911) 锁 `333699a8…` 已固定该依赖，配置与资源目标 16 项实际通过（含 gzip 与 FIFO 回归）；该阶段全图 103 主测试及 17 个 feature 边界测试通过，尚无 APK/ART 验收。
+
+通用 Meow 探测另参照同一校验包内 `zio::Writer`、`write::GzDecoder` 的短写、缓冲 drain、finish 和 Drop 行为，修正解码截断前缀的写入计数。复用现有解码器，保留严格读取的 CRC/解码错误；修复后的 Rust 测试单独记录，不沿用历史 Run19 的通过结论。
 
 **许可证、署名与证据：** MIT OR Apache-2.0；官方 1.1.10 原包 SHA 与锁校验值一致；`LICENSE-MIT` SHA256 `025436edff4cfcdde17a5811fdea78892d8482efd1abdec5a17872d07a4f2112`，`LICENSE-APACHE` SHA256 `a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2`；[MultiGzDecoder 官方文档](https://docs.rs/flate2/1.1.10/flate2/read/struct.MultiGzDecoder.html)。
 
@@ -1152,6 +1162,8 @@ Lite 端口释放失败的证据采集另只读参考固定 `6de0b804ca086a6194a
 **固定版本 / revision：** `v9.6.0` / `3f750f03d77e42327c5f9fcb9992110088330a32`（tag ref 直接指向该 commit）
 
 **用途与采用方式：** test-only CI graph parser 只读参照 [`DryRunBuildExecutionAction.java`](https://github.com/gradle/gradle/blob/3f750f03d77e42327c5f9fcb9992110088330a32/subprojects/core/src/main/java/org/gradle/execution/DryRunBuildExecutionAction.java#L45-L55) 输出的 plain `:task SKIPPED` 格式；仓库入口为 [test-only diagnostic workflow](../../.github/workflows/aerove-lite125-test-only-diagnostic.yaml) 与 [graph parser](../../.github/scripts/lite125_test_only_preflight.py)。只描述 dry-run 输出协议，不代表 App / APK 验收；未复制源码或新增产品依赖。
+
+双构建入口另只读参照同一固定版本的 `CopySpec.from(Object, Action)`、`ScriptHandler.getSourceFile` 与 `Gradle.getParent/projectsEvaluated`；沿 `DefaultIncludedBuildRegistry`、`AbstractBuildState`、`DefaultGradle` 核验 included build 的 parent 链。采用现有 CopySpec API 和精确产品路径校验，保持产品的 Compose 依赖证明；未复制 Gradle 实现或增加产品依赖。
 
 **许可证、署名与证据：** Apache-2.0；保留 Gradle 署名；固定 `LICENSE` 声明 Apache License 2.0。固定 `DryRunBuildExecutionAction.java` blob `e4203d3f0f136516f493786497729c0aa2d9128c`，SHA-256 `74a85c1931c554d991f35f36f3f054710b7cbba9780c2c6e82540790a7b5da5f`。
 

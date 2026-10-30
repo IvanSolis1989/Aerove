@@ -177,6 +177,7 @@ class CoreApiClient(
             listOf("aerove", "service-check"), "POST", body,
             budgetMillis = timeoutMillis * 6L,
             failure = ::serviceCheckFailure,
+            joinResponse = true,
         ), wanted)
     }
 

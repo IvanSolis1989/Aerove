@@ -1,3 +1,5 @@
+import 'package:fl_clash/common/product_core_copy.dart';
+import 'package:fl_clash/product.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/providers/app.dart';
@@ -79,7 +81,7 @@ class DisclaimerView extends StatelessWidget {
     (
       title: l.disclaimerSoftwareTitle,
       content:
-          '${l.disclaimerSoftwareContent}\n\n${l.disclaimerNoServiceStatement}',
+          '${productCoreCopy(ClientProduct.current.expectedCoreId, l).software}\n\n${l.disclaimerNoServiceStatement}',
     ),
     (title: l.disclaimerUsageTitle, content: l.disclaimerUsageContent),
     (
@@ -93,7 +95,10 @@ class DisclaimerView extends StatelessWidget {
     (title: l.disclaimerWarrantyTitle, content: l.disclaimerWarrantyContent),
     (title: l.disclaimerLiabilityTitle, content: l.disclaimerLiabilityContent),
     (title: l.disclaimerPrivacyTitle, content: l.disclaimerPrivacyContent),
-    (title: l.disclaimerLicenseTitle, content: l.disclaimerLicenseContent),
+    (
+      title: l.disclaimerLicenseTitle,
+      content: productCoreCopy(ClientProduct.current.expectedCoreId, l).license,
+    ),
     (title: l.disclaimerChangesTitle, content: l.disclaimerChangesContent),
     (title: l.disclaimerAcceptTitle, content: l.disclaimerAcceptContent),
   ];

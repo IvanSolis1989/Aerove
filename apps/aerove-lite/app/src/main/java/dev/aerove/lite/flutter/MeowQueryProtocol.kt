@@ -34,6 +34,7 @@ internal class MeowQueryProtocol(private val client: CoreApiClient,
     private val telemetry: MeowTelemetryProtocol, private val applied: MeowAppliedQueries?,
     private val coreEpoch: ULong, private val owner: String, private val generation: Long) {
     private val selection = kotlinx.coroutines.sync.Mutex()
+    private val serviceChecks = MeowServiceCheckProtocol(client, coreEpoch, telemetry::route)
     private val historyGate = Any()
     private var lastHistory: Pair<ULong, List<Map<String, Any?>>>? = null
 
@@ -158,6 +159,7 @@ internal class MeowQueryProtocol(private val client: CoreApiClient,
         "startLog" -> { noArguments(arguments); telemetry.setLogEnabled(true); null }
         "stopLog" -> { noArguments(arguments); telemetry.setLogEnabled(false); null }
         "probe", "outboundIp" -> routedProbe(arguments, method == "outboundIp")
+        "serviceCheck" -> serviceChecks.invoke(arguments)
         "resetTraffic" -> missing(method, "no matching native API with shared argument/result semantics")
         else -> throw MeowQueryException("unsupported_method", "Unknown query method: $method")
     }

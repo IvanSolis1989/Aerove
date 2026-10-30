@@ -87,7 +87,7 @@ void main() {
       );
       expect(script, contains('Mihomo'));
       await expectLater(
-        rootBundle.load(
+        () => rootBundle.load(
           'packages/fl_clash/${standardProduct.resources.defaultScriptAsset}',
         ),
         throwsA(isA<FlutterError>()),

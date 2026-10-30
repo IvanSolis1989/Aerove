@@ -341,6 +341,34 @@ class MeowEngineAttachmentTest {
         } finally { engine.closeAndJoin(); server.shutdown() }
     }
 
+    @Test fun sharedServiceCheckEnvelopeReachesTheOwnedHttpSessionAndReturnsItsDto() = runBlocking {
+        val home = home(); val seed = seed(home); val server = MockWebServer(); server.start()
+        val vpn = MutableStateFlow(running(seed, CoreEndpoint(server.port, "x".repeat(32))))
+        val owner = Owner(seed, vpn, seed.store.readAppliedIdentity()!!)
+        val serviceBodies = mutableListOf<JSONObject>()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
+                "/aerove/route" -> route()
+                "/aerove/service-check" -> {
+                    serviceBodies += JSONObject(request.body.readUtf8())
+                    MockResponse().setBody("""[{"name":"google","status":"available","region":"HK","delay":23,"chains":["local"],"checked-at":1790000000000,"core-epoch":5,"route-version":2,"hits":[{"host":"google.example","exit":"local"}]}]""")
+                }
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val engine = attachment(home, seed.store, vpn, this, owner)
+        try {
+            val response = rpc(engine, "serviceCheck", mapOf("names" to listOf("google"), "proxy-name" to "DIRECT", "timeout" to 1000))
+            assertEquals("test-serviceCheck", response.getString("id"))
+            assertFalse(response.has("error"))
+            val result = response.getJSONArray("result").getJSONObject(0)
+            assertEquals("google", result.getString("name")); assertEquals("available", result.getString("status"))
+            assertEquals(23, result.getInt("delay")); assertEquals(5, result.getInt("core-epoch"))
+            assertEquals("DIRECT", serviceBodies.single().getString("proxy-name"))
+            assertEquals(seed.snapshot.revision, seed.store.readAppliedIdentity()!!.revision)
+        } finally { engine.closeAndJoin(); server.shutdown() }
+    }
+
     private fun routeDispatcher(owner: Owner, probes: MutableList<Pair<String?, String?>>? = null) = object : Dispatcher() {
         override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl?.encodedPath) {
             "/aerove/route" -> route(owner.epoch.get())

@@ -130,9 +130,6 @@ class ServiceProbeTest {
         MockWebServer().use { server ->
             client(server).use { api ->
                 assertThrows(IllegalArgumentException::class.java) { runBlocking { api.serviceChecks(emptyList()) } }
-                assertThrows(IllegalArgumentException::class.java) { runBlocking {
-                    api.serviceChecks(listOf(ServiceTarget.Google, ServiceTarget.Google))
-                } }
                 listOf(-1, 0, 60001).forEach { timeout ->
                     assertThrows(IllegalArgumentException::class.java) { runBlocking {
                         api.serviceChecks(listOf(ServiceTarget.Google), timeoutMillis = timeout)
@@ -259,6 +256,18 @@ class ServiceProbeTest {
         listOf(body(second, first), body(first), body(first, second.replace("\"route-version\":12", "\"route-version\":13")),
             body(first, second.replace("\"core-epoch\":7", "\"core-epoch\":8"))).forEach { response ->
             assertThrows(IOException::class.java) { decodeServiceChecks(response, targets) }
+        }
+    }
+
+    @Test fun repeatedTargetsAreDecodedByOriginalIndexWithoutDeduplication() {
+        val targets = listOf(ServiceTarget.Google, ServiceTarget.GitHub, ServiceTarget.Google)
+        val first = row(targets[0])
+        val second = row(targets[1])
+        val third = row(targets[2], ServiceProbeStatus.Restricted)
+        assertEquals(listOf(ServiceProbeStatus.Available, ServiceProbeStatus.Available, ServiceProbeStatus.Restricted),
+            decodeServiceChecks(body(first, second, third), targets).map { it.status })
+        listOf(body(first, second), body(first, third, second), body(first, second, third, third)).forEach {
+            assertThrows(IOException::class.java) { decodeServiceChecks(it, targets) }
         }
     }
 
