@@ -4,6 +4,12 @@ import dev.aerove.lite.data.ControlEndpoint
 import dev.aerove.lite.data.CoreApiClient
 import dev.aerove.lite.data.CoreApiException
 import java.math.BigInteger
+import java.util.concurrent.LinkedBlockingQueue
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
@@ -312,6 +318,115 @@ class MeowQueryTelemetryTest {
         }
     }
 
+    @Test fun stoppingLogsDoesNotReportAnAlreadyQueuedSocketFailure() = runBlocking<Unit> {
+        val queued = LinkedBlockingQueue<Pair<CoroutineContext, Runnable>>()
+        val dispatchGate = Any()
+        var holding = false
+        val dispatcher = object : CoroutineDispatcher() {
+            override fun dispatch(context: CoroutineContext, block: Runnable) = synchronized(dispatchGate) {
+                if (holding) { queued.add(context to block); Unit } else Dispatchers.Default.dispatch(context, block)
+            }
+        }
+        val owner = SupervisorJob()
+        MockWebServer().use { server ->
+            val logs = CompletableDeferred<WebSocket>()
+            val stream = CompletableDeferred<WebSocket>()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse = MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        if (request.path == "/logs") logs.complete(webSocket) else stream.complete(webSocket)
+                    }
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, "") }
+                })
+            }
+            api(server).use { client ->
+                val failures = Channel<Throwable>(Channel.UNLIMITED)
+                val ready = CompletableDeferred<Unit>()
+                val telemetry = MeowTelemetryProtocol(client, 7uL, CoroutineScope(owner + dispatcher), { true }, { ready.complete(Unit) },
+                    { failures.trySend(it) }, false)
+                try {
+                    telemetry.setLogEnabled(true)
+                    telemetry.setActive(true)
+                    val peer = withTimeout(4000) { logs.await() }
+                    withTimeout(4000) { stream.await() }
+                    assertTrue(peer.send("""{"type":"info","payload":"reader ready"}"""))
+                    withTimeout(4000) { ready.await() }
+                    synchronized(dispatchGate) { holding = true }
+                    assertTrue(peer.close(1011, "actual upstream failure"))
+                    val pending = withContext(Dispatchers.IO) { queued.poll(4, TimeUnit.SECONDS) }
+                    assertNotNull("The real socket failure must be queued before stop", pending)
+                    val stop = async(start = CoroutineStart.UNDISPATCHED) { telemetry.setLogEnabled(false) }
+                    synchronized(dispatchGate) {
+                        holding = false
+                        pending!!.let { Dispatchers.Default.dispatch(it.first, it.second) }
+                        while (true) {
+                            val task = queued.poll() ?: break
+                            Dispatchers.Default.dispatch(task.first, task.second)
+                        }
+                    }
+                    withTimeout(4000) { stop.await() }
+                    assertTrue("Cancelled log reader must not publish a socket failure", failures.tryReceive().isFailure)
+                } finally {
+                    synchronized(dispatchGate) {
+                        holding = false
+                        while (true) {
+                            val task = queued.poll() ?: break
+                            Dispatchers.Default.dispatch(task.first, task.second)
+                        }
+                    }
+                    telemetry.close()
+                    owner.cancelAndJoin()
+                    failures.close()
+                }
+            }
+        }
+    }
+    @Test fun activeLogFailureIsReportedOnceAndFailureCallbackExceptionsRemainVisible() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            val logs = CompletableDeferred<WebSocket>()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse = MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                    override fun onOpen(webSocket: WebSocket, response: Response) {
+                        if (request.path == "/logs") logs.complete(webSocket)
+                    }
+                    override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, "") }
+                })
+            }
+            api(server).use { client ->
+                val uncaught = Channel<Throwable>(Channel.UNLIMITED)
+                val failures = Channel<Throwable>(Channel.UNLIMITED)
+                val calls = AtomicInteger()
+                val owner = SupervisorJob()
+                val handler = CoroutineExceptionHandler { _, failure -> uncaught.trySend(failure) }
+                val telemetry = MeowTelemetryProtocol(client, 7uL, CoroutineScope(owner + Dispatchers.Default + handler),
+                    { true }, {}, { failure ->
+                        calls.incrementAndGet()
+                        failures.trySend(failure)
+                        throw AssertionError("failure callback remains visible", failure)
+                    }, false)
+                try {
+                    telemetry.setLogEnabled(true)
+                    telemetry.setActive(true)
+                    assertTrue(withTimeout(4000) { logs.await() }.close(1011, "actual upstream failure"))
+                    val failure = withTimeout(4000) { failures.receive() }
+                    assertTrue(failure is java.io.IOException)
+                    assertEquals("Core stream closed (1011)", failure.message)
+                    val callbackError = withTimeout(4000) { uncaught.receive() }
+                    assertTrue(callbackError is AssertionError)
+                    assertEquals("failure callback remains visible", callbackError.message)
+                    assertSame(failure, callbackError.cause)
+                    telemetry.setLogEnabled(false)
+                    assertEquals(1, calls.get())
+                    assertTrue(failures.tryReceive().isFailure)
+                    assertTrue(uncaught.tryReceive().isFailure)
+                } finally {
+                    telemetry.close()
+                    owner.cancelAndJoin()
+                    failures.close(); uncaught.close()
+                }
+            }
+        }
+    }
     @Test fun callerCancellationCancelsTheActualHttpRead() = runBlocking<Unit> {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))

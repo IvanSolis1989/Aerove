@@ -146,7 +146,13 @@ internal class MeowTelemetryProtocol(private val client: CoreApiClient, private 
 
     private fun launchOwned(lease: Long, work: suspend () -> Unit): Job = scope.launch(start = CoroutineStart.DEFAULT) {
         try { work() } catch (cancelled: CancellationException) { throw cancelled }
-        catch (failure: Throwable) { synchronized(gate) { if (valid(lease)) onFailure(failure) } }
+        catch (failure: Throwable) {
+            val context = currentCoroutineContext()
+            synchronized(gate) {
+                context.ensureActive()
+                if (valid(lease)) onFailure(failure)
+            }
+        }
     }
 
     fun traffic(onlyProxy: Boolean, total: Boolean): Map<String, Any?> = synchronized(gate) {
