@@ -6,9 +6,11 @@
 
 分支差异以记录的 FlClash `v0.9.1`（`8d4f9744948751f1273fe871e1d05276fac09b0e`）为基线。代理协议、核心路由、VPN 授权和监控数据等上游已有能力，不列为 Aerove 独创功能。
 
-## 0.11.0-beta.17+2026102294 — 已验收待推广
+## 0.11.0-beta.17+2026102294 — 已发行
 
-标准版[原构建 #94](https://github.com/IvanSolis1989/Aerove/actions/runs/41050898199)使用源码 `aba97c45c26ac657ad2711205331fe902fd85ea8`，完整 CI 24项通过；用户沿用此前报错的配置安装验收通过，已明确授权合入 main 并发行同一原包。ARM64 APK 的 SHA-256 为 `f3883329af648e7041abaf828962befaa5d596cf300a87fe08b2f1aa442a3d43`。推广保留原源码、安装编号、签名和字节，不重新编译；Lite 独立继续开发与验收。
+标准版[原构建 #94](https://github.com/IvanSolis1989/Aerove/actions/runs/41050898199)使用源码 `aba97c45c26ac657ad2711205331fe902fd85ea8`，完整 CI 24项和用户真机验收通过。[推广 #96](https://github.com/IvanSolis1989/Aerove/actions/runs/41071145009) 于 2026-10-30 23:31:32（日本时间）发布为 [Android 预览版](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.17%2B2026102294)。发行资产下载核验通过，ARM64 APK 的 SHA-256 为 `f3883329af648e7041abaf828962befaa5d596cf300a87fe08b2f1aa442a3d43`；原源码、安装编号、签名和 APK 字节保持不变，没有重新编译。
+
+标准版官方更新列表及中英文下载页面已同步，[Telegram 原包推送](https://t.me/IvanSolis89/67) 已确认；稳定版 latest 保持 `v0.9.1+2026102203`。Lite 独立继续开发与验收。
 
 - 修复标准版对 Mihomo TUN 栈名称的大小写校验，接受内核原生使用的 `Mips`、`Mixed`、`System`、`Gvisor` 写法；保留未知值及跨内核不兼容值的错误提示，不改写用户源配置。
 - 标准与纯黑模式均保留柔光磨砂、流光清透和灵动极光；深色纯黑的极光底图比标准更暗，保留配色和缓动。
