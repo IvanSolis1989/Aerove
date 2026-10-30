@@ -869,7 +869,7 @@ jobs:
           python3 -m unittest tool.test_aerove_release_notes -v
           previous_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
           python3 tool/aerove_release_notes.py \
-            --tag "$TAG" --source "$BUILD_SOURCE" --previous-tag "$previous_tag" \
+            --tag "$TAG" --source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE" --previous-tag "$previous_tag" \
             --build-info dist/BUILD_INFO.json \
             --output "$RUNNER_TEMP/xclash-release.md"
           printf '\n\nOriginal build source: `%s`\nRelease source: `%s`\nRelease run: `%s` (attempt `%s`)\n' \

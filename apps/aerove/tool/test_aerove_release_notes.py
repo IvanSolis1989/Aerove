@@ -14,6 +14,51 @@ INFO = {'source': 'a' * 40, 'version': TAG.removeprefix('v')}
 
 
 class AeroveReleaseNotesTest(unittest.TestCase):
+    def test_cli_uses_equivalent_committed_notes_without_rewriting_build_identity(self):
+        script = Path(notes.__file__).resolve()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = {**os.environ, 'GIT_AUTHOR_NAME': 'Test', 'GIT_COMMITTER_NAME': 'Test',
+                           'GIT_AUTHOR_EMAIL': 'test@example.invalid', 'GIT_COMMITTER_EMAIL': 'test@example.invalid'}
+
+            def git(*arguments):
+                return subprocess.check_output(['git', *arguments], cwd=root, env=environment,
+                                               text=True, encoding='utf-8').strip()
+
+            git('init', '-q')
+            changelog = root / notes.CHANGELOG_PATH
+            changelog.parent.mkdir(parents=True)
+            changelog.write_text('## 待发布\n- 构建时的候选记录\n', encoding='utf-8')
+            application = root / 'apps/aerove/lib/main.dart'
+            application.parent.mkdir(parents=True)
+            application.write_text('void main() {}\n', encoding='utf-8')
+            git('add', '.')
+            git('commit', '-qm', 'build source')
+            original = git('rev-parse', 'HEAD')
+            info = root / 'BUILD_INFO.json'
+            info.write_text(json.dumps({**INFO, 'source': original}), encoding='utf-8')
+            changelog.write_text(f'## {TAG.removeprefix("v")} — 已验收待推广\n- 真机确认的修复\n', encoding='utf-8')
+            git('add', notes.CHANGELOG_PATH)
+            git('commit', '-qm', 'accepted notes')
+            accepted = git('rev-parse', 'HEAD')
+            command = [sys.executable, str(script), '--tag', TAG, '--source', original,
+                       '--changelog-source', accepted, '--build-info', str(info),
+                       '--output', str(root / 'release.md')]
+            changelog.write_text('## 待发布\n- 尚未提交的内容\n', encoding='utf-8')
+            subprocess.run(command, cwd=root, check=True)
+            rendered = (root / 'release.md').read_text(encoding='utf-8')
+            self.assertIn('真机确认的修复', rendered)
+            self.assertIn(f'源码：`{original}`', rendered)
+            self.assertNotIn('尚未提交的内容', rendered)
+            self.assertEqual(json.loads(info.read_text(encoding='utf-8'))['source'], original)
+            application.write_text('void main() { throw Exception(); }\n', encoding='utf-8')
+            git('add', 'apps/aerove/lib/main.dart')
+            git('commit', '-qm', 'changed application')
+            command[command.index('--changelog-source') + 1] = git('rev-parse', 'HEAD')
+            rejected = subprocess.run(command, cwd=root, capture_output=True, text=True, encoding='utf-8')
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('Product/build/acceptance input changed', rejected.stderr)
+
     def test_original_std74_candidate_preamble_is_removed_without_changing_build_identity(self):
         info = {'source': '806558b3c397ebd6b3d4ea4d558a442828c6d285',
                 'version': '0.11.0-beta.14+2026102274'}

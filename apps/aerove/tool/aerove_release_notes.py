@@ -2,7 +2,11 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'tooling'))
+import product_source
 
 if __package__:
     from .xclash_version import parse_release_tag
@@ -130,10 +134,21 @@ def previous_source_changelog(previous_tag, repo=None):
     return source_changelog(previous_tag, repo=repo, required=False)
 
 
+def release_changelog(build_source, changelog_source=None, repo=None):
+    if not changelog_source:
+        return source_changelog(build_source, repo=repo)
+    source = git('rev-parse', f'{changelog_source}^{{commit}}', repo=repo)
+    git('merge-base', '--is-ancestor', build_source, source, repo=repo)
+    product_source.equivalent(root=repo, product='aerove',
+                             build_source=build_source, release_source=source)
+    return source_changelog(source, repo=repo)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--tag', required=True)
     parser.add_argument('--source', required=True)
+    parser.add_argument('--changelog-source')
     parser.add_argument('--previous-tag', default='')
     parser.add_argument('--repo', type=Path, default=Path.cwd())
     parser.add_argument('--build-info', type=Path, required=True)
@@ -143,7 +158,7 @@ def main():
     source = git('rev-parse', f'{args.source}^{{commit}}', repo=args.repo)
     if info.get('source') != source:
         raise ValueError('The requested source does not match BUILD_INFO.json')
-    markdown = source_changelog(source, repo=args.repo)
+    markdown = release_changelog(source, args.changelog_source, repo=args.repo)
     previous = previous_source_changelog(args.previous_tag, repo=args.repo)
     args.output.write_text(render_release(markdown, args.tag, info, previous), encoding='utf-8')
 
