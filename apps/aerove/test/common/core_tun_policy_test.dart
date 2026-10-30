@@ -132,6 +132,48 @@ void main() {
   });
 
   test(
+    'Standard accepts Mihomo stack spelling without changing source',
+    () async {
+      for (final stack in ['Gvisor', 'System', 'Mixed', 'Mips', 'MIPS']) {
+        final input = state(
+          coreId: 'mihomo',
+          raw: {
+            'tun': {'stack': stack},
+          },
+        );
+        final result = await makeRealProfileTask(input, coreId: 'mihomo');
+        expect(
+          ((loadPlainYaml(result.yaml) as Map)['tun'] as Map)['stack'],
+          'mips',
+        );
+        expect(input.rawConfig['tun'], {'stack': stack});
+      }
+    },
+  );
+
+  test('stack spelling compatibility preserves product and unknown errors', () {
+    for (final (coreId, stack) in [
+      ('mihomo', 'Lwip'),
+      ('mihomo', 'unknown'),
+      ('mihomo', ' Mips'),
+      ('meow-rs', 'Mips'),
+      ('meow-rs', 'Lwip'),
+    ]) {
+      final capabilities = CoreCapabilities.forCore(coreId);
+      expect(
+        () => validateTunPolicy(
+          coreId: coreId,
+          stack: capabilities.defaultTunStack,
+          congestionController: capabilities.defaultTunCongestionController,
+          device: '',
+          sourceTun: {'stack': stack},
+        ),
+        throwsFormatException,
+      );
+    }
+  });
+
+  test(
     'Meow keeps source and selected TUN fields for strict native reconciliation',
     () async {
       final input = state(

@@ -9,7 +9,10 @@ void validateTunPolicy({
 }) {
   final capabilities = CoreCapabilities.forCore(coreId);
   void stackValue(Object? value) {
-    if (value is! String || !capabilities.tunStacks.contains(value)) {
+    final stack = value is String && coreId == CoreCapabilities.mihomo.coreId
+        ? value.toLowerCase()
+        : value;
+    if (stack is! String || !capabilities.tunStacks.contains(stack)) {
       throw FormatException('\$.tun.stack: $value is not supported by $coreId');
     }
   }
