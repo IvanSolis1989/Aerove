@@ -4,5 +4,12 @@ plugins {
     id("org.jetbrains.compose")
 }
 
-extra["liteComposeDependencies"] = listOf(compose.foundation, compose.material3, compose.materialIconsExtended, compose.ui)
+dependencies {
+    project.extra["liteComposeDependencies"] = listOf(
+        compose.foundation,
+        compose.material3,
+        compose.materialIconsExtended,
+        compose.ui,
+    )
+}
 apply(from = "../android/app-common.gradle.kts")

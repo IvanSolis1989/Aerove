@@ -139,7 +139,7 @@ async fn complete_group(fixture:&Fixture,proxy:&TcpListener)->String {
 #[tokio::test(flavor="multi_thread",worker_threads=3)]
 async fn fallback_owned_selection_records_its_real_group_url_without_relabeling_the_failed_node_test() {
     let proxy=TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let fixture=Fixture::new(Some(proxy.local_addr().unwrap().port())).await;
+    let fixture=Fixture::with_http_proxy(Some(proxy.local_addr().unwrap().port())).await;
     let failed_path=fixture.path(false).replace("/proxies/DIRECT/","/proxies/SLOW/");
     let failed=tokio::spawn(get(fixture.address,failed_path));
     let mut peer=proxy_probe(&proxy).await;

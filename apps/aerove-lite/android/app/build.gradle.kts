@@ -6,7 +6,14 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-extra["liteComposeDependencies"] = listOf(compose.foundation, compose.material3, compose.materialIconsExtended, compose.ui)
+dependencies {
+    project.extra["liteComposeDependencies"] = listOf(
+        compose.foundation,
+        compose.material3,
+        compose.materialIconsExtended,
+        compose.ui,
+    )
+}
 apply(from = "../app-common.gradle.kts")
 
 android {

@@ -30,7 +30,7 @@ var rawString = regexp.MustCompile(`r'([^']*)'`)
 
 func filterPresets(t *testing.T) map[string]string {
 	t.Helper()
-	source, err := os.ReadFile("../lib/models/config.dart")
+	source, err := os.ReadFile("../../../packages/aerove_client/lib/models/config.dart")
 	if err != nil {
 		t.Fatal(err)
 	}

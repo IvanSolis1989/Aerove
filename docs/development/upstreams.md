@@ -1105,6 +1105,14 @@ beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3
 
 **许可证、署名与证据：** GPL-2.0，固定源码文件头；[固定 emugl_config.cpp](https://android.googlesource.com/platform/external/qemu/+/ae9d18d2b6261179fbd57fffec720a04f7bfb053/android/android-ui/modules/aemu-gl-init/src/android/opengl/emugl_config.cpp)，blob `07c1a129a599927cc2aa0a7f674c0de835c4c5e5`。
 
+#### [JetBrains/compose-multiplatform](https://github.com/JetBrains/compose-multiplatform)
+
+**固定版本 / revision：** `v1.12.0` / `d67175a3766c51caa673b220c74a4fb68a61fd31`
+
+**用途与采用方式：** Lite 两个 Android 构建入口只读参照 [`ComposePlugin.kt`](https://github.com/JetBrains/compose-multiplatform/blob/d67175a3766c51caa673b220c74a4fb68a61fd31/gradle-plugins/compose/src/main/kotlin/org/jetbrains/compose/ComposePlugin.kt) 的依赖扩展注册位置，在 `dependencies` 接收者中复用既有四项 Compose 依赖；未复制实现、升级版本或新增依赖。
+
+**许可证、署名与证据：** Apache-2.0；固定版本官方源码与许可证，保留 JetBrains 署名。
+
 #### [JetBrains/compose-multiplatform-core](https://github.com/JetBrains/compose-multiplatform-core)
 
 **固定版本 / revision：** `v1.12.0` / `f29d2f99f3beafc60992c6a73dbbaa9f841c5d4c`

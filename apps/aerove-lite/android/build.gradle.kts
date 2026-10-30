@@ -27,6 +27,10 @@ subprojects {
     )
 }
 
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
 // Keep Java/Kotlin targets aligned with the existing Standard Flutter host.
 gradle.projectsEvaluated {
     allprojects {
