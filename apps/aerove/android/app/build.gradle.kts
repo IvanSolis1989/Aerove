@@ -24,7 +24,11 @@ val hasReleaseSigning = releaseStoreFile.exists() &&
 
 android {
     namespace = "com.follow.clash"
-    compileSdk = libs.versions.compileSdk.get().toInt()
+    compileSdk {
+        version = release(libs.versions.compileSdk.get().toInt()) {
+            minorApiLevel = libs.versions.compileSdkMinor.get().toInt()
+        }
+    }
     ndkVersion = libs.versions.ndkVersion.get()
 
     compileOptions {

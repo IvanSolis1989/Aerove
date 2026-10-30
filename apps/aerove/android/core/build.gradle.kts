@@ -12,7 +12,11 @@ plugins {
 
 android {
     namespace = "com.follow.clash.core"
-    compileSdk = libs.versions.compileSdk.get().toInt()
+    compileSdk {
+        version = release(libs.versions.compileSdk.get().toInt()) {
+            minorApiLevel = libs.versions.compileSdkMinor.get().toInt()
+        }
+    }
     ndkVersion = libs.versions.ndkVersion.get()
 
     defaultConfig {
