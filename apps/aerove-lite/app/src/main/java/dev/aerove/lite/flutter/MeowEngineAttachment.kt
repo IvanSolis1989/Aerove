@@ -72,17 +72,25 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     }
 
     override fun isInitialized(): Boolean = initialized && !closed
+    override fun hasRequestedIntent(): Boolean = !closed && actions.hasRequestedIntent()
+
+    override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) {
+        checkOpen()
+        verifyApplied(actions.applyStaged(snapshot))
+    }
 
     override suspend fun readRuntime(): MeowSetupRuntime? {
         if (closed) return null
         val identity = store.readAppliedIdentity() ?: return null
         val snapshot = vpn.value
-        val endpoint = snapshot.endpoint ?: return null
+        val graph = actions.queryGraph()
+        val endpoint = graph?.endpoint ?: snapshot.endpoint ?: return null
+        if (!store.isGraphCurrent(identity)) return null
         if (!owns(identity, endpoint, snapshot)) return null
         val route = CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { it.routeSnapshot() }
         if (!owns(identity, endpoint) || route.coreEpoch.toString() != identity.proof.coreEpoch) return null
         return MeowSetupRuntime(identity.revision, identity.intentEpoch, identity.compiledSha256,
-            identity.proof.coreEpoch, identity.proof.serviceOwner, identity.proof.sessionGeneration, snapshot.listening)
+            identity.proof.coreEpoch, identity.proof.serviceOwner, identity.proof.sessionGeneration, graph?.listening ?: snapshot.listening)
     }
 
     override suspend fun applyUpdate(expected: MeowSetupRuntime?, projection: MeowSetupProjection) {
@@ -122,23 +130,25 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     }
 
     private fun owns(identity: RuntimeAppliedIdentity, endpoint: CoreEndpoint, snapshot: VpnSnapshot = vpn.value): Boolean =
-        !closed && actions.identityIsCurrent(identity) && snapshot.phase == VpnPhase.Running && snapshot.endpoint === endpoint &&
-            snapshot.serviceOwner == identity.proof.serviceOwner && snapshot.sessionGeneration == identity.proof.sessionGeneration &&
-            store.isCurrent(identity.revision, identity.intentEpoch)
+        !closed && actions.identityIsCurrent(identity) && store.isGraphCandidate(identity.revision, identity.intentEpoch) &&
+            (actions.queryGraph()?.let { it.endpoint === endpoint && meowSameRuntimeIdentity(it.identity, identity) } ?: (
+                snapshot.phase == VpnPhase.Running && snapshot.endpoint === endpoint &&
+                    snapshot.serviceOwner == identity.proof.serviceOwner && snapshot.sessionGeneration == identity.proof.sessionGeneration &&
+                    store.isCurrent(identity.revision, identity.intentEpoch)))
 
     suspend fun updateRuntime(snapshot: VpnSnapshot) {
         if (closed) return
         sessionGate.withLock {
             val existing = session
             if (existing != null && !owns(existing.identity, existing.endpoint, snapshot)) retireSession()
-            if (uiActive && snapshot.phase == VpnPhase.Running && snapshot.endpoint != null) requireSession()
+            if (uiActive && (actions.queryGraph() != null || snapshot.phase == VpnPhase.Running && snapshot.endpoint != null)) requireSession()
         }
     }
 
     suspend fun setUiActive(active: Boolean) = sessionGate.withLock {
         checkOpen()
         uiActive = active
-        if (active && vpn.value.phase == VpnPhase.Running) requireSession().protocol.setUiTelemetryActive(true)
+        if (active && (actions.queryGraph() != null || vpn.value.phase == VpnPhase.Running)) requireSession().protocol.setUiTelemetryActive(true)
         else session?.protocol?.setUiTelemetryActive(false)
     }
 
@@ -161,9 +171,9 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
         val identity = store.readAppliedIdentity()
             ?: throw MeowProtocolFailure("not_running", "No actual applied Meow runtime is available")
         val snapshot = vpn.value
-        val endpoint = snapshot.endpoint
+        val endpoint = actions.queryGraph()?.endpoint ?: snapshot.endpoint
             ?: throw MeowProtocolFailure("not_running", "Meow private control endpoint is not available")
-        if (!owns(identity, endpoint, snapshot)) throw MeowProtocolFailure("superseded", "Meow runtime identity changed")
+        if (!owns(identity, endpoint, snapshot) || !store.isGraphCurrent(identity)) throw MeowProtocolFailure("superseded", "Meow runtime identity changed")
         val applied = store.readLastApplied()
             ?: throw MeowProtocolFailure("superseded", "Applied Meow configuration disappeared")
         val client = CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret))
@@ -186,7 +196,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
                 }
                 override suspend fun latestDelays(): MeowDelayHistorySnapshot = history.read()
             }
-            // Service publishes this projection only after actual native policy readback and its Store CAS.
+            // The owner publishes only after native policy readback and its Store CAS.
             val onlyProxy = MeowRuntimeSnapshotSettings.decode(applied.handoff.runtimeSettingsJson).backgroundPolicy.onlyStatisticsProxy
             val protocol = MeowProtocolSession(client, owner, identity.proof.sessionGeneration, route.coreEpoch,
                 scope, { owns(identity, endpoint) }, { rows -> if (owns(identity, endpoint)) emit(this, rows) },

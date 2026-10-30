@@ -41,7 +41,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Flutter owns its attachment; the existing Service remains the sole VPN/runtime owner. */
+/** Flutter owns its attachment; the Service alone owns VPN authorization and descriptors. */
 object MeowFlutterHost {
     fun attach(activity: FlutterActivity, engine: FlutterEngine) {
         check(activity.application is LiteApplication) { "Meow host requires the Lite application" }
@@ -156,6 +156,12 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                             { failure -> android.util.Log.w("MeowFlutter", "UI telemetry failed for the owned runtime", failure) },
                             object : MeowFlutterRuntime {
                                 override fun identityIsCurrent(identity: RuntimeAppliedIdentity) = graph.flutterRuntimeIdentityIsCurrent(identity)
+                                override fun hasRequestedIntent() = graph.flutterHasRequestedIntent()
+                                override fun queryGraph() = graph.flutterQueryGraph()
+                                override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
+                                    return meowApplyStagedGraph(snapshot, graph.runtimeHandoffs,
+                                        graph::replaceFlutterRuntimeGraph, graph::ensureParkedGraph)
+                                }
                                 override suspend fun setListening(expected: MeowSetupRuntime, enabled: Boolean) = graph.setFlutterRuntimeListening(expected, enabled)
                                 override suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection) = graph.applyFlutterRuntimeUpdate(expected, projection)
                                 override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String) = graph.refreshFlutterRuntimeSetup(expected, setupParamsJson)
@@ -180,12 +186,16 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                     cancelPermission(revision)
                     runtimeIntentGate.withLock {
                         if (revision != intent.get()) throw MeowProtocolFailure("superseded", "Stop intent was superseded")
-                        graph.runtimeHandoffs.readCurrent()?.let { graph.runtimeHandoffs.invalidate(it.intentEpoch) }
+                        if (graph.runtimeHandoffs.hasAuthority) graph.runtimeHandoffs.invalidate()
                     }
-                    withContext(Dispatchers.Main.immediate) {
+                    val stopped = withContext(Dispatchers.Main.immediate) {
                         if (revision != intent.get()) throw MeowProtocolFailure("superseded", "Stop intent was superseded before dispatch")
                         commands.disconnectAndJoin() is MeowFlutterStopResult.Confirmed
                     }
+                    if (stopped && revision == intent.get()) {
+                        graph.runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested }?.let { graph.ensureParkedGraph(it) }
+                    }
+                    stopped
                 }
                 "park" -> listenerCommandGate.withLock {
                     if (!attached || revision != intent.get()) false
@@ -228,7 +238,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
         cancelPermission(revision)
         val adopted = listenerCommandGate.withLock {
             val existing = existingRuntime(owner, revision)
-            if (existing == null) false else {
+            if (existing == null || graph.flutterQueryGraph() != null) false else {
                 if (!graph.vpn.value.listening) owner.setListening(true)
                 markAdopted(owner, revision)
             }
@@ -238,6 +248,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
             if (!attached || revision != intent.get() || owner !== current) return false
             val staged = owner.setup.staged()
                 ?: throw MeowProtocolFailure("configuration_missing", "No validated Flutter runtime snapshot is staged")
+            graph.retireParkedGraph()
             graph.runtimeHandoffs.beginStart(staged.revision, staged.intentEpoch)
         }
         val dispatched = AtomicBoolean(false)
@@ -251,6 +262,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                         catch (superseded: IllegalStateException) { if (superseded.message != "runtime_stop_superseded") throw superseded }
                     }
                 }
+                graph.runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested }?.let { graph.ensureParkedGraph(it) }
             }
         }
     }

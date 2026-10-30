@@ -14,6 +14,7 @@ import dev.aerove.lite.vpn.VpnSnapshot
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -32,6 +33,43 @@ class LiteApplication : Application() {
         })
     }
     internal val nativeLifecycle = Mutex()
+    private val parkedGraphGate = Mutex()
+    private val runtimeScope by lazy { kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default) }
+    private val parkedGraph by lazy {
+        dev.aerove.lite.flutter.MeowParkedGraphOwner(runtimeHandoffs, claimOwner = {
+            check(vpn.value.phase == VpnPhase.Stopped && vpn.value.endpoint == null && !maintenanceActive) { "runtime_service_not_stopped" }
+            claimGraphOwner()
+        }, ownsOwner = ::ownsGraphOwner, backendFactory = { _, testUrl, current ->
+            dev.aerove.lite.vpn.MeowTunnelBackend(dev.aerove.lite.vpn.MeowAndroidHost(null, this,
+                capturePhysical = {
+                    val manager = getSystemService(android.net.ConnectivityManager::class.java)
+                    dev.aerove.lite.vpn.captureMeowPhysical(manager) {
+                        manager.allNetworks.firstOrNull { network -> manager.getNetworkCapabilities(network)?.let {
+                            it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                                it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                        } == true }
+                    }
+                }, initialListening = { false }, captureOwnerIntent = { current }, graphOnly = true, graphTestUrl = { testUrl }))
+        }, publish = { graphOwner, query ->
+            publishFlutterRuntimeIdentity(graphOwner, query?.identity)
+        })
+    }
+    internal suspend fun retireParkedGraph() = parkedGraph.retire()
+    suspend fun ensureParkedGraph(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot): dev.aerove.lite.flutter.RuntimeAppliedIdentity = parkedGraphGate.withLock {
+        val existing = parkedGraph.queryGraph()
+        if (existing != null && existing.identity.revision == snapshot.revision && existing.identity.intentEpoch == snapshot.intentEpoch &&
+            runtimeHandoffs.isGraphCurrent(existing.identity)) return@withLock existing.identity
+        parkedGraph.applyStaged(snapshot)
+    }
+    fun flutterQueryGraph(): dev.aerove.lite.flutter.MeowQueryGraph? = parkedGraph.queryGraph()
+    internal fun restoreParkedGraphAfterService(expectedOwner: Long) {
+        runtimeScope.launch {
+            if (!ownsVpnOwner(expectedOwner) || maintenanceActive || vpn.value.phase != VpnPhase.Stopped) return@launch
+            val snapshot = runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested } ?: return@launch
+            try { ensureParkedGraph(snapshot) }
+            catch (failure: Exception) { android.util.Log.w("MeowGraph", "Stopped runtime graph could not be restored", failure) }
+        }
+    }
     internal val ownedStarts = dev.aerove.lite.vpn.OwnedStartRegistry()
     private val pendingStarts = java.util.concurrent.atomic.AtomicLong()
     fun startIntentEpoch(): Long = pendingStarts.get()
@@ -40,8 +78,9 @@ class LiteApplication : Application() {
     private val mutableFlutterRuntimeIdentity = MutableStateFlow<dev.aerove.lite.flutter.RuntimeAppliedIdentity?>(null)
     val flutterRuntimeIdentity = mutableFlutterRuntimeIdentity.asStateFlow()
     @Synchronized internal fun publishFlutterRuntimeIdentity(owner: Long, identity: dev.aerove.lite.flutter.RuntimeAppliedIdentity?) {
-        if (this.owner != owner) return
+        if (this.owner != owner && graphOwner != owner) return
         val prior = mutableFlutterRuntimeIdentity.value
+        if (identity == null && prior?.proof?.serviceOwner != owner) return
         if (identity == null || prior == null || !dev.aerove.lite.flutter.meowSameRuntimeIdentity(prior, identity))
             mutableFlutterRuntimeIdentity.value = identity
     }
@@ -55,13 +94,17 @@ class LiteApplication : Application() {
         }
     }
     @Synchronized private fun flutterRuntime(): dev.aerove.lite.flutter.MeowFlutterRuntime =
-        checkNotNull(flutterRuntimeOwner?.takeIf { it.first == owner }?.second) { "runtime_service_owner_unavailable" }
+        parkedGraph.takeIf { it.queryGraph() != null }
+            ?: checkNotNull(flutterRuntimeOwner?.takeIf { it.first == owner }?.second) { "runtime_service_owner_unavailable" }
     @Synchronized fun flutterRuntimeIdentityIsCurrent(identity: dev.aerove.lite.flutter.RuntimeAppliedIdentity): Boolean =
-        flutterRuntimeOwner?.takeIf { it.first == owner }?.second?.identityIsCurrent(identity) == true
+        parkedGraph.identityIsCurrent(identity) || flutterRuntimeOwner?.takeIf { it.first == owner }?.second?.identityIsCurrent(identity) == true
+    @Synchronized fun flutterHasRequestedIntent(): Boolean =
+        flutterRuntimeOwner?.takeIf { it.first == owner }?.second?.hasRequestedIntent() == true
     suspend fun setFlutterRuntimeListening(expected: dev.aerove.lite.flutter.MeowSetupRuntime, enabled: Boolean) = flutterRuntime().setListening(expected, enabled)
     suspend fun applyFlutterRuntimeUpdate(expected: dev.aerove.lite.flutter.MeowSetupRuntime, projection: dev.aerove.lite.flutter.MeowSetupProjection) = flutterRuntime().applyUpdate(expected, projection)
     suspend fun refreshFlutterRuntimeSetup(expected: dev.aerove.lite.flutter.MeowSetupRuntime, setupParamsJson: String) = flutterRuntime().refreshSetup(expected, setupParamsJson)
     suspend fun flutterRuntimeDefaultTestUrl(expected: dev.aerove.lite.flutter.MeowSetupRuntime) = flutterRuntime().defaultTestUrl(expected)
+    suspend fun replaceFlutterRuntimeGraph(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot) = flutterRuntime().applyStaged(snapshot)
     private val maintenanceGate = Mutex()
     @Volatile var maintenanceActive: Boolean = false
         private set
@@ -119,6 +162,7 @@ class LiteApplication : Application() {
     }
 
     suspend fun stopForMaintenance(): dev.aerove.lite.vpn.MaintenanceRuntimeContext {
+        retireParkedGraph()
         val hooks = synchronized(this) { maintenanceHooks?.takeIf { it.owner == owner } }
         if (hooks != null) return hooks.stop()
         check(vpn.value.phase == VpnPhase.Stopped && vpn.value.endpoint == null) { "VPN owner has not stopped" }
@@ -223,13 +267,25 @@ class LiteApplication : Application() {
     val settings by lazy { LiteSettingsStore(filesDir) }
     private val mutableVpn = MutableStateFlow(VpnSnapshot())
     private var owner = 0L
+    private var graphOwner = 0L
+    private var nextRuntimeOwner = 0L
     val vpn = mutableVpn.asStateFlow()
 
     @Synchronized
     internal fun registerVpnOwner(): Long {
         mutableFlutterRuntimeIdentity.value = null
-        return ++owner
+        graphOwner = 0L
+        owner = ++nextRuntimeOwner
+        return owner
     }
+
+    @Synchronized private fun claimGraphOwner(): Long {
+        check(vpn.value.phase == VpnPhase.Stopped && vpn.value.endpoint == null && !maintenanceActive) { "runtime_service_not_stopped" }
+        graphOwner = ++nextRuntimeOwner
+        return graphOwner
+    }
+    @Synchronized private fun ownsGraphOwner(expected: Long): Boolean = graphOwner == expected &&
+        vpn.value.phase == VpnPhase.Stopped && vpn.value.endpoint == null && !maintenanceActive
 
     @Synchronized
     internal fun ownsVpnOwner(expected: Long): Boolean = owner == expected

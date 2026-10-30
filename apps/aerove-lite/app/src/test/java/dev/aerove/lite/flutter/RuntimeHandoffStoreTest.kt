@@ -9,6 +9,70 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RuntimeHandoffStoreTest {
+    @Test fun flutterComposerRequiresLiveOwnedReadLeaseAndRejectsTamperedResourcesOrReceipt() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("flutter-composer-lease").toRealPath().toFile()
+        val asset = File(root, "rules.yaml").apply { writeText("payload: [example.test]\n") }
+        val yaml = "rule-providers: {r: {type: file, path: '${asset.path}', behavior: domain, format: yaml}}\nrules: ['RULE-SET,r,DIRECT']\n"
+        val store = RuntimeHandoffStore(root)
+        val snapshot = store.commit(handoff(yaml, listOf(RuntimeHandoffResource("assets/rules.yaml", asset.path, runtimeSha256(asset.readBytes())))), 0, null)
+        val lease = dev.aerove.lite.data.FlutterRuntimeResources.create(root, snapshot) { true }
+        val prepared = dev.aerove.lite.data.PreparedProfile(snapshot.profileId, lease.yaml, lease.yaml, snapshot.revision,
+            snapshot.handoff.compiledSha256, lease.readRoot, null)
+        val runtime = File(root, "runtime")
+        val cache = File(runtime, "meow-cache/session").apply { mkdirs() }
+        val composer = dev.aerove.lite.data.MeowRuntimeConfigComposer(runtime, cacheDirectory = cache)
+        val settings = dev.aerove.lite.LiteSettings(network = dev.aerove.lite.networksettings.NetworkSettings(vpnEnabled = false))
+        fun compose(profile: dev.aerove.lite.data.PreparedProfile = prepared) = composer.composeFlutter(profile, lease, settings,
+            -1, 49152, "x".repeat(32), dev.aerove.lite.core.NativeCore.RuntimeMode.Proxy,
+            dev.aerove.lite.data.SystemDnsSnapshot(), dev.aerove.lite.data.TunRuntimeOptions(1500, false, false), true, null, emptySet())
+        val config = compose()
+        assertEquals(snapshot.profileId, config.profileId); assertEquals(snapshot.revision, config.revision)
+        assertEquals(lease.readRoot, config.resourceReadRoot); assertTrue(config.initiallyParked)
+        assertTrue(config.engineYaml.contains("rules.yaml"))
+        assertTrue(runCatching { composer.compose(prepared, settings, -1, 49152, "x".repeat(32), initiallyParked = true) }.isFailure)
+        assertTrue(runCatching { compose(prepared.copy(generation = "foreign")) }.isFailure)
+        assertTrue(runCatching { compose(prepared.copy(yaml = "rules: ['MATCH,REJECT']")) }.isFailure)
+        val relocated = File(lease.readRoot, "assets/rules.yaml")
+        val bytes = relocated.readBytes()
+        relocated.writeText("payload: [changed.test]\n")
+        assertTrue(runCatching { compose() }.isFailure)
+        relocated.writeBytes(bytes)
+        compose()
+        val receipt = File(lease.readRoot, "relocation-receipt.json")
+        val receiptBytes = receipt.readBytes()
+        receipt.writeText(JSONObject(String(receiptBytes)).put("records", org.json.JSONArray()).toString())
+        assertTrue(runCatching { compose() }.isFailure)
+        receipt.writeBytes(receiptBytes)
+        compose()
+        lease.closeAfterNativeJoin()
+        assertTrue(runCatching { compose() }.isFailure)
+    }
+
+    @Test fun parkedGraphReceiptDoesNotAuthorizeVpnAndCannotSurviveStopOrSuccessor() = runBlocking<Unit> {
+        val store = RuntimeHandoffStore(Files.createTempDirectory("parked-graph").toFile())
+        val candidate = store.commit(handoff(), 0, null)
+        val proof = RuntimeAppliedProof(7, 2, "4")
+        store.admitGraph(candidate.revision, candidate.intentEpoch)
+        store.commitGraphApplied(candidate.revision, candidate.intentEpoch, proof, candidate.handoff)
+        val identity = store.readAppliedIdentity()!!
+        assertTrue(store.isGraphCurrent(identity))
+        assertFalse(store.isCurrent(identity.revision, identity.intentEpoch))
+        assertFalse(store.readCurrent()!!.userRequested)
+        rejects { store.admit(candidate.revision, candidate.intentEpoch) }
+        rejects { store.commitApplied(candidate.revision, candidate.intentEpoch, proof) }
+        assertFalse(store.isGraphCurrent(identity.copy(proof = proof.copy(serviceOwner = 8))))
+        store.invalidate(candidate.intentEpoch)
+        assertFalse(store.isGraphCurrent(identity))
+        rejects { store.commitGraphApplied(candidate.revision, candidate.intentEpoch, proof, candidate.handoff) }
+        val stopped = store.readCurrent()!!
+        store.commitGraphApplied(stopped.revision, stopped.intentEpoch, proof.copy(sessionGeneration = 3), stopped.handoff)
+        val parked = store.readAppliedIdentity()!!
+        store.beginStart(stopped.revision, stopped.intentEpoch)
+        assertFalse(store.isGraphCurrent(parked))
+        rejects { store.admitGraph(stopped.revision, stopped.intentEpoch) }
+        assertEquals(parked, store.readAppliedIdentity())
+    }
+
     @Test fun sessionRelocationRewritesNestedTlsPathsWithoutMutatingStoreOrNeedingProducerGeneration() = runBlocking<Unit> {
         val root = Files.createTempDirectory("flutter-relocation").toRealPath().toFile()
         val ca = File(root, "original-ca.pem").apply { writeText("certificate fixture bytes") }

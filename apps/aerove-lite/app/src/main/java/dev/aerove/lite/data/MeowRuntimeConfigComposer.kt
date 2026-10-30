@@ -87,6 +87,18 @@ class MeowRuntimeConfigComposer(privateDirectory: File, private val defaultUserA
             tunOptions, initiallyParked, null, null, null, MeowPhysicalNetwork(physicalNetworkHandle, systemDns), verifiedNativeFeatures.toSet(), null, settings)
     }
 
+    fun composeFlutter(prepared: PreparedProfile, lease: FlutterRuntimeResources, settings: LiteSettings, tunFd: Int,
+        port: Int, secret: String, runtimeMode: RuntimeMode, systemDns: SystemDnsSnapshot,
+        tunOptions: TunRuntimeOptions, initiallyParked: Boolean, physicalNetworkHandle: String?,
+        verifiedNativeFeatures: Set<String>): MeowRuntimeConfig {
+        val input = input(prepared.yaml)
+        val composed = shared.composeFlutter(prepared, lease, settings, tunFd,
+            port, secret, runtimeMode, systemDns, tunOptions, initiallyParked, ConfigYaml.dump(input.first))
+        return finish(composed, input.second, tunFd, runtimeMode, tunOptions, initiallyParked,
+            prepared.profileId, prepared.revision, prepared.generation, MeowPhysicalNetwork(physicalNetworkHandle, systemDns),
+            verifiedNativeFeatures.toSet(), lease.verifyReadLease(prepared), settings)
+    }
+
     private fun invalid(path: String, reason: String): Nothing = throw ConfigValidationException(listOf(ConfigIssue(path, reason)))
 
     private fun input(source: String): Pair<MutableMap<String, Any?>, List<Any?>> = MeowSourceConfig.input(source)

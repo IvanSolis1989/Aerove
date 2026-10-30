@@ -26,7 +26,34 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
         it.revision == revision && it.intentEpoch == epoch && it.userRequested
     } == true
 
+    fun isGraphCandidate(revision: String, epoch: Long): Boolean = current?.let {
+        it.revision == revision && it.intentEpoch == epoch
+    } == true
+
+    suspend fun isGraphCurrent(identity: RuntimeAppliedIdentity): Boolean = storage.transaction {
+        val (epoch, desired) = load()
+        val applied = lastApplied
+        val proof = appliedProof
+        epoch == identity.intentEpoch && desired?.revision == identity.revision &&
+            desired.handoff.compiledSha256 == identity.compiledSha256 && applied?.revision == identity.revision &&
+            applied.intentEpoch == epoch && applied.handoff.compiledSha256 == identity.compiledSha256 && proof != null &&
+            proof.getLong("serviceOwner") == identity.proof.serviceOwner &&
+            proof.getLong("sessionGeneration") == identity.proof.sessionGeneration &&
+            proof.getString("coreEpoch") == identity.proof.coreEpoch &&
+            meowJsonEqual(JSONObject(applied.handoff.setupRecordJson), JSONObject(identity.expectedSetupRecordJson))
+    }
+
+    suspend fun admitGraph(snapshotRevision: String, expectedEpoch: Long): MeowRuntimeSnapshot = storage.transaction {
+        val (epoch, snapshot) = load()
+        check(epoch == expectedEpoch && snapshot?.revision == snapshotRevision && !snapshot.userRequested) { "runtime_graph_superseded" }
+        checkNotNull(snapshot)
+    }
+
+    suspend fun commitGraphApplied(snapshotRevision: String, expectedEpoch: Long, proof: RuntimeAppliedProof,
+        projection: RuntimeHandoff): MeowRuntimeSnapshot = commitAppliedWithProjection(snapshotRevision, expectedEpoch, proof, projection, false)
+
     suspend fun currentEpoch(): Long = storage.transaction { load().first }
+    internal fun peekCurrent(): MeowRuntimeSnapshot? = current
     suspend fun readCurrent(): MeowRuntimeSnapshot? = storage.transaction { load().second }
     suspend fun readLastApplied(): MeowRuntimeSnapshot? = storage.transaction { load(); lastApplied }
 
@@ -78,14 +105,17 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
         commitAppliedWithProjection(snapshotRevision, expectedEpoch, proof, null)
 
     suspend fun commitAppliedWithProjection(snapshotRevision: String, expectedEpoch: Long, proof: RuntimeAppliedProof,
-        projection: RuntimeHandoff?): MeowRuntimeSnapshot = storage.transaction {
+        projection: RuntimeHandoff?): MeowRuntimeSnapshot = commitAppliedWithProjection(snapshotRevision, expectedEpoch, proof, projection, true)
+
+    private suspend fun commitAppliedWithProjection(snapshotRevision: String, expectedEpoch: Long, proof: RuntimeAppliedProof,
+        projection: RuntimeHandoff?, userRequested: Boolean): MeowRuntimeSnapshot = storage.transaction {
         val (epoch, snapshot) = load()
-        check(epoch == expectedEpoch && snapshot?.revision == snapshotRevision && snapshot.userRequested) { "runtime_apply_superseded" }
+        check(epoch == expectedEpoch && snapshot?.revision == snapshotRevision && snapshot.userRequested == userRequested) { "runtime_apply_superseded" }
         require(proof.serviceOwner > 0 && proof.sessionGeneration > 0 &&
             proof.coreEpoch.toULongOrNull()?.let { it > 0uL && it.toString() == proof.coreEpoch } == true) { "runtime_apply_proof_invalid" }
         val applied = if (projection == null) checkNotNull(snapshot) else {
             validateReplacement(checkNotNull(snapshot).handoff, projection)
-            MeowRuntimeSnapshot(snapshotRevision, epoch, true, projection, snapshot.resourceDirectory)
+            MeowRuntimeSnapshot(snapshotRevision, epoch, userRequested, projection, snapshot.resourceDirectory)
         }
         lastApplied = applied
         appliedProof = JSONObject().put("serviceOwner", proof.serviceOwner).put("sessionGeneration", proof.sessionGeneration).put("coreEpoch", proof.coreEpoch)
@@ -94,12 +124,18 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
     }
 
     suspend fun commitRuntimeProjection(expected: RuntimeAppliedIdentity, projection: RuntimeHandoff,
-        proof: RuntimeAppliedProof): RuntimeAppliedIdentity = storage.transaction {
+        proof: RuntimeAppliedProof): RuntimeAppliedIdentity = commitRuntimeProjection(expected, projection, proof, true)
+
+    suspend fun commitGraphRuntimeProjection(expected: RuntimeAppliedIdentity, projection: RuntimeHandoff,
+        proof: RuntimeAppliedProof): RuntimeAppliedIdentity = commitRuntimeProjection(expected, projection, proof, false)
+
+    private suspend fun commitRuntimeProjection(expected: RuntimeAppliedIdentity, projection: RuntimeHandoff,
+        proof: RuntimeAppliedProof, userRequested: Boolean): RuntimeAppliedIdentity = storage.transaction {
         val (epoch, desired) = load()
         val previous = lastApplied
         val before = appliedProof
         check(epoch == expected.intentEpoch && desired != null && previous != null && before != null &&
-            desired.userRequested && desired.revision == expected.revision && previous.revision == expected.revision &&
+            desired.userRequested == userRequested && previous.userRequested == userRequested && desired.revision == expected.revision && previous.revision == expected.revision &&
             previous.intentEpoch == expected.intentEpoch && previous.handoff.compiledSha256 == expected.compiledSha256 &&
             before.getLong("serviceOwner") == expected.proof.serviceOwner && before.getLong("sessionGeneration") == expected.proof.sessionGeneration &&
             before.getString("coreEpoch") == expected.proof.coreEpoch &&
@@ -108,7 +144,7 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
             proof.coreEpoch.toULongOrNull()?.let { it.toString() == proof.coreEpoch && it >= expected.proof.coreEpoch.toULong() } == true) { "runtime_apply_proof_invalid" }
         validateReplacement(previous.handoff, projection)
         require(JSONObject(projection.setupRecordJson).getString("yaml-md5") == JSONObject(previous.handoff.setupRecordJson).getString("yaml-md5")) { "runtime_refresh_yaml_changed" }
-        val next = MeowRuntimeSnapshot(previous.revision, epoch, true, projection, previous.resourceDirectory)
+        val next = MeowRuntimeSnapshot(previous.revision, epoch, userRequested, projection, previous.resourceDirectory)
         lastApplied = next
         appliedProof = JSONObject().put("serviceOwner", proof.serviceOwner).put("sessionGeneration", proof.sessionGeneration).put("coreEpoch", proof.coreEpoch)
         save(epoch, next)
@@ -137,7 +173,14 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
         commit(handoff, expectedEpoch, expectedRevision) {}
 
     internal suspend fun commit(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?,
-        sourceIsCurrent: () -> Unit): MeowRuntimeSnapshot = storage.transaction {
+        sourceIsCurrent: () -> Unit): MeowRuntimeSnapshot = commit(handoff, expectedEpoch, expectedRevision, sourceIsCurrent) { false }
+
+    internal suspend fun commitForSetup(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?,
+        hasRequestedIntent: () -> Boolean, sourceIsCurrent: () -> Unit): MeowRuntimeSnapshot =
+        commit(handoff, expectedEpoch, expectedRevision, sourceIsCurrent, hasRequestedIntent)
+
+    private suspend fun commit(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?,
+        sourceIsCurrent: () -> Unit, hasRequestedIntent: () -> Boolean): MeowRuntimeSnapshot = storage.transaction {
         val (epoch, old) = load()
         check(epoch == expectedEpoch && old?.revision == expectedRevision) { "runtime_commit_superseded" }
         val frozen = RuntimeHandoff.fromJson(handoff.json()).also { it.validate(expectedCoreSha); validateProjection(it) }
@@ -156,7 +199,7 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
                 val target = File(resources, asset.relativePath).apply { parentFile.mkdirs() }
                 java.io.FileOutputStream(target).use { it.write(bytes); it.fd.sync() }
             }
-            val next = MeowRuntimeSnapshot(revision, Math.addExact(epoch, 1), false, frozen, resources)
+            val next = MeowRuntimeSnapshot(revision, Math.addExact(epoch, 1), old?.userRequested == true && hasRequestedIntent(), frozen, resources)
             verify(next)
             sourceIsCurrent()
             kotlinx.coroutines.currentCoroutineContext().ensureActive()

@@ -59,6 +59,11 @@ class RuntimeConfigComposer(privateDirectory: File, private val defaultUserAgent
         return compose(prepared.yaml, settings, tunFd, port, secret, bundle, runtimeMode, systemDnsSnapshot, tunOptions, initiallyParked)
     }
 
+    internal fun composeFlutter(prepared: PreparedProfile, lease: FlutterRuntimeResources, settings: LiteSettings,
+        tunFd: Int, port: Int, secret: String, runtimeMode: RuntimeMode, systemDnsSnapshot: SystemDnsSnapshot,
+        tunOptions: TunRuntimeOptions, initiallyParked: Boolean, normalizedYaml: String = prepared.yaml): String = compose(normalizedYaml, settings, tunFd, port,
+            secret, lease.verifyReadLease(prepared), runtimeMode, systemDnsSnapshot, tunOptions, initiallyParked)
+
     fun compose(source: String, settings: LiteSettings, tunFd: Int, port: Int, secret: String,
         runtimeMode: RuntimeMode = if (settings.network.vpnEnabled) RuntimeMode.Tun else RuntimeMode.Proxy,
         systemDnsSnapshot: SystemDnsSnapshot = SystemDnsSnapshot(),

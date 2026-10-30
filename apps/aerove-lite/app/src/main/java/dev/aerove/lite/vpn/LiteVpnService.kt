@@ -126,6 +126,7 @@ class LiteVpnService : VpnService() {
         graph.registerRuleReload(owner, coordinator::reloadRules)
         graph.registerModeCleanup(owner, ::stopForModeFailure)
         graph.registerFlutterRuntime(owner, object : MeowFlutterRuntime {
+            override fun hasRequestedIntent() = graph.ownsVpnOwner(owner) && ownerAdmissionAllowed && !maintenanceHold
             override fun identityIsCurrent(identity: RuntimeAppliedIdentity): Boolean {
                 val publication = flutterPublication ?: return false
                 val actual = coordinator.state.value
@@ -135,6 +136,7 @@ class LiteVpnService : VpnService() {
                     graph.ownsVpnOwner(owner) && graph.runtimeHandoffs.isCurrent(identity.revision, identity.intentEpoch)
             }
             override suspend fun setListening(expected: MeowSetupRuntime, enabled: Boolean) = flutterSetListening(expected, enabled)
+            override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) = flutterReplaceGraph(snapshot)
             override suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection) = flutterApplyUpdate(expected, projection)
             override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String) = flutterRefreshSetup(expected, setupParamsJson)
             override suspend fun defaultTestUrl(expected: MeowSetupRuntime): String = flutterRuntimeGate.withLock {
@@ -292,6 +294,14 @@ class LiteVpnService : VpnService() {
         val hasOwnedId = intent?.action == ACTION_START && intent?.hasExtra(EXTRA_OWNED_START_ID) == true
         val ownedId = if (hasOwnedId) intent?.getStringExtra(EXTRA_OWNED_START_ID) else null
         if (hasOwnedId && ownedId == null) return rejectOwnedStart(startId)
+        if (intent?.action == ACTION_RECONFIGURE && intent.hasExtra(EXTRA_REPLACEMENT_OWNER)) {
+            val revision = intent.getStringExtra(EXTRA_RUNTIME_REVISION)
+            val epoch = intent.getLongExtra(EXTRA_RUNTIME_EPOCH, -1)
+            if (!meowAdmitGraphReplacement(intent.getLongExtra(EXTRA_REPLACEMENT_OWNER, -1),
+                    intent.getLongExtra(EXTRA_REPLACEMENT_INTENT, -1), owner, intentGeneration,
+                    wasRequested(this), revision != null && graph.runtimeHandoffs.isCurrent(revision, epoch)))
+                return rejectOwnedStart(startId)
+        }
         // Restore owns the complete stop/join/write transaction, including non-UI entry points.
         if (graph.maintenanceActive && intent?.action != ACTION_STOP) {
             ownedId?.let(graph.ownedStarts::reject)
@@ -349,10 +359,11 @@ class LiteVpnService : VpnService() {
             requested(false)
             lastPlan = null
             syncListenerPolicy()
+            val stoppedRuntime = graph.runtimeHandoffs.peekCurrent()
             scope.launch(NonCancellable) {
                 try {
-                    val snapshot = runtimeSnapshot ?: graph.runtimeHandoffs.readCurrent()
-                    if (snapshot != null) graph.runtimeHandoffs.invalidate(snapshot.intentEpoch)
+                    val snapshot = stoppedRuntime ?: graph.runtimeHandoffs.readCurrent()
+                    if (snapshot != null && generation == intentGeneration) graph.runtimeHandoffs.invalidate(snapshot.intentEpoch)
                 } catch (failure: Exception) {
                     android.util.Log.e("MeowRuntime", "Runtime stop snapshot invalidation failed", failure)
                 } finally {
@@ -519,6 +530,28 @@ class LiteVpnService : VpnService() {
         val epoch = CoreApiClient(ControlEndpoint(actual.endpoint.port, actual.endpoint.secret)).use { it.routeSnapshot().coreEpoch.toString() }
         check(epoch == expected.coreEpoch && coordinator.state.value.endpoint === actual.endpoint) { "runtime_service_superseded" }
         return actual to identity
+    }
+
+    private suspend fun flutterReplaceGraph(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
+        withContext(Dispatchers.Main.immediate) {
+            check(graph.ownsVpnOwner(owner) && wasRequested(this@LiteVpnService) &&
+                graph.runtimeHandoffs.isCurrent(snapshot.revision, snapshot.intentEpoch) &&
+                coordinator.requestedBuilderSettings() != null && !maintenanceHold) { "runtime_replacement_superseded" }
+            startService(Intent(this@LiteVpnService, LiteVpnService::class.java).setAction(ACTION_RECONFIGURE)
+                .putExtra(EXTRA_RUNTIME_REVISION, snapshot.revision).putExtra(EXTRA_RUNTIME_EPOCH, snapshot.intentEpoch)
+                .putExtra(EXTRA_REPLACEMENT_OWNER, owner).putExtra(EXTRA_REPLACEMENT_INTENT, intentGeneration))
+        }
+        val receipt = kotlinx.coroutines.withTimeout(45_000) {
+            combine(graph.flutterRuntimeIdentity, graph.vpn, startupIntentChanges) { identity, state, _ -> identity to state }
+                .first { (identity, state) ->
+                    identity?.let { it.revision == snapshot.revision && it.intentEpoch == snapshot.intentEpoch } == true ||
+                        !graph.ownsVpnOwner(owner) || !wasRequested(this@LiteVpnService) ||
+                        !graph.runtimeHandoffs.isCurrent(snapshot.revision, snapshot.intentEpoch) || state.phase == VpnPhase.Failed
+                }.first
+        }
+        check(receipt != null && receipt.revision == snapshot.revision && receipt.intentEpoch == snapshot.intentEpoch &&
+            graph.runtimeHandoffs.isGraphCurrent(receipt) && graph.flutterRuntimeIdentityIsCurrent(receipt)) { "runtime_replacement_superseded" }
+        return receipt
     }
 
     private fun startupFlutterSetup(snapshot: MeowRuntimeSnapshot): MeowServiceSetup {
@@ -883,9 +916,12 @@ class LiteVpnService : VpnService() {
             heldMaintenance = null
             requested(false)
             lastPlan = null
+            val revokedRuntime = graph.runtimeHandoffs.peekCurrent()
             withContext(NonCancellable) {
                 try {
-                    runtimeSnapshot?.let { graph.runtimeHandoffs.invalidate(it.intentEpoch) }
+                    (revokedRuntime ?: graph.runtimeHandoffs.readCurrent())?.let {
+                        if (generation == intentGeneration) graph.runtimeHandoffs.invalidate(it.intentEpoch)
+                    }
                 } finally {
                     if (generation == intentGeneration) {
                         coordinator.stop()
@@ -938,6 +974,7 @@ class LiteVpnService : VpnService() {
                 val snapshot = coordinator.state.value
                 graph.publishVpn(owner, if (snapshot.phase == VpnPhase.Failed ||
                     (snapshot.phase == VpnPhase.Stopped && !snapshot.error.isNullOrBlank())) snapshot else VpnSnapshot())
+                graph.restoreParkedGraphAfterService(owner)
             } finally {
                 traceLifecycle(VpnServiceLifecycleTrace.Event.ScopesCancelBegin)
                 coreScope.cancel()
@@ -1038,6 +1075,8 @@ class LiteVpnService : VpnService() {
         const val EXTRA_REQUESTED_AT_NANOS = "dev.aerove.lite.REQUESTED_AT_NANOS"
         const val EXTRA_RUNTIME_REVISION = "runtimeRevision"
         const val EXTRA_RUNTIME_EPOCH = "runtimeEpoch"
+        private const val EXTRA_REPLACEMENT_OWNER = "replacementOwner"
+        private const val EXTRA_REPLACEMENT_INTENT = "replacementIntent"
         const val EXTRA_OWNED_START_ID = "dev.aerove.lite.OWNED_START_ID"
         const val ACTION_STOP = "dev.aerove.lite.STOP"
         const val ACTION_RECONFIGURE = "dev.aerove.lite.RECONFIGURE"

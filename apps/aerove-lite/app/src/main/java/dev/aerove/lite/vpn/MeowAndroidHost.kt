@@ -29,12 +29,14 @@ import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-/** Real Service adapter; construction alone neither establishes a VPN nor starts Native. */
-class MeowAndroidHost(private val service: LiteVpnService, private val application: LiteApplication,
+/** Native lease adapter; only a Service-backed TUN plan may establish a VPN. */
+class MeowAndroidHost(private val service: LiteVpnService?, private val application: LiteApplication,
     private val capturePhysical: () -> CapturedMeowPhysical,
     private val initialListening: suspend (VpnPlan) -> Boolean,
     private val captureOwnerIntent: (VpnPlan) -> (() -> Boolean),
     private val verifiedNativeFeatures: () -> Set<String> = { MeowNativeCore.readVerifiedFeatures() },
+    private val graphOnly: Boolean = false,
+    private val graphTestUrl: () -> String = { dev.aerove.lite.flutter.MEOW_DEFAULT_TEST_URL },
 ) : MeowTunnelBackend.Host {
     private val gate = Any()
     private val retained = mutableSetOf<Resources>()
@@ -43,14 +45,17 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         val resources = Resources(TunOwnerAdmission(captureOwnerIntent(plan)))
         synchronized(gate) { check(retained.isEmpty()) { "Previous Meow Host resources remain owned" }; retained += resources }
         try {
+            if (!graphOnly) application.retireParkedGraph()
             acquireMeowLifecycleLock(application.nativeLifecycle, resources) { resources.locked = true }
             if (plan.profileId.startsWith("flutter:")) {
                 val snapshot = checkNotNull(application.runtimeHandoffs.readCurrent()) { "runtime_snapshot_missing" }
                 check(snapshot.profileId == plan.profileId) { "runtime_start_superseded" }
-                resources.runtimeSnapshot = application.runtimeHandoffs.admit(snapshot.revision, snapshot.intentEpoch)
+                resources.runtimeSnapshot = if (graphOnly) application.runtimeHandoffs.admitGraph(snapshot.revision, snapshot.intentEpoch)
+                    else application.runtimeHandoffs.admit(snapshot.revision, snapshot.intentEpoch)
                 val relocated = FlutterRuntimeResources.create(application.filesDir, snapshot, resources::isCurrent)
                 resources.flutterResources = relocated
-                val projected = dev.aerove.lite.flutter.meowProjectGroupTestUrl(ConfigYaml.parse(relocated.yaml), service.startupFlutterTestUrl())
+                val projected = dev.aerove.lite.flutter.meowProjectGroupTestUrl(ConfigYaml.parse(relocated.yaml),
+                    if (graphOnly) graphTestUrl() else checkNotNull(service).startupFlutterTestUrl())
                 val yaml = ConfigYaml.dump(projected)
                 resources.preparedValue = PreparedProfile(plan.profileId, yaml, yaml, snapshot.revision,
                     snapshot.handoff.compiledSha256, relocated.readRoot, null)
@@ -88,9 +93,10 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             resources.builderReservedFakeIpRanges = plan.vpnReservedFakeIpRanges?.toList()
                 ?: vpnReservedRanges(profileRanges, resources.builderDnsEnabled, vpnBuilderIpv6(plan))
             check(resources.isCurrent()) { "Meow Host intent was superseded" }
-            if (mode == NativeCore.RuntimeMode.Tun) resources.resolver = ConnectionOwnerResolver.forTun(service, resources.admission::admitted)
+            check(!graphOnly || mode == NativeCore.RuntimeMode.Proxy && parked) { "Query graph must be private-only Proxy" }
+            if (mode == NativeCore.RuntimeMode.Tun) resources.resolver = ConnectionOwnerResolver.forTun(checkNotNull(service), resources.admission::admitted)
             if (mode == NativeCore.RuntimeMode.Tun && !parked) {
-                resources.tun = establishAndroidTun(service, plan, port, resources.builderDnsEnabled, dns, resources.builderReservedFakeIpRanges) { physical }
+                resources.tun = establishAndroidTun(checkNotNull(service), plan, port, resources.builderDnsEnabled, dns, resources.builderReservedFakeIpRanges) { physical }
                 resources.admission.established()
             }
             val cache = File(runtime, "meow-cache/${UUID.randomUUID()}").canonicalFile
@@ -99,8 +105,12 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             val baseline = plan.builderSettings()
             val startup = if (resources.runtimeSnapshot != null) plan.settings else runtimePoliciesForStart(plan.settings, application.settings.read())
             resources.startupPolicies = MeowHostPolicyTarget.from(startup, resources.requestUserAgent)
-            val composed = MeowRuntimeConfigComposer(runtime, resources.requestUserAgent, cache)
-                .compose(resources.prepared, startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
+            val composer = MeowRuntimeConfigComposer(runtime, resources.requestUserAgent, cache)
+            val composed = if (resources.runtimeSnapshot != null) composer.composeFlutter(resources.prepared,
+                checkNotNull(resources.flutterResources), startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
+                TunRuntimeOptions(baseline.network.mtu, baseline.network.dnsHijacking, baseline.ipv6), parked,
+                captured.networkHandle, verifiedNativeFeatures().toSet())
+            else composer.compose(resources.prepared, startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
                     TunRuntimeOptions(baseline.network.mtu, baseline.network.dnsHijacking, baseline.ipv6), parked,
                     captured.networkHandle, verifiedNativeFeatures().toSet())
             resources.configValue = resources.ruleResources?.configure(composed) ?: composed.withResources(
@@ -158,7 +168,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         override val prepared get() = ruleResources?.prepared ?: preparedValue
         override val configuration get() = ruleResources?.configuration ?: configValue
         override val appliedConfiguration get() = AppliedConfigSnapshot(prepared.profileId, checkNotNull(file))
-        override val protector: SocketProtector? get() = if(configuration.runtimeMode == NativeCore.RuntimeMode.Tun) SocketProtector(service::protect) else null
+        override val protector: SocketProtector? get() = if(configuration.runtimeMode == NativeCore.RuntimeMode.Tun) SocketProtector(checkNotNull(service)::protect) else null
         override val connectionOwner: ConnectionOwnerLookup? get() = resolver
         override var builderDnsEnabled = false
         override var coreDnsEnabled = false
@@ -193,7 +203,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             check(owned.owner === this) { "Foreign Meow network owner" }
             val captured = owned.captured
             check(isCurrent() && !sharedCleaned) { "Meow network owner is not current" }
-            if (tun != null) check(service.setUnderlyingNetworks(arrayOf(checkNotNull(captured.network)))) { "Android underlying network binding failed" }
+            if (tun != null) check(checkNotNull(service).setUnderlyingNetworks(arrayOf(checkNotNull(captured.network)))) { "Android underlying network binding failed" }
             physicalValue = captured
         } }
         override fun observeIdentityChanges(changed: () -> Unit): AutoCloseable? {
@@ -216,7 +226,7 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
             check(captured.networkHandle == physicalValue.networkHandle && captured.dns.json() == physicalValue.dns.json()) {
                 "Physical network changed; Meow network policy update is required before TUN attach"
             }
-            val fd = establishAndroidTun(service,startupPlan,controlPort,builderDnsEnabled,captured.dns,builderReservedFakeIpRanges) { captured.network }
+            val fd = establishAndroidTun(checkNotNull(service),startupPlan,controlPort,builderDnsEnabled,captured.dns,builderReservedFakeIpRanges) { captured.network }
             try { admission.established();Attachment(fd).also { staged += it } }
             catch(failure:Throwable) { try { fd.close() } catch(cleanup:Throwable) { failure.addSuppressed(cleanup) };throw failure }
         } }
@@ -238,7 +248,8 @@ class MeowAndroidHost(private val service: LiteVpnService, private val applicati
         override suspend fun reloadRules(next: PreparedProfile, endpoint: CoreEndpoint, current: () -> Boolean): Boolean =
             ruleResources?.reload(next, endpoint, current) ?: false
         override fun isCurrent() = admission.current() && (runtimeSnapshot?.let {
-            application.runtimeHandoffs.isCurrent(it.revision, it.intentEpoch)
+            if (graphOnly) application.runtimeHandoffs.isGraphCandidate(it.revision, it.intentEpoch)
+                else application.runtimeHandoffs.isCurrent(it.revision, it.intentEpoch)
         } ?: true)
         override suspend fun verifyControl(endpoint: CoreEndpoint) = verifyMeowControl(endpoint)
         override suspend fun release() = withContext(NonCancellable + Dispatchers.IO) { cleanup.withLock {

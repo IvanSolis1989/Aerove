@@ -45,6 +45,46 @@ class MeowEngineAttachmentTest {
     @get:Rule val temporary = TemporaryFolder()
     private fun home() = temporary.newFolder().canonicalFile
 
+    @Test fun parkedGraphQueriesUseActualEndpointWhileVpnRemainsStoppedAndRejectRetiredIdentity() = runBlocking<Unit> {
+        val home = home(); val seeded = seed(home)
+        seeded.store.invalidate()
+        val candidate = seeded.store.readCurrent()!!
+        seeded.store.commitGraphApplied(candidate.revision, candidate.intentEpoch, RuntimeAppliedProof(9, 3, "5"), candidate.handoff)
+        val identity = seeded.store.readAppliedIdentity()!!
+        val server = MockWebServer(); server.start()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse = when (request.requestUrl!!.encodedPath) {
+                "/aerove/route" -> route()
+                "/proxies" -> MockResponse().setBody("""{"proxies":{"local":{"name":"local","type":"Direct"}}}""")
+                "/providers/proxies", "/providers/rules" -> MockResponse().setBody("""{"providers":{}}""")
+                "/aerove/delay-history" -> MockResponse().setBody("""{"complete":true,"core-epoch":"5","route-version":"2","history-revision":"1","delays":[{"name":"local","url":"https://example.test/probe","value":23}]}""")
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        val vpn = MutableStateFlow(VpnSnapshot())
+        var published: MeowQueryGraph? = MeowQueryGraph(identity, CoreEndpoint(server.port, "x".repeat(32)), false)
+        val owner = object : MeowFlutterRuntime by UnavailableOwner {
+            override fun queryGraph() = published
+            override fun identityIsCurrent(identity: RuntimeAppliedIdentity) = published?.identity == identity &&
+                seeded.store.isGraphCandidate(identity.revision, identity.intentEpoch)
+        }
+        val engine = attachment(home, seeded.store, vpn, this, owner)
+        try {
+            assertFalse(engine.readRuntime()!!.listening)
+            assertTrue(rpc(engine, "getProxies").getJSONObject("result").getJSONObject("proxies").has("local"))
+            assertFalse(rpc(engine, "getExternalProviders").has("error"))
+            val delays = rpc(engine, "getLatestDelays")
+            assertFalse(delays.toString(), delays.has("error"))
+            assertTrue(delays.toString().contains("23"))
+            assertEquals(VpnSnapshot(), vpn.value)
+            assertFalse(seeded.store.readCurrent()!!.userRequested)
+            assertFalse(engine.setup.getAppliedSetup()["running"] as Boolean)
+            published = null
+            assertTrue(rpc(engine, "getProxies").has("error"))
+            assertNull(engine.readRuntime())
+        } finally { assertTrue(engine.closeAndJoin()); server.shutdown() }
+    }
+
     @Test fun ruleSetPreviewValidatesTheSharedPathWithoutRequiringARunningCore() = runBlocking<Unit> {
         val home = home()
         val store = RuntimeHandoffStore(home)

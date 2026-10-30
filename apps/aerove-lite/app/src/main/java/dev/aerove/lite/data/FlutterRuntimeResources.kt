@@ -14,8 +14,48 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Session-owned relocation. The Store's original manifest, policies and byte receipts stay immutable. */
-class FlutterRuntimeResources private constructor(private val privateRoot: File, val readRoot: File, val yaml: String) {
-    suspend fun closeAfterNativeJoin() = withContext(NonCancellable + Dispatchers.IO) { deletePrivateTree(privateRoot, readRoot) }
+class FlutterRuntimeResources private constructor(private val privateRoot: File, val readRoot: File, val yaml: String,
+    private val profileId: String, private val revision: String, private val compiledSha256: String,
+    private val receiptSha256: String) {
+    @Volatile private var closed = false
+    suspend fun closeAfterNativeJoin() = withContext(NonCancellable + Dispatchers.IO) {
+        closed = true
+        deletePrivateTree(privateRoot, readRoot)
+    }
+
+    internal fun verifyReadLease(prepared: PreparedProfile): File {
+        check(!closed) { "Flutter runtime resource lease is closed" }
+        require(prepared.profileId == profileId && prepared.revision == revision && prepared.generation == compiledSha256 &&
+            prepared.resourceDirectory == readRoot && readRoot.toPath() == readRoot.toPath().toRealPath()) { "Foreign Flutter runtime resource lease" }
+        val original = ConfigYaml.parse(yaml)
+        val supplied = ConfigYaml.parse(prepared.yaml)
+        val groups = original["proxy-groups"] as? List<*>
+        val projected = if (groups == null) original else original + ("proxy-groups" to groups.mapIndexed { index, value ->
+            val row = value as? Map<*, *>
+            if (row != null && row["type"] in setOf("url-test", "fallback", "load-balance") && (row["url"] == null || row["url"] == "")) {
+                val actual = (supplied["proxy-groups"] as? List<*>)?.getOrNull(index) as? Map<*, *>
+                val url = actual?.get("url") as? String ?: error("Missing runtime group test URL")
+                SubscriptionDownloader.parseUrl(url)
+                row + ("url" to url)
+            } else value
+        })
+        require(projected == supplied) { "Flutter runtime YAML differs from its owned source" }
+        val receiptFile = File(readRoot, "relocation-receipt.json")
+        require(receiptFile.toPath() == receiptFile.toPath().toRealPath() && Files.isRegularFile(receiptFile.toPath(), NOFOLLOW_LINKS)) { "Unsafe runtime receipt" }
+        val bytes = Files.newInputStream(receiptFile.toPath(), NOFOLLOW_LINKS).use { it.readBounded(4 * 1024 * 1024) }
+        require(dev.aerove.lite.flutter.runtimeSha256(bytes) == receiptSha256) { "Runtime receipt changed" }
+        val receipt = JSONObject(String(bytes, Charsets.UTF_8))
+        require(receipt.getString("revision") == revision && receipt.getString("compiledSha256") == compiledSha256) { "Runtime receipt lineage changed" }
+        val records = receipt.getJSONArray("records")
+        repeat(records.length()) { index ->
+            val row = records.getJSONObject(index)
+            val path = File(readRoot, row.getString("file"))
+            require(path.toPath() == path.toPath().toRealPath() && Files.isRegularFile(path.toPath(), NOFOLLOW_LINKS) &&
+                sha256(path) == row.getString("runtimeSha256")) { "Relocated runtime resource changed" }
+        }
+        check(!closed) { "Flutter runtime resource lease is closed" }
+        return readRoot
+    }
 
     companion object {
         suspend fun create(privateDirectory: File, snapshot: MeowRuntimeSnapshot, current: () -> Boolean): FlutterRuntimeResources = withContext(Dispatchers.IO) {
@@ -68,11 +108,13 @@ class FlutterRuntimeResources private constructor(private val privateRoot: File,
                 }
                 for (asset in resources) receipts.put(JSONObject().put("file", asset.relativePath).put("sourceSha256", asset.sha256)
                     .put("runtimeSha256", sha256(File(root, asset.relativePath))))
-                PrivateStorage(root).write("relocation-receipt.json", JSONObject().put("revision", snapshot.revision)
-                    .put("compiledSha256", snapshot.handoff.compiledSha256).put("records", receipts).toString())
+                val receipt = JSONObject().put("revision", snapshot.revision)
+                    .put("compiledSha256", snapshot.handoff.compiledSha256).put("records", receipts).toString()
+                PrivateStorage(root).write("relocation-receipt.json", receipt)
                 checkCurrent()
                 @Suppress("UNCHECKED_CAST")
-                FlutterRuntimeResources(privateRoot, root, ConfigYaml.dump(remap(input) as Map<String, Any?>))
+                FlutterRuntimeResources(privateRoot, root, ConfigYaml.dump(remap(input) as Map<String, Any?>),
+                    snapshot.profileId, snapshot.revision, snapshot.handoff.compiledSha256, sha256(receipt))
             } catch (failure: Throwable) { deletePrivateTree(privateRoot, root); throw failure }
         }
     }

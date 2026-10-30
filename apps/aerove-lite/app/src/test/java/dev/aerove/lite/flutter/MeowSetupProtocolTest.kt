@@ -20,14 +20,100 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
 class MeowSetupProtocolTest {
+    @Test fun coldSetupDoesNotTreatHistoricalRequestedFlagAsLiveStartAuthority() = runBlocking<Unit> {
+        val home = home(); val input = File(home, "config.yaml").apply { writeText("rules: ['MATCH,DIRECT']\n") }
+        val store = RuntimeHandoffStore(home)
+        val effects = Effects()
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects, verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.syncState(shared()); api.setupConfig(setup())
+            val original = store.readCurrent()!!
+            store.requestStart(original.revision, original.intentEpoch)
+            store.commitApplied(original.revision, original.intentEpoch, RuntimeAppliedProof(7, 1, "1"))
+            assertFalse(effects.hasRequestedIntent())
+            effects.onStaged = { candidate -> assertFalse(candidate.userRequested) }
+            input.writeText("rules: ['MATCH,REJECT']\n")
+            api.setupConfig(setup())
+            assertFalse(store.readCurrent()!!.userRequested)
+            assertEquals(original.revision, store.readLastApplied()!!.revision)
+        }
+    }
+
+    @Test fun ordinarySetupReplacesRequestedGraphWithoutStopAndLaterStopRejectsQueuedReplacement() = runBlocking<Unit> {
+        val home = home(); val input = File(home, "config.yaml").apply { writeText("rules: ['MATCH,DIRECT']\n") }
+        val store = RuntimeHandoffStore(home)
+        val effects = Effects()
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects, verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.syncState(shared()); api.setupConfig(setup())
+            val original = store.readCurrent()!!
+            store.requestStart(original.revision, original.intentEpoch)
+            store.commitApplied(original.revision, original.intentEpoch, RuntimeAppliedProof(7, 1, "1"))
+            effects.requestedIntent = true
+            var requested = true; var generation = 4L; var replacements = 0; var parkedLoads = 0
+            effects.onStaged = { staged ->
+                meowApplyStagedGraph(staged, store, replaceRequested = { next ->
+                    assertTrue(requested); assertTrue(next.userRequested)
+                    assertTrue(meowAdmitGraphReplacement(7, generation, 7, generation, requested,
+                        store.isCurrent(next.revision, next.intentEpoch)))
+                    replacements++
+                    store.commitApplied(next.revision, next.intentEpoch, RuntimeAppliedProof(7, 2, "2"))
+                    store.readAppliedIdentity()!!
+                }, parked = { parkedLoads++; error("Ordinary setup stopped the requested runtime") })
+            }
+            input.writeText("rules: ['MATCH,REJECT']\n")
+            api.setupConfig(setup())
+            assertEquals(1, replacements); assertEquals(0, parkedLoads); assertTrue(requested)
+            assertTrue(store.readCurrent()!!.userRequested)
+            val active = store.readAppliedIdentity()!!
+            assertEquals(store.readCurrent()!!.revision, active.revision)
+            effects.onStaged = { staged ->
+                val captured = generation
+                requested = false; generation++
+                effects.requestedIntent = false
+                store.invalidate(staged.intentEpoch)
+                assertFalse(meowAdmitGraphReplacement(7, captured, 7, generation, requested,
+                    store.isCurrent(staged.revision, staged.intentEpoch)))
+                meowApplyStagedGraph(staged, store, replaceRequested = { error("Late setup revived a stopped runtime") },
+                    parked = { error("Old candidate bypassed its stop epoch") })
+            }
+            input.writeText("rules: ['MATCH,DIRECT']\n")
+            try { api.setupConfig(setup()); fail("Superseded setup succeeded") }
+            catch (failure: MeowProtocolFailure) { assertEquals("superseded", failure.code) }
+            assertFalse(requested); assertFalse(store.readCurrent()!!.userRequested)
+            assertEquals(active, store.readAppliedIdentity())
+        }
+    }
+
+    @Test fun setupWaitsForGraphOwnerAndOwnerFailureLeavesCandidateUnapplied() = runBlocking<Unit> {
+        val home = home(); File(home, "config.yaml").writeText("rules: ['MATCH,DIRECT']\n")
+        val store = RuntimeHandoffStore(home)
+        val effects = Effects()
+        var candidate: MeowRuntimeSnapshot? = null
+        effects.onStaged = { candidate = it; throw MeowConfigProtocolException("graph_failed", "actual graph failed readiness") }
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects, verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.syncState(shared())
+            expect("graph_failed", null) { api.setupConfig(setup()) }
+            assertEquals(candidate!!.revision, store.readCurrent()!!.revision)
+            assertFalse(store.readCurrent()!!.userRequested)
+            assertNull(store.readLastApplied())
+            assertNull(store.readAppliedIdentity())
+        }
+    }
+
     @get:Rule val temporary = TemporaryFolder()
     private class Effects : MeowSetupEffects {
         var initialized = true
+        var requestedIntent = false
+        override fun hasRequestedIntent() = requestedIntent
         override fun isInitialized() = initialized
         var runtime: MeowSetupRuntime? = null
         var projection: MeowSetupProjection? = null
         var onApply: suspend () -> Unit = {}
         var refreshCalls = 0
+        var onStaged: suspend (MeowRuntimeSnapshot) -> Unit = {}
+        override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) = onStaged(snapshot)
         override suspend fun readRuntime() = runtime
         override suspend fun applyUpdate(expected: MeowSetupRuntime?, projection: MeowSetupProjection) { onApply(); this.projection = projection }
         override suspend fun refreshApplied(expected: MeowSetupRuntime, setupParamsJson: String): Boolean { refreshCalls++; return true }

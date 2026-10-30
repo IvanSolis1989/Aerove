@@ -35,9 +35,13 @@ class MeowSetupProjection(val settings: LiteSettings, val sharedStateJson: Strin
 
 interface MeowSetupEffects {
     fun isInitialized(): Boolean
+    fun hasRequestedIntent(): Boolean = false
     suspend fun readRuntime(): MeowSetupRuntime?
     suspend fun applyUpdate(expected: MeowSetupRuntime?, projection: MeowSetupProjection)
     suspend fun refreshApplied(expected: MeowSetupRuntime, setupParamsJson: String): Boolean
+    suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) {
+        throw MeowConfigProtocolException("implementation_blocked", "A runtime graph owner must apply the staged configuration")
+    }
 }
 
 class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, private val config: MeowConfigProtocol,
@@ -179,6 +183,11 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             val prepared = preparedValidator ?: NativePreparedConfigValidator { _, _ -> blocked("$.resources", "Prepared native validation is required for sealed resources") }
             MeowProfileValidator(validator, prepared, home, verifiedFeatures).validate(yaml, resources.second != null, resources.second)
             val runtimeSettings = MeowRuntimeSnapshotSettings.encode(projected).put("flutterSetup", params).put("flutterUpdate", setupUpdate)
+            if (before?.userRequested == true && effects.hasRequestedIntent()) {
+                val prior = JSONObject(before.handoff.runtimeSettingsJson)
+                if (prior.has("flutterListeningRequested"))
+                    runtimeSettings.put("flutterListeningRequested", prior.getBoolean("flutterListeningRequested"))
+            }
             val sourceSha = runtimeSha256(sourceBytes)
             fun checkSource() {
                 if (read(checkedFile(File(path)), 4 * 1024 * 1024) != input)
@@ -192,7 +201,8 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                 notification(state).toString(), resources.first)
             MeowRuntimeSnapshotSettings.validate(handoff)
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            store.commit(handoff, expectedEpoch, before?.revision, ::checkSource)
+            val staged = store.commitForSetup(handoff, expectedEpoch, before?.revision, effects::hasRequestedIntent, ::checkSource)
+            effects.applyStaged(staged)
             setup = params; settings = projected; update = setupUpdate
             ""
         } finally {

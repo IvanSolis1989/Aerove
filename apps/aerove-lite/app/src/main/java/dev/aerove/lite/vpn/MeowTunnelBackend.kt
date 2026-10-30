@@ -276,6 +276,18 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             val target = lease.currentPolicies(settings)
             policy.apply(target) { !stopping && lease.isCurrent() && lease.currentPolicies(settings) == target }
         }
+        suspend fun readGraphReadiness(): ListenerReadback = withContext(Dispatchers.IO) { listenerChanges.withLock {
+            check(!stopping && lease.isCurrent()) { "Meow graph owner is no longer current" }
+            val status = commands.status(handle)
+            val actual = commands.listeners(handle)
+            check(status.state == MeowState.Running && status.coreReady && status.runtimeMode == config.runtimeMode &&
+                status.apiAddress == "127.0.0.1:${endpoint.port}" && status.listening == actual.listening &&
+                status.tunReady == actual.tunReady && status.userListenersReady == actual.userListenersReady) { "Meow graph readiness changed" }
+            acceptEpoch(actual.coreEpoch)
+            ListenerReadback(actual.listening, actual.tunReady, actual.userListenersReady, actual.coreEpoch, actual.activePorts)
+                .also { listenerReadback = it }
+        } }
+        suspend fun readGraphPolicy() = policy.read { !stopping && lease.isCurrent() }
         override suspend fun configureNetworkDns(snapshot: SystemDnsSnapshot) {
             check(!stopping && lease.isCurrent()) { "Meow network owner is no longer current" }
             val captured = lease.captureNetwork(snapshot)
