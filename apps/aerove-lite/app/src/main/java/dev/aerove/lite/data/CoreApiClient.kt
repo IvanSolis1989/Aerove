@@ -23,6 +23,8 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -53,7 +55,9 @@ import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -70,6 +74,13 @@ import org.json.JSONObject
 private fun defaultCoreHttpClient(): OkHttpClient = OkHttpClient.Builder()
     .dispatcher(okhttp3.Dispatcher().apply { maxRequestsPerHost = 32 })
     .build()
+
+private class ProtocolFailurePolicy(val create: (Int, String) -> IOException) :
+    AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ProtocolFailurePolicy>
+}
+
+internal class CoreApiProtocolReceiptException(val field: String) : IOException("Core returned an invalid delay receipt: $field")
 
 class CoreApiClient(
     private val endpoint: ControlEndpoint,
@@ -93,7 +104,10 @@ class CoreApiClient(
         .build()
 
     private data class TelemetryDemand(val observations: Boolean = false, val revision: Long = 0)
-    private data class TelemetryPacket(val revision: Long, val value: Result<CoreTelemetry>)
+    private class TelemetryFrame(val source: String) {
+        val decoded: Result<CoreTelemetry> by lazy { runCatching { decodeTelemetry(source) } }
+    }
+    private data class TelemetryPacket(val revision: Long, val value: Result<TelemetryFrame>)
     private val telemetryGate = Any()
     private val telemetryDemand = MutableStateFlow(TelemetryDemand())
 
@@ -109,7 +123,7 @@ class CoreApiClient(
             frames(listOf("aerove", "telemetry"), 65536,
                 query = if (demand.observations) mapOf("observations" to "true") else emptyMap(), serializedClose = true,
                 gracefulClose = { telemetryDemand.value.revision != demand.revision })
-            .map { TelemetryPacket(demand.revision, Result.success(decodeTelemetry(it))) }
+            .map { TelemetryPacket(demand.revision, Result.success(TelemetryFrame(it))) }
             .onCompletion { cause ->
                 if (cause == null) emit(TelemetryPacket(demand.revision, Result.failure(IOException("Core telemetry stream closed"))))
             }
@@ -286,6 +300,34 @@ class CoreApiClient(
         return result.getInt("delay").also { require(it >= 0) { "Core returned a negative delay" } }
     }
 
+    internal suspend fun protocolDelay(proxy: String, url: String, timeoutMillis: Int, expectedEpoch: ULong,
+        receipt: (ULong, ULong) -> Unit): Int {
+        require(proxy.isNotBlank() && timeoutMillis in 1..60000 && expectedEpoch > 0uL)
+        SubscriptionDownloader.parseUrl(url)
+        val body = request(listOf("proxies", proxy, "delay"),
+            query = mapOf("url" to url, "timeout" to timeoutMillis.toString(), "coreEpoch" to expectedEpoch.toString()),
+            inspectResponse = { response ->
+                // Only a committed measurement has these headers. Admission failures keep their native errors.
+                if (response.isSuccessful || response.code == 504) {
+                    fun stamp(field: String): ULong {
+                        val values = response.headers.values(field)
+                        val text = values.singleOrNull() ?: throw CoreApiProtocolReceiptException(field)
+                        return text.toULongOrNull()?.takeIf { it.toString() == text }
+                            ?: throw CoreApiProtocolReceiptException(field)
+                    }
+                    val epoch = stamp("x-aerove-core-epoch")
+                    if (epoch == 0uL) throw CoreApiProtocolReceiptException("x-aerove-core-epoch")
+                    receipt(epoch, stamp("x-aerove-route-version"))
+                }
+            })
+        val value = JSONObject(body).get("delay")
+        return when (value) {
+            is Int -> value.takeIf { it in 0..65535 }
+            is Long -> value.takeIf { it in 0..65535 }?.toInt()
+            else -> null
+        } ?: throw CoreApiProtocolReceiptException("delay")
+    }
+
     suspend fun closeConnection(id: String) {
         require(id.isNotBlank())
         request(listOf("connections", id), "DELETE")
@@ -300,20 +342,69 @@ class CoreApiClient(
         LogLine(System.currentTimeMillis(), value.getString("type"), value.getString("payload"))
     }
 
-    fun telemetry(): Flow<CoreTelemetry> = flow {
+    fun telemetry(): Flow<CoreTelemetry> = telemetryFrames().map { it.decoded.getOrThrow() }
+
+    // The Flutter projection must retain fields that the native UI's smaller DTOs do not use.
+    // Both readers share the same demand owner and websocket, never a second sampler.
+    internal fun protocolTelemetry(): Flow<String> = telemetryFrames().map { it.source }
+
+    private fun telemetryFrames(): Flow<TelemetryFrame> = flow {
         check(!closed.get()) { "Core client is closed" }
         emitAll(merge(
-            flow<CoreTelemetry> {
+            flow<TelemetryFrame> {
                 telemetryPackets.collect { packet ->
                     if (packet.revision == telemetryDemand.value.revision) emit(packet.value.getOrThrow())
                 }
             },
-            flow<CoreTelemetry> {
+            flow<TelemetryFrame> {
                 closedSignal.first { it }
                 throw IOException("Core client is closed")
             },
         ))
     }
+
+    internal suspend fun protocolSnapshot(path: List<String>): String {
+        require(path == listOf("proxies") || path == listOf("connections") ||
+            path == listOf("providers", "proxies") || path == listOf("providers", "rules"))
+        return request(path)
+    }
+
+    suspend fun protocolDelayHistory(coreEpoch: ULong): String {
+        require(coreEpoch > 0uL) { "Invalid expected core epoch" }
+        return request(listOf("aerove", "delay-history"), query = mapOf("coreEpoch" to coreEpoch.toString()))
+    }
+
+    internal suspend fun protocolProbe(url: String, proxy: String, headers: Map<String, String>,
+        timeoutMillis: Long, maxBody: Long, coreEpoch: ULong): String {
+        require(coreEpoch > 0uL && timeoutMillis <= 60000 && maxBody <= 8 * 1024 * 1024)
+        val data = JSONObject().put("url", url).put("proxy-name", proxy).put("headers", JSONObject(headers))
+            .put("timeout", timeoutMillis).put("max-body", maxBody)
+        return request(listOf("aerove", "probe"), "POST", data,
+            query = mapOf("coreEpoch" to coreEpoch.toString()), budgetMillis = timeoutMillis.takeIf { it > 0 } ?: 10000,
+            maxBytes = 4 * 1024 * 1024 + maxBody.coerceAtLeast(0).toInt() * 6, joinResponse = true)
+    }
+
+    internal suspend fun protocolOutboundIp(proxy: String, urls: List<String>, timeoutMillis: Long, coreEpoch: ULong): String {
+        require(coreEpoch > 0uL && timeoutMillis <= 60000)
+        val data = JSONObject().put("proxy-name", proxy).put("urls", JSONArray(urls)).put("timeout", timeoutMillis)
+        return request(listOf("aerove", "outbound-ip"), "POST", data,
+            query = mapOf("coreEpoch" to coreEpoch.toString()), budgetMillis = timeoutMillis.takeIf { it > 0 } ?: 10000,
+            maxBytes = 32 * 1024 * 1024, joinResponse = true)
+    }
+
+    internal suspend fun protocolUnpin(group: String) {
+        require(group.isNotBlank())
+        request(listOf("proxies", group), "DELETE")
+    }
+
+    internal suspend fun protocolProvider(kind: String, name: String): String {
+        require(kind in setOf("proxies", "rules") && name.isNotBlank())
+        return request(listOf("providers", kind, name))
+    }
+
+    // Opt-in only: the existing native callers keep their established exception types.
+    internal suspend fun <T> protocolErrors(create: (Int, String) -> IOException, work: suspend () -> T): T =
+        withContext(ProtocolFailurePolicy(create)) { work() }
 
     fun traffic(): Flow<Traffic> = telemetry().filterIsInstance<CoreTelemetry.TrafficSample>().map { it.value }
 
@@ -349,6 +440,8 @@ class CoreApiClient(
         failure: ((Int, String) -> IOException)? = null,
         maxBytes: Int = MAX_PROFILE_BYTES,
         emptyBody: Boolean = false,
+        inspectResponse: ((Response) -> Unit)? = null,
+        joinResponse: Boolean = false,
     ): String = withContext(Dispatchers.IO) {
         check(!closed.get()) { "Core client is closed" }
         val builder = authenticated(url(path, query))
@@ -362,12 +455,17 @@ class CoreApiClient(
         val cancellation = Job(currentCoroutineContext()[Job])
         cancellation.invokeOnCompletion { if (it != null) call.cancel() }
         calls.add(call)
+        val callbackEnded = CompletableDeferred<Unit>()
+        var joined = false
         try {
             if (closed.get()) throw IOException("Core client is closed")
-            call.awaitResponse().use { response ->
+            val received = if (joinResponse) { joined = true; awaitProtocolResponse(call, callbackEnded) } else call.awaitResponse()
+            received.use { response ->
+                inspectResponse?.invoke(response)
                 if (!response.isSuccessful) {
-                    throw if (failure == null) CoreApiException(response.code, path.first()) else {
-                        failure(response.code, response.body?.byteStream()?.readBounded(8192)?.strictUtf8().orEmpty())
+                    val describe = failure ?: currentCoroutineContext()[ProtocolFailurePolicy]?.create
+                    throw if (describe == null) CoreApiException(response.code, path.first()) else {
+                        describe(response.code, response.body?.byteStream()?.readBounded(8192)?.strictUtf8().orEmpty())
                     }
                 }
                 response.body?.byteStream()?.readBounded(maxBytes)?.strictUtf8().orEmpty()
@@ -376,10 +474,28 @@ class CoreApiClient(
             currentCoroutineContext().ensureActive()
             throw error
         } finally {
+            if (joined) withContext(NonCancellable) { callbackEnded.await() }
             calls.remove(call)
             cancellation.complete()
         }
     }
+
+    private suspend fun awaitProtocolResponse(call: Call, ended: CompletableDeferred<Unit>): Response =
+        suspendCancellableCoroutine { continuation ->
+            continuation.invokeOnCancellation { call.cancel() }
+            try {
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        try { if (!continuation.isCancelled) continuation.resumeWith(Result.failure(e)) }
+                        finally { ended.complete(Unit) }
+                    }
+                    override fun onResponse(call: Call, response: Response) {
+                        try { continuation.resume(response) { _, value, _ -> value.close() } }
+                        finally { ended.complete(Unit) }
+                    }
+                })
+            } catch (failure: Throwable) { ended.complete(Unit); throw failure }
+        }
 
     private fun url(path: List<String>, query: Map<String, String> = emptyMap()): HttpUrl {
         val builder = HttpUrl.Builder().scheme("http").host("127.0.0.1").port(endpoint.port)

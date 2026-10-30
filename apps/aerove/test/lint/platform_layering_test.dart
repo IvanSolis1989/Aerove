@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import '../helpers/client_sources.dart';
+
 const _platformPackages = [
   'tray',
   'window',
@@ -28,7 +30,7 @@ Set<String> _closureOfCommonBarrel() {
       return 'lib/${uri.substring('package:fl_clash/'.length)}';
     }
     if (uri.startsWith('dart:') || uri.startsWith('package:')) return uri;
-    return p.normalize(p.join(p.dirname(from), uri));
+    return p.posix.normalize(p.posix.join(p.posix.dirname(from), uri));
   }
 
   final directive = RegExp(
@@ -41,7 +43,7 @@ Set<String> _closureOfCommonBarrel() {
 
   while (queue.isNotEmpty) {
     final current = queue.removeLast();
-    final file = File(current);
+    final file = clientSourceFile(current);
     if (!file.existsSync()) continue;
     for (final match in directive.allMatches(file.readAsStringSync())) {
       final next = resolve(match.group(1)!, current);
@@ -54,7 +56,7 @@ Set<String> _closureOfCommonBarrel() {
 }
 
 Iterable<File> _dartFilesIn(String root) sync* {
-  final directory = Directory(root);
+  final directory = clientSourceDirectory(root);
   if (!directory.existsSync()) {
     fail('$root no longer exists; update this test.');
   }
@@ -69,7 +71,9 @@ Iterable<File> _dartFilesIn(String root) sync* {
 
 void main() {
   test('the common barrel never re-exports a platform module', () {
-    final exports = File('lib/common/common.dart').readAsLinesSync();
+    final exports = clientSourceFile(
+      'lib/common/common.dart',
+    ).readAsLinesSync();
     final leaked = <String>[];
 
     for (final module in _platformModules) {
@@ -90,7 +94,7 @@ void main() {
 
     for (final root in ['lib/common', 'lib/enum', 'lib/models']) {
       for (final file in _dartFilesIn(root)) {
-        final relative = p.relative(file.path);
+        final relative = clientSourcePath(file.path);
         if (_platformModules.contains(relative)) {
           continue;
         }
@@ -148,7 +152,7 @@ void main() {
         "import 'package:fl_clash/manager/manager.dart';",
       )) {
         offenders.add(
-          '${p.relative(file.path)} — import the one manager it needs, not the '
+          '${clientSourcePath(file.path)} — import the one manager it needs, not the '
           'barrel that reaches every platform manager',
         );
       }

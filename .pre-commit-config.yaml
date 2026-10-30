@@ -19,6 +19,12 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-push]
+      - id: shared-flutter-analyze
+        name: shared Flutter client analyze (pre-push)
+        entry: python tooling/workspace.py run-package aerove_client -- flutter analyze --no-fatal-infos
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
       - id: commit-msg-format
         name: conventional commit message
         entry: tooling/hooks/commit_msg.sh

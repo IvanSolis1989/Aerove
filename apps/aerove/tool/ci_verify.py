@@ -240,6 +240,7 @@ REGRESSION_SOFTWARE_PATHS = ['test/application_theme_test.dart',
  'test/lint/']
 
 CURRENT_REGRESSION_PATHS = [
+    'test/product_boundary_test.dart',
     'test/common/preferences_store_skip_test.dart',
     'test/common/system_test_font_test.dart',
     'test/common/traffic_format_test.dart',

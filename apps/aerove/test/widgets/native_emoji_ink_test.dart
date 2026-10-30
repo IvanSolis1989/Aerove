@@ -10,7 +10,9 @@ import 'package:material_ui/material_ui.dart';
 void main() {
   setUpAll(() async {
     final loader = FontLoader(desktopEmojiFontFamily)
-      ..addFont(rootBundle.load('assets/fonts/Twemoji.Mozilla.ttf'));
+      ..addFont(
+        rootBundle.load('packages/fl_clash/assets/fonts/Twemoji.Mozilla.ttf'),
+      );
     await loader.load();
     NativeEmojiCover.debugFontFamily = desktopEmojiFontFamily;
   });

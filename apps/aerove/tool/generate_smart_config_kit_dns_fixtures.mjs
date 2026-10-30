@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 export const fixedSource = Object.freeze({
-  revision: '3971964b4089b38c6a1233537e1cf2e44bf2be4d',
-  gitBlob: '9dc3bb723779f835f94d0267aac401c735a2ac71',
-  scriptSha256: '8bbbe11ca809c1c49e56919e4aef4d4480683a7c9d843bd8875947d6c4cd9d9e',
+  revision: '66a5eb6034bae4f2bda905669de788a418cacd9a',
+  gitBlob: '02ac2030b0a190958ed590fc6475f83132aa1c4f',
+  scriptSha256: 'f33ea7ef24043899d734f3174000b87f4f620cd35c4328af484c32775ea062bc',
 });
 
 export function syntheticInput(kind) {
@@ -70,9 +70,9 @@ export function fixtureSource() {
     networkRequests: 0,
     baseline: 'Two synthetic FQDN nodes; no source DNS.',
     private: 'Same nodes; exact node resolver hints, an unused node hint and unrelated global DNS. Only active-node proxy-server-nameserver-policy survives.',
-    previousRevision: '70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd',
-    previousGitBlob: '65beff76d400f51d21686b04b09ccc40df6e620e',
-    previousScriptSha256: '0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec',
+    previousRevision: '3971964b4089b38c6a1233537e1cf2e44bf2be4d',
+    previousGitBlob: '9dc3bb723779f835f94d0267aac401c735a2ac71',
+    previousScriptSha256: '8bbbe11ca809c1c49e56919e4aef4d4480683a7c9d843bd8875947d6c4cd9d9e',
   };
 }
 
@@ -93,7 +93,7 @@ function main() {
   assert.equal(metadata.revision, fixedSource.revision);
   assert.equal(metadata.gitBlob, fixedSource.gitBlob);
   assert.equal(metadata.sha256, fixedSource.scriptSha256);
-  assert.equal(metadata.version, 'v6.0.21-flclash.24');
+  assert.equal(metadata.version, 'v6.0.21-flclash.25');
   const outputs = new Map();
   for (const kind of ['baseline', 'private']) {
     outputs.set(`dns-${kind}.json`, runDns(source.toString('utf8'), syntheticInput(kind)));

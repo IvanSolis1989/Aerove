@@ -11,6 +11,17 @@ import zipfile
 import product_source as source
 
 
+SHARED_STANDARD_INPUTS = (
+    'apps/aerove/plugins/window/lib/window.dart',
+    'apps/aerove/plugins/proxy/lib/proxy.dart',
+    'apps/aerove/plugins/tray/lib/tray.dart',
+    'apps/aerove/plugins/wifi_ssid/lib/wifi_ssid.dart',
+    'apps/aerove/plugins/code_forge/lib/code_forge.dart',
+    'apps/aerove/plugins/rust_api/rust/src/lib.rs',
+    'apps/aerove/lint_options.yaml',
+)
+
+
 class ProductSourceTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -26,7 +37,8 @@ class ProductSourceTest(unittest.TestCase):
                      'apps/aerove/tool/aerove_release_notes.py',
                      'apps/aerove/tool/test_aerove_release_notes.py',
                      'docs/aerove/CHANGELOG.md', 'docs/shared/UI_CONTRACT.md',
-                     '.github/actions/flutter/action.yaml', '.gitmodules', 'root-build.sh'):
+                     '.github/actions/flutter/action.yaml', '.gitmodules', 'root-build.sh',
+                     *SHARED_STANDARD_INPUTS):
             self.write(path, 'original\n')
         self.original = self.commit()
 
@@ -88,6 +100,56 @@ class ProductSourceTest(unittest.TestCase):
         self.commit()
         with self.assertRaisesRegex(source.ProjectionError, 'Cross-product acceptance input'):
             self.compare('aerove-lite')
+
+    def test_lite_rejects_changes_to_every_shared_standard_plugin_and_lint_input(self):
+        baseline = source.equivalent(root=self.root, product='aerove-lite',
+            build_source=self.original, release_source=self.original)
+        for path in SHARED_STANDARD_INPUTS:
+            with self.subTest(path=path):
+                self.git('reset', '--hard', self.original)
+                self.write(path, 'changed shared client dependency\n')
+                changed = self.commit()
+                with self.assertRaisesRegex(source.ProjectionError, 'Cross-product acceptance input'):
+                    self.compare('aerove-lite')
+                current = source.equivalent(root=self.root, product='aerove-lite',
+                    build_source=changed, release_source=changed)
+                self.assertNotEqual(current['protected_inputs_sha256'],
+                                    baseline['protected_inputs_sha256'])
+
+    def test_lite_protects_added_and_deleted_files_inside_shared_plugin_directories(self):
+        for operation in ('add', 'delete'):
+            with self.subTest(operation=operation):
+                self.git('reset', '--hard', self.original)
+                if operation == 'add':
+                    self.write('apps/aerove/plugins/rust_api/rust/src/api/new.rs', 'new shared API\n')
+                else:
+                    (self.root / SHARED_STANDARD_INPUTS[0]).unlink()
+                self.commit()
+                with self.assertRaisesRegex(source.ProjectionError, 'Cross-product acceptance input'):
+                    self.compare('aerove-lite')
+
+    def test_lite_can_ignore_independent_standard_core_and_plugin_sibling_changes(self):
+        baseline = self.compare('aerove-lite')
+        paths = {'apps/aerove/core/main.go',
+                 'apps/aerove/plugins/window_extra/lib/window.dart'}
+        for path in paths:
+            self.write(path, 'standard-only input\n')
+        self.commit()
+        projected = self.compare('aerove-lite')
+        self.assertEqual({row['path'] for row in projected['changed']}, paths)
+        self.assertEqual({row['reason'] for row in projected['changed']}, {'otherProduct'})
+        self.assertEqual(projected['protected_inputs_sha256'], baseline['protected_inputs_sha256'])
+
+    def test_shared_package_sources_remain_protected_for_both_products(self):
+        for product in ('aerove', 'aerove-lite'):
+            for path in ('packages/aerove_client/lib/application.dart',
+                         'packages/aerove_client/pubspec.yaml'):
+                with self.subTest(product=product, path=path):
+                    self.git('reset', '--hard', self.original)
+                    self.write(path, 'changed shared package\n')
+                    self.commit()
+                    with self.assertRaisesRegex(source.ProjectionError, 'Product/build/acceptance input'):
+                        self.compare(product)
 
     def test_changed_modes_symlinks_and_submodule_entries_are_rejected_even_on_exceptions(self):
         path = 'docs/aerove/CHANGELOG.md'

@@ -940,22 +940,15 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
         prepareOwnedConnect()?.let(::connectOwned)
     }
 
-    fun prepareOwnedConnect(): OwnedStartRequest? =
-        if (canConnect()) application.ownedStarts.prepare() else null
-
-    fun connectOwned(request: OwnedStartRequest): Boolean {
-        if (!application.ownedStarts.send(request)) return false
-        try {
-            if (!canConnect()) { application.ownedStarts.retire(request); return false }
-            ContextCompat.startForegroundService(application, Intent(application, LiteVpnService::class.java)
-                .setAction(LiteVpnService.ACTION_START).putExtra(LiteVpnService.EXTRA_REQUESTED_AT_NANOS, System.nanoTime())
-                .putExtra(LiteVpnService.EXTRA_OWNED_START_ID, request.id))
-        } catch (failure: Exception) {
-            application.ownedStarts.retire(request)
-            throw failure
+    private val platformCommands by lazy {
+        dev.aerove.lite.flutter.createMeowFlutterCommandFacade(application, ::canConnect, ::canConnect) {
+            if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.cancelPending()
         }
-        return true
     }
+
+    fun prepareOwnedConnect(): OwnedStartRequest? = platformCommands.prepareOwnedConnect()
+
+    fun connectOwned(request: OwnedStartRequest): Boolean = platformCommands.connectOwned(request)
 
     private fun canConnect(): Boolean {
         if (application.maintenanceActive) return false
@@ -972,9 +965,7 @@ class LiteController(private val application: LiteApplication) : ViewModel(), Li
 
     override fun disconnect() {
         platformEntryGate.cancelStart()
-        application.invalidatePendingStarts()
-        if (sourceApplyOwner.isInitialized()) sourceApplyOwner.value.cancelPending()
-        application.startService(Intent(application, LiteVpnService::class.java).setAction(LiteVpnService.ACTION_STOP))
+        platformCommands.disconnect()
     }
 
     override fun importFile() { filePicker?.invoke() }

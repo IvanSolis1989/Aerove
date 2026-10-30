@@ -5,12 +5,14 @@ import 'package:fl_clash/common/l10n_labels.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../helpers/client_sources.dart';
+
 const _arbDir = 'arb';
 const _libDir = 'lib';
 
 Map<String, Set<String>> _arbKeys() {
   final result = <String, Set<String>>{};
-  for (final entity in Directory(_arbDir).listSync()) {
+  for (final entity in clientSourceDirectory(_arbDir).listSync()) {
     if (entity is! File || !entity.path.endsWith('.arb')) continue;
     final decoded =
         jsonDecode(entity.readAsStringSync()) as Map<String, Object?>;
@@ -44,9 +46,11 @@ void main() {
 
   test('no Intl.message call builds a key at runtime', () {
     final offenders = <String>[];
-    for (final entity in Directory(_libDir).listSync(recursive: true)) {
+    for (final entity in clientSourceDirectory(
+      _libDir,
+    ).listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      final path = entity.path;
+      final path = clientSourcePath(entity.path);
       if (path.contains('/generated/') || path.contains('/l10n/')) continue;
       if (entity.readAsStringSync().contains('Intl.message(')) {
         offenders.add(path);

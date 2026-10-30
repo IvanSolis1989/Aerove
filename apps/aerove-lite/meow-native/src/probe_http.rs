@@ -22,13 +22,15 @@ pub(super) struct ProbeRequest {
     pub max_body: usize,
     pub no_redirect: bool,
     pub strict: bool,
+    pub truncate_body: bool,
+    pub proof: Option<Arc<crate::control::RoutedProbeProof>>,
     pub until: Option<fn(&str) -> bool>,
 }
 
 impl ProbeRequest {
     pub fn get(url: &str, max_body: usize, timeout: Duration) -> Self {
         Self { method: Method::GET, url: url.into(), headers: HeaderMap::new(), body: Vec::new(),
-            timeout, max_body, no_redirect: false, strict: false, until: None }
+            timeout, max_body, no_redirect: false, strict: false, truncate_body: false, proof: None, until: None }
     }
 }
 
@@ -39,11 +41,13 @@ pub(super) struct ProbeResult {
     pub body: Vec<u8>,
     pub delay: u64,
     pub chains: Vec<String>,
+    pub rule: String,
+    pub rule_payload: String,
 }
 
 pub(super) async fn run_probe(control: Arc<RouteControl>, proxy: String, hits: Hits, mut request: ProbeRequest) -> io::Result<ProbeResult> {
     let _slot = tokio::time::timeout(request.timeout, SLOTS.get_or_init(|| Semaphore::new(8)).acquire()).await
-        .map_err(|_| io::Error::other("probe queue timed out"))?.map_err(io::Error::other)?;
+        .map_err(|error| io::Error::new(io::ErrorKind::TimedOut, error))?.map_err(io::Error::other)?;
     let timeout = request.timeout;
     tokio::time::timeout(timeout, meow_common::probe_policy::DiagnosticToken::measurement().scope(async {
         let start = Instant::now();
@@ -76,6 +80,9 @@ pub(super) async fn run_probe(control: Arc<RouteControl>, proxy: String, hits: H
 }
 
 async fn round_trip(control: Arc<RouteControl>, proxy: &str, hits: &Hits, request: &ProbeRequest, start: Instant) -> io::Result<ProbeResult> {
+    if let Some(proof) = &request.proof {
+        control.readback_routed_probe(proof).map_err(|_| io::Error::other("routed probe superseded"))?;
+    }
     let uri: Uri = request.url.parse().map_err(io::Error::other)?;
     let host = uri.host().ok_or_else(|| io::Error::other("missing probe host"))?;
     let https = uri.scheme_str() == Some("https");
@@ -85,6 +92,9 @@ async fn round_trip(control: Arc<RouteControl>, proxy: &str, hits: &Hits, reques
     // Record before resolution/dial so failures preceding the success receipt also participate in rechecks.
     hits.record(&address, proxy, String::new());
     let resolved = resolve(&control, &address, proxy).await?;
+    if let Some(proof) = &request.proof {
+        control.check_routed_target(proof, &resolved.route).map_err(|_| io::Error::other("routed probe superseded"))?;
+    }
     hits.record(&address, proxy, exit_through(resolved.adapter.clone(), &resolved.metadata));
     let receipt = Arc::new(meow_common::dial_outcome::DialReceipt::default());
     let mut metadata = resolved.metadata.clone();
@@ -102,7 +112,12 @@ async fn round_trip(control: Arc<RouteControl>, proxy: &str, hits: &Hits, reques
         TlsLayer::new(&config).map_err(io::Error::other)?.connect(conn).await.map_err(io::Error::other)?
     } else { conn };
     let mut result = exchange(stream, uri, request, start).await?;
+    if let Some(proof) = &request.proof {
+        control.check_routed_target(proof, &resolved.route).map_err(|_| io::Error::other("routed probe superseded"))?;
+    }
     result.chains = chains;
+    result.rule = resolved.rule.clone();
+    result.rule_payload = resolved.rule_payload.clone();
     drop(resolved);
     Ok(result)
 }
@@ -140,12 +155,12 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S,
         let mut body = Body::new(response.into_body()).into_data_stream();
         let mut wire = 0usize;
         let mut bytes = Vec::new();
-        let mut decoder = (gzip && limit > 0).then(|| flate2::write::GzDecoder::new(LimitedBody { bytes: Vec::new(), limit, until: probe.until, stopped: false }));
+        let mut decoder = (gzip && limit > 0).then(|| flate2::write::GzDecoder::new(LimitedBody { bytes: Vec::new(), limit, until: probe.until, stopped: false, truncate: probe.truncate_body }));
         while limit > 0 {
             let Some(chunk) = body.next().await else { break; };
             let chunk = chunk.map_err(io::Error::other)?;
             wire = wire.checked_add(chunk.len()).ok_or_else(|| io::Error::other("probe wire body overflow"))?;
-            if wire > probe.max_body { return Err(io::Error::other("probe wire body limit exceeded")); }
+            if !probe.truncate_body && wire > probe.max_body { return Err(io::Error::other("probe wire body limit exceeded")); }
             {
                 let previous;
                 let output = if let Some(decoder) = decoder.as_mut() {
@@ -159,10 +174,11 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S,
                     &decoder.get_ref().bytes
                 } else {
                     previous = bytes.len();
-                    if chunk.len() > limit - previous { return Err(io::Error::other("probe body limit exceeded")); }
-                    bytes.extend_from_slice(&chunk);
+                    if !probe.truncate_body && chunk.len() > limit - previous { return Err(io::Error::other("probe body limit exceeded")); }
+                    bytes.extend_from_slice(&chunk[..chunk.len().min(limit - previous)]);
                     &bytes
                 };
+                if probe.truncate_body && output.len() == limit { break; }
                 if let Some(until) = probe.until
                     && until(&String::from_utf8_lossy(&output[previous.saturating_sub(256)..])) { break; }
             }
@@ -171,7 +187,7 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S,
             if !decoder.get_ref().stopped { decoder.try_finish()?; }
             bytes = std::mem::take(&mut decoder.get_mut().bytes);
         }
-        Ok(ProbeResult { url: probe.url.clone(), status, headers, body: bytes, delay, chains: Vec::new() })
+        Ok(ProbeResult { url: probe.url.clone(), status, headers, body: bytes, delay, chains: Vec::new(), rule: String::new(), rule_payload: String::new() })
     };
     tokio::pin!(read, connection);
     tokio::select! {
@@ -180,16 +196,16 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(stream: S,
     }
 }
 
-struct LimitedBody { bytes: Vec<u8>, limit: usize, until: Option<fn(&str) -> bool>, stopped: bool }
+struct LimitedBody { bytes: Vec<u8>, limit: usize, until: Option<fn(&str) -> bool>, stopped: bool, truncate: bool }
 
 impl io::Write for LimitedBody {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if self.stopped { return Err(io::Error::other("probe scan complete")); }
         let previous = self.bytes.len();
         let count = bytes.len().min(self.limit - previous);
-        if count != bytes.len() { return Err(io::Error::other("probe decoded body limit reached")); }
+        if !self.truncate && count != bytes.len() { return Err(io::Error::other("probe decoded body limit reached")); }
         self.bytes.extend_from_slice(bytes);
-        self.stopped = self.until.is_some_and(|until| until(&String::from_utf8_lossy(&self.bytes[previous.saturating_sub(256)..])));
+        self.stopped = (self.truncate && self.bytes.len() == self.limit) || self.until.is_some_and(|until| until(&String::from_utf8_lossy(&self.bytes[previous.saturating_sub(256)..])));
         Ok(count)
     }
     fn flush(&mut self) -> io::Result<()> { Ok(()) }

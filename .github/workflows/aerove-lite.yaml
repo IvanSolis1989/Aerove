@@ -596,6 +596,80 @@ jobs:
           apps/aerove-lite/app/build/test-results/
           apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
         if-no-files-found: warn
+  flutter_host_preflight:
+    name: Shared Flutter Android host compilation (no APK)
+    needs: promotion_request
+    if: ${{ needs.promotion_request.result == 'success' && inputs.client_preflight && inputs.accepted_build_run == '' && !inputs.publish_release && !inputs.meow_host_only && !inputs.native_preflight && !inputs.qa84_only && !inputs.qa79_only && (inputs.diagnostic_target == 'none' || inputs.diagnostic_target == '') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: ./.github/actions/flutter
+      with:
+        flutter-version: 3.47.6
+        cache: true
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Select the existing pinned Android SDK and NDK requirements
+      run: |-
+        sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
+        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      with:
+        toolchain: 1.98.1
+        targets: aarch64-linux-android
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      with:
+        go-version: 1.27.1
+        cache-dependency-path: apps/aerove-lite/regexp2/go.sum
+    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      with:
+        gradle-version: 9.6.0
+        cache-read-only: false
+    - name: Resolve the actual Lite Flutter plugin graph
+      working-directory: apps/aerove-lite
+      run: flutter pub get --enforce-lockfile
+    - name: Compile the Flutter host and its real Android unit-test source graph
+      working-directory: apps/aerove-lite
+      run: |-
+        mkdir -p "$RUNNER_TEMP/lite-flutter-host"
+        gradle --no-daemon --continue -p android -Ptarget-platform=android-arm64 \
+          :app:compileReleaseKotlin :app:compileReleaseUnitTestKotlin \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/compile.log"
+    - name: Retain compile scope without claiming an application or acceptance
+      if: always()
+      run: |-
+        mkdir -p "$RUNNER_TEMP/lite-flutter-host"
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
+        roots = [Path('apps/aerove-lite/android/app/build/outputs/apk'), Path('apps/aerove-lite/app/build/outputs/apk')]
+        apks = [str(p) for root in roots if root.exists() for p in root.rglob('*.apk')]
+        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+                       buildRoot='apps/aerove-lite/android', requestedTasks=['compileReleaseKotlin', 'compileReleaseUnitTestKotlin'],
+                       appApkBuilt=bool(apks), apks=apks, acceptance=False)
+        (output / 'scope.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        assert not apks, 'Compile-only preflight unexpectedly packaged an application'
+        PY
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      if: always()
+      with:
+        name: AEROVE-Lite-Flutter-host-compilation
+        path: |-
+          ${{ runner.temp }}/lite-flutter-host/
+          apps/aerove-lite/android/app/build/reports/
+          apps/aerove-lite/android/app/build/test-results/
+        if-no-files-found: error
   reuse:
     needs: promotion_request
     if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))))) }}

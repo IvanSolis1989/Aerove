@@ -32,7 +32,21 @@ WORKFLOWS = {
     'aerove': '.github/workflows/xclash-android.yaml',
     'aerove-lite': '.github/workflows/aerove-lite.yaml',
 }
-CROSS_PRODUCT_INPUTS = {'aerove': set(), 'aerove-lite': {'apps/aerove/assets/data/ASN.mmdb'}}
+CROSS_PRODUCT_INPUTS = {
+    'aerove': set(),
+    'aerove-lite': {'apps/aerove/assets/data/ASN.mmdb', 'apps/aerove/lint_options.yaml'},
+}
+CROSS_PRODUCT_DIRECTORIES = {
+    'aerove': (),
+    'aerove-lite': (
+        'apps/aerove/plugins/window/',
+        'apps/aerove/plugins/proxy/',
+        'apps/aerove/plugins/tray/',
+        'apps/aerove/plugins/wifi_ssid/',
+        'apps/aerove/plugins/code_forge/',
+        'apps/aerove/plugins/rust_api/',
+    ),
+}
 ACCEPTED_BUILD_INPUT = (
     '      accepted_build_run:\n'
     '        description: Explicit fully accepted original build run to promote without rebuilding\n'
@@ -172,6 +186,10 @@ def workflow_equivalent(before, after):
     return sorted(old_jobs.keys() - {'reuse', 'release'})
 
 
+def _cross_product_input(product, path):
+    return path in CROSS_PRODUCT_INPUTS[product] or path.startswith(CROSS_PRODUCT_DIRECTORIES[product])
+
+
 def equivalent(*, root, product, build_source, release_source):
     if product not in WORKFLOWS:
         raise ProjectionError('Unknown product')
@@ -192,7 +210,7 @@ def equivalent(*, root, product, build_source, release_source):
             raise ProjectionError(f'File mode changed: {path}')
         if path.rsplit('/', 1)[-1] in ('AGENTS.md', 'CLAUDE.md'):
             raise ProjectionError(f'Product/workspace instructions changed: {path}')
-        if path in CROSS_PRODUCT_INPUTS[product]:
+        if _cross_product_input(product, path):
             raise ProjectionError(f'Cross-product acceptance input changed: {path}')
         category = None
         if path.startswith(f'apps/{other}/') or path == WORKFLOWS[other]:
@@ -215,7 +233,7 @@ def equivalent(*, root, product, build_source, release_source):
         changes.append(row)
     protected = [f"{path}\0{value['mode']}\0{value['type']}\0{value['blob']}\n"
                  for path, value in sorted(before.items())
-                 if (not path.startswith(f'apps/{other}/') or path in CROSS_PRODUCT_INPUTS[product])
+                 if (not path.startswith(f'apps/{other}/') or _cross_product_input(product, path))
                  and path not in FACT_DOCUMENTS | PUBLISHERS
                  and path not in WORKFLOWS.values()]
     return dict(schema=1, product=product, build_source=build_source, build_tree=build_tree,

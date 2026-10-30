@@ -236,7 +236,9 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter pub get
+          (cd ../../packages/aerove_client && flutter pub get)
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27.1'
@@ -254,19 +256,21 @@ jobs:
       - name: Generate and format sources
         run: |
           cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
-          dart run intl_utils:generate
-          dart run build_runner build --delete-conflicting-outputs
-          dart format lib test
+          cp ../../packages/aerove_client/pubspec.yaml "$RUNNER_TEMP/xclash-shared-pubspec.yaml"
+          trap 'cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml; cp "$RUNNER_TEMP/xclash-shared-pubspec.yaml" ../../packages/aerove_client/pubspec.yaml' EXIT
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml ../../packages/aerove_client/pubspec.yaml
+          (cd ../../packages/aerove_client && dart run intl_utils:generate)
+          (cd ../../packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)
+          dart format ../../packages/aerove_client/lib lib test
           python3 tool/mihomo_source.py prepare
           (cd core && go mod tidy)
           gofmt -w core/*.go
           cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
-          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          git -C "$GITHUB_WORKSPACE" diff --cached --binary -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock > "$RUNNER_TEMP/xclash-generated.patch"
+          cp "$RUNNER_TEMP/xclash-shared-pubspec.yaml" ../../packages/aerove_client/pubspec.yaml
+          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" diff --cached --binary -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock > "$RUNNER_TEMP/xclash-generated.patch"
           git -C "$GITHUB_WORKSPACE" write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         id: generated
         if: always()
@@ -305,9 +309,9 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
           if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
           test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
       - uses: ./.github/actions/flutter
         with:
           channel: stable
@@ -315,7 +319,9 @@ jobs:
           cache: true
           cache-read-only: true
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter pub get
+          (cd ../../packages/aerove_client && flutter pub get)
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.27.1'
@@ -336,7 +342,9 @@ jobs:
           go test .
       - name: Analyze
         id: analyze
-        run: flutter analyze --no-pub --no-fatal-infos
+        run: |
+          (cd ../../packages/aerove_client && flutter analyze --no-pub --no-fatal-infos)
+          flutter analyze --no-pub --no-fatal-infos
 
   native:
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') }}
@@ -356,9 +364,9 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
           if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
           test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
       - uses: ./.github/actions/flutter
         with:
           channel: stable
@@ -366,7 +374,9 @@ jobs:
           cache: true
           cache-read-only: true
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter pub get
+          (cd ../../packages/aerove_client && flutter pub get)
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: '1.99.0'
@@ -415,9 +425,9 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
           if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
           test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
       - uses: ./.github/actions/flutter
         with:
           channel: stable
@@ -425,7 +435,9 @@ jobs:
           cache: true
           cache-read-only: true
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter pub get
+          (cd ../../packages/aerove_client && flutter pub get)
       - uses: ./.github/actions/aerove-test-font
         timeout-minutes: 10
       - name: Prepare official Core source for DNS contract tests
@@ -463,9 +475,9 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
           if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
           test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
       - uses: ./.github/actions/flutter
         with:
           channel: stable
@@ -473,7 +485,9 @@ jobs:
           cache: true
           cache-read-only: true
       - name: Install dependencies
-        run: flutter pub get
+        run: |
+          flutter pub get
+          (cd ../../packages/aerove_client && flutter pub get)
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: '1.99.0'
@@ -549,9 +563,9 @@ jobs:
         run: |
           patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
           if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
           test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
+          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
       - uses: ./.github/actions/flutter
         with:
           channel: stable
@@ -674,7 +688,7 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: |
-          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest \
+          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest :fl_clash:testDebugUnitTest \
             -Ptarget-platform=android-arm64 \
             -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

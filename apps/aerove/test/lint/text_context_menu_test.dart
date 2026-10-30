@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import '../helpers/client_sources.dart';
+
 final _textWidget = RegExp(
   r'\b(TextField|TextFormField|SelectableText(?:\.rich)?|SelectionArea|EditableText)\(',
 );
@@ -80,8 +82,10 @@ List<String> _offenders(String path, String source) {
 void main() {
   test('every text widget shows the glass selection menu', () {
     final offenders = <String>[];
-    for (final entity in Directory('lib').listSync(recursive: true)) {
-      final path = entity.path.replaceAll(r'\', '/');
+    for (final entity in clientSourceDirectory(
+      'lib',
+    ).listSync(recursive: true)) {
+      final path = clientSourcePath(entity.path);
       if (entity is! File ||
           !path.endsWith('.dart') ||
           path.contains('/generated/') ||

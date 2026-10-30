@@ -256,7 +256,9 @@ Future<void> _settle(WidgetTester tester) async {
 
 void main() {
   setUpAll(() async {
-    await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+    await ui.FragmentProgram.fromAsset(
+      'packages/fl_clash/shaders/liquid_glass.frag',
+    );
   });
 
   for (final dark in [false, true]) {

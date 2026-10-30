@@ -1,9 +1,10 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
-const _roots = ['lib', 'test', 'tool', 'plugins'];
+import '../helpers/client_sources.dart';
+
+const _roots = ['lib', 'host/lib', 'test', 'tool', 'plugins'];
 
 const _forbiddenImports = <String, String>{
   'package:cupertino_ui/':
@@ -30,7 +31,7 @@ void main() {
     final offenders = <String>[];
 
     for (final root in _roots) {
-      final directory = Directory(root);
+      final directory = clientSourceDirectory(root);
       if (!directory.existsSync()) {
         fail('$root no longer exists; update _roots.');
       }
@@ -38,7 +39,7 @@ void main() {
         if (entity is! File || !entity.path.endsWith('.dart')) {
           continue;
         }
-        final relative = p.posix.joinAll(p.split(p.relative(entity.path)));
+        final relative = clientSourcePath(entity.path);
         if (_isGenerated(relative)) {
           continue;
         }

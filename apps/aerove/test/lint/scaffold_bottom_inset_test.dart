@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import '../helpers/client_sources.dart';
+
 final _scopeRead = RegExp(r'BottomInsetScope\.of\(');
 
 final _insetRead = RegExp(r'(\w+)\.bottomInset\b');
@@ -64,13 +66,15 @@ void main() {
   test('pages read the bottom inset below the scaffold that adds to it', () {
     final offenders = <String>[];
 
-    for (final entity in Directory('lib').listSync(recursive: true)) {
+    for (final entity in clientSourceDirectory(
+      'lib',
+    ).listSync(recursive: true)) {
       if (entity is! File ||
           !entity.path.endsWith('.dart') ||
           entity.path.contains('/generated/')) {
         continue;
       }
-      final path = p.relative(entity.path);
+      final path = clientSourcePath(entity.path);
       if (p.isWithin('lib/ui', path)) {
         continue;
       }

@@ -249,7 +249,9 @@ Map<String, Object> _frozenDifference(Uint8List before, Uint8List after) {
 
 void main() {
   setUpAll(() async {
-    await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+    await ui.FragmentProgram.fromAsset(
+      'packages/fl_clash/shaders/liquid_glass.frag',
+    );
   });
 
   for (final dark in [false, true]) {

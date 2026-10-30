@@ -853,13 +853,58 @@
  logbook = ["dep:rusqlite"]
 --- a/crates/meow-common/src/adapter.rs
 +++ b/crates/meow-common/src/adapter.rs
-@@ -52,10 +52,16 @@
+@@ -52,10 +52,61 @@
++/// Original graph identities and the owner admission ticket for one URL probe.
++/// Capture reserves only an intent; it makes no routing decision, I/O, task or health mutation.
++pub struct UrlDelayReceipt {
++    pub proxy: Arc<dyn Proxy>,
++    pub proxies: Vec<Arc<dyn Proxy>>,
++    pub dependencies: Vec<ProbeDependencies>,
++    pub admission: Option<UrlProbeStamp>,
++}
++impl UrlDelayReceipt {
++    pub fn capture(proxy: &Arc<dyn Proxy>) -> Option<Arc<Self>> {
++        fn visit(proxy: &Arc<dyn Proxy>, depth: usize, active: &mut std::collections::BTreeSet<usize>,
++            seen: &mut std::collections::BTreeSet<usize>, receipt: &mut UrlDelayReceipt) -> Option<()> {
++            if depth > 64 { return None; }
++            let key = Arc::as_ptr(proxy).cast::<()>() as usize;
++            if active.contains(&key) { return None; }
++            if !seen.insert(key) { return Some(()); }
++            active.insert(key);
++            if let Some(members) = proxy.member_proxies() {
++                for member in members { visit(&member, depth + 1, active, seen, receipt)?; }
++            }
++            let proof = proxy.probe_dependencies().ok()?;
++            if !proof.is_current() { return None; }
++            for dependency in &proof.proxies { visit(dependency, depth + 1, active, seen, receipt)?; }
++            receipt.dependencies.push(proof); receipt.proxies.push(proxy.clone());
++            active.remove(&key); Some(())
++        }
++        let mut receipt = Self { proxy: proxy.clone(), proxies: Vec::new(), dependencies: Vec::new(), admission: None };
++        visit(proxy, 0, &mut Default::default(), &mut Default::default(), &mut receipt)?;
++        if !crate::probe_policy::DiagnosticToken::capture().is_measurement() {
++            let observer = proxy.health().observer.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
++            receipt.admission = match observer { Some(observer) => observer.begin_url_probe(proxy).ok()?, None => None };
++        }
++        if !receipt.is_current() { return None; }
++        Some(Arc::new(receipt))
++    }
++    pub fn is_current(&self) -> bool { self.dependencies.iter().all(ProbeDependencies::is_current) }
++
++}
++
  /// Per-adapter liveness + rolling delay history. Owned by every concrete
  /// adapter and accessed via [`ProxyAdapter::health`]. Writers use interior
  /// mutability so the trait method can return `&ProxyHealth`.
++#[derive(Clone)]
++pub enum HealthUpdate {
++    Alive(bool), Delay(u16),
++    UrlDelay { proxy: std::sync::Weak<dyn Proxy>, url: Arc<str>, delay: u16, receipt: Option<Arc<UrlDelayReceipt>> },
++}
 +#[derive(Clone, Copy)]
-+pub enum HealthUpdate { Alive(bool), Delay(u16) }
++pub struct UrlProbeStamp { pub epoch: u64, pub ticket: u64 }
 +pub trait HealthObserver: Send + Sync {
++    fn begin_url_probe(&self, _proxy: &Arc<dyn Proxy>) -> std::io::Result<Option<UrlProbeStamp>> { Ok(None) }
 +    fn commit(&self, health: &ProxyHealth, update: HealthUpdate);
 +}
  pub struct ProxyHealth {
@@ -870,7 +915,7 @@
  }
  
  impl ProxyHealth {
-@@ -64,6 +70,7 @@
+@@ -64,6 +115,7 @@
              alive: AtomicBool::new(true),
              history: RwLock::new(VecDeque::new()),
              max_history: 10,
@@ -878,7 +923,7 @@
          }
      }
  
-@@ -71,9 +78,26 @@
+@@ -71,9 +123,26 @@
          self.alive.load(Ordering::Relaxed)
      }
  
@@ -896,7 +941,7 @@
 +    pub fn apply_committed(&self, update: HealthUpdate) {
 +        match update {
 +            HealthUpdate::Alive(alive) => self.alive.store(alive, Ordering::Relaxed),
-+            HealthUpdate::Delay(delay) => self.record_delay_committed(delay),
++            HealthUpdate::Delay(delay) | HealthUpdate::UrlDelay { delay, .. } => self.record_delay_committed(delay),
 +        }
 +    }
 +    fn publish(&self, update: HealthUpdate) {
@@ -908,17 +953,21 @@
  
      pub fn last_delay(&self) -> u16 {
          self.history
-@@ -92,7 +116,8 @@
+@@ -92,7 +161,12 @@
              .collect()
      }
  
 -    pub fn record_delay(&self, delay: u16) {
 +    pub fn record_delay(&self, delay: u16) { self.publish(HealthUpdate::Delay(delay)); }
++    /// Carry the actual measured target, not a name inferred from a shared health handle.
++    pub fn record_url_delay(&self, proxy: &Arc<dyn Proxy>, url: &str, delay: u16, receipt: Option<Arc<UrlDelayReceipt>>) {
++        self.publish(HealthUpdate::UrlDelay { proxy: Arc::downgrade(proxy), url: Arc::from(url), delay, receipt });
++    }
 +    fn record_delay_committed(&self, delay: u16) {
          let mut history = self
              .history
              .write()
-@@ -129,6 +154,26 @@
+@@ -129,6 +203,26 @@
      fn support_udp(&self) -> bool;
      async fn dial_tcp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyConn>>;
      async fn dial_udp(&self, metadata: &Metadata) -> Result<Box<dyn ProxyPacketConn>>;
@@ -945,7 +994,7 @@
      /// Run this adapter's complete post-connect pipeline over `stream`.
      ///
      /// Used by relay groups (M1.C-2) to chain proxy hops without dialling a
-@@ -232,6 +277,17 @@
+@@ -232,6 +326,17 @@
      /// Validate and select a member by name.
      async fn set(&self, name: &str) -> Result<()>;
  
@@ -963,7 +1012,7 @@
      /// Set or clear a selection without validation. This mirrors mihomo's
      /// `SelectAble.ForceSet` and is used to unfix automatic groups before a
      /// group health check.
-@@ -245,6 +301,65 @@
+@@ -245,6 +350,65 @@
      /// Only automatic groups can be returned to automatic mode through
      /// `DELETE /proxies/{name}`.
      fn can_unfix(&self) -> bool;
@@ -1029,7 +1078,7 @@
  }
  
  pub trait Proxy: ProxyAdapter {
-@@ -270,6 +385,20 @@
+@@ -270,6 +434,20 @@
      fn member_proxies(&self) -> Option<Vec<Arc<dyn Proxy>>> {
          None
      }
@@ -1050,7 +1099,7 @@
      /// For group adapters: the name of the currently active member
      /// (selected/fastest/first-alive depending on group kind).
      fn current(&self) -> Option<String> {
-@@ -296,6 +425,10 @@
+@@ -296,6 +474,10 @@
      fn group_display(&self) -> Option<&GroupDisplay> {
          None
      }
@@ -1061,7 +1110,7 @@
  
      /// Monotonic traffic-use generation for genuinely lazy health checks.
      /// Leaf adapters return zero; automatic groups increment on every dial.
-@@ -472,3 +605,23 @@
+@@ -472,3 +654,23 @@
          assert_eq!(back.delay, entry.delay);
      }
  }
@@ -9601,7 +9650,7 @@
  
      fn usage_generation(&self) -> u64 {
          self.usage.generation()
-@@ -343,6 +351,45 @@
+@@ -343,6 +351,47 @@
          Ok(())
      }
  
@@ -9619,7 +9668,9 @@
 +        let proxy = self.find_member(name).ok_or_else(|| MeowError::Proxy("proxy not exist".into()))?;
 +        if let Some((prepared, delay)) = health {
 +            if !Arc::ptr_eq(&proxy, &prepared) { return Err(MeowError::Proxy("proxy changed during preparation".into())); }
-+            proxy.health().record_delay(delay);
++            // The legacy CLI tuple has no original graph receipt. Native managed selection
++            // uses its explicit captured transaction; an observed foreign commit is incomplete.
++            proxy.health().record_url_delay(&proxy, &self.test_url, delay, None);
 +        }
 +        self.force_set(Some(name));
 +        Ok(())
@@ -9647,7 +9698,7 @@
      fn force_set(&self, name: Option<&str>) {
          *self.fixed.write() = name.map(SmolStr::from);
          if let Some(store) = &self.store {
-@@ -366,6 +413,17 @@
+@@ -366,6 +415,17 @@
  
  #[cfg(test)]
  mod tests {
@@ -10390,15 +10441,77 @@
  /// Probe a proxy and record the result in its [`ProxyHealth`].
  ///
  /// On success the measured delay (ms) is recorded; on any failure `0` is
-@@ -119,6 +188,7 @@
+@@ -117,11 +186,14 @@
+         .acquire()
+         .await
          .expect("global delay probe semaphore is never closed");
++    let receipt = meow_common::adapter::UrlDelayReceipt::capture(proxy)
++        .ok_or_else(|| UrlTestError::Transport("URL probe graph admission failed".into()))?;
      let adapter: &dyn ProxyAdapter = proxy.as_ref();
      let result = url_test(adapter, url, expected, timeout).await;
 +    if meow_common::probe_policy::capture().is_err() { return result; }
      match &result {
-         Ok(d) => proxy.health().record_delay(*d),
-         Err(_) => proxy.health().record_delay(0),
-@@ -858,7 +928,7 @@
+-        Ok(d) => proxy.health().record_delay(*d),
+-        Err(_) => proxy.health().record_delay(0),
++        Ok(d) => proxy.health().record_url_delay(proxy, url, *d, Some(receipt.clone())),
++        Err(_) => proxy.health().record_url_delay(proxy, url, 0, Some(receipt)),
+     }
+     result
+ }
+@@ -259,6 +331,11 @@
+     timeout: Duration,
+     hold: Duration,
+ ) -> ChainProbeReport {
++    // A metadata-only check must not replace a real target health intent.
++    let receipt = if owner.alive() { None } else {
++        let Some(receipt) = meow_common::adapter::UrlDelayReceipt::capture(owner) else { return ChainProbeReport::default(); };
++        Some(receipt)
++    };
+     let round = ChainRound {
+         group,
+         target,
+@@ -275,7 +352,7 @@
+         .unwrap_or_default();
+     if let Some((member, delay)) = report.reached.first() {
+         if !owner.alive() {
+-            revive_owner(group.name(), owner, member, *delay);
++            if let Some(receipt) = receipt { revive_owner(group.name(), owner, member, url, *delay, Some(receipt)); }
+         }
+     }
+     report
+@@ -286,12 +363,12 @@
+ /// own, which marks it alive, and the recovery in the logbook. Only a
+ /// health check marked it down, or its dial failures did, and either
+ /// recorded that in the logbook.
+-fn revive_owner(group: &str, owner: &Arc<dyn Proxy>, member: &str, delay: u16) {
++fn revive_owner(group: &str, owner: &Arc<dyn Proxy>, member: &str, url: &str, delay: u16, receipt: Option<Arc<meow_common::adapter::UrlDelayReceipt>>) {
+     let name = owner.name();
+     info!(
+         "proxy-group '{group}': chained outbound '{name}' reached its server through \
+          '{member}' in a chain probe; marking it alive"
+     );
+-    owner.health().record_delay(delay);
++    owner.health().record_url_delay(owner, url, delay, receipt);
+     record_passing(name, Some((group, member)));
+ }
+@@ -515,6 +592,7 @@
+     timeout: Duration,
+     hold: Duration,
+ ) -> SweptMember {
++    let Some(receipt) = meow_common::adapter::UrlDelayReceipt::capture(&proxy) else { return SweptMember { name, delay: 0 }; };
+     let (result, front_pick) = {
+         let _permit = global_delay_probe_limiter()
+             .acquire()
+@@ -544,7 +622,7 @@
+             }
+         }
+     };
+-    proxy.health().record_delay(delay);
++    proxy.health().record_url_delay(&proxy, url, delay, Some(receipt));
+     if delay > 0 {
+         record_passing(&name, None);
+     }
+@@ -858,7 +936,7 @@
  
  /// Parse an `expected` query-param value into inclusive status-code ranges.
  /// Empty / `None` defaults to `[200..=299]`, matching upstream.
@@ -10407,7 +10520,7 @@
      let s = spec.unwrap_or("").trim();
      if s.is_empty() {
          return Ok(vec![(200, 299)]);
-@@ -1486,3 +1556,264 @@
+@@ -1486,3 +1564,264 @@
          }
      }
  }

@@ -1,5 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
+
+import '../helpers/client_sources.dart';
 
 import 'package:fl_clash/l10n/intl/messages_en.dart' as messages_en;
 import 'package:fl_clash/l10n/intl/messages_es.dart' as messages_es;
@@ -26,7 +27,9 @@ void main() {
     final arbByLocale = <String, Map<String, dynamic>>{
       for (final locale in lookups.keys)
         locale:
-            jsonDecode(File('arb/intl_$locale.arb').readAsStringSync())
+            jsonDecode(
+                  clientSourceFile('arb/intl_$locale.arb').readAsStringSync(),
+                )
                 as Map<String, dynamic>,
     };
     final expectedKeys = arbByLocale['en']!.keys

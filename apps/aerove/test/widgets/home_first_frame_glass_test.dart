@@ -443,7 +443,7 @@ void main() {
                   ui.ImageFilter.isShaderFilterSupported) {
                 await tester.runAsync(() async {
                   await ui.FragmentProgram.fromAsset(
-                    'shaders/liquid_glass.frag',
+                    'packages/fl_clash/shaders/liquid_glass.frag',
                   );
                 });
                 await tester.pump();

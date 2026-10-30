@@ -6,16 +6,17 @@
 
 Read this entry point, then the applicable product instructions. The Standard edition and Lite are independent build roots:
 
+Canonical Flutter client source is [packages/aerove_client](packages/aerove_client/). Standard's thin entry remains in `apps/aerove/`; Lite's Flutter host and Meow protocol integration remain in progress. Shared source extraction is not Android or release acceptance.
+
 - [AEROVE 标准版](apps/aerove/AGENTS.md): Flutter and official Mihomo; run its commands in `apps/aerove/`.
-- [AEROVE Lite](apps/aerove-lite/AGENTS.md): native Android and meow-rs (migration in progress); run its commands in `apps/aerove-lite/`.
+- [AEROVE Lite](apps/aerove-lite/AGENTS.md): shared Flutter client UI with native Android platform integration and meow-rs (migration in progress); run platform and core commands in `apps/aerove-lite/` and confirm the canonical shared Flutter source/build root before client work.
 - [Workspace and document policy](docs/development/REPOSITORY_LAYOUT.md): ownership, paths and archival rules.
 - [Project context](.agents/project.md), [commands](.agents/commands.md) and [engineering rules](.agents/rules.md).
 
 ## 双版本开发硬契约（每次开发必读）
 
-- 产品名称为 **AEROVE 标准版**（原完整版）和 **AEROVE Lite**。现阶段并行开发、独立安装和发行；Lite 采用原生
-  Android + meow-rs、最低 Android 13/API 33；标准版保留 Flutter + 官方 Mihomo 与现有桌面支持。
-- 两版 Android 共同界面、交互和客户端功能必须完全一致。任一版的新增功能、修复或微调均须双向核对并同步；
+- 产品名称为 **AEROVE 标准版**（原完整版）和 **AEROVE Lite**。现阶段并行开发、独立安装和发行；两版 Android 共用同一份 Flutter 客户端 UI、交互与动效源码；Lite 保留原生 Android 平台接入与 meow-rs、最低 Android 13/API 33，标准版保留官方 Mihomo 与现有桌面支持。
+- 两版 Android 共用同一份界面、交互、动效和客户端刷新门禁实现，不复制两份 UI 分别维护。任一版的新增功能、修复或微调均须双向核对；
   另一版已正确实现时复用其证据，不制造无意义改动。不能把单端退化同步成新标准。
 - 只有固定 Rust 核心源码证明确实不支持的能力才可暂缓；必须记录核心 SHA、源码路径、行为证据和具体字段。
   “尚未移植”、缺少 JNI/API/包装、框架差异、工期及首版目标均不是例外，而是交付阻断。

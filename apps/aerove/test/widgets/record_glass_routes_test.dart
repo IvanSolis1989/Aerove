@@ -33,7 +33,9 @@ void main() {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
     if (ui.ImageFilter.isShaderFilterSupported) {
-      await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+      await ui.FragmentProgram.fromAsset(
+        'packages/fl_clash/shaders/liquid_glass.frag',
+      );
     }
   });
 

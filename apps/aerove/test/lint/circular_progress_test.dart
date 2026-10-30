@@ -2,13 +2,17 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import '../helpers/client_sources.dart';
+
 final _circularProgress = RegExp(r'\bCircularProgressIndicator\b');
 
 void main() {
   test('lib shows circular loading with CommonCircleLoading', () {
     final offenders = <String>[];
 
-    for (final entity in Directory('lib').listSync(recursive: true)) {
+    for (final entity in clientSourceDirectory(
+      'lib',
+    ).listSync(recursive: true)) {
       if (entity is! File ||
           !entity.path.endsWith('.dart') ||
           entity.path.contains('/generated/')) {

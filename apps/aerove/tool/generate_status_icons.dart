@@ -4,9 +4,9 @@ import 'dart:typed_data';
 import 'src/icons/ico.dart';
 
 const sourceDir = 'assets_source/images/icon';
-const pngOutputDir = 'assets/images/tray/unix';
-const icoOutputDir = 'assets/images/tray/windows';
-const macosOutputDir = 'assets/images/tray/macos';
+const pngOutputDir = '../../packages/aerove_client/assets/images/tray/unix';
+const icoOutputDir = '../../packages/aerove_client/assets/images/tray/windows';
+const macosOutputDir = '../../packages/aerove_client/assets/images/tray/macos';
 const statusIconNames = ['status_1', 'status_2', 'status_3', 'status_4'];
 const macosStatusIconSources = {
   'status_1': '$sourceDir/glyph.svg',

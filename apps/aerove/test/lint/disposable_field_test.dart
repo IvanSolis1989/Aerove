@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import '../helpers/client_sources.dart';
 
 const _disposableTypes = {
   'AnimationController',
@@ -49,14 +50,14 @@ bool _isGenerated(String path) {
 
 void main() {
   test('every self-created disposable field is released in the same file', () {
-    final root = Directory('lib');
+    final root = clientSourceDirectory('lib');
     final offenders = <String>[];
 
     for (final entity in root.listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) {
         continue;
       }
-      final relative = p.relative(entity.path);
+      final relative = clientSourcePath(entity.path);
       if (_isGenerated(relative)) {
         continue;
       }
@@ -98,7 +99,7 @@ void main() {
   test('the allow list has no stale entries', () {
     for (final entry in _allowed) {
       final parts = entry.split('#');
-      final file = File(parts.first);
+      final file = clientSourceFile(parts.first);
       expect(
         file.existsSync(),
         isTrue,

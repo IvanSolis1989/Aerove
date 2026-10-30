@@ -13,7 +13,7 @@ internal object MeowSourceConfig {
             if (key !in setOf("enable", "device", "mtu", "inet4-address", "inet6-address", "auto-route", "dns-hijack"))
                 invalid("$.tun.$key", "Not consumed by the Android typed TUN plan; warn-only fields cannot be ignored")
         }
-        // Source TUN device/address/route choices cannot silently supersede the actual Android Builder.
+        // Source TUN policy must be reconciled with the Android Builder, rather than overwritten by host defaults.
         (tun as? Map<*, *>)?.forEach { (key, value) ->
             val valid = when (key) {
                 "enable" -> value is Boolean
@@ -25,7 +25,7 @@ internal object MeowSourceConfig {
                 else -> false
             }
             if (!valid) invalid("$.tun.$key", "Invalid Meow RawTun value")
-            if (key in setOf("device", "inet4-address", "inet6-address", "auto-route"))
+            if (key in setOf("device", "inet4-address", "inet6-address", "auto-route", "mtu", "dns-hijack") || (key == "enable" && value == true))
                 invalid("$.tun.$key", "Explicit source TUN policy requires Android Builder reconciliation before activation")
         }
         val raw = root.remove("listeners") ?: emptyList<Any?>()

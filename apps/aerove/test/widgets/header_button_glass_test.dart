@@ -277,7 +277,9 @@ void main() {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
     if (ui.ImageFilter.isShaderFilterSupported) {
-      await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+      await ui.FragmentProgram.fromAsset(
+        'packages/fl_clash/shaders/liquid_glass.frag',
+      );
       await GlassInk.prepare();
     }
   });
@@ -568,7 +570,9 @@ void main() {
           await tester.pumpAndSettle();
           if (ui.ImageFilter.isShaderFilterSupported) {
             await tester.runAsync(
-              () => ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'),
+              () => ui.FragmentProgram.fromAsset(
+                'packages/fl_clash/shaders/liquid_glass.frag',
+              ),
             );
             await tester.pumpAndSettle();
             expect(LiquidGlass.debugShaderReady, isTrue);
@@ -689,7 +693,9 @@ void main() {
           if (ui.ImageFilter.isShaderFilterSupported &&
               !LiquidGlass.debugShaderReady) {
             await tester.runAsync(
-              () => ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'),
+              () => ui.FragmentProgram.fromAsset(
+                'packages/fl_clash/shaders/liquid_glass.frag',
+              ),
             );
             await tester.pumpAndSettle();
             expect(LiquidGlass.debugShaderReady, isTrue);
@@ -852,7 +858,9 @@ void main() {
             await _shot(tester, '$prefix-revealing');
             if (ui.ImageFilter.isShaderFilterSupported) {
               await tester.runAsync(
-                () => ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'),
+                () => ui.FragmentProgram.fromAsset(
+                  'packages/fl_clash/shaders/liquid_glass.frag',
+                ),
               );
             }
             await tester.pumpAndSettle();

@@ -6,12 +6,14 @@
 
 **本页导航** · [文件归属](#文件归属) · [文档生命周期](#文档生命周期) · [工作目录与变更规则](#工作目录与变更规则)
 
-仓库按产品划分工程，按用途划分文档。根目录提供导航、许可证、协作与 CI 入口，产品自身保留完整的构建根目录。
+仓库按产品划分构建工程，按用途划分文档。根目录提供导航、许可证、协作与 CI 入口，两版通过共享客户端包使用同一份 Flutter 界面和业务实现；产品自身保留独立构建、核心和发行身份。
 
 ```text
 apps/
-  aerove/             Flutter + 官方 Mihomo，包含所有平台、插件、测试和产品构建工具
-  aerove-lite/        原生 Android + meow-rs（迁移中），包含 Android 工程、Rust 桥接和产品测试
+  aerove/             标准版 Flutter 薄入口 + 官方 Mihomo，保留平台、插件、测试和产品构建工具
+  aerove-lite/        Lite Android 平台 + meow-rs，Flutter 宿主接线进行中
+packages/
+  aerove_client/      共同 Flutter 客户端源码、ARB、图片、字体与 shader；不是第三个发行 App
 docs/
   shared/             两版共同遵守的 UI、功能、性能及验收契约
   aerove/             标准版说明、默认值、网络行为、发行记录
@@ -31,7 +33,7 @@ experiments/          可丢弃的原型，不能作为已发布功能
 ## 文件归属
 
 - 仅一个产品使用的实现、资源、配置、测试、依赖锁和构建工具进入对应 `apps/` 工程。两版独立版本、包名、签名、数据与发行入口继续有效。
-- 两版共享的是规格与测试向量。不得为了目录对称复制业务代码、引入另一版运行时，或让 Lite 在运行时读取 Flutter 文件。
+- 两版 Android 共同界面与客户端业务只维护在 `packages/aerove_client/`，Dart 包名为 `fl_clash`。产品薄入口注入品牌、专版脚本、更新入口和核心适配；禁止复制两份 UI，或让 Lite 引入 Mihomo 构建与运行依赖。
 - 固定的第三方源码放所属产品 `third_party/`，记录提交、原始与适配后哈希、最小改动及许可证。当前 Lite 的 Java 色彩算法闭包独立存放，布局检查校验其完整清单；原注释保留，业务代码不得借此目录规避质量规则。
 - 一份规范只有一个权威文件；其他位置使用链接。`docs/shared/UI_CONTRACT.md` 是双向同步要求的入口，产品文档不能另写较弱例外。
 - 源码生成物留在工具规定的位置。构建缓存、临时验证脚本、原始 CI 日志、候选截图放本机任务目录或 CI artifact，不能直接堆入 `docs/`。
@@ -59,7 +61,7 @@ experiments/          可丢弃的原型，不能作为已发布功能
 
 ## 工作目录与变更规则
 
-标准版命令在 `apps/aerove/` 执行；Lite 命令在 `apps/aerove-lite/` 执行。GitHub Actions 的 checkout、artifact、cache 路径相对仓库根目录；`run` 的工作目录由各产品工作流显式指定。
+标准版产品命令在 `apps/aerove/` 执行；Lite 平台命令在 `apps/aerove-lite/` 执行。共享源码的本地分析、ARB 和代码生成在 `packages/aerove_client/` 执行，Standard 测试从产品根导入真实共享包；源码检查不得只扫描薄入口。GitHub Actions 的 checkout、artifact、cache 路径相对仓库根目录；`run` 的工作目录由各产品工作流显式指定。
 
 GitHub 的 Workspace layout 工作流会持续检查入口、文档分类、本地链接及旧客户端兼容更新流，防止后续重新散落。
 
@@ -68,6 +70,7 @@ GitHub 的 Workspace layout 工作流会持续检查入口、文档分类、本�
 ```sh
 python tooling/workspace.py check
 python tooling/workspace.py run aerove -- flutter analyze --no-fatal-infos
+python tooling/workspace.py run-package aerove_client -- flutter analyze --no-fatal-infos
 python tooling/workspace.py run aerove-lite -- gradle :app:testReleaseUnitTest
 ```
 

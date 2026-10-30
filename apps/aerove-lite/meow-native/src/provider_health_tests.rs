@@ -105,8 +105,14 @@ async fn independent_initial_periodic_status_and_stop_read_back() {
     let snapshot=f.plane.proxy_snapshot(&f.api.state,Some("P")).unwrap();
     assert_eq!(snapshot["testUrl"],f.policy.url);assert_eq!(snapshot["expectedStatus"],"204");
     assert!(snapshot["revision"].as_str().unwrap().parse::<u64>().unwrap()>0);
+    let history=f.api.control.delay_history(Some(&f.plane.stamp().0.to_string())).unwrap();
+    assert!(history.complete);assert_eq!(history.delays.len(),1);
+    assert_eq!(history.delays[0].name,"A");assert_eq!(history.delays[0].url,f.policy.url);assert!(history.delays[0].value>0);
     second.write_all(b"HTTP/1.1 500 Failure\r\nConnection: close\r\n\r\n").await.unwrap();drop(second);
-    let third=f.request().await;assert_eq!(f.delay(),0);drop(third);
+    let third=f.request().await;assert_eq!(f.delay(),0);
+    let history=f.api.control.delay_history(Some(&f.plane.stamp().0.to_string())).unwrap();
+    assert_eq!(history.delays.len(),1);assert_eq!(history.delays[0].url,f.policy.url);assert_eq!(history.delays[0].value,-2);
+    drop(third);
     let origin=f.close(task).await;
     assert!(timeout(Duration::from_millis(1150),origin.accept()).await.is_err());
 }
@@ -200,11 +206,15 @@ async fn manual_intent_wins_and_member_replacement_retires_old_result() {
     assert_eq!(manual.await.unwrap().status(),axum::http::StatusCode::SERVICE_UNAVAILABLE);
     old.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await.unwrap();drop(old);
     let mut next=f.request().await;assert_eq!(f.delay(),0);
+    let history=f.api.control.delay_history(Some(&f.plane.stamp().0.to_string())).unwrap();
+    assert_eq!(history.delays.len(),1);assert_eq!(history.delays[0].name,"A");assert_eq!(history.delays[0].value,-2);
     std::fs::write(f.files.join("feed.yaml"),"proxies: [{name: B,type: direct}]\n").unwrap();
     let provider=f.api.state.proxy_providers.get("P").unwrap().value().clone();
     provider.refresh_owned().await.unwrap();
     next.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await.unwrap();drop(next);
     let mut replaced=f.request().await;assert_eq!(provider.proxies()[0].name(),"B");assert_eq!(provider.proxies()[0].last_delay(),0);
+    let history=f.api.control.delay_history(Some(&f.plane.stamp().0.to_string())).unwrap();
+    assert!(history.complete && history.delays.is_empty(),"same provider name must not inherit its retired member's URL history");
     replaced.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await.unwrap();drop(replaced);
     f.close(task).await;
 }

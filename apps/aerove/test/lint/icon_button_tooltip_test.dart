@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import '../helpers/client_sources.dart';
+
 /// The one button that carries its label on an enclosing [Tooltip] instead of
 /// its own `tooltip:`. Nesting a second tooltip inside would fight it.
 const _wrappedInTooltip = 'lib/views/dashboard/widgets/core_status_button.dart';
@@ -11,7 +13,7 @@ final _iconButton = RegExp(
 );
 
 Iterable<File> _dartFilesIn(String root) sync* {
-  final directory = Directory(root);
+  final directory = clientSourceDirectory(root);
   if (!directory.existsSync()) {
     fail('$root no longer exists; update this test.');
   }
@@ -43,7 +45,7 @@ void main() {
 
     for (final file in _dartFilesIn('lib')) {
       final source = file.readAsStringSync();
-      if (file.path == _wrappedInTooltip) continue;
+      if (clientSourcePath(file.path) == _wrappedInTooltip) continue;
 
       for (final match in _iconButton.allMatches(source)) {
         final arguments = _arguments(source, match.end);
@@ -64,7 +66,7 @@ void main() {
   });
 
   test('the exempted button still gets its label from an enclosing Tooltip', () {
-    final source = File(_wrappedInTooltip).readAsStringSync();
+    final source = clientSourceFile(_wrappedInTooltip).readAsStringSync();
 
     expect(
       source,

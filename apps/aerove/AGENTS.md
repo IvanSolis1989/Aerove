@@ -4,6 +4,11 @@
 
 Standard edition development entry point and binding reference navigation.
 
+The Standard product builds and runs tests from this directory. Production Flutter UI and client code now live in
+`../../packages/aerove_client/` (Dart package `fl_clash`); `lib/main.dart` and `lib/standard_product.dart` are the thin
+composition entry. Run shared analysis, ARB and model generation from the shared package; keep Standard's `setup`
+hook, native/core paths, package identity and APK output in this product root.
+
 This file is the entry point for AI coding agents working in this repository. Keep it small: detailed guidance lives under
 `.agents/`, and discoverable repo skills live under `.agents/skills/*/SKILL.md`.
 

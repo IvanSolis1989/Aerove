@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import '../helpers/client_sources.dart';
 
 final _reorderableList = RegExp(
   r'\b(?:ReorderableListView(?:\.\w+)?|ReorderableList|SliverReorderableList|'
@@ -38,13 +39,15 @@ void main() {
     () {
       final offenders = <String>[];
 
-      for (final entity in Directory('lib').listSync(recursive: true)) {
+      for (final entity in clientSourceDirectory(
+        'lib',
+      ).listSync(recursive: true)) {
         if (entity is! File ||
             !entity.path.endsWith('.dart') ||
             entity.path.contains('/generated/')) {
           continue;
         }
-        final path = p.relative(entity.path);
+        final path = clientSourcePath(entity.path);
         if (_allowed.contains(path)) {
           continue;
         }

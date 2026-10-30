@@ -10,7 +10,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCTS = {'aerove': ROOT / 'apps/aerove', 'aerove-lite': ROOT / 'apps/aerove-lite'}
-PUBLIC_DIRECTORIES = {'.agents', '.claude', '.codex', '.github', 'apps', 'docs', 'experiments', 'tooling', 'website'}
+SHARED_PACKAGES = {'aerove_client': ROOT / 'packages/aerove_client'}
+PUBLIC_DIRECTORIES = {'.agents', '.claude', '.codex', '.github', 'apps', 'packages', 'docs', 'experiments', 'tooling', 'website'}
 DOC_AREAS = {'shared', 'aerove', 'aerove-lite', 'development', 'research', 'archive', 'assets', 'i18n'}
 ROOT_FILES = {'AGENTS.md', 'README.md', 'LICENSE', 'Makefile', '.gitignore', '.gitattributes',
               '.gitmodules', '.pre-commit-config.yaml', '.mcp.json'}
@@ -30,10 +31,13 @@ def check():
             errors.append(f'Unexpected public root directory: {parts[0]}')
         if parts[0] == 'apps' and len(parts) > 1 and parts[1] not in PRODUCTS:
             errors.append(f'Unregistered product directory: {name}')
+        if parts[0] == 'packages' and len(parts) > 1 and parts[1] not in SHARED_PACKAGES:
+            errors.append(f'Unregistered shared package directory: {name}')
         if parts[0] == 'docs' and len(parts) > 1 and parts[1] not in {'README.md', 'CHANGELOG_Aerove.md'} and parts[1] not in DOC_AREAS:
             errors.append(f'Unclassified document: {name}')
     for name in ['apps/aerove/pubspec.yaml', 'apps/aerove-lite/settings.gradle.kts', 'docs/README.md',
-                 'docs/shared/UI_CONTRACT.md', 'docs/aerove/CHANGELOG.md']:
+                 'docs/shared/UI_CONTRACT.md', 'docs/aerove/CHANGELOG.md',
+                 'packages/aerove_client/pubspec.yaml', 'packages/aerove_client/lib/aerove_client.dart']:
         if not (ROOT / name).is_file():
             errors.append(f'Missing workspace entry: {name}')
     vendor = ROOT / 'apps/aerove-lite/third_party/material-color-utilities'
@@ -79,6 +83,7 @@ def check():
         print('\n'.join(sorted(set(errors))), file=sys.stderr)
         return 1
     print(json.dumps({'products': {name: path.relative_to(ROOT).as_posix() for name, path in PRODUCTS.items()},
+                      'sharedPackages': {name: path.relative_to(ROOT).as_posix() for name, path in SHARED_PACKAGES.items()},
                       'publicRootDirectories': sorted({Path(name).parts[0] for name in files if len(Path(name).parts) > 1}),
                       'checkedFiles': len(files), 'layout': 'valid'}, ensure_ascii=False))
     return 0
@@ -88,19 +93,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('check')
-    run = commands.add_parser('run')
-    run.add_argument('product', choices=PRODUCTS)
-    run.add_argument('arguments', nargs=argparse.REMAINDER)
+    for command, roots in [('run', PRODUCTS), ('run-package', SHARED_PACKAGES)]:
+        run = commands.add_parser(command)
+        run.add_argument('target', choices=roots)
+        run.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command == 'check':
         return check()
     arguments = args.arguments[1:] if args.arguments[:1] == ['--'] else args.arguments
     if not arguments:
-        parser.error('run requires a command after the product name')
+        parser.error(f'{args.command} requires a command after the target name')
     executable = shutil.which(arguments[0])
     if executable is None:
         parser.exit(127, f'Tool not found: {arguments[0]}\n')
-    return subprocess.call([executable, *arguments[1:]], cwd=PRODUCTS[args.product])
+    roots = PRODUCTS if args.command == 'run' else SHARED_PACKAGES
+    return subprocess.call([executable, *arguments[1:]], cwd=roots[args.target])
 
 
 if __name__ == '__main__':

@@ -15,7 +15,43 @@ pub struct RouteSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ControlError { Cancelled, NotFound, InvalidSelection, RevisionExhausted, InvalidEpoch, SelectionMemberNotIntegrated, DialerProxyNotIntegrated, Superseded, ProviderBusy }
+pub enum ControlError { Cancelled, NotFound, InvalidSelection, RevisionExhausted, InvalidEpoch, SelectionMemberNotIntegrated, DialerProxyNotIntegrated, Superseded, ProviderBusy, DelayHistoryIncomplete }
+
+const MAX_DELAY_HISTORY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_DELAY_HISTORY_ENTRIES: usize = 65536;
+const MAX_DELAY_URL_BYTES: usize = 16384;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LatestDelay { pub name: String, pub url: String, pub value: i32 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct DelayHistorySnapshot {
+    #[serde(rename = "core-epoch")] pub core_epoch: String,
+    #[serde(rename = "route-version")] pub route_version: String,
+    #[serde(rename = "history-revision")] pub history_revision: String,
+    pub complete: bool,
+    pub delays: Vec<LatestDelay>,
+}
+
+enum DelayGraphProof {
+    Managed(ManagedGraph),
+    Core(Arc<meow_common::adapter::UrlDelayReceipt>),
+}
+impl DelayGraphProof {
+    fn proxies(&self) -> &[Arc<dyn Proxy>] {
+        match self { Self::Managed(graph) => &graph.members, Self::Core(receipt) => &receipt.proxies }
+    }
+    fn is_current(&self) -> bool {
+        match self { Self::Managed(graph) => graph.is_current(), Self::Core(receipt) => receipt.is_current() }
+    }
+    fn matches(&self, current: &ManagedGraph) -> bool {
+        self.is_current() && current.is_current() && self.proxies().len() == current.len() &&
+            self.proxies().iter().all(|before| current.iter().any(|after| Arc::ptr_eq(before, after)))
+    }
+}
+pub(crate) struct DelayHistoryRecord {
+    epoch: u64, target: Arc<dyn Proxy>, url: String, delay: u16, proof: DelayGraphProof, bytes: usize,
+}
 
 
 
@@ -154,6 +190,10 @@ struct ModeRequest { mode: TunnelMode }
 #[serde(deny_unknown_fields)]
 struct SelectRequest { name: String }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DelayHistoryQuery { #[serde(rename = "coreEpoch")] core_epoch: Option<String> }
+
 impl ControlError {
     pub(crate) fn response(self) -> axum::response::Response {
         use axum::response::IntoResponse;
@@ -163,8 +203,12 @@ impl ControlError {
             Self::InvalidSelection | Self::InvalidEpoch => axum::http::StatusCode::BAD_REQUEST,
             Self::RevisionExhausted | Self::Superseded | Self::ProviderBusy => axum::http::StatusCode::CONFLICT,
             Self::SelectionMemberNotIntegrated | Self::DialerProxyNotIntegrated => axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            Self::DelayHistoryIncomplete => axum::http::StatusCode::CONFLICT,
         };
-        let body = if self == Self::ProviderBusy {
+        let body = if self == Self::DelayHistoryIncomplete {
+            serde_json::json!({"error":"delayHistoryIncomplete", "field":"delay-history",
+                "reason":"A complete current-owner URL/proxy/graph history is unavailable; no partial snapshot was returned"})
+        } else if self == Self::ProviderBusy {
             serde_json::json!({"error":"providerBusy"})
         } else if self == Self::SelectionMemberNotIntegrated {
             serde_json::json!({"error": "selectionMemberNotIntegrated", "field": "proxy-groups.proxies",
@@ -178,11 +222,14 @@ impl ControlError {
 }
 
 pub fn router(control: Arc<RouteControl>) -> axum::Router {
-    use axum::{extract::{Path, State}, routing::{get, patch, put}, Json};
+    use axum::{extract::{Path, State, Query}, routing::{get, patch, put}, Json};
     axum::Router::new()
         .route("/aerove/telemetry", get(provider_telemetry))
         .route("/aerove/route", get(|State(control): State<Arc<RouteControl>>| async move {
             control.snapshot().await.map(Json).map_err(ControlError::response)
+        }))
+        .route("/aerove/delay-history", get(|State(control): State<Arc<RouteControl>>, Query(query): Query<DelayHistoryQuery>| async move {
+            control.delay_history(query.core_epoch.as_deref()).map(Json).map_err(ControlError::response)
         }))
         .route("/aerove/mode", patch(|State(control): State<Arc<RouteControl>>, Json(body): Json<ModeRequest>| async move {
             control.set_mode(body.mode).await.map(Json).map_err(ControlError::response)
@@ -305,11 +352,149 @@ impl Drop for GroupEmission<'_> {
     }
 }
 
+#[derive(Clone)]
 struct ManagedGraph { members:Vec<Arc<dyn Proxy>>, dependencies:Vec<meow_config::ManagedProbeDependencies> }
 impl std::ops::Deref for ManagedGraph { type Target=Vec<Arc<dyn Proxy>>;fn deref(&self)->&Self::Target { &self.members } }
 impl std::ops::DerefMut for ManagedGraph { fn deref_mut(&mut self)->&mut Self::Target { &mut self.members } }
 impl<'a> IntoIterator for &'a ManagedGraph { type Item=&'a Arc<dyn Proxy>;type IntoIter=std::slice::Iter<'a,Arc<dyn Proxy>>;fn into_iter(self)->Self::IntoIter { self.members.iter() } }
 impl ManagedGraph { fn is_current(&self)->bool { self.dependencies.iter().all(|proof|proof.is_current()) } }
+
+/// One caller-owned routed diagnostic, retaining the original publication guards.
+pub(crate) struct RoutedProbeProof {
+    pub stamp: (u64, u64),
+    route: Arc<meow_tunnel::tunnel::RouteTable>,
+    graph: ManagedGraph,
+}
+
+impl RouteControl {
+    pub(crate) fn routed_scope(&self) -> Result<Arc<meow_config::owned_load::OwnedLoadScope>, ControlError> {
+        { let gate = self.plane.gate.lock(); self.check_live(&gate)?; }
+        let scope = self.groups.lock().clone().ok_or(ControlError::SelectionMemberNotIntegrated)?;
+        if scope.is_cancelled() { return Err(ControlError::Cancelled); }
+        Ok(scope)
+    }
+
+    pub(crate) fn capture_routed_probe(&self, expected: u64) -> Result<RoutedProbeProof, ControlError> {
+        let (stamp, route) = {
+            let gate = self.plane.gate.lock();
+            self.check_live(&gate)?;
+            self.check_graph_idle(&gate)?;
+            if gate.core_epoch != expected || meow_common::probe_policy::operation_epoch().is_some_and(|epoch| epoch != expected) {
+                return Err(ControlError::Superseded);
+            }
+            ((gate.core_epoch, gate.revision), self.state.tunnel.route_snapshot())
+        };
+        // Build outside the gate so even a partially rejected dependency graph
+        // releases its final publication guards without holding the plane lock.
+        let proof = RoutedProbeProof { stamp, route, graph: self.group_members()? };
+        self.readback_routed_probe(&proof)?;
+        Ok(proof)
+    }
+
+    pub(crate) fn readback_routed_probe(&self, proof: &RoutedProbeProof) -> Result<(), ControlError> {
+        let gate = self.plane.gate.lock();
+        self.check_live(&gate)?;
+        self.check_graph_idle(&gate)?;
+        if (gate.core_epoch, gate.revision) != proof.stamp || !proof.graph.is_current()
+            || !Arc::ptr_eq(&proof.route, &self.state.tunnel.route_snapshot())
+            || meow_common::probe_policy::operation_epoch().is_some_and(|epoch| epoch != proof.stamp.0) {
+            return Err(ControlError::Superseded);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_routed_target(&self, proof: &RoutedProbeProof,
+        route: &Arc<meow_tunnel::tunnel::RouteTable>) -> Result<(), ControlError> {
+        self.readback_routed_probe(proof)?;
+        if !Arc::ptr_eq(&proof.route, route) { return Err(ControlError::Superseded); }
+        Ok(())
+    }
+
+    pub(crate) fn routed_proxy(&self, name: &str) -> Result<Arc<dyn Proxy>, ControlError> {
+        // Provider leaves are not necessarily keys of RouteTable.proxies.
+        let proof = self.capture_routed_probe(self.stamp()?.0)?;
+        let mut matches = proof.graph.iter().filter(|proxy| proxy.name() == name);
+        let target = matches.next().cloned().ok_or(ControlError::NotFound)?;
+        if matches.any(|other| !Arc::ptr_eq(other, &target)) { return Err(ControlError::InvalidSelection); }
+        Ok(target)
+    }
+}
+
+impl RouteControl {
+    fn record_delay_locked(gate: &mut PlaneState, target: &Arc<dyn Proxy>, url: &str, delay: u16,
+        proof: DelayGraphProof, retired: &mut Vec<DelayHistoryRecord>) {
+        let bytes = url.len().saturating_mul(2).saturating_add(target.name().len()).saturating_add(256)
+            .saturating_add(proof.proxies().len().saturating_mul(96));
+        let entry = DelayHistoryRecord { epoch: gate.core_epoch, target: target.clone(), url: url.to_owned(), delay, proof, bytes };
+        if url.is_empty() || url.len() > MAX_DELAY_URL_BYTES || !entry.proof.is_current() {
+            gate.delay_history_error = Some("delayHistoryProofUnavailable"); retired.push(entry); return;
+        }
+        let key = (Arc::as_ptr(target).cast::<()>() as usize, url.to_owned());
+        let before = gate.delay_history.get(&key).map_or(0, |entry| entry.bytes);
+        let total = gate.delay_history_bytes.saturating_sub(before).saturating_add(bytes);
+        if total > MAX_DELAY_HISTORY_BYTES || (!gate.delay_history.contains_key(&key) && gate.delay_history.len() >= MAX_DELAY_HISTORY_ENTRIES) {
+            gate.delay_history_error = Some("delayHistoryBudgetExceeded"); retired.push(entry); return;
+        }
+        let Some(revision) = gate.delay_history_revision.checked_add(1) else {
+            gate.delay_history_error = Some("delayHistoryRevisionExhausted"); retired.push(entry); return;
+        };
+        if let Some(previous) = gate.delay_history.insert(key, entry) { retired.push(previous); }
+        gate.delay_history_bytes = total; gate.delay_history_revision = revision;
+    }
+
+    fn commit_delay_locked(gate: &mut PlaneState, target: &Arc<dyn Proxy>, url: &str, delay: u16,
+        graph: &ManagedGraph, retired: &mut Vec<DelayHistoryRecord>) {
+        target.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(delay));
+        Self::record_delay_locked(gate, target, url, delay, DelayGraphProof::Managed(graph.clone()), retired);
+    }
+
+    pub fn delay_history(&self, expected: Option<&str>) -> Result<DelayHistorySnapshot, ControlError> {
+        let expected = expected.and_then(|value| value.parse::<u64>().ok().filter(|epoch| *epoch > 0 && epoch.to_string() == value))
+            .ok_or(ControlError::InvalidEpoch)?;
+        let mut retired = Vec::new();
+        let result = (|| {
+            let mut gate = self.plane.gate.lock(); self.check_live(&gate)?; self.check_graph_idle(&gate)?;
+            if expected != gate.core_epoch { return Err(ControlError::Superseded); }
+            if self.groups.lock().as_ref().is_none_or(|scope| scope.is_cancelled()) { return Err(ControlError::SelectionMemberNotIntegrated); }
+            if gate.delay_history_error.is_some() { return Err(ControlError::DelayHistoryIncomplete); }
+            let route = self.state.tunnel.route_snapshot();
+            let mut eligible = BTreeMap::new(); let mut names = BTreeMap::new();
+            for group in route.proxies.values() {
+                if let Some(members) = group.member_proxies() {
+                    for member in members {
+                        if member.member_proxies().is_some() { continue; }
+                        let key = Arc::as_ptr(&member).cast::<()>() as usize;
+                        if names.insert(member.name().to_owned(), key).is_some_and(|prior| prior != key) {
+                            return Err(ControlError::DelayHistoryIncomplete);
+                        }
+                        eligible.insert(key, member);
+                    }
+                }
+            }
+            let mut current = BTreeMap::new();
+            for (key, proxy) in &eligible { current.insert(*key, Self::probe_graph(proxy.clone())?); }
+            let invalid: Vec<_> = gate.delay_history.iter().filter_map(|(key, entry)| {
+                let valid = entry.epoch == gate.core_epoch && current.get(&key.0).is_some_and(|graph| entry.proof.matches(graph));
+                (!valid).then(|| key.clone())
+            }).collect();
+            if !invalid.is_empty() {
+                gate.delay_history_revision = gate.delay_history_revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+                for key in invalid {
+                    if let Some(entry) = gate.delay_history.remove(&key) {
+                        gate.delay_history_bytes = gate.delay_history_bytes.saturating_sub(entry.bytes); retired.push(entry);
+                    }
+                }
+            }
+            let mut delays: Vec<_> = gate.delay_history.values().map(|entry| LatestDelay { name: entry.target.name().to_owned(),
+                url: entry.url.clone(), value: if entry.delay == 0 { -2 } else { i32::from(entry.delay) } }).collect();
+            delays.sort_by(|a,b| (&a.name,&a.url).cmp(&(&b.name,&b.url)));
+            Ok(DelayHistorySnapshot { core_epoch: gate.core_epoch.to_string(), route_version: gate.revision.to_string(),
+                history_revision: gate.delay_history_revision.to_string(), complete: true, delays })
+        })();
+        drop(retired);
+        result
+    }
+}
 
 pub(crate) struct ProviderProjectionGraph(ManagedGraph);
 impl ProviderProjectionGraph { pub(crate) fn is_current(&self)->bool { self.0.is_current() } }
@@ -320,20 +505,61 @@ pub(crate) struct ProviderGroupCommit {
 
 struct GroupHealthObserver(std::sync::Weak<RouteControl>);
 impl meow_common::adapter::HealthObserver for GroupHealthObserver {
+    fn begin_url_probe(&self, proxy: &Arc<dyn Proxy>) -> std::io::Result<Option<meow_common::adapter::UrlProbeStamp>> {
+        let control = self.0.upgrade().ok_or_else(|| std::io::Error::other("group owner retired"))?;
+        let scope = control.groups.lock().clone();
+        if scope.as_ref().is_none_or(|scope| scope.is_cancelled()) { return Err(std::io::Error::other("group owner cancelled")); }
+        let epoch = meow_common::probe_policy::operation_epoch();
+        let mut gate = control.plane.gate.lock();
+        control.check_live(&gate).and_then(|_| control.check_graph_idle(&gate))
+            .map_err(|_| std::io::Error::other("URL probe owner unavailable"))?;
+        if epoch.is_some_and(|epoch| epoch != gate.core_epoch) { return Err(std::io::Error::other("URL probe epoch changed")); }
+        let members = control.group_members().map_err(|_| std::io::Error::other("URL probe graph unavailable"))?;
+        if !members.iter().any(|current| Arc::ptr_eq(current, proxy)) { return Err(std::io::Error::other("URL probe target retired")); }
+        let ticket = gate.selection_serial.checked_add(1).ok_or_else(|| std::io::Error::other("URL probe intent exhausted"))?;
+        gate.selection_serial = ticket;
+        gate.delay_intents.insert(proxy.health() as *const _ as usize, ticket);
+        Ok(Some(meow_common::adapter::UrlProbeStamp { epoch: gate.core_epoch, ticket }))
+    }
+
     fn commit(&self, health: &meow_common::ProxyHealth, update: meow_common::adapter::HealthUpdate) {
         let Some(control) = self.0.upgrade() else { return; };
         let scope = control.groups.lock().clone();
         if scope.as_ref().map_or(true, |scope| scope.is_cancelled()) { return; }
         let epoch = meow_common::probe_policy::operation_epoch();
+        let mut retired_delays = Vec::new();
         let mut gate = control.plane.gate.lock();
         if control.check_live(&gate).is_err() || epoch.is_some_and(|epoch| epoch != gate.core_epoch) { return; }
         let Ok(proxies) = control.group_members() else { return; };
         if !proxies.iter().any(|proxy| std::ptr::eq(proxy.health(), health)) { return; }
+        let url_record = match &update {
+            meow_common::adapter::HealthUpdate::UrlDelay { proxy, url, delay, receipt } => {
+                let Some(target) = proxy.upgrade() else { return; };
+                if !std::ptr::eq(target.health(), health) || !proxies.iter().any(|current| Arc::ptr_eq(current, &target)) { return; }
+                match receipt {
+                    Some(receipt) => {
+                        let Some(admission) = receipt.admission else { gate.delay_history_error = Some("unownedUrlProbe"); return; };
+                        if admission.epoch != gate.core_epoch || gate.delay_intents.get(&(health as *const _ as usize)) != Some(&admission.ticket) { return; }
+                        if !Arc::ptr_eq(&target, &receipt.proxy) { return; }
+                        let Ok(current) = RouteControl::probe_graph(target.clone()) else { return; };
+                        let proof = DelayGraphProof::Core(receipt.clone());
+                        if !proof.matches(&current) { return; }
+                        Some((target, url.clone(), *delay, proof))
+                    }
+                    None => { gate.delay_history_error = Some("urlProbeProofUnavailable"); None }
+                }
+            }
+            meow_common::adapter::HealthUpdate::Delay(_) => { gate.delay_history_error = Some("unattributedDelay"); None }
+            meow_common::adapter::HealthUpdate::Alive(_) => None,
+        };
         let Some(revision) = gate.revision.checked_add(1) else { return; };
         let Some(sequence) = gate.groups_sequence.checked_add(1) else { return; };
         let before = control.snapshot_locked(&gate).picks;
         let fixed_before: Vec<_> = proxies.iter().map(|proxy| proxy.selection().and_then(|selection| selection.fixed())).collect();
         health.apply_committed(update);
+        if let Some((target, url, delay, proof)) = url_record {
+            RouteControl::record_delay_locked(&mut gate, &target, &url, delay, proof, &mut retired_delays);
+        }
         for proxy in &proxies {
             if let Some(selection) = proxy.selection() { selection.reconcile_health(); }
         }
@@ -341,6 +567,7 @@ impl meow_common::adapter::HealthObserver for GroupHealthObserver {
         if control.snapshot_locked(&gate).picks != before || fixed_before != fixed_after { gate.revision = revision; }
         gate.groups_sequence = sequence;
         drop(gate);
+        drop(retired_delays);
         control.groups_changed.notify_one();
     }
 }
@@ -516,6 +743,9 @@ impl RouteControl {
         if self.groups.lock().is_some() { return Err(ControlError::InvalidSelection); }
         if !gate.busy.is_empty() || !gate.emitting.is_empty() { return Err(ControlError::Superseded); }
         let proxies = self.group_members()?;
+        if proxies.iter().any(|proxy| !proxy.delay_history().is_empty()) {
+            gate.delay_history_error = Some("preActivationHistoryUnowned");
+        }
         self.observe_members(&proxies)?;
         *self.groups.lock() = Some(scope.clone());
         gate.group_control = Some(Arc::downgrade(self));
@@ -596,6 +826,7 @@ impl RouteControl {
             if measured.as_ref().is_ok_and(|value|value.core_epoch.is_some_and(|value|value!=epoch)) { return Err(ControlError::Superseded); }
             Some(measured.map(|value|value.delay).unwrap_or(0))
         } else { None };
+        let mut retired_delays = Vec::new();
         let snapshot = {
             let mut gate = self.plane.gate.lock(); self.check_live(&gate)?;
             if scope.is_cancelled() { return Err(ControlError::Cancelled); }
@@ -619,7 +850,7 @@ impl RouteControl {
             let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
             selection.commit_memory(name).map_err(|_| ControlError::InvalidSelection)?;
             if let Some(delay) = delay {
-                member.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(delay));
+                Self::commit_delay_locked(&mut gate, &member, proxy.test_url().unwrap_or(""), delay, &path, &mut retired_delays);
             }
             for member in &all {
                 if let Some(selection) = member.selection() { selection.reconcile_health(); }
@@ -698,6 +929,7 @@ impl RouteControl {
                 params.url.as_deref().unwrap_or(""), params.expected.as_deref(), timeout) => result,
         };
         if result.as_ref().is_ok_and(|value|value.core_epoch.is_some_and(|value|value!=epoch)) { return ControlError::Superseded.response(); }
+        let mut retired_delays = Vec::new();
         let committed = (|| {
             let mut gate = self.plane.gate.lock(); self.check_live(&gate)?;
             if gate.core_epoch != epoch || gate.revision != revision ||
@@ -718,7 +950,7 @@ impl RouteControl {
             let before = self.snapshot_locked(&gate).picks;
             let fixed_before: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
             let delay = result.as_ref().map(|value|value.delay).unwrap_or(0);
-            proxy.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(delay));
+            Self::commit_delay_locked(&mut gate, &proxy, params.url.as_deref().unwrap_or(""), delay, &path, &mut retired_delays);
             for member in &all { if let Some(selection) = member.selection() { selection.reconcile_health(); } }
             let fixed_after: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
             if self.snapshot_locked(&gate).picks != before || fixed_before != fixed_after { gate.revision = next; }
@@ -884,6 +1116,7 @@ impl RouteControl {
             completed
         }; // Drop every pending network future before publishing any result.
         if completed.iter().any(|(_,result)|result.as_ref().is_ok_and(|value|value.core_epoch.is_some_and(|value|value!=epoch))) { return ControlError::Superseded.response(); }
+        let mut retired_delays = Vec::new();
         let committed = (|| {
             let mut gate = self.plane.gate.lock(); self.check_live(&gate)?;
             if scope.is_cancelled() { return Err(ControlError::Cancelled); }
@@ -908,7 +1141,7 @@ impl RouteControl {
             let fixed_before: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
             for (index, result) in &completed {
                 let delay = result.as_ref().map(|value|value.delay).unwrap_or(0);
-                paths[*index][0].health().apply_committed(meow_common::adapter::HealthUpdate::Delay(delay));
+                Self::commit_delay_locked(&mut gate, &paths[*index][0], params.url.as_deref().unwrap_or(""), delay, &paths[*index], &mut retired_delays);
             }
             for member in &all { if let Some(selection) = member.selection() { selection.reconcile_health(); } }
             let fixed_after: Vec<_> = all.iter().map(|member| member.selection().and_then(|selection| selection.fixed())).collect();
@@ -1319,6 +1552,7 @@ impl RouteControl {
         if results.iter().any(|result|result.as_ref().is_ok_and(|value|value.core_epoch.is_some_and(|value|value!=epoch))){
             return Err(ControlError::Superseded);
         }
+        let mut retired_delays = Vec::new();
         let retired={
             let mut gate=self.plane.gate.lock();self.check_live(&gate)?;self.check_graph_idle(&gate)?;
             if scope.is_cancelled(){return Err(ControlError::Cancelled);}
@@ -1343,8 +1577,8 @@ impl RouteControl {
             let sequence=gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
             let before=self.snapshot_locked(&gate).picks;
             let fixed_before:Vec<_>=all.iter().map(|member|member.selection().and_then(|selection|selection.fixed())).collect();
-            for (member,result) in members.iter().zip(&results){
-                member.health().apply_committed(meow_common::adapter::HealthUpdate::Delay(result.as_ref().map(|value|value.delay).unwrap_or(0)));
+            for (index,(member,result)) in members.iter().zip(&results).enumerate(){
+                Self::commit_delay_locked(&mut gate, member, &policy.url, result.as_ref().map(|value|value.delay).unwrap_or(0), &paths[index], &mut retired_delays);
             }
             for member in &all{if let Some(selection)=member.selection(){selection.reconcile_health();}}
             let fixed_after:Vec<_>=all.iter().map(|member|member.selection().and_then(|selection|selection.fixed())).collect();
@@ -1355,5 +1589,78 @@ impl RouteControl {
         drop(retired);drop(route);
         if !members.is_empty(){self.groups_changed.notify_one();}
         Ok(stamp)
+    }
+}
+
+#[cfg(test)]
+mod delay_history_tests {
+    use super::*;
+    use crate::{api::CoreApi, providers::OwnedLoadScope};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    async fn fixture() -> (CoreApi, Arc<OwnedLoadScope>, tokio::task::JoinHandle<()>, Arc<dyn Proxy>) {
+        let scope = OwnedLoadScope::new();
+        let config = meow_config::load_config_from_str_owned("proxy-groups: [{name: PICK,type: select,proxies: [DIRECT]}]\nrules: ['MATCH,PICK']\n", &scope).await.unwrap();
+        let tunnel = meow_tunnel::Tunnel::new_with_slot(config.dns.resolver_slot.clone());
+        tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
+        let api = CoreApi::assemble_with_epoch(&config, tunnel.clone(), "127.0.0.1:12345".parse().unwrap(),
+            "history-unit-private-secret-00000001", None, axum::Router::new(), 901, CancellationToken::new()).unwrap();
+        tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
+        let events = api.control.activate_groups(&scope).unwrap();
+        let target = tunnel.route_snapshot().proxies["DIRECT"].clone();
+        (api, scope, events, target)
+    }
+    async fn close(api: CoreApi, scope: Arc<OwnedLoadScope>, events: tokio::task::JoinHandle<()>) {
+        api.cancel(); scope.close().await.unwrap();
+        if let Err(error) = events.await { assert!(error.is_cancelled()); }
+        api.join().await;
+    }
+
+    struct Guard { valid: AtomicBool, plane: std::sync::Weak<ControlPlane>, retired: Arc<AtomicBool> }
+    impl meow_common::adapter::ProbeDependencyGuard for Guard {
+        fn is_current(&self) -> bool { self.valid.load(Ordering::SeqCst) }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            if let Some(plane) = self.plane.upgrade() { assert!(plane.gate.try_lock().is_some(), "history proof destructor ran under the plane gate"); }
+            self.retired.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn invalidated_original_dependency_proof_is_pruned_and_dropped_outside_the_gate() {
+        let (api, scope, events, target) = fixture().await;
+        let retired = Arc::new(AtomicBool::new(false));
+        let guard = Arc::new(Guard { valid: AtomicBool::new(true), plane: Arc::downgrade(&api.control.plane), retired: retired.clone() });
+        let weak = Arc::downgrade(&guard);
+        let receipt = Arc::new(meow_common::adapter::UrlDelayReceipt { proxy: target.clone(), proxies: vec![target.clone()],
+            dependencies: vec![meow_common::adapter::ProbeDependencies::guarded(Vec::new(), guard)], admission: None });
+        let mut old = Vec::new();
+        { let mut gate = api.control.plane.gate.lock(); RouteControl::record_delay_locked(&mut gate, &target,
+            "http://unit.invalid/proof", 17, DelayGraphProof::Core(receipt), &mut old); }
+        drop(old);
+        assert_eq!(api.control.delay_history(Some("901")).unwrap().delays.len(), 1);
+        weak.upgrade().unwrap().valid.store(false, Ordering::SeqCst);
+        let snapshot = api.control.delay_history(Some("901")).unwrap();
+        assert!(snapshot.complete && snapshot.delays.is_empty()); assert_eq!(snapshot.history_revision, "2");
+        assert!(weak.upgrade().is_none()); assert!(retired.load(Ordering::SeqCst));
+        close(api, scope, events).await;
+    }
+
+    #[tokio::test]
+    async fn history_budget_or_revision_exhaustion_returns_an_error_instead_of_a_partial_complete_snapshot() {
+        for revision_exhausted in [false, true] {
+            let (api, scope, events, target) = fixture().await;
+            let graph = RouteControl::probe_graph(target.clone()).unwrap(); let mut old = Vec::new();
+            {
+                let mut gate = api.control.plane.gate.lock();
+                if revision_exhausted { gate.delay_history_revision = u64::MAX; } else { gate.delay_history_bytes = MAX_DELAY_HISTORY_BYTES; }
+                RouteControl::record_delay_locked(&mut gate, &target, "http://unit.invalid/budget", 19, DelayGraphProof::Managed(graph), &mut old);
+                assert!(gate.delay_history.is_empty()); assert!(gate.delay_history_error.is_some());
+            }
+            drop(old);
+            assert_eq!(api.control.delay_history(Some("901")).unwrap_err(), ControlError::DelayHistoryIncomplete);
+            close(api, scope, events).await;
+        }
     }
 }

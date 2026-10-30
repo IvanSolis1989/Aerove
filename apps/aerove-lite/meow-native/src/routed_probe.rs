@@ -15,11 +15,15 @@ use tokio::sync::Semaphore;
 #[serde(deny_unknown_fields)]
 pub struct RouteHit { pub host: String, #[serde(default, skip_serializing_if = "String::is_empty")] pub proxy: String, pub exit: String }
 #[derive(Clone, Default)]
-struct Hits(Arc<parking_lot::Mutex<BTreeMap<(String, String), RouteHit>>>);
+struct Hits(Arc<parking_lot::Mutex<BTreeMap<(String, String), RouteHit>>>, Option<Arc<parking_lot::Mutex<BTreeMap<(String, String), RouteHit>>>>);
 impl Hits {
     fn record(&self, host: &str, proxy: &str, exit: String) {
-        self.0.lock().insert((host.into(), proxy.into()), RouteHit { host: host.into(), proxy: proxy.into(), exit });
+        let key = (host.into(), proxy.into());
+        let hit = RouteHit { host: host.into(), proxy: proxy.into(), exit };
+        self.0.lock().insert(key.clone(), hit.clone());
+        if let Some(parent) = &self.1 { parent.lock().insert(key, hit); }
     }
+    fn fork(&self) -> Self { Self(Arc::default(), Some(self.0.clone())) }
     fn values(&self) -> Vec<RouteHit> { self.0.lock().values().cloned().collect() }
 }
 
@@ -27,6 +31,8 @@ struct Resolved {
     metadata: Metadata,
     adapter: Arc<dyn ProxyAdapter>,
     route: Arc<meow_tunnel::tunnel::RouteTable>,
+    rule: String,
+    rule_payload: String,
 }
 async fn resolve(control: &RouteControl, address: &str, proxy: &str) -> io::Result<Resolved> {
     let uri: axum::http::Uri = format!("http://{address}/").parse().map_err(io::Error::other)?;
@@ -39,11 +45,12 @@ async fn resolve(control: &RouteControl, address: &str, proxy: &str) -> io::Resu
     }
     if !proxy.is_empty() {
         let route = control.state.tunnel.route_snapshot();
-        let adapter = route.proxies.get(proxy).cloned().ok_or_else(|| io::Error::other("requested proxy is not in applied config"))?;
-        return Ok(Resolved { metadata, adapter: adapter as Arc<dyn ProxyAdapter>, route });
+        let adapter = match route.proxies.get(proxy) { Some(adapter) => adapter.clone(),
+            None => control.routed_proxy(proxy).map_err(|_| io::Error::other("requested proxy is absent or ambiguous in applied config"))? };
+        return Ok(Resolved { metadata, adapter: adapter as Arc<dyn ProxyAdapter>, route, rule: String::new(), rule_payload: String::new() });
     }
     let target = control.state.tunnel.inner().resolve_proxy_lazy(&mut metadata).await.ok_or_else(|| io::Error::other("route unavailable"))?;
-    Ok(Resolved { metadata, adapter: target.adapter, route: target.route })
+    Ok(Resolved { metadata, adapter: target.adapter, route: target.route, rule: target.rule_name.to_string(), rule_payload: target.rule_payload.to_string() })
 }
 fn exit_name(proxy: &dyn ProxyAdapter) -> String { format!("{:?} {} {}", proxy.name(), proxy.adapter_type(), proxy.addr()) }
 fn exit_through(mut adapter: Arc<dyn ProxyAdapter>, metadata: &Metadata) -> String {
@@ -70,12 +77,16 @@ fn exit_from_chains(resolved: &Resolved, chains: &[String]) -> String {
 struct CheckRequest { hits: Vec<Vec<RouteHit>> }
 
 pub struct Probe { control: Arc<RouteControl>, slot: Semaphore, services: service_check::Services,
+    outbound_claims: parking_lot::Mutex<Vec<(u64, Arc<tokio_util::sync::CancellationToken>)>>,
     #[cfg(test)] fixture_sources: parking_lot::Mutex<Option<Vec<Source>>>,
 }
 impl Probe {
-    pub fn new(control: Arc<RouteControl>) -> Arc<Self> { Arc::new(Self { control, slot: Semaphore::new(1), services: service_check::Services::new(), #[cfg(test)] fixture_sources: parking_lot::Mutex::new(None) }) }
+    pub fn new(control: Arc<RouteControl>) -> Arc<Self> { Arc::new(Self { control, slot: Semaphore::new(1), services: service_check::Services::new(),
+        outbound_claims: parking_lot::Mutex::new(Vec::new()), #[cfg(test)] fixture_sources: parking_lot::Mutex::new(None) }) }
     pub fn router(self: &Arc<Self>) -> Router {
         Router::new().route("/aerove/outbound", get(Self::outbound))
+            .route("/aerove/probe", post(Self::shared_probe))
+            .route("/aerove/outbound-ip", post(Self::shared_outbound))
             .route("/aerove/service-check", post(Self::services))
             .route("/aerove/check-routes", post(Self::check_routes))
             .route("/aerove/reset-connections", post(Self::reset_connections))
@@ -187,6 +198,244 @@ impl Probe {
             Err(_)=>failure(StatusCode::BAD_GATEWAY,"quality_unavailable")}
     }
 }
+const DEFAULT_SHARED_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_SHARED_BODY: i64 = 8 * 1024 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SharedProbeParams {
+    url: String,
+    #[serde(default, rename = "proxy-name")] proxy_name: String,
+    #[serde(default)] headers: BTreeMap<String, String>,
+    timeout: i64,
+    #[serde(default, rename = "max-body")] max_body: i64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SharedOutboundParams {
+    #[serde(default, rename = "proxy-name")] proxy_name: String,
+    #[serde(default)] urls: Vec<String>,
+    timeout: i64,
+}
+
+struct OutboundClaim<'a> { owner: &'a Probe, token: Arc<tokio_util::sync::CancellationToken> }
+impl Drop for OutboundClaim<'_> {
+    fn drop(&mut self) {
+        self.token.cancel();
+        self.owner.outbound_claims.lock().retain(|(_, token)| !Arc::ptr_eq(token, &self.token));
+    }
+}
+
+fn shared_epoch(request: &Request) -> Result<u64, Response> {
+    let Some(value) = request.uri().query().and_then(|query| query.strip_prefix("coreEpoch=")) else {
+        return Err(failure(StatusCode::BAD_REQUEST, "invalid_core_epoch"));
+    };
+    match value.parse::<u64>() {
+        Ok(epoch) if epoch > 0 && epoch.to_string() == value => Ok(epoch),
+        _ => Err(failure(StatusCode::BAD_REQUEST, "invalid_core_epoch")),
+    }
+}
+
+fn shared_timeout(milliseconds: i64) -> Result<Duration, Response> {
+    if milliseconds > 60_000 { return Err(failure(StatusCode::BAD_REQUEST, "invalid_timeout")); }
+    Ok(if milliseconds <= 0 { DEFAULT_SHARED_TIMEOUT } else { Duration::from_millis(milliseconds as u64) })
+}
+
+fn shared_url(value: &str) -> bool {
+    value.len() <= 16384 && url::Url::parse(value).is_ok_and(|url| {
+        matches!(url.scheme(), "http" | "https") && url.host_str().is_some()
+            && url.username().is_empty() && url.password().is_none()
+    })
+}
+
+fn private_json(value: Value) -> Response {
+    ([(axum::http::header::CACHE_CONTROL, "no-store")], Json(value)).into_response()
+}
+
+fn probe_error(error: &io::Error) -> &'static str {
+    if error.kind() == io::ErrorKind::TimedOut { "timeout" } else { "failed" }
+}
+
+impl Probe {
+    fn claim_outbound(&self, epoch: u64) -> OutboundClaim<'_> {
+        let token = Arc::new(self.cancel().child_token());
+        let mut claims = self.outbound_claims.lock();
+        claims.retain(|(prior_epoch, prior)| {
+            if *prior_epoch < epoch { prior.cancel(); false } else { true }
+        });
+        claims.push((epoch, token.clone()));
+        OutboundClaim { owner: self, token }
+    }
+
+    async fn shared_probe(State(probe): State<Arc<Self>>, request: Request) -> Response {
+        let scope = match probe.control.routed_scope() { Ok(scope) => scope, Err(error) => return error.response() };
+        match scope.run_captured(async move { probe.shared_probe_captured(request).await }).await {
+            Ok(response) => response,
+            Err(_) => failure(StatusCode::GONE, "session_stopped"),
+        }
+    }
+
+    async fn shared_probe_captured(&self, request: Request) -> Response {
+        let epoch = match shared_epoch(&request) { Ok(epoch) => epoch, Err(response) => return response };
+        let body = match request_body(self, request, 65536).await {
+            Ok(body) => body,
+            Err(_) if self.cancel().is_cancelled() => return failure(StatusCode::GONE, "session_stopped"),
+            Err(_) => return failure(StatusCode::BAD_REQUEST, "invalid_request_body"),
+        };
+        let Ok(params) = serde_json::from_slice::<SharedProbeParams>(&body) else {
+            return failure(StatusCode::BAD_REQUEST, "invalid_probe_parameters");
+        };
+        if !shared_url(&params.url) || params.proxy_name.len() > 4096 || params.max_body > MAX_SHARED_BODY || params.headers.len() > 128 {
+            return failure(StatusCode::BAD_REQUEST, "invalid_probe_parameters");
+        }
+        let timeout = match shared_timeout(params.timeout) { Ok(value) => value, Err(response) => return response };
+        let mut request = http_probe::ProbeRequest::get(&params.url, params.max_body.max(0) as usize, timeout);
+        request.truncate_body = true;
+        for (name, value) in &params.headers {
+            let Ok(name) = axum::http::HeaderName::from_bytes(name.as_bytes()) else {
+                return failure(StatusCode::BAD_REQUEST, "invalid_probe_headers");
+            };
+            let Ok(value) = axum::http::HeaderValue::from_str(value) else {
+                return failure(StatusCode::BAD_REQUEST, "invalid_probe_headers");
+            };
+            request.headers.insert(name, value);
+        }
+        let proof = match self.control.capture_routed_probe(epoch) { Ok(proof) => Arc::new(proof), Err(error) => return error.response() };
+        request.proof = Some(proof.clone());
+        let hits = Hits::default();
+        let result = tokio::select! { biased;
+            _ = self.cancel().cancelled() => return failure(StatusCode::GONE, "session_stopped"),
+            result = tokio::time::timeout(timeout, http_probe::run_probe(self.control.clone(), params.proxy_name, hits.clone(), request)) =>
+                result.unwrap_or_else(|error| Err(io::Error::new(io::ErrorKind::TimedOut, error))),
+        };
+        if let Err(error) = self.control.readback_routed_probe(&proof) { return error.response(); }
+        let mut value = match result {
+            Ok(result) => json!({"status-code":result.status.as_u16(), "delay":result.delay,
+                "body":String::from_utf8_lossy(&result.body), "url":result.url, "chains":result.chains,
+                "rule":result.rule, "rule-payload":result.rule_payload}),
+            Err(error) => json!({"status-code":0, "delay":0, "body":"", "url":params.url, "chains":[],
+                "rule":"", "rule-payload":"", "error":probe_error(&error), "message":error.to_string()}),
+        };
+        value["core-epoch"] = json!(proof.stamp.0.to_string());
+        value["route-version"] = json!(proof.stamp.1.to_string());
+        value["hits"] = json!(hits.values());
+        private_json(value)
+    }
+
+    async fn shared_outbound(State(probe): State<Arc<Self>>, request: Request) -> Response {
+        let scope = match probe.control.routed_scope() { Ok(scope) => scope, Err(error) => return error.response() };
+        match scope.run_captured(async move { probe.shared_outbound_captured(request).await }).await {
+            Ok(response) => response,
+            Err(_) => failure(StatusCode::GONE, "session_stopped"),
+        }
+    }
+
+    async fn shared_outbound_captured(&self, request: Request) -> Response {
+        let epoch = match shared_epoch(&request) { Ok(epoch) => epoch, Err(response) => return response };
+        let body = match request_body(self, request, 1024 * 1024).await {
+            Ok(body) => body,
+            Err(_) if self.cancel().is_cancelled() => return failure(StatusCode::GONE, "session_stopped"),
+            Err(_) => return failure(StatusCode::BAD_REQUEST, "invalid_request_body"),
+        };
+        let Ok(params) = serde_json::from_slice::<SharedOutboundParams>(&body) else {
+            return failure(StatusCode::BAD_REQUEST, "invalid_outbound_parameters");
+        };
+        if params.urls.len() > 64 || params.proxy_name.len() > 4096 || params.urls.iter().any(|url| !shared_url(url)) {
+            return failure(StatusCode::BAD_REQUEST, "invalid_outbound_parameters");
+        }
+        let timeout = match shared_timeout(params.timeout) { Ok(value) => value, Err(response) => return response };
+        let proof = match self.control.capture_routed_probe(epoch) { Ok(proof) => Arc::new(proof), Err(error) => return error.response() };
+        let hits = Hits::default();
+        let claim = self.claim_outbound(proof.stamp.0);
+        let work = async {
+            let (url, result, winning_hits) = self.shared_race(params.urls, &params.proxy_name, timeout, hits.clone(), proof.clone()).await?;
+            let mut node_hits = Vec::new();
+            if let Some(node) = result.chains.first().filter(|node| node.as_str() != params.proxy_name.as_str()) {
+                for hit in winning_hits {
+                    let exit = resolve(&self.control, &hit.host, node).await
+                        .map(|target| exit_through(target.adapter, &target.metadata)).unwrap_or_default();
+                    node_hits.push(RouteHit { host: hit.host, proxy: node.clone(), exit });
+                }
+            }
+            Ok::<_, io::Error>(json!({"url":url, "body":String::from_utf8_lossy(&result.body), "delay":result.delay,
+                "chains":result.chains, "node-hits":node_hits}))
+        };
+        let result = tokio::select! { biased;
+            _ = self.cancel().cancelled() => return failure(StatusCode::GONE, "session_stopped"),
+            _ = claim.token.cancelled() => return failure(StatusCode::CONFLICT, "outbound_superseded"),
+            result = tokio::time::timeout(timeout, work) =>
+                result.unwrap_or_else(|error| Err(io::Error::new(io::ErrorKind::TimedOut, error))),
+        };
+        if let Err(error) = self.control.readback_routed_probe(&proof) { return error.response(); }
+        let mut value = result.unwrap_or_else(|error| json!({"url":"", "body":"", "delay":0, "chains":[],
+            "node-hits":[], "error":probe_error(&error)}));
+        value["core-epoch"] = json!(proof.stamp.0.to_string());
+        value["route-version"] = json!(proof.stamp.1.to_string());
+        value["hits"] = json!(hits.values());
+        private_json(value)
+    }
+
+    async fn shared_race(&self, urls: Vec<String>, proxy: &str, timeout: Duration, hits: Hits,
+        proof: Arc<crate::control::RoutedProbeProof>)
+        -> io::Result<(String, http_probe::ProbeResult, Vec<RouteHit>)> {
+        let mut urls = urls.into_iter();
+        let mut pending = FuturesUnordered::new();
+        let mut timed_out = false;
+        if let Some(url) = urls.next() { pending.push(shared_fetch(self.control.clone(), url, proxy.to_owned(), timeout, hits.fork(), proof.clone())); }
+        let stagger = tokio::time::sleep(Duration::from_millis(800));
+        tokio::pin!(stagger);
+        while !pending.is_empty() {
+            tokio::select! {
+                answer = pending.next() => {
+                    match answer {
+                        Some(Ok(answer)) => return Ok(answer),
+                        Some(Err(error)) => timed_out |= error.kind() == io::ErrorKind::TimedOut,
+                        None => {},
+                    }
+                    if let Some(url) = urls.next() { pending.push(shared_fetch(self.control.clone(), url, proxy.to_owned(), timeout, hits.fork(), proof.clone())); }
+                }
+                _ = &mut stagger => {
+                    if pending.len() < 3 {
+                        if let Some(url) = urls.next() { pending.push(shared_fetch(self.control.clone(), url, proxy.to_owned(), timeout, hits.fork(), proof.clone())); }
+                    }
+                    stagger.as_mut().reset(tokio::time::Instant::now() + Duration::from_millis(800));
+                }
+            }
+        }
+        Err(io::Error::new(if timed_out { io::ErrorKind::TimedOut } else { io::ErrorKind::Other },
+            "no caller URL returned a usable public address"))
+    }
+}
+
+async fn shared_fetch(control: Arc<RouteControl>, url: String, proxy: String, timeout: Duration, hits: Hits,
+    proof: Arc<crate::control::RoutedProbeProof>)
+    -> io::Result<(String, http_probe::ProbeResult, Vec<RouteHit>)> {
+    let mut request = http_probe::ProbeRequest::get(&url, 4096, timeout);
+    request.truncate_body = true;
+    request.proof = Some(proof);
+    request.headers.insert(axum::http::header::USER_AGENT, http_probe::USER_AGENT.parse().expect("fixed browser user agent"));
+    let result = http_probe::run_probe(control, proxy, hits.clone(), request).await?;
+    if result.status != StatusCode::OK || !mentions_ip(&String::from_utf8_lossy(&result.body)) {
+        return Err(io::Error::other("caller source returned no usable public address"));
+    }
+    Ok((url, result, hits.values()))
+}
+
+fn mentions_ip(body: &str) -> bool {
+    body.split(|character: char| !(character.is_ascii_alphanumeric() || matches!(character, '.' | ':')))
+        .filter_map(|token| token.parse::<IpAddr>().ok()).any(|ip| {
+            let ip = match ip { IpAddr::V6(ip) => ip.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(IpAddr::V6(ip)), ip => ip };
+            match ip {
+                IpAddr::V4(ip) => !ip.is_unspecified() && !ip.is_loopback() && !ip.is_link_local()
+                    && !ip.is_multicast() && !ip.is_broadcast() && !ip.is_private()
+                    && !(ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1])),
+                IpAddr::V6(ip) => !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast()
+                    && !ip.is_unicast_link_local() && !ip.is_unique_local(),
+            }
+        })
+}
+
 async fn request_body(probe: &Probe, request: Request, limit: usize) -> io::Result<Vec<u8>> {
     tokio::select! { biased; _=probe.cancel().cancelled()=>Err(io::Error::from(io::ErrorKind::Interrupted)),
         result=tokio::time::timeout(Duration::from_secs(5),axum::body::to_bytes(request.into_body(),limit))=>
@@ -292,6 +541,7 @@ mod tests {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();
         let api=Arc::new(CoreApi::assemble_with_plane(&config,tunnel.clone(),"127.0.0.1:12345".parse().unwrap(),SECRET,None,Router::new(),plane).unwrap());
         tunnel.update_routing(config.proxies,config.rules,config.dialer_registry);
+        let _events = api.control.activate_groups(&scope).unwrap();
         let serving=api.clone();let server=tokio::spawn(async move{serving.serve_private(listener,cancel).await});
         (api,scope,address,server)
     }
@@ -338,5 +588,262 @@ mod tests {
         assert!(response.starts_with("HTTP/1.1 200"),"{response}");let value:Value=serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
         assert_eq!(value[0]["status"],"failed");assert_eq!(value[0]["hits"][0]["host"],host.to_string());assert_eq!(value[0]["hits"][0]["proxy"],"A");assert!(!value[0]["hits"][0]["exit"].as_str().unwrap().is_empty());
         stop(api,scope,server).await;
+    }
+
+    fn response_json(response: &str) -> Value {
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    async fn accepted_head(listener: &TcpListener) -> (TcpStream, String) {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(socket.read_u8().await.unwrap());
+            assert!(head.len() < 65536);
+        }
+        (socket, String::from_utf8(head).unwrap())
+    }
+
+    #[tokio::test]
+    async fn shared_probe_honors_caller_headers_proxy_status_and_body_cap() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = origin.local_addr().unwrap();
+        let fetch = tokio::spawn(async move {
+            let (mut socket, head) = accepted_head(&origin).await;
+            let head = head.to_ascii_lowercase();
+            assert!(head.starts_with("get /custom?q=1 http/1.1\r\n"));
+            assert!(head.contains("user-agent: caller-agent\r\n"));
+            assert!(head.contains("x-caller: exact-header\r\n"));
+            socket.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 16\r\nConnection: close\r\n\r\nabcdefghijklmnop").await.unwrap();
+        });
+        let url = format!("http://{host}/custom?q=1");
+        let body = json!({"url":url, "proxy-name":"B", "headers":{"User-Agent":"caller-agent","X-Caller":"exact-header"},
+            "timeout":2000, "max-body":8}).to_string();
+        let response = request(address, "POST", "/aerove/probe?coreEpoch=91", &body).await;
+        let value = response_json(&response);
+        assert_eq!(value["status-code"], 403); assert_eq!(value["body"], "abcdefgh");
+        assert_eq!(value["url"], url); assert_eq!(value["chains"][0], "B");
+        assert_eq!(value["rule"], ""); assert_eq!(value["rule-payload"], "");
+        assert_eq!(value["core-epoch"], "91"); assert_eq!(value["route-version"], "0");
+        assert_eq!(value["hits"][0]["host"], host.to_string()); assert_eq!(value["hits"][0]["proxy"], "B");
+        assert!(value["delay"].is_u64()); assert!(value.get("error").is_none());
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_probe_redirect_reports_final_url_and_real_routing_rule_without_body_read() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = origin.local_addr().unwrap();
+        let fetch = tokio::spawn(async move {
+            let (mut first, _) = accepted_head(&origin).await;
+            first.write_all(b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            let (mut last, head) = accepted_head(&origin).await;
+            assert!(head.starts_with("GET /final HTTP/1.1\r\n"));
+            last.write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef").await.unwrap();
+        });
+        let response = request(address, "POST", "/aerove/probe?coreEpoch=91",
+            &json!({"url":format!("http://{host}/"),"timeout":2000}).to_string()).await;
+        let value = response_json(&response);
+        assert_eq!(value["status-code"], 201); assert_eq!(value["body"], "");
+        assert_eq!(value["url"], format!("http://{host}/final"));
+        assert_eq!(value["rule"], "MATCH"); assert_eq!(value["rule-payload"], "");
+        assert_eq!(value["chains"][0], "A"); assert!(value["hits"][0]["exit"].as_str().unwrap().contains("A"));
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_probe_caps_decoded_gzip_without_turning_the_cap_into_failure() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap(); let host = origin.local_addr().unwrap();
+        let fetch = tokio::spawn(async move {
+            let (mut socket, head) = accepted_head(&origin).await;
+            assert!(head.to_ascii_lowercase().contains("accept-encoding: gzip\r\n"));
+            let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            std::io::Write::write_all(&mut encoder, b"abcdefghijklmnop").unwrap();
+            let compressed = encoder.finish().unwrap();
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", compressed.len()).as_bytes()).await.unwrap();
+            socket.write_all(&compressed).await.unwrap();
+        });
+        let value = response_json(&request(address, "POST", "/aerove/probe?coreEpoch=91",
+            &json!({"url":format!("http://{host}/"),"timeout":2000,"max-body":8}).to_string()).await);
+        assert_eq!(value["status-code"], 200); assert_eq!(value["body"], "abcdefgh");
+        assert!(value.get("error").is_none());
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_probe_timeout_drops_real_socket_and_keeps_failed_attempt_hit() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = origin.local_addr().unwrap();
+        let fetch = tokio::spawn(async move {
+            let (mut socket, _) = accepted_head(&origin).await;
+            let mut byte = [0];
+            assert_eq!(tokio::time::timeout(Duration::from_secs(2), socket.read(&mut byte)).await.unwrap().unwrap(), 0);
+        });
+        let value = response_json(&request(address, "POST", "/aerove/probe?coreEpoch=91",
+            &json!({"url":format!("http://{host}/hang"),"proxy-name":"B","timeout":100,"max-body":10}).to_string()).await);
+        assert_eq!(value["error"], "timeout"); assert_eq!(value["status-code"], 0);
+        assert_eq!(value["hits"][0]["host"], host.to_string()); assert_eq!(value["hits"][0]["proxy"], "B");
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_probe_rejects_stale_route_response_after_actual_request() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = origin.local_addr().unwrap();
+        let (sent, arrived) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let fetch = tokio::spawn(async move {
+            let (mut socket, _) = accepted_head(&origin).await;
+            sent.send(()).unwrap(); released.await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await.unwrap();
+        });
+        let pending = tokio::spawn(async move {
+            request(address, "POST", "/aerove/probe?coreEpoch=91",
+                &json!({"url":format!("http://{host}/"),"timeout":2000,"max-body":10}).to_string()).await
+        });
+        arrived.await.unwrap(); api.control.set_mode(meow_common::TunnelMode::Direct).await.unwrap();
+        release.send(()).unwrap();
+        let response = pending.await.unwrap(); assert!(response.starts_with("HTTP/1.1 409"), "{response}");
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_probe_scope_cancel_joins_request_and_closes_target() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host = origin.local_addr().unwrap();
+        let (sent, arrived) = tokio::sync::oneshot::channel();
+        let fetch = tokio::spawn(async move {
+            let (mut socket, _) = accepted_head(&origin).await; sent.send(()).unwrap();
+            let mut byte = [0];
+            assert_eq!(tokio::time::timeout(Duration::from_secs(2), socket.read(&mut byte)).await.unwrap().unwrap(), 0);
+        });
+        let pending = tokio::spawn(async move {
+            request(address, "POST", "/aerove/probe?coreEpoch=91",
+                &json!({"url":format!("http://{host}/"),"timeout":60000,"max-body":10}).to_string()).await
+        });
+        arrived.await.unwrap(); scope.cancel();
+        let response = tokio::time::timeout(Duration::from_secs(2), pending).await.unwrap().unwrap();
+        assert!(response.starts_with("HTTP/1.1 410"), "{response}");
+        tokio::time::timeout(Duration::from_secs(2), scope.close()).await.unwrap().unwrap();
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_outbound_uses_caller_urls_preserves_requested_url_and_cancels_loser() {
+        let (api, scope, address, server) = fixture().await;
+        let slow = TcpListener::bind("127.0.0.1:0").await.unwrap(); let slow_host = slow.local_addr().unwrap();
+        let fast = TcpListener::bind("127.0.0.1:0").await.unwrap(); let fast_host = fast.local_addr().unwrap();
+        let loser = tokio::spawn(async move {
+            let (mut socket, _) = accepted_head(&slow).await;
+            let mut byte = [0];
+            assert_eq!(tokio::time::timeout(Duration::from_secs(3), socket.read(&mut byte)).await.unwrap().unwrap(), 0);
+        });
+        let winner = tokio::spawn(async move {
+            let (mut first, _) = accepted_head(&fast).await;
+            first.write_all(b"HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            let (mut last, head) = accepted_head(&fast).await;
+            assert!(head.to_ascii_lowercase().contains("user-agent: mozilla/5.0"));
+            let body = format!("ip=1.1.1.1\n{}", "x".repeat(5000));
+            last.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+        });
+        let url = format!("http://{fast_host}/requested");
+        let value = response_json(&request(address, "POST", "/aerove/outbound-ip?coreEpoch=91",
+            &json!({"proxy-name":"PICK","urls":[format!("http://{slow_host}/hang"),url],"timeout":2500}).to_string()).await);
+        assert_eq!(value["url"], url); assert_eq!(value["body"].as_str().unwrap().len(), 4096);
+        assert_eq!(value["chains"][0], "A"); assert!(value.get("error").is_none());
+        assert_eq!(value["core-epoch"], "91"); assert_eq!(value["route-version"], "0");
+        let hits = value["hits"].as_array().unwrap(); assert_eq!(hits.len(), 2);
+        assert!(hits.iter().any(|hit| hit["host"] == slow_host.to_string()));
+        assert!(hits.iter().any(|hit| hit["host"] == fast_host.to_string()));
+        assert_eq!(value["node-hits"][0]["proxy"], "A");
+        assert!(value["node-hits"][0]["exit"].as_str().unwrap().contains("A"));
+        loser.await.unwrap(); winner.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_outbound_skips_non_200_and_private_addresses_without_parsing_countries() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap(); let host = origin.local_addr().unwrap();
+        let fetch = tokio::spawn(async move {
+            for (path, status, body) in [("/status", "403 Forbidden", "ip=1.1.1.1"),
+                ("/private", "200 OK", "ip=10.1.2.3"), ("/public", "200 OK", "raw=2606:4700:4700::1111")] {
+                let (mut socket, head) = accepted_head(&origin).await;
+                assert!(head.starts_with(&format!("GET {path} HTTP/1.1\r\n")));
+                socket.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let value = response_json(&request(address, "POST", "/aerove/outbound-ip?coreEpoch=91",
+            &json!({"proxy-name":"B","urls":[format!("http://{host}/status"),format!("http://{host}/private"),format!("http://{host}/public")],"timeout":2000}).to_string()).await);
+        assert_eq!(value["url"], format!("http://{host}/public"));
+        assert_eq!(value["body"], "raw=2606:4700:4700::1111"); assert_eq!(value["chains"][0], "B");
+        assert_eq!(value["node-hits"], json!([])); assert!(value.get("error").is_none());
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn newer_epoch_outbound_claim_cancels_actual_old_socket_but_same_epoch_claims_coexist() {
+        let (api, scope, address, server) = fixture().await;
+        {
+            let first = api.probes.claim_outbound(91); let second = api.probes.claim_outbound(91);
+            assert!(!first.token.is_cancelled()); assert!(!second.token.is_cancelled());
+            drop(second); assert!(!first.token.is_cancelled());
+        }
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap(); let host = origin.local_addr().unwrap();
+        let (sent, arrived) = tokio::sync::oneshot::channel();
+        let fetch = tokio::spawn(async move {
+            let (mut socket, _) = accepted_head(&origin).await; sent.send(()).unwrap();
+            let mut byte = [0];
+            assert_eq!(tokio::time::timeout(Duration::from_secs(2), socket.read(&mut byte)).await.unwrap().unwrap(), 0);
+        });
+        let pending = tokio::spawn(async move {
+            request(address, "POST", "/aerove/outbound-ip?coreEpoch=91",
+                &json!({"urls":[format!("http://{host}/")],"timeout":60000}).to_string()).await
+        });
+        arrived.await.unwrap();
+        let (stamp, _) = api.control.plane.commit_policy(91, true, || ()).unwrap();
+        let value = response_json(&request(address, "POST", &format!("/aerove/outbound-ip?coreEpoch={}", stamp.0),
+            "{\"urls\":[],\"timeout\":1000}").await);
+        assert_eq!(value["error"], "failed");
+        let response = tokio::time::timeout(Duration::from_secs(2), pending).await.unwrap().unwrap();
+        assert!(response.starts_with("HTTP/1.1 409"), "{response}");
+        fetch.await.unwrap(); stop(api, scope, server).await;
+    }
+
+    #[tokio::test]
+    async fn shared_parameters_empty_sources_and_bearer_boundary_do_not_fall_back_to_fixed_sources() {
+        let (api, scope, address, server) = fixture().await;
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap(); let host = origin.local_addr().unwrap();
+        let body = json!({"url":format!("http://{host}/"),"timeout":1000,"headers":{"bad header":"x"}}).to_string();
+        for path in ["/aerove/probe", "/aerove/probe?coreEpoch=0", "/aerove/probe?coreEpoch=091", "/aerove/probe?coreEpoch=91"] {
+            let response = request(address, "POST", path, &body).await;
+            assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+        }
+        let stale = request(address, "POST", "/aerove/probe?coreEpoch=90",
+            &json!({"url":format!("http://{host}/"),"timeout":1000}).to_string()).await;
+        assert!(stale.starts_with("HTTP/1.1 409"), "{stale}");
+        let empty = response_json(&request(address, "POST", "/aerove/outbound-ip?coreEpoch=91", "{\"urls\":[],\"timeout\":1000}").await);
+        assert_eq!(empty["error"], "failed"); assert_eq!(empty["hits"], json!([]));
+        let missing = response_json(&request(address, "POST", "/aerove/probe?coreEpoch=91",
+            &json!({"url":format!("http://{host}/"),"proxy-name":"missing","timeout":1000}).to_string()).await);
+        assert_eq!(missing["error"], "failed"); assert_eq!(missing["hits"][0]["proxy"], "missing");
+        assert!(tokio::time::timeout(Duration::from_millis(40), origin.accept()).await.is_err());
+        let mut socket = TcpStream::connect(address).await.unwrap();
+        socket.write_all(b"POST /aerove/probe?coreEpoch=91 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut response = String::new(); socket.read_to_string(&mut response).await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 401"), "{response}");
+        stop(api, scope, server).await;
+    }
+
+    #[test]
+    fn shared_outbound_public_address_filter_matches_standard_global_unicast_gate() {
+        for body in ["ip=1.1.1.1", "{\"ip\":\"2606:4700:4700::1111\"}", "ip=::ffff:8.8.8.8"] { assert!(mentions_ip(body), "{body}"); }
+        for body in ["captcha", "127.0.0.1", "10.1.2.3", "100.64.0.1", "169.254.1.1", "::1", "fe80::1", "fc00::1", "224.0.0.1", "::ffff:192.168.1.1"] { assert!(!mentions_ip(body), "{body}"); }
     }
 }

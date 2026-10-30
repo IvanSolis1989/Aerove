@@ -70,6 +70,11 @@ Future<void> main(List<String> arguments) async {
   );
 
   final code = await _flutterTest([
+    if (flutterArguments.contains('--coverage') &&
+        !flutterArguments.any(
+          (argument) => argument.split('=').first == '--coverage-package',
+        ))
+      r'--coverage-package=^(fl_clash|aerove_standard)$',
     if (!setsConcurrency)
       '--concurrency=${min(_bundleCount, Platform.numberOfProcessors)}',
     if (reports) '--file-reporter=json:$_reportPath',
@@ -171,6 +176,9 @@ List<({String path, List<String> files})> _writeBundles(List<String> files) {
   final directory = Directory(_bundleDir);
   if (directory.existsSync()) directory.deleteSync(recursive: true);
   directory.createSync(recursive: true);
+  File(p.join(directory.path, 'flutter_test_config.dart')).writeAsStringSync(
+    "export '${_posix(p.relative('test/flutter_test_config.dart', from: directory.path))}';\n",
+  );
 
   final sizes = {for (final file in files) file: File(file).lengthSync()};
   final bundles = List.generate(

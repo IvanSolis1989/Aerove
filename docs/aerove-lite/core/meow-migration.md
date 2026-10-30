@@ -2,8 +2,9 @@
 
 [文档](../../README.md) / [Lite](../README.md)
 
-2026-10-23 用户决定：Lite 从 clash-rs 切换到 meow-rs，继续原生 Android / Compose、最低 API 33。
-标准版继续 Flutter + 官方 Mihomo。这里记录实施与验收，不改变[共同契约](../../shared/UI_CONTRACT.md)。
+2026-10-23 用户决定：Lite 从 clash-rs 切换到 meow-rs，采用原生 Android / Compose、最低 API 33。该项是当时的架构决定，作为历史记录保留。
+2026-10-29 用户决定：两版 Android 共用同一份 Flutter 客户端 UI、交互、动效与刷新门禁，停止继续复刻 Compose UI；Lite 保留原生 Android 平台接入、meow-rs、API 33 起及独立包名/签名/版本/更新入口。此前 native/Compose UI 与验收失败保留为可恢复检查点；既有 meow-native、Kotlin 平台及核心验证成果继续复用。该迁移决定和实施开始不代表 Flutter Lite 已构建、验收或发行。
+标准版继续 Flutter + 官方 Mihomo。这里记录实施与验收，不改变[共同契约](../../shared/UI_CONTRACT.md)。 当前共享源码、平台适配与验收步骤见[共享 Flutter 客户端实施计划](../../development/shared-flutter-migration.md)。
 
 ## 本页目录
 
@@ -30,7 +31,9 @@
 
 ## 当前状态
 
-当前文档目标候选为 **0.1.0-beta.25 / code 25**，尚未构建或发行；beta.24/code 24 的原 #158 应用包已构建，但完整验收失败，原身份和执行账本保留在[未发行候选记录](../CHANGELOG.md#历史未发行候选记录)；beta.15/code 15 与 beta.16/code 16 是此前未发行的历史候选。以下 host123/124 记录只对应其固定输入，不代替当前候选验收。host123（source `bd83a3f5d9ad44be8ac3c87460279133af34ca17`）Native 42 个 targets 全部通过，Core 32 条命令/179 个命中、compileCheck 与 featureBoundary 均通过且锁恢复；整次 run 仅因两道 rustfmt 检查失败。Root 已机械回放真实 formatter 输出并将三文件修正整合到 pref9；host124原run/job仍因旧consumer表31/32不匹配失败；独立修复已在 `d1c0c47d` 整合，保留原31批准项并追加明确批准项。44项Python测试通过；原sealed receipt（SHA-256 `391719e99f0bd00632139990dc6d9d8779a984d834c8c938cecd28134000323c`）已在修复后consumer下只读重放并接受，receipt/source/run/attempt未修改，Core 32/179、format/compile/feature/source/lock证明与原receipt匹配。该原run回放不改写host124 job失败，也不是新source验收；新source完整App CI仍待运行。Android、十二宫格与 APK 均未验收。内置分流脚本原样采用 AEROVE Lite / meow 专版，来源和许可统一见[开源来源与鸣谢](../../development/upstreams.md#开源来源与鸣谢)。生产入口为 `LiteApplication` 的 asset loader，经 `OverrideRepository` 一次初始化进入原脚本库，再沿既有配置 Script 模式和 `ScriptLibrarySession` 更新/CAS 链路执行。
+当前历史候选为 **0.1.0-beta.25 / code 25**。该候选已在 source `cf28637c8dc850dd634447df02630e893a99a258`、run `40859085935`（#163）完成一次原应用构建，未发行。该 CI 终态失败：remaining 393 项通过、44 项失败、2 项未执行，另十二图矩阵 12 项通过。随后用户手机验收独立报告首启玻璃、声明复制、Dock 及页面一致性缺陷，手机验收失败。2026-10-29 决定后的 Flutter Lite 迁移目标尚未构建、验收或发行。beta.24/code 24 的原 #158 应用包也已构建但完整验收失败，原身份和执行账本保留在[未发行候选记录](../CHANGELOG.md#历史未发行候选记录)；beta.15/code 15 与 beta.16/code 16 是此前未发行的历史候选。以下 host123/124 记录只对应其固定输入，不代替 beta25 手机验收或 Flutter 迁移目标验收。host123（source `bd83a3f5d9ad44be8ac3c87460279133af34ca17`）Native 42 个 targets 全部通过，Core 32 条命令/179 个命中、compileCheck 与 featureBoundary 均通过且锁恢复；整次 run 仅因两道 rustfmt 检查失败。Root 已机械回放真实 formatter 输出并将三文件修正整合到 pref9；host124原run/job仍因旧consumer表31/32不匹配失败；独立修复已在 `d1c0c47d` 整合，保留原31批准项并追加明确批准项。44项Python测试通过；原sealed receipt（SHA-256 `391719e99f0bd00632139990dc6d9d8779a984d834c8c938cecd28134000323c`）已在修复后consumer下只读重放并接受，receipt/source/run/attempt未修改，Core 32/179、format/compile/feature/source/lock证明与原receipt匹配。该原run回放不改写host124 job失败，也不是新source验收；新source完整App CI仍待运行。beta25 Compose APK 的仪表盘静态十二图已生成并获用户外观方向确认，但该确认不覆盖后续首启、动态交互和手机验收；该 APK 未通过完整验收。Flutter 迁移目标 APK 尚未构建。内置分流脚本原样采用 AEROVE Lite / meow 专版，来源和许可统一见[开源来源与鸣谢](../../development/upstreams.md#开源来源与鸣谢)。生产入口为 `LiteApplication` 的 asset loader，经 `OverrideRepository` 一次初始化进入原脚本库，再沿既有配置 Script 模式和 `ScriptLibrarySession` 更新/CAS 链路执行。
+
+2026-10-29 架构迁移状态补充：上述 beta25 手机验收失败与构建 run、host123/124 CI 记录分开记载，后续 Flutter Lite 验收也须独立记录。两版共享客户端 UI 的实际源码组织和构建入口仍须按仓库实查确认。悬浮 Dock 采用 Standard 固定栏既有未选中描边、选中实心规则；固定栏选柔光磨砂或流光清透时，Dock 复用对应真实材质。该设计决定不构成 Dock 实现或验收证据。
 
 标准版对照为 `common/xclash_defaults.dart` 的一次初始化，Lite 没有新增独有菜单。首次及旧安装保留已有脚本、编辑与配置选择；用户删除后不自动回填。接近既有容量上限的合法旧库暂缓加入，仍可读取、编辑和删除；释放空间或原子恢复后重试，不扩大容量上限，也不把暂缓标成初始化成功。
 
@@ -75,6 +78,15 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
 尚未接入的 JNI、宿主策略、API、provider 或客户端功能继续阻止发行，不作为核心例外。
 离线校验在固定核心内部的取消粒度见[离线资源校验的取消与等待](#offline-cancel-join)，只是开发记录，不形成 APP 入口差异，也不是核心例外。
 官方 MRS 规则集的展开字节、domain-set 输出与 IP 前缀输出另受固定核心上限约束，按核心例外记录，能力标识、源码证据、受影响字段与入口见[官方 MRS 解码上限](#mrs-decode-limits)。
+
+固定 `727ddcd06f592e2f12c5222c4de6cce328df808c` 的 TUN 使用 lwIP：
+[listener](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-listener/src/tun/mod.rs#L745) 直接构造该栈，
+[配置解析](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-config/src/lib.rs#L357) 对 `tun.stack` 仅告警忽略；
+[lwIP 构建](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-lwip/build.rs#L54) 编译内建的
+[TCP 拥塞控制](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-lwip/old-src/core/tcp_in.c#L1270)，没有可选算法接口。
+因此 `gvisor/system/mixed/mips` 栈选择及 TUN 的 `cubic/reno/bbr/bbr3` 选择按固定核心例外处理，不能将它们静默映射为 lwIP。
+Lite 共同协议明确使用 `stack=lwip`、`congestionController=builtin`，Android FD、MTU、IPv6、DNS 劫持、路由及应用过滤继续沿现有宿主接入；
+源配置的显式 TUN 策略尚未投影到 Android Builder 时按字段报错，属于接线阻断，不扩大为“核心不支持 VPN”。协议与 JVM 验证不代替 JNI、真实 TUN 流量或 Android 验收。
 
 <a name="section-4"></a>
 

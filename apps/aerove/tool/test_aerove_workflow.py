@@ -217,6 +217,9 @@ class WorkflowPolicyTest(unittest.TestCase):
 
     def test_official_source_and_real_go_resolution_precede_generated_tree_export(self):
         generate = run_block('Generate and format sources')
+        self.assertIn('(cd ../../packages/aerove_client && dart run intl_utils:generate)', generate)
+        self.assertIn('(cd ../../packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)', generate)
+        self.assertIn('dart format ../../packages/aerove_client/lib lib test', generate)
         prepare = generate.index('python3 tool/mihomo_source.py prepare')
         tidy = generate.index('(cd core && go mod tidy)')
         capture = generate.index('git -C "$GITHUB_WORKSPACE" diff --cached')
@@ -251,6 +254,12 @@ class GeneratedPatchGitTest(unittest.TestCase):
             'lib/example.g.dart', 'test/example_test.dart', 'core/main.go',
             'core/go.mod', 'core/go.sum', 'pubspec.lock',
         )
+        self.shared_generated = ('lib/models/generated/example.g.dart', 'pubspec.lock')
+        self.shared = self.root / 'packages/aerove_client'
+        for relative in self.shared_generated:
+            path = self.shared / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('before\n', encoding='utf-8', newline='\n')
         for relative in self.generated:
             path = self.product / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -284,6 +293,8 @@ class GeneratedPatchGitTest(unittest.TestCase):
     def capture(self):
         for relative in self.generated:
             (self.product / relative).write_text('after\n', encoding='utf-8', newline='\n')
+        for relative in self.shared_generated:
+            (self.shared / relative).write_text('after\n', encoding='utf-8', newline='\n')
         commands = '\n'.join(line for line in run_block('Generate and format sources').splitlines()
                              if line.startswith('git -C '))
         self.assertEqual(len(commands.splitlines()), 4)
@@ -299,31 +310,45 @@ class GeneratedPatchGitTest(unittest.TestCase):
         patch = (bundle / 'xclash-generated.patch').read_text(encoding='utf-8')
         for relative in self.generated:
             self.assertIn(f'diff --git a/apps/aerove/{relative} b/apps/aerove/{relative}', patch)
+        for relative in self.shared_generated:
+            self.assertIn(f'diff --git a/packages/aerove_client/{relative} b/packages/aerove_client/{relative}', patch)
         self.assertEqual(self.git('diff', '--cached', '--name-only'), '')
         verified = (bundle / 'xclash-verified-tree.txt').read_text(encoding='ascii').strip()
         self.assertNotEqual(verified, self.git('rev-parse', 'HEAD^{tree}'))
-        self.assertEqual(self.git('ls-tree', '--name-only', verified), 'apps\nshared-contract.txt')
-        self.git('restore', '--worktree', '--', 'apps/aerove')
+        self.assertEqual(self.git('ls-tree', '--name-only', verified), 'apps\npackages\nshared-contract.txt')
+        self.git('restore', '--worktree', '--', 'apps/aerove', 'packages/aerove_client')
         self.shell(run_block('Apply verified generated sources'))
         self.assertEqual(self.git('diff', '--cached', '--name-only'), '')
         for relative in self.generated:
             self.assertEqual((self.product / relative).read_text(encoding='utf-8'), 'after\n')
+        for relative in self.shared_generated:
+            self.assertEqual((self.shared / relative).read_text(encoding='utf-8'), 'after\n')
         self.assertEqual((self.root / 'shared-contract.txt').read_text(encoding='utf-8'), 'shared source\n')
 
     def test_replay_rejects_a_different_shared_root_tree(self):
         self.capture()
-        self.git('restore', '--worktree', '--', 'apps/aerove')
+        self.git('restore', '--worktree', '--', 'apps/aerove', 'packages/aerove_client')
         (self.root / 'shared-contract.txt').write_text('different source\n', encoding='utf-8')
         self.git('add', 'shared-contract.txt')
         self.shell(run_block('Apply verified generated sources'), success=False)
 
     def test_replay_rejects_an_omitted_go_lock_change(self):
         bundle = self.capture()
-        self.git('restore', '--worktree', '--', 'apps/aerove')
+        self.git('restore', '--worktree', '--', 'apps/aerove', 'packages/aerove_client')
         patch = bundle / 'xclash-generated.patch'
         sections = re.split(r'(?=^diff --git )', patch.read_text(encoding='utf-8'), flags=re.MULTILINE)
         patch.write_text(''.join(section for section in sections
                                  if not section.startswith('diff --git a/apps/aerove/core/go.sum ')),
+                         encoding='utf-8', newline='\n')
+        self.shell(run_block('Apply verified generated sources'), success=False)
+
+    def test_replay_rejects_an_omitted_shared_lock_change(self):
+        bundle = self.capture()
+        self.git('restore', '--worktree', '--', 'apps/aerove', 'packages/aerove_client')
+        patch = bundle / 'xclash-generated.patch'
+        sections = re.split(r'(?=^diff --git )', patch.read_text(encoding='utf-8'), flags=re.MULTILINE)
+        patch.write_text(''.join(section for section in sections
+                                 if not section.startswith('diff --git a/packages/aerove_client/pubspec.lock ')),
                          encoding='utf-8', newline='\n')
         self.shell(run_block('Apply verified generated sources'), success=False)
 

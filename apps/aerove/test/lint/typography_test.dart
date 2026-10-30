@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import '../helpers/client_sources.dart';
 
 const _typography = 'lib/ui/typography.dart';
 
@@ -21,8 +22,10 @@ void main() {
   test('lib takes its text sizes from AppTextStyle', () {
     final offenders = <String>[];
 
-    for (final entity in Directory('lib').listSync(recursive: true)) {
-      final path = p.relative(entity.path).replaceAll(r'\', '/');
+    for (final entity in clientSourceDirectory(
+      'lib',
+    ).listSync(recursive: true)) {
+      final path = clientSourcePath(entity.path).replaceAll(r'\', '/');
       if (entity is! File || !path.endsWith('.dart') || _isGenerated(path)) {
         continue;
       }

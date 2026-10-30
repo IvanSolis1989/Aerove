@@ -147,7 +147,9 @@ void main() {
       expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
     }
     if (ui.ImageFilter.isShaderFilterSupported) {
-      await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+      await ui.FragmentProgram.fromAsset(
+        'packages/fl_clash/shaders/liquid_glass.frag',
+      );
     }
   });
 
@@ -163,7 +165,9 @@ void main() {
         await tester.pumpWidget(_app(host));
         await tester.runAsync(() async {
           if (ui.ImageFilter.isShaderFilterSupported) {
-            await ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag');
+            await ui.FragmentProgram.fromAsset(
+              'packages/fl_clash/shaders/liquid_glass.frag',
+            );
           }
         });
         await _frames(tester);

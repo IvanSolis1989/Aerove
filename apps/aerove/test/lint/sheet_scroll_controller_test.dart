@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import '../helpers/client_sources.dart';
 
 final _plainController = RegExp(r'\bScrollController\(');
 
@@ -24,13 +25,15 @@ void main() {
   test('scroll views in lib let a bottom sheet take their drags', () {
     final offenders = <String>[];
 
-    for (final entity in Directory('lib').listSync(recursive: true)) {
+    for (final entity in clientSourceDirectory(
+      'lib',
+    ).listSync(recursive: true)) {
       if (entity is! File ||
           !entity.path.endsWith('.dart') ||
           entity.path.contains('/generated/')) {
         continue;
       }
-      final path = p.relative(entity.path).replaceAll(r'\', '/');
+      final path = clientSourcePath(entity.path).replaceAll(r'\', '/');
       if (_allowed.contains(path)) {
         continue;
       }

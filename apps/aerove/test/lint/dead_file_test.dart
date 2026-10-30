@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import '../helpers/client_sources.dart';
+
 const _entryPoints = ['lib/main.dart'];
 
 /// Types, functions, and the top level names a file publishes alongside them — the
@@ -16,8 +18,8 @@ final _declaration = RegExp(
 );
 
 Iterable<File> _dartFiles({required bool includeGenerated}) sync* {
-  for (final root in ['lib', 'test', 'tool', 'plugins']) {
-    final directory = Directory(root);
+  for (final root in ['lib', 'host/lib', 'test', 'tool', 'plugins']) {
+    final directory = clientSourceDirectory(root);
     if (!directory.existsSync()) {
       fail('$root no longer exists; update this test.');
     }
@@ -70,11 +72,11 @@ class Container {
     // notifier is reached through the provider its annotation generates.
     final consumers = {
       for (final file in _dartFiles(includeGenerated: true))
-        file.path: file.readAsStringSync(),
+        clientSourcePath(file.path): file.readAsStringSync(),
     };
     final sources = {
       for (final file in _dartFiles(includeGenerated: false))
-        file.path: consumers[file.path]!,
+        clientSourcePath(file.path): consumers[clientSourcePath(file.path)]!,
     };
     final barrels = {
       for (final MapEntry(key: path, value: source) in sources.entries)

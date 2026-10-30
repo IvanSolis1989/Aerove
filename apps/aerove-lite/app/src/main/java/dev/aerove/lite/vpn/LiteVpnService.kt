@@ -28,6 +28,10 @@ import dev.aerove.lite.data.ProfileRepository
 import dev.aerove.lite.data.SystemDnsSnapshot
 import dev.aerove.lite.platform.PhysicalNetworkLease
 import dev.aerove.lite.networksettings.NetworkRuntimeCoordinator
+import dev.aerove.lite.flutter.*
+import org.json.JSONObject
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +70,19 @@ class LiteVpnService : VpnService() {
     @Volatile private var intentGeneration = 0L
     @Volatile private var ownerAdmissionAllowed = false
     private var owner = 0L
+    private var runtimeSnapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot? = null
+    private var runtimeSettings: LiteSettings? = null
+    private val flutterRuntimeGate = Mutex()
+    private var flutterListeningRequested = true
+    private var flutterTestUrl = MEOW_DEFAULT_TEST_URL
+    private data class FlutterPublication(val identity: RuntimeAppliedIdentity, val endpoint: CoreEndpoint, val intent: Long)
+    @Volatile private var flutterPublication: FlutterPublication? = null
+    private fun publishFlutterRuntime(publication: FlutterPublication?) {
+        flutterPublication = publication
+        graph.publishFlutterRuntimeIdentity(owner, publication?.identity)
+    }
+    internal fun startupFlutterTestUrl(): String = flutterTestUrl
+    private fun currentSettings(): LiteSettings? = runtimeSettings ?: if (graph.runtimeHandoffs.hasAuthority) null else graph.settings.changes.value
     @Volatile private var lastPlan: VpnPlan? = null
     @Volatile private var ownedStart: OwnedStartServiceReceipt? = null
     private var ownedPreparation: Job? = null
@@ -97,18 +114,33 @@ class LiteVpnService : VpnService() {
             CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client -> client.applyNetwork(settings, ipv6) }
         }, { status -> coordinator.recordNetworkStatus(status) })
         coordinator = VpnCoordinator(coreScope, MeowTunnelBackend(MeowAndroidHost(this, graph, { physical.value }, ::initialListening, ::captureOwnerIntent)), networkRuntime::detachAndJoin,
-            latestSavedSettings = { graph.settings.changes.value },
+            latestSavedSettings = { currentSettings() },
             beforeListenerPark = networkRuntime::parkBarrier, afterListenerResume = networkRuntime::resume,
             latestNetworkDns = { physical.value.takeIf { it.network != null }?.dns }, onSessionReady = { snapshot ->
                 networkRuntime.bind(snapshot.endpoint, snapshot.initialNetwork ?: snapshot.appliedNetwork, snapshot.initialIpv6 ?: snapshot.appliedIpv6,
                     snapshot.appliedNetwork, snapshot.appliedIpv6, initiallyParked = snapshot.suspended)
             })
-        listenerPolicy = BackgroundPolicyActor(coreScope, { intent ->
-            coordinator.setListenerPolicy(intent.listening) { listenerPolicy.isCurrent(intent) }
-        }, { failure -> coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName) })
+        listenerPolicy = BackgroundPolicyActor(coreScope, ::applyBackgroundListenerPolicy,
+            { failure -> coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName) })
         graph.registerMaintenanceStop(owner, ::stopForMaintenance, ::resumeAfterMaintenance)
         graph.registerRuleReload(owner, coordinator::reloadRules)
         graph.registerModeCleanup(owner, ::stopForModeFailure)
+        graph.registerFlutterRuntime(owner, object : MeowFlutterRuntime {
+            override fun identityIsCurrent(identity: RuntimeAppliedIdentity): Boolean {
+                val publication = flutterPublication ?: return false
+                val actual = coordinator.state.value
+                return meowSameRuntimeIdentity(publication.identity, identity) && publication.intent == intentGeneration &&
+                    publication.endpoint === actual.endpoint && actual.phase == VpnPhase.Running &&
+                    actual.sessionGeneration == identity.proof.sessionGeneration && identity.proof.serviceOwner == owner &&
+                    graph.ownsVpnOwner(owner) && graph.runtimeHandoffs.isCurrent(identity.revision, identity.intentEpoch)
+            }
+            override suspend fun setListening(expected: MeowSetupRuntime, enabled: Boolean) = flutterSetListening(expected, enabled)
+            override suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection) = flutterApplyUpdate(expected, projection)
+            override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String) = flutterRefreshSetup(expected, setupParamsJson)
+            override suspend fun defaultTestUrl(expected: MeowSetupRuntime): String = flutterRuntimeGate.withLock {
+                requireFlutterRuntime(expected); flutterTestUrl
+            }
+        })
         policyPreferences = graph.settings.changes.value?.backgroundPolicy ?: BackgroundPolicyPreferences()
         networkLease = graph.physicalNetworks.acquire(needsSsid())
         physicalObservation = scope.launch { graph.physicalNetworks.snapshots.collect { updateUnderlying() } }
@@ -127,8 +159,14 @@ class LiteVpnService : VpnService() {
                     val generation = intentGeneration
                     fun current() = generation == intentGeneration && lastPlan != null && physical.value == captured && coordinator.state.value.endpoint === endpoint
                     applyPhysicalNetworkChange(action, { current() && networkHotFailureReconnect(coordinator.state.value, captured.networkHandle) }, hot = {
+                        if (runtimeSnapshot != null) publishFlutterRuntime(null)
                         coordinator.configureNetworkDns(captured.dns)
                         if (!current()) return@applyPhysicalNetworkChange
+                        if (runtimeSnapshot != null && endpoint != null) flutterRuntimeGate.withLock {
+                            val identity = graph.runtimeHandoffs.readAppliedIdentity()
+                            if (identity != null && current() && graph.runtimeHandoffs.isCurrent(identity.revision, identity.intentEpoch))
+                                persistFlutterProjection(identity, endpoint, checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff)
+                        }
                         networkListenerError?.let { coordinator.clearListenerError(it) }
                         networkListenerError = null
                         if (old?.networkHandle != null && old.networkHandle != captured.networkHandle && endpoint != null) {
@@ -145,6 +183,7 @@ class LiteVpnService : VpnService() {
         }
         scope.launch {
             graph.settings.changes.filterNotNull().collect { settings ->
+                if (graph.runtimeHandoffs.hasAuthority) return@collect
                 networkRuntime.settings(settings.network, settings.ipv6)
                 val rulesChanged = policyPreferences.excludeSSIDs != settings.backgroundPolicy.excludeSSIDs
                 val ssidGateChanged = policyPreferences.excludeSSIDs.isEmpty() != settings.backgroundPolicy.excludeSSIDs.isEmpty()
@@ -162,13 +201,48 @@ class LiteVpnService : VpnService() {
                     settings.tcpConcurrent, settings.externalController, settings.findProcessMode)
             }
                 .distinctUntilChanged().collectLatest {
-                    try { graph.settings.changes.value?.let { settings -> coordinator.configurePolicies(settings) } }
+                    if (graph.runtimeHandoffs.hasAuthority) return@collectLatest
+                    try { currentSettings()?.let { settings -> coordinator.configurePolicies(settings) } }
                     catch (cancelled: CancellationException) { throw cancelled }
                     catch (failure: Exception) { coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName) }
                 }
         }
         scope.launch {
+            var appliedGeneration = 0L
             coordinator.state.collect { snapshot ->
+                if (snapshot.phase != VpnPhase.Running) publishFlutterRuntime(null)
+                val runtime = runtimeSnapshot
+                val endpointForProof = snapshot.endpoint
+                if (runtime != null && snapshot.phase == VpnPhase.Running && endpointForProof != null && snapshot.sessionGeneration != appliedGeneration) {
+                    val capturedIntent = intentGeneration
+                    try {
+                        val setup = startupFlutterSetup(runtime)
+                        coordinator.configurePolicies(checkNotNull(runtimeSettings))
+                        applyFlutterSelections(endpointForProof, setup)
+                        val route = CoreApiClient(ControlEndpoint(endpointForProof.port, endpointForProof.secret)).use { it.routeSnapshot() }
+                        check(capturedIntent == intentGeneration && coordinator.state.value.endpoint === endpointForProof) { "runtime_apply_superseded" }
+                        graph.runtimeHandoffs.commitAppliedWithProjection(runtime.revision, runtime.intentEpoch,
+                            dev.aerove.lite.flutter.RuntimeAppliedProof(owner, snapshot.sessionGeneration, route.coreEpoch.toString()),
+                            meowServiceProjection(runtime.handoff, checkNotNull(runtimeSettings), null, null, null, flutterTestUrl))
+                        runtimeSnapshot = graph.runtimeHandoffs.readCurrent()
+                        val identity = checkNotNull(graph.runtimeHandoffs.readAppliedIdentity())
+                        check(capturedIntent == intentGeneration && graph.runtimeHandoffs.isCurrent(identity.revision, identity.intentEpoch)) { "runtime_apply_superseded" }
+                        publishFlutterRuntime(FlutterPublication(identity, endpointForProof, capturedIntent))
+                        appliedGeneration = snapshot.sessionGeneration
+                    } catch (failure: Exception) {
+                        if (capturedIntent == intentGeneration && graph.runtimeHandoffs.isCurrent(runtime.revision, runtime.intentEpoch)) {
+                            try {
+                                graph.runtimeHandoffs.invalidate(runtime.intentEpoch)
+                                if (capturedIntent == intentGeneration) {
+                                    requested(false)
+                                    recordStartupFailure(this@LiteVpnService, failure)
+                                }
+                            } catch (superseded: Exception) { failure.addSuppressed(superseded) }
+                        }
+                        coordinator.stopIfCurrent(endpointForProof, "Runtime apply receipt failed: ${failure.message}")
+                        return@collect
+                    }
+                }
                 networkRuntime.bind(snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running },
                     snapshot.initialNetwork, snapshot.initialIpv6, snapshot.appliedNetwork, snapshot.appliedIpv6)
                 graph.publishVpn(owner, snapshot)
@@ -193,8 +267,9 @@ class LiteVpnService : VpnService() {
             }
         }
         scope.launch {
+            if (graph.runtimeHandoffs.hasAuthority) return@launch
             collectResourceRefreshes(
-                coordinator.state.map { snapshot -> snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running } },
+                coordinator.state.map { snapshot -> snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running && !graph.runtimeHandoffs.hasAuthority } },
                 graph.profiles,
             ) { endpoint -> lastPlan?.let { refreshResources(it, endpoint) } }
         }
@@ -262,6 +337,7 @@ class LiteVpnService : VpnService() {
         if (intent?.action in setOf(ACTION_START, ACTION_RECONFIGURE, SERVICE_INTERFACE) || intent == null)
             showForeground(if (::coordinator.isInitialized) coordinator.state.value.phase else VpnPhase.Starting)
         val generation = ++intentGeneration
+        publishFlutterRuntime(null)
         val previousPreparation = retireOwnedStart()
         ownedStart = nextOwned
         previousPreparation?.cancel()
@@ -273,11 +349,19 @@ class LiteVpnService : VpnService() {
             requested(false)
             lastPlan = null
             syncListenerPolicy()
-            coordinator.stop()
-            finishStop(startId, generation)
+            scope.launch(NonCancellable) {
+                try {
+                    val snapshot = runtimeSnapshot ?: graph.runtimeHandoffs.readCurrent()
+                    if (snapshot != null) graph.runtimeHandoffs.invalidate(snapshot.intentEpoch)
+                } catch (failure: Exception) {
+                    android.util.Log.e("MeowRuntime", "Runtime stop snapshot invalidation failed", failure)
+                } finally {
+                    if (generation == intentGeneration) { coordinator.stop(); finishStop(startId, generation) }
+                }
+            }
             return START_NOT_STICKY
         }
-        if (intent == null && !wasRequested(this)) {
+        if (intent == null && !wasRequested(this) && !graph.runtimeHandoffs.hasAuthority) {
             lastPlan = null
             coordinator.stop()
             finishStop(startId, generation)
@@ -298,11 +382,38 @@ class LiteVpnService : VpnService() {
         val preparation = scope.launch {
             traceLifecycle(VpnServiceLifecycleTrace.Event.StartEntered, startId, command, generation)
             try {
-                val profile = checkNotNull(graph.profiles.snapshot().selectedId) { "Import and select a configuration first" }
-                val settings = graph.settings.read()
+                val explicitSnapshot = intent?.hasExtra(EXTRA_RUNTIME_REVISION) == true
+                val snapshot = if (explicitSnapshot || graph.runtimeHandoffs.hasAuthority) {
+                    var saved = checkNotNull(graph.runtimeHandoffs.readCurrent()) { "runtime_snapshot_missing" }
+                    if (!explicitSnapshot && (intent == null || intent.action == SERVICE_INTERFACE) &&
+                        graph.runtimeHandoffs.readLastApplied() != null) {
+                        saved = graph.runtimeHandoffs.restoreLastApplied(saved.intentEpoch)
+                    }
+                    val revision = intent?.getStringExtra(EXTRA_RUNTIME_REVISION)
+                    if (intent?.action == ACTION_START) check(revision != null) { "runtime_snapshot_receipt_required" }
+                    graph.runtimeHandoffs.admit(revision ?: saved.revision,
+                        if (explicitSnapshot) intent!!.getLongExtra(EXTRA_RUNTIME_EPOCH, -1) else saved.intentEpoch)
+                } else null
+                val profile = snapshot?.profileId ?: checkNotNull(graph.profiles.snapshot().selectedId) { "Import and select a configuration first" }
+                val settings = snapshot?.let { dev.aerove.lite.flutter.MeowRuntimeSnapshotSettings.decode(it.handoff.runtimeSettingsJson) }
+                    ?: graph.settings.read()
+                runtimeSnapshot = snapshot
+                runtimeSettings = settings.takeIf { snapshot != null }
+                flutterListeningRequested = snapshot?.let { JSONObject(it.handoff.runtimeSettingsJson).optBoolean("flutterListeningRequested", true) } ?: true
+                if (snapshot != null) {
+                    val previous = graph.runtimeHandoffs.readLastApplied()?.handoff?.runtimeSettingsJson?.let(::JSONObject)
+                    val retained = previous?.optString("flutterDefaultTestUrl")?.takeIf { it.isNotEmpty() } ?: MEOW_DEFAULT_TEST_URL
+                    val row = JSONObject(snapshot.handoff.runtimeSettingsJson)
+                    flutterTestUrl = MeowServiceSetup(row.getJSONObject("flutterSetup").toString(),
+                        row.optString("flutterDefaultTestUrl").takeIf { it.isNotEmpty() } ?: retained).testUrl
+                }
+                policyPreferences = settings.backgroundPolicy
+                notificationStopPreference = snapshot?.let { org.json.JSONObject(it.handoff.notificationJson).getBoolean("showStopAction") }
+                    ?: settings.backgroundPolicy.showNotificationStopAction
                 traceLifecycle(VpnServiceLifecycleTrace.Event.StartRead, startId, command, generation)
                 if (generation != intentGeneration || nextOwned?.request?.cancelling == true) return@launch
-                val plan = VpnPlan(profile, settings)
+                val builder = snapshot?.let { meowFlutterBuilderSettings(settings, it.handoff.vpnOptionsJson) }
+                val plan = VpnPlan(profile, settings, vpnIpv6 = builder?.ipv6, vpnSettings = builder)
                 val actual = if (reconfigure) coordinator.requestedBuilderSettings() else settings
                 check(canStartRuntime(checkNotNull(actual).network.vpnEnabled, intent?.action == SERVICE_INTERFACE) {
                     prepare(this@LiteVpnService) == null
@@ -396,6 +507,209 @@ class LiteVpnService : VpnService() {
 
     internal fun recordBuilderDns(dns: List<String>) { builderDns = dns.toList() }
 
+    private suspend fun requireFlutterRuntime(expected: MeowSetupRuntime): Pair<VpnSnapshot, RuntimeAppliedIdentity> {
+        val actual = coordinator.state.value
+        val identity = graph.runtimeHandoffs.readAppliedIdentity()
+        check(graph.ownsVpnOwner(owner) && actual.phase == VpnPhase.Running && actual.endpoint != null &&
+            actual.sessionGeneration == expected.sessionGeneration && owner == expected.serviceOwner &&
+            identity != null && identity.revision == expected.revision && identity.intentEpoch == expected.intentEpoch &&
+            identity.compiledSha256 == expected.compiledSha256 && identity.proof.coreEpoch == expected.coreEpoch &&
+            identity.proof.serviceOwner == owner && identity.proof.sessionGeneration == actual.sessionGeneration &&
+            graph.runtimeHandoffs.isCurrent(expected.revision, expected.intentEpoch)) { "runtime_service_superseded" }
+        val epoch = CoreApiClient(ControlEndpoint(actual.endpoint.port, actual.endpoint.secret)).use { it.routeSnapshot().coreEpoch.toString() }
+        check(epoch == expected.coreEpoch && coordinator.state.value.endpoint === actual.endpoint) { "runtime_service_superseded" }
+        return actual to identity
+    }
+
+    private fun startupFlutterSetup(snapshot: MeowRuntimeSnapshot): MeowServiceSetup {
+        val setup = MeowServiceSetup(JSONObject(snapshot.handoff.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), flutterTestUrl)
+        check(checkNotNull(runtimeSettings).requests.checkCertificate == !setup.skipCertVerify) { "skip-cert-verify: Startup policy differs from compiled setup" }
+        return setup
+    }
+
+    private suspend fun applyFlutterSelections(endpoint: CoreEndpoint, setup: MeowServiceSetup) {
+        val runtime = checkNotNull(runtimeSnapshot)
+        CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client ->
+            MeowRuntimeSelection(client).apply(setup.selectedMap) {
+                graph.runtimeHandoffs.isCurrent(runtime.revision, runtime.intentEpoch) &&
+                    lastPlan?.ownerIntentToken == intentGeneration && graph.ownsVpnOwner(owner)
+            }
+        }
+    }
+
+    private suspend fun persistFlutterProjection(before: RuntimeAppliedIdentity, endpoint: CoreEndpoint,
+        handoff: RuntimeHandoff): RuntimeAppliedIdentity {
+        val actual = coordinator.state.value
+        check(actual.endpoint === endpoint && actual.phase == VpnPhase.Running &&
+            actual.sessionGeneration == before.proof.sessionGeneration && graph.ownsVpnOwner(owner) &&
+            graph.runtimeHandoffs.isCurrent(before.revision, before.intentEpoch)) { "runtime_service_superseded" }
+        val epoch = CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { it.routeSnapshot().coreEpoch.toString() }
+        val identity = graph.runtimeHandoffs.commitRuntimeProjection(before, handoff,
+            RuntimeAppliedProof(owner, actual.sessionGeneration, epoch))
+        runtimeSnapshot = graph.runtimeHandoffs.readCurrent()
+        runtimeSettings = MeowRuntimeSnapshotSettings.decode(handoff.runtimeSettingsJson)
+        lastPlan = lastPlan?.copy(settings = checkNotNull(runtimeSettings))
+        policyPreferences = checkNotNull(runtimeSettings).backgroundPolicy
+        notificationStopPreference = JSONObject(handoff.notificationJson).getBoolean("showStopAction")
+        notificationUpdates.contentChanged(actual.phase)
+        publishFlutterRuntime(FlutterPublication(identity, endpoint, intentGeneration))
+        graph.publishVpn(owner, coordinator.state.value)
+        return identity
+    }
+
+    private suspend fun applyBackgroundListenerPolicy(policy: dev.aerove.lite.backgroundpolicy.ListenerPolicyIntent): Unit = flutterRuntimeGate.withLock {
+        if (!listenerPolicy.isCurrent(policy) || !graph.ownsVpnOwner(owner)) return@withLock
+        val actual = coordinator.state.value
+        val endpoint = actual.endpoint
+        val identity = if (runtimeSnapshot != null && endpoint != null && actual.phase == VpnPhase.Running)
+            graph.runtimeHandoffs.readAppliedIdentity()?.takeIf {
+                it.proof.serviceOwner == owner && it.proof.sessionGeneration == actual.sessionGeneration &&
+                    graph.runtimeHandoffs.isCurrent(it.revision, it.intentEpoch)
+            } else null
+        if (runtimeSnapshot != null) publishFlutterRuntime(null)
+        coordinator.setListenerPolicy(policy.listening && flutterListeningRequested) {
+            listenerPolicy.isCurrent(policy) && graph.ownsVpnOwner(owner)
+        }
+        if (identity != null && listenerPolicy.isCurrent(policy) && coordinator.state.value.endpoint === endpoint &&
+            graph.runtimeHandoffs.isCurrent(identity.revision, identity.intentEpoch))
+            persistFlutterProjection(identity, checkNotNull(endpoint), checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff)
+    }
+
+    private suspend fun flutterSetListening(expected: MeowSetupRuntime, enabled: Boolean): RuntimeAppliedIdentity {
+        try {
+            return meowWithListenerPolicyDecision(flutterRuntimeGate, request = {
+                requireFlutterRuntime(expected)
+                intentGeneration to syncListenerPolicy()
+            }, decision = listenerPolicy::latestDecision, isCurrent = listenerPolicy::isCurrent) { admittedIntent, policy ->
+                meowRequireListenerPolicyCurrent(admittedIntent == intentGeneration && graph.ownsVpnOwner(owner))
+                val (actual, before) = requireFlutterRuntime(expected)
+                val endpoint = checkNotNull(actual.endpoint)
+                val listening = enabled && policy.listening
+                val previousListeningRequested = flutterListeningRequested
+                fun current() = admittedIntent == intentGeneration && graph.ownsVpnOwner(owner) &&
+                    coordinator.state.value.endpoint === endpoint &&
+                    graph.runtimeHandoffs.isCurrent(before.revision, before.intentEpoch) && listenerPolicy.isCurrent(policy)
+                try {
+                    meowRequireListenerPolicyCurrent(current())
+                    publishFlutterRuntime(null)
+                    flutterListeningRequested = enabled
+                    coordinator.setListenerPolicy(listening, ::current)
+                    meowRequireListenerPolicyCurrent(current())
+                    val readback = coordinator.state.value
+                    check(readback.endpoint === endpoint && readback.listening == listening &&
+                        readback.suspended == !listening && readback.listenerError == null) { "runtime_listener_readback_failed" }
+                    val previous = checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff
+                    val runtime = JSONObject(previous.runtimeSettingsJson).put("flutterListeningRequested", enabled)
+                    val projection = RuntimeHandoff(previous.coreSha, previous.sourceId, previous.sourceRevision, previous.sourceSha256,
+                        previous.compiledYaml, previous.compiledSha256, previous.setupRecordJson, runtime.toString(),
+                        previous.vpnOptionsJson, previous.notificationJson, previous.resources)
+                    meowRequireListenerPolicyCurrent(current())
+                    persistFlutterProjection(before, endpoint, projection)
+                } catch (failure: Throwable) {
+                    if (meowListenerFailureRequiresStop(failure, current())) {
+                        coordinator.stopIfCurrent(endpoint, "Listener transaction failed: ${failure.message}")
+                    } else {
+                        flutterListeningRequested = previousListeningRequested
+                        // Reconcile via the same owner callback; a cancelled caller cannot strand a null publication.
+                        coreScope.launch { applyBackgroundListenerPolicy(listenerPolicy.latestDecision()) }
+                    }
+                    throw failure
+                }
+            }
+        } catch (superseded: MeowListenerPolicySuperseded) {
+            throw MeowProtocolFailure("superseded", "Listener policy request was superseded")
+        }
+    }
+    private suspend fun flutterApplyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection): RuntimeAppliedIdentity = flutterRuntimeGate.withLock {
+        val (actual, before) = requireFlutterRuntime(expected)
+        val endpoint = checkNotNull(actual.endpoint)
+        val old = checkNotNull(runtimeSettings)
+        val next = projection.settings
+        val previous = checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff
+        val vpnOptions = JSONObject(projection.sharedStateJson).optJSONObject("vpnOptions")?.toString() ?: previous.vpnOptionsJson
+        val desiredBuilder = meowFlutterBuilderSettings(next, vpnOptions)
+        fun blocked(field: String): Nothing = throw MeowProtocolFailure("implementation_blocked", "Setting requires a new compiled runtime or explicit VPN restart", mapOf("field" to field))
+        if (requiresVpnRestart(desiredBuilder, actual)) blocked("vpnOptions")
+        if (old.ipv6 != next.ipv6) blocked("ipv6")
+        if (old.dnsPreferences != next.dnsPreferences) blocked("dnsPreferences")
+        if (old.geoResources != next.geoResources) blocked("geox-url")
+        if (old.autoStart != next.autoStart) blocked("autoStart")
+        if (old.backgroundPolicy.copy(onlyStatisticsProxy = next.backgroundPolicy.onlyStatisticsProxy,
+                showNotificationStopAction = next.backgroundPolicy.showNotificationStopAction) != next.backgroundPolicy) blocked("backgroundPolicy")
+        if (old.appAccess != next.appAccess || old.packages != next.packages || old.appFilterMode != next.appFilterMode) blocked("accessControlProps")
+        if (!actual.listening && (old.network != next.network || old.ipv6 != next.ipv6)) blocked("network.parked")
+        val previousUpdate = JSONObject(previous.runtimeSettingsJson).optJSONObject("flutterUpdate")
+        val requestedUpdate = projection.updateParamsJson?.let(::JSONObject)
+        if (requestedUpdate != null && requestedUpdate.opt("log-level") != previousUpdate?.opt("log-level")) blocked("log-level")
+        if (requestedUpdate != null && !meowJsonEqual(requestedUpdate.opt("tun"), previousUpdate?.opt("tun"))) blocked("tun")
+        val oldSetup = MeowServiceSetup(JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), flutterTestUrl)
+        val setupJson = projection.setupParamsJson?.let(::JSONObject) ?: JSONObject(oldSetup.json.toString())
+        if (requestedUpdate != null && !meowJsonEqual(requestedUpdate, previousUpdate))
+            setupJson.put("skip-cert-verify", !next.requests.checkCertificate)
+        val setup = MeowServiceSetup(setupJson.toString(), flutterTestUrl)
+        if (next.requests.checkCertificate != !setup.skipCertVerify) blocked("skip-cert-verify")
+        if (setup.testUrl != flutterTestUrl && meowMissingGroupTestUrl(dev.aerove.lite.data.ConfigYaml.parse(previous.compiledYaml))) blocked("test-url")
+        if (setup.json.getJSONObject("applied").getString("yaml-md5") != JSONObject(previous.setupRecordJson).getString("yaml-md5")) blocked("applied.yaml-md5")
+        try {
+            publishFlutterRuntime(null)
+            coordinator.configurePolicies(next)
+            CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client ->
+                if (old.mode != next.mode) client.setMode(next.mode)
+                check(client.mode() == next.mode) { "mode: Native mode did not converge" }
+            }
+            if (old.network != next.network || old.ipv6 != next.ipv6) {
+                val requestBefore = coordinator.state.value.networkRequest?.id ?: 0
+                networkRuntime.settings(next.network, next.ipv6)
+                val readback = kotlinx.coroutines.withTimeout(25_000) { coordinator.state.first { state ->
+                    state.endpoint !== endpoint || state.phase != VpnPhase.Running || state.networkRequest?.let {
+                        it.id > requestBefore && it.network == next.network && it.ipv6 == next.ipv6 &&
+                            it.outcome != dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Applying
+                    } == true
+                } }
+                check(readback.endpoint === endpoint && readback.networkError == null &&
+                    readback.networkRequest?.outcome == dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Applied) { readback.networkError ?: "network: Native apply was not confirmed" }
+            }
+            if (setup.selectedMap != oldSetup.selectedMap) applyFlutterSelections(endpoint, setup)
+            val handoff = meowServiceProjection(previous, next, JSONObject(projection.sharedStateJson), projection.updateParamsJson,
+                setup.json.toString(), setup.testUrl)
+            val result = persistFlutterProjection(before, endpoint, handoff)
+            flutterTestUrl = setup.testUrl
+            refreshNetworkPermissions()
+            result
+        } catch (failure: Throwable) {
+            coordinator.stopIfCurrent(endpoint, "Live update failed: ${failure.message}")
+            throw failure
+        }
+    }
+
+    private suspend fun flutterRefreshSetup(expected: MeowSetupRuntime, params: String): RuntimeAppliedIdentity = flutterRuntimeGate.withLock {
+        val (actual, before) = requireFlutterRuntime(expected)
+        val endpoint = checkNotNull(actual.endpoint)
+        val previous = checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff
+        val setup = MeowServiceSetup(params, flutterTestUrl)
+        if (JSONObject(previous.setupRecordJson).getString("yaml-md5") != setup.json.getJSONObject("applied").getString("yaml-md5"))
+            throw MeowProtocolFailure("superseded", "Setup YAML identity changed")
+        if (setup.testUrl != flutterTestUrl && meowMissingGroupTestUrl(dev.aerove.lite.data.ConfigYaml.parse(previous.compiledYaml)))
+            throw MeowProtocolFailure("implementation_blocked", "Existing default-URL health groups require a new compiled session", mapOf("field" to "test-url"))
+        val oldSetup = MeowServiceSetup(JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), flutterTestUrl)
+        try {
+            val next = checkNotNull(runtimeSettings).copy(requests = checkNotNull(runtimeSettings).requests.copy(checkCertificate = !setup.skipCertVerify))
+            if (oldSetup.skipCertVerify != setup.skipCertVerify || oldSetup.selectedMap != setup.selectedMap) {
+                publishFlutterRuntime(null)
+                coordinator.configurePolicies(next)
+                applyFlutterSelections(endpoint, setup)
+            }
+            val update = JSONObject(previous.runtimeSettingsJson).optJSONObject("flutterUpdate")?.put("skip-cert-verify", setup.skipCertVerify)?.toString()
+            val handoff = meowServiceProjection(previous, next, null, update, params, setup.testUrl)
+            val result = persistFlutterProjection(before, endpoint, handoff)
+            flutterTestUrl = setup.testUrl
+            result
+        } catch (failure: Throwable) {
+            coordinator.stopIfCurrent(endpoint, "Setup refresh failed: ${failure.message}")
+            throw failure
+        }
+    }
+
     private suspend fun initialListening(plan: VpnPlan): Boolean {
         val token = withContext(Dispatchers.Main.immediate) {
             val expected = checkNotNull(plan.ownerIntentToken) { "Runtime owner intent is unavailable" }
@@ -404,7 +718,7 @@ class LiteVpnService : VpnService() {
                     throw CancellationException("Startup intent was superseded")
             }
             requireCurrent()
-            val current = checkNotNull(graph.settings.changes.value) { "Settings are not loaded" }.backgroundPolicy
+            val current = checkNotNull(currentSettings()) { "Settings are not loaded" }.backgroundPolicy
             if (current.excludeSSIDs != policyPreferences.excludeSSIDs) {
                 policyPreferences = current
                 refreshNetworkPermissions()
@@ -443,15 +757,15 @@ class LiteVpnService : VpnService() {
         return withContext(Dispatchers.Main.immediate) {
             if (token != intentGeneration || lastPlan == null || !wasRequested(this@LiteVpnService) || maintenanceHold)
                 throw CancellationException("Startup intent was superseded")
-            decision.listening
+            decision.listening && flutterListeningRequested
         }
     }
 
-    private fun syncListenerPolicy() {
-        if (!::listenerPolicy.isInitialized) return
+    private fun syncListenerPolicy(): Long {
+        check(::listenerPolicy.isInitialized) { "Listener policy is not initialized" }
         val ssid = if (policyPreferences.excludeSSIDs.isEmpty()) null else
             AndroidSsidPolicy.read(network?.let(graph.physicalNetworks.snapshots.value.capabilities::get), policyPreferences, AndroidSsidPolicy.access(this))
-        listenerPolicy.update(policyPreferences, lastPlan != null && wasRequested(this) && !maintenanceHold, false, ssid)
+        return listenerPolicy.update(policyPreferences, lastPlan != null && wasRequested(this) && !maintenanceHold, false, ssid)
     }
 
     private fun needsSsid(): Boolean = policyPreferences.excludeSSIDs.isNotEmpty() && AndroidSsidPolicy.access(this).granted
@@ -544,6 +858,7 @@ class LiteVpnService : VpnService() {
     }
 
     private suspend fun refreshResources(plan: VpnPlan, endpoint: CoreEndpoint) {
+        if (plan.profileId.startsWith("flutter:")) return
         fun current() = lastPlan == plan && intentGeneration == plan.ownerIntentToken &&
             coordinator.state.value.endpoint === endpoint
         refreshRuntimeResources(graph.profiles, plan.profileId, endpoint, ::current,
@@ -568,8 +883,16 @@ class LiteVpnService : VpnService() {
             heldMaintenance = null
             requested(false)
             lastPlan = null
-            coordinator.stop()
-            finishStop(startId, generation)
+            withContext(NonCancellable) {
+                try {
+                    runtimeSnapshot?.let { graph.runtimeHandoffs.invalidate(it.intentEpoch) }
+                } finally {
+                    if (generation == intentGeneration) {
+                        coordinator.stop()
+                        finishStop(startId, generation)
+                    }
+                }
+            }
         }
     }
 
@@ -580,6 +903,7 @@ class LiteVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        publishFlutterRuntime(null)
         traceLifecycle(VpnServiceLifecycleTrace.Event.DestroyEntered)
         ++intentGeneration
         retireOwnedStart()?.cancel()
@@ -591,6 +915,7 @@ class LiteVpnService : VpnService() {
         graph.clearMaintenanceStop(owner)
         graph.clearRuleReload(owner)
         graph.clearModeCleanup(owner)
+        graph.clearFlutterRuntime(owner)
         if (::listenerPolicy.isInitialized) listenerPolicy.close()
         removeNotification()
         notificationUpdates.close()
@@ -682,14 +1007,15 @@ class LiteVpnService : VpnService() {
         val vpnEnabled = if (::coordinator.isInitialized) {
             coordinator.state.value.initialSettings?.network?.vpnEnabled
                 ?: coordinator.requestedBuilderSettings()?.network?.vpnEnabled
-                ?: graph.settings.changes.value?.network?.vpnEnabled ?: true
-        } else graph.settings.changes.value?.network?.vpnEnabled ?: true
+                ?: currentSettings()?.network?.vpnEnabled ?: true
+        } else currentSettings()?.network?.vpnEnabled ?: true
         return Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_vpn)
-            .setContentTitle("AEROVE Lite").setContentText(label)
+            .setContentTitle(runtimeSnapshot?.let { org.json.JSONObject(it.handoff.notificationJson).getString("currentProfileName") } ?: "AEROVE Lite").setContentText(label)
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true).setSound(null).setVibrate(null)
             .apply {
                 if (notificationShowsStopAction(vpnEnabled, notificationStopPreference))
-                    addAction(Notification.Action.Builder(null, getString(R.string.action_disconnect), stop).build())
+                    addAction(Notification.Action.Builder(null, runtimeSnapshot?.let { JSONObject(it.handoff.notificationJson).getString("stopText") }
+                        ?: getString(R.string.action_disconnect), stop).build())
             }.build()
     }
 
@@ -699,6 +1025,7 @@ class LiteVpnService : VpnService() {
     }
 
     private fun requested(value: Boolean) {
+        if (!value) publishFlutterRuntime(null)
         ownerAdmissionAllowed = value
         getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit().putBoolean("requested", value).commit()
         startupIntentChanges.value++
@@ -709,6 +1036,8 @@ class LiteVpnService : VpnService() {
         val hostNetworkGeneration: kotlinx.coroutines.flow.StateFlow<Long> = mutableHostNetworkGeneration
         const val ACTION_START = "dev.aerove.lite.START"
         const val EXTRA_REQUESTED_AT_NANOS = "dev.aerove.lite.REQUESTED_AT_NANOS"
+        const val EXTRA_RUNTIME_REVISION = "runtimeRevision"
+        const val EXTRA_RUNTIME_EPOCH = "runtimeEpoch"
         const val EXTRA_OWNED_START_ID = "dev.aerove.lite.OWNED_START_ID"
         const val ACTION_STOP = "dev.aerove.lite.STOP"
         const val ACTION_RECONFIGURE = "dev.aerove.lite.RECONFIGURE"

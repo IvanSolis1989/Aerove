@@ -1,4 +1,6 @@
 import 'dart:convert';
+
+import '../helpers/client_sources.dart';
 import 'dart:io';
 
 import 'package:fl_clash/common/app_localizations.dart';
@@ -209,7 +211,9 @@ void main() {
       expect(
         base['bytes'],
         base64Encode(
-          File('assets/images/tray/macos/status_4.png').readAsBytesSync(),
+          clientSourceFile(
+            'packages/fl_clash/assets/images/tray/macos/status_4.png',
+          ).readAsBytesSync(),
         ),
       );
     });
@@ -252,7 +256,9 @@ void main() {
     expect(
       base['bytes'],
       base64Encode(
-        File('assets/images/tray/unix/status_3.png').readAsBytesSync(),
+        clientSourceFile(
+          'packages/fl_clash/assets/images/tray/unix/status_3.png',
+        ).readAsBytesSync(),
       ),
     );
     expect(

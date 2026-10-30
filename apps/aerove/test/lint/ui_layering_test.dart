@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import '../helpers/client_sources.dart';
+
 const _stateManagement = [
   'flutter_riverpod',
   'hooks_riverpod',
@@ -20,7 +22,7 @@ String _resolve(String uri, String from) {
     return 'lib/${uri.substring('package:fl_clash/'.length)}';
   }
   if (uri.startsWith('dart:') || uri.startsWith('package:')) return uri;
-  return p.normalize(p.join(p.dirname(from), uri));
+  return p.posix.normalize(p.posix.join(p.posix.dirname(from), uri));
 }
 
 bool _isStateManagement(String uri) =>
@@ -39,7 +41,7 @@ List<String>? _escape(String root) {
   final seen = {root};
   while (queue.isNotEmpty) {
     final current = queue.removeAt(0);
-    final file = File(current);
+    final file = clientSourceFile(current);
     if (!file.existsSync()) continue;
     for (final match in _directive.allMatches(file.readAsStringSync())) {
       final next = _resolve(match.group(1)!, current);
@@ -60,14 +62,14 @@ List<String>? _escape(String root) {
 
 void main() {
   test('lib/ui reaches no app layer and no state management', () {
-    final directory = Directory('lib/ui');
+    final directory = clientSourceDirectory('lib/ui');
     if (!directory.existsSync()) {
       fail('lib/ui no longer exists; update this test.');
     }
     final offenders = <String>[];
     for (final entity in directory.listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      final chain = _escape(p.relative(entity.path));
+      final chain = _escape(clientSourcePath(entity.path));
       if (chain != null) offenders.add(chain.join(' -> '));
     }
     expect(

@@ -75,7 +75,13 @@ async fn public_group_delay_unpins_in_gate_persists_before_probe_and_acks_same_s
     assert_eq!(body.as_object().unwrap().len(),1);assert!(body["DIRECT"].is_u64());
     let after=fixture.api.control.snapshot().await.unwrap();assert_eq!(after,unpinned);
     assert!(response.contains("x-aerove-core-epoch: 123\r\n"));assert!(response.contains(&format!("x-aerove-route-version: {}\r\n",after.route_version)));
-    assert_eq!(direct.health().delay_history().len(),history+1);fixture.close().await;
+    assert_eq!(direct.health().delay_history().len(),history+1);
+    let delays=fixture.api.control.delay_history(Some("123")).unwrap();assert!(delays.complete);
+    assert_eq!(delays.delays.len(),2);
+    assert!(delays.delays.iter().all(|row|row.url==fixture.query().url.as_deref().unwrap()));
+    assert!(delays.delays.iter().any(|row|row.name=="DIRECT" && row.value==body["DIRECT"].as_i64().unwrap() as i32));
+    assert!(delays.delays.iter().any(|row|row.name=="REJECT" && row.value==-2));
+    fixture.close().await;
 }
 
 #[tokio::test(flavor="multi_thread",worker_threads=3)]
@@ -128,6 +134,26 @@ async fn complete_group(fixture:&Fixture,proxy:&TcpListener)->String {
     let request=tokio::spawn(get(fixture.address,fixture.path(true)));
     let mut direct=fixture.accept().await;let mut proxied=proxy_probe(proxy).await;
     reply(&mut direct).await;reply(&mut proxied).await;request.await.unwrap()
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=3)]
+async fn fallback_owned_selection_records_its_real_group_url_without_relabeling_the_failed_node_test() {
+    let proxy=TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fixture=Fixture::new(Some(proxy.local_addr().unwrap().port())).await;
+    let failed_path=fixture.path(false).replace("/proxies/DIRECT/","/proxies/SLOW/");
+    let failed=tokio::spawn(get(fixture.address,failed_path));
+    let mut peer=proxy_probe(&proxy).await;
+    peer.write_all(b"HTTP/1.1 500 Failure\r\nConnection: close\r\n\r\n").await.unwrap();drop(peer);
+    assert!(failed.await.unwrap().starts_with("HTTP/1.1 503"));
+    let selected=tokio::spawn(put_slow(fixture.address));
+    let mut peer=proxy_probe(&proxy).await;reply(&mut peer).await;drop(peer);
+    assert!(selected.await.unwrap().starts_with("HTTP/1.1 204"));
+    let history=fixture.api.control.delay_history(Some("123")).unwrap();
+    let base=format!("http://{}",fixture.origin.local_addr().unwrap());
+    assert_eq!(history.delays.len(),2);assert!(history.complete);
+    assert!(history.delays.iter().any(|row|row.name=="SLOW" && row.url==format!("{base}/observed-policy") && row.value==-2));
+    assert!(history.delays.iter().any(|row|row.name=="SLOW" && row.url==format!("{base}/health") && row.value>0));
+    fixture.close().await;
 }
 
 #[tokio::test(flavor="multi_thread",worker_threads=3)]

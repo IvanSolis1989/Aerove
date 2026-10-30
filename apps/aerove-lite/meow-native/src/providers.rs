@@ -54,6 +54,10 @@ pub(crate) struct PlaneState {
     pub(crate) selection_serial: u64,
     pub(crate) selection_intents: BTreeMap<String, u64>,
     pub(crate) delay_intents: BTreeMap<usize, u64>,
+    pub(crate) delay_history: BTreeMap<(usize, String), crate::control::DelayHistoryRecord>,
+    pub(crate) delay_history_revision: u64,
+    pub(crate) delay_history_bytes: usize,
+    pub(crate) delay_history_error: Option<&'static str>,
     active: bool,
     pub(crate) group_control: Option<Weak<crate::control::RouteControl>>,
     live: BTreeMap<ProviderKey, u64>,
@@ -88,6 +92,7 @@ impl ControlPlane {
         let (events, _) = broadcast::channel(1024);
         Ok(Arc::new_cyclic(|this| Self { gate: Mutex::new(PlaneState {
             core_epoch: epoch, revision: 0, closed: false, groups_sequence: 0, groups_emitting: false, selection_serial: 0, selection_intents: BTreeMap::new(), delay_intents: BTreeMap::new(), active: false, group_control: None, live: BTreeMap::new(), admitted: BTreeMap::new(),
+            delay_history: BTreeMap::new(), delay_history_revision: 0, delay_history_bytes: 0, delay_history_error: None,
             sources: BTreeMap::new(), busy: BTreeSet::new(), emitting: BTreeSet::new(), pending: BTreeMap::new(), sequence: 0,
         }), cancel, this: this.clone(), changed: Notify::new(), events }))
     }
@@ -104,7 +109,10 @@ impl ControlPlane {
         }
         let epoch = next_core_epoch(gate.core_epoch)?;
         let retired = install(); gate.core_epoch = epoch;
+        let history = std::mem::take(&mut gate.delay_history);
+        gate.delay_history_revision = 0; gate.delay_history_bytes = 0; gate.delay_history_error = None;
         let stamp = (gate.core_epoch, gate.revision); drop(gate);
+        drop(history);
         Ok((stamp, Some(retired)))
     }
     pub fn stamp(&self) -> (u64, u64) {
@@ -112,8 +120,13 @@ impl ControlPlane {
         (gate.core_epoch, gate.revision)
     }
     pub fn cancel(&self) {
-        self.gate.lock().closed = true;
+        let history = {
+            let mut gate = self.gate.lock(); gate.closed = true;
+            gate.delay_history_bytes = 0;
+            std::mem::take(&mut gate.delay_history)
+        };
         self.cancel.cancel();
+        drop(history);
     }
     pub fn subscribe(&self) -> broadcast::Receiver<ProviderLoaded> { self.events.subscribe() }
     pub fn activate(&self, identities: &[ProviderIdentity]) -> Result<(), String> {
@@ -447,6 +460,10 @@ impl ActiveLease {
             control.finish_provider_commit(prepared, &mut gate, *revision, *groups_sequence);
         }
         gate.sources.insert(self.identity.source, SourceReceipt { revision: next, changed });
+        let retired_history = if epoch_next != gate.core_epoch {
+            gate.delay_history_revision = 0; gate.delay_history_bytes = 0; gate.delay_history_error = None;
+            Some(std::mem::take(&mut gate.delay_history))
+        } else { None };
         gate.core_epoch = epoch_next;
         gate.revision = route_next;
         gate.groups_sequence = groups_next;
@@ -456,6 +473,7 @@ impl ActiveLease {
                 revision: next.to_string(), phase: if previous == 0 { "initial" } else { "update" }, changed }));
         }
         drop(gate);
+        drop(retired_history);
         // Retired adapters may own cancellable clients. Destructors stay outside
         // the short publish gate, like the upstream provider's retired slot.
         drop(prepared);

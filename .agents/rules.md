@@ -9,6 +9,9 @@ Binding engineering conventions for the Standard edition.
 [Dart and Flutter Style](#dart-and-flutter-style) · [Comments](#comments) · [Core API Safety](#core-api-safety) · [Lifecycle Rules](#lifecycle-rules) · [UI Isolate Work](#ui-isolate-work) · [Testing Rules](#testing-rules) · [Running the App Locally](#running-the-app-locally) · [Commit Messages](#commit-messages) · [Migrations](#migrations) · [Generated Code](#generated-code)
 
 Paths and commands for the full product are relative to `apps/aerove/`; run its commands there.
+Production `lib/` and `arb/` references below describe the canonical `packages/aerove_client/` source after extraction.
+Standard tests, native/core integration and product commands remain under `apps/aerove/`; shared analysis and code
+generation run in the shared package. Source lints must resolve that actual client tree, not only the thin host entry.
 Repository governance and workflows remain at the repository root. See [workspace layout](../docs/development/REPOSITORY_LAYOUT.md).
 
 These are repository coding and testing conventions. Codex command permission rules belong in `.codex/rules/*.rules`; see `.agents/agent-config.md` before adding those.

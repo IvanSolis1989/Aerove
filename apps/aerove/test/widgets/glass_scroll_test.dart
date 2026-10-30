@@ -18,7 +18,9 @@ void main() {
     }
     if (ui.ImageFilter.isShaderFilterSupported) {
       await Future.wait([
-        ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'),
+        ui.FragmentProgram.fromAsset(
+          'packages/fl_clash/shaders/liquid_glass.frag',
+        ),
         ui.FragmentProgram.fromAsset('shaders/stretch_effect.frag'),
       ]);
     }
@@ -96,7 +98,9 @@ void main() {
           if (ui.ImageFilter.isShaderFilterSupported) {
             await tester.runAsync(() async {
               await Future.wait([
-                ui.FragmentProgram.fromAsset('shaders/liquid_glass.frag'),
+                ui.FragmentProgram.fromAsset(
+                  'packages/fl_clash/shaders/liquid_glass.frag',
+                ),
                 ui.FragmentProgram.fromAsset('shaders/stretch_effect.frag'),
               ]);
             });

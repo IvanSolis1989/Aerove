@@ -19,13 +19,13 @@
 | 回前台自动更新 | 任何一次离开（含下拉通知栏）后返回都立即跑一轮订阅、图标、脚本与规则检查 | 按 20 分钟间隔到期才跑；只有被离开中断的那一轮在返回时补做 |
 | 代理链循环提示 | 后台仍逐次弹出提示，帧停止时提示无法退场而在队列中累积 | 后台只记下最近一次，返回前台显示一次 |
 
-主要入口：[Core 遥测](../../apps/aerove/core/ui_telemetry.go)、[请求观察](../../apps/aerove/core/request_traffic.go)、[事件管理](../../apps/aerove/lib/manager/core_manager.dart)、[应用调度](../../apps/aerove/lib/application.dart)、[IP 查询](../../apps/aerove/lib/providers/ip_quality.dart)、[代理操作](../../apps/aerove/lib/providers/actions/proxies.dart)、[通知](../../apps/aerove/android/service/src/main/java/com/follow/clash/service/modules/NotificationModule.kt)。
+主要入口：[Core 遥测](../../apps/aerove/core/ui_telemetry.go)、[请求观察](../../apps/aerove/core/request_traffic.go)、[事件管理](../../packages/aerove_client/lib/manager/core_manager.dart)、[应用调度](../../packages/aerove_client/lib/application.dart)、[IP 查询](../../packages/aerove_client/lib/providers/ip_quality.dart)、[代理操作](../../packages/aerove_client/lib/providers/actions/proxies.dart)、[通知](../../apps/aerove/android/service/src/main/java/com/follow/clash/service/modules/NotificationModule.kt)。
 
 ## 已有的后台渲染保护
 
 根 `TickerMode` 已覆盖实际导航树，inactive 保留最后画面，hidden、paused、detached 隐藏页面并停止动画节拍。主题过渡自行停止截图与动画；图表没有独立动画计时器；玻璃 Host 随合成采样，没有独立刷新循环。本轮补齐 standalone Host 在 detached 时暂停和清缓存，不能将这个资源一致性缺口当作主要耗电原因。
 
-来源：[极光与根生命周期](../../apps/aerove/lib/widgets/aurora.dart)、[主题过渡](../../apps/aerove/lib/ui/theme_cross_fade.dart)、[玻璃 Host](../../apps/aerove/lib/ui/liquid_glass_capture.dart)。
+来源：[极光与根生命周期](../../packages/aerove_client/lib/widgets/aurora.dart)、[主题过渡](../../packages/aerove_client/lib/ui/theme_cross_fade.dart)、[玻璃 Host](../../packages/aerove_client/lib/ui/liquid_glass_capture.dart)。
 
 ## 必须保留的工作与边界
 

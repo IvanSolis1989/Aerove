@@ -26,11 +26,42 @@ class LiteApplication : Application() {
 
     internal val physicalNetworks by lazy { dev.aerove.lite.platform.PhysicalNetworkMonitor(applicationContext, providerResetOwner::network) }
 
+    val runtimeHandoffs by lazy {
+        dev.aerove.lite.flutter.RuntimeHandoffStore(filesDir, validateProjection = {
+            dev.aerove.lite.flutter.MeowRuntimeSnapshotSettings.validate(it)
+        })
+    }
     internal val nativeLifecycle = Mutex()
     internal val ownedStarts = dev.aerove.lite.vpn.OwnedStartRegistry()
     private val pendingStarts = java.util.concurrent.atomic.AtomicLong()
     fun startIntentEpoch(): Long = pendingStarts.get()
     fun invalidatePendingStarts() { pendingStarts.incrementAndGet() }
+    private var flutterRuntimeOwner: Pair<Long, dev.aerove.lite.flutter.MeowFlutterRuntime>? = null
+    private val mutableFlutterRuntimeIdentity = MutableStateFlow<dev.aerove.lite.flutter.RuntimeAppliedIdentity?>(null)
+    val flutterRuntimeIdentity = mutableFlutterRuntimeIdentity.asStateFlow()
+    @Synchronized internal fun publishFlutterRuntimeIdentity(owner: Long, identity: dev.aerove.lite.flutter.RuntimeAppliedIdentity?) {
+        if (this.owner != owner) return
+        val prior = mutableFlutterRuntimeIdentity.value
+        if (identity == null || prior == null || !dev.aerove.lite.flutter.meowSameRuntimeIdentity(prior, identity))
+            mutableFlutterRuntimeIdentity.value = identity
+    }
+    @Synchronized internal fun registerFlutterRuntime(owner: Long, runtime: dev.aerove.lite.flutter.MeowFlutterRuntime) {
+        if (this.owner == owner) flutterRuntimeOwner = owner to runtime
+    }
+    @Synchronized internal fun clearFlutterRuntime(owner: Long) {
+        if (flutterRuntimeOwner?.first == owner) {
+            flutterRuntimeOwner = null
+            publishFlutterRuntimeIdentity(owner, null)
+        }
+    }
+    @Synchronized private fun flutterRuntime(): dev.aerove.lite.flutter.MeowFlutterRuntime =
+        checkNotNull(flutterRuntimeOwner?.takeIf { it.first == owner }?.second) { "runtime_service_owner_unavailable" }
+    @Synchronized fun flutterRuntimeIdentityIsCurrent(identity: dev.aerove.lite.flutter.RuntimeAppliedIdentity): Boolean =
+        flutterRuntimeOwner?.takeIf { it.first == owner }?.second?.identityIsCurrent(identity) == true
+    suspend fun setFlutterRuntimeListening(expected: dev.aerove.lite.flutter.MeowSetupRuntime, enabled: Boolean) = flutterRuntime().setListening(expected, enabled)
+    suspend fun applyFlutterRuntimeUpdate(expected: dev.aerove.lite.flutter.MeowSetupRuntime, projection: dev.aerove.lite.flutter.MeowSetupProjection) = flutterRuntime().applyUpdate(expected, projection)
+    suspend fun refreshFlutterRuntimeSetup(expected: dev.aerove.lite.flutter.MeowSetupRuntime, setupParamsJson: String) = flutterRuntime().refreshSetup(expected, setupParamsJson)
+    suspend fun flutterRuntimeDefaultTestUrl(expected: dev.aerove.lite.flutter.MeowSetupRuntime) = flutterRuntime().defaultTestUrl(expected)
     private val maintenanceGate = Mutex()
     @Volatile var maintenanceActive: Boolean = false
         private set
@@ -191,7 +222,10 @@ class LiteApplication : Application() {
     val vpn = mutableVpn.asStateFlow()
 
     @Synchronized
-    internal fun registerVpnOwner(): Long = ++owner
+    internal fun registerVpnOwner(): Long {
+        mutableFlutterRuntimeIdentity.value = null
+        return ++owner
+    }
 
     @Synchronized
     internal fun ownsVpnOwner(expected: Long): Boolean = owner == expected

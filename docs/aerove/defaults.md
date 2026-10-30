@@ -29,7 +29,7 @@
 - Core 可热更新的字段走 `UpdateParams`；DNS、Hosts、Geo 加载器和出站参数等走重新装配配置。Android VPN 启动参数变化沿既有通知提示用户重启 VPN；继续使用现有重启提示流程。
 - Android 首次预设只在空偏好、空文件目录和无既有数据的条件下使用；完成的初始化 journal 不重做。既有订阅和已删除的默认脚本不重新绑定。
 
-实现入口：[模型](../../apps/aerove/lib/models/config.dart)、[Core/DNS/TUN 模型](../../apps/aerove/lib/models/clash_config.dart)、[配置装配](../../apps/aerove/lib/common/task.dart)、[配置来源](../../apps/aerove/lib/providers/state/profile.dart)、[Android VPN 参数](../../apps/aerove/lib/providers/state/system.dart)、[首次预设](../../apps/aerove/lib/common/xclash_defaults.dart)；路径说明见[设置变更规则](../../.agents/setting-changes.md)。
+实现入口：[模型](../../packages/aerove_client/lib/models/config.dart)、[Core/DNS/TUN 模型](../../packages/aerove_client/lib/models/clash_config.dart)、[配置装配](../../packages/aerove_client/lib/common/task.dart)、[配置来源](../../packages/aerove_client/lib/providers/state/profile.dart)、[Android VPN 参数](../../packages/aerove_client/lib/providers/state/system.dart)、[首次预设](../../packages/aerove_client/lib/common/xclash_defaults.dart)；路径说明见[设置变更规则](../../.agents/setting-changes.md)。
 
 <a name="section-2"></a>
 
@@ -270,9 +270,9 @@
 - **决定：** 保留
 
 
-其中 `filters` 的地区及流量提示项为本地筛选模板，不是分流规则；具体正则见[模型中的 defaultFilters](../../apps/aerove/lib/models/config.dart)。`dashboardWidgets` 是卡片列表，不表示所有诊断任务持续后台执行。免责声明接受版本、列宽和服务排序属于使用状态，不预造用户操作。
+其中 `filters` 的地区及流量提示项为本地筛选模板，不是分流规则；具体正则见[模型中的 defaultFilters](../../packages/aerove_client/lib/models/config.dart)。`dashboardWidgets` 是卡片列表，不表示所有诊断任务持续后台执行。免责声明接受版本、列宽和服务排序属于使用状态，不预造用户操作。
 
-TLS 校验保持开启：Dart 的不可信证书回调返回 `false` 时拒绝连接，Core 的证书宽松模式也保持关闭。证书错误应定位时钟、信任链或服务端，不能全局关闭校验来换取表面可用。[Dart 官方证书回调](https://api.flutter.dev/flutter/dart-io/HttpClient/badCertificateCallback.html)、[本地 HTTP 实现](../../apps/aerove/lib/common/http.dart)、[Core 证书实现](../../apps/aerove/core/certificate.go)。
+TLS 校验保持开启：Dart 的不可信证书回调返回 `false` 时拒绝连接，Core 的证书宽松模式也保持关闭。证书错误应定位时钟、信任链或服务端，不能全局关闭校验来换取表面可用。[Dart 官方证书回调](https://api.flutter.dev/flutter/dart-io/HttpClient/badCertificateCallback.html)、[本地 HTTP 实现](../../packages/aerove_client/lib/common/http.dart)、[Core 证书实现](../../apps/aerove/core/certificate.go)。
 
 <a name="section-3"></a>
 
@@ -409,7 +409,7 @@ TLS 校验保持开启：Dart 的不可信证书回调返回 `false` 时拒绝�
 
 `closeConnections=true` 在成功切换代理后关闭全部跟踪连接，包含 DIRECT；`onlyStatisticsProxy=true` 仅限制统计口径，两者没有筛选关联。长下载、通话等持续业务优先的用户可自行关闭自动断开。测速 URL `https://www.gstatic.com/generate_204` 保留作为代理健康目标，改成国内站点可能把已失去外网能力的代理误判健康。
 
-含义依据：[mihomo 全局配置](https://wiki.metacubex.one/config/general/)、[固定版本连接统计](https://github.com/chen08209/Clash.Meta/tree/8380d0e7462f061a964323e9bf3129a236fcc5d5/tunnel/statistic)。具体客户端初值见[模型](../../apps/aerove/lib/models/clash_config.dart)，不将官方示例值当成本应用值。
+含义依据：[mihomo 全局配置](https://wiki.metacubex.one/config/general/)、[固定版本连接统计](https://github.com/chen08209/Clash.Meta/tree/8380d0e7462f061a964323e9bf3129a236fcc5d5/tunnel/statistic)。具体客户端初值见[模型](../../packages/aerove_client/lib/models/clash_config.dart)，不将官方示例值当成本应用值。
 
 <a name="section-4"></a>
 
@@ -484,7 +484,7 @@ TLS 校验保持开启：Dart 的不可信证书回调返回 `false` 时拒绝�
 | `proxy-server-nameserver-policy` | 客户端预设空表；脚本仅投射通过筛选的节点域名 hints | 保留节点级提示，不接受订阅任意扩大为全局 DNS 策略 |
 | 脚本引导 `hosts` | `dns.alidns.com=[223.5.5.5,223.6.6.6]`；`doh.pub=[119.29.29.29]`；`dns.google=[8.8.8.8,8.8.4.4]`；`cloudflare-dns.com=[1.1.1.1,1.0.0.1]` | 保留4组；还可投射限定节点 hints，应用同名 Hosts 最终优先 |
 
-完整原列表及过滤条目可检索于 [xclashDefaultDns](../../apps/aerove/lib/models/clash_config.dart) 和[内置脚本 overwriteGeneral](../../apps/aerove/assets/data/smart-config-kit-flclash.js)。本轮不改供应商、地址、顺序及脚本内容。
+完整原列表及过滤条目可检索于 [xclashDefaultDns](../../packages/aerove_client/lib/models/clash_config.dart) 和[内置脚本 overwriteGeneral](../../apps/aerove/assets/data/smart-config-kit-flclash.js)。本轮不改供应商、地址、顺序及脚本内容。
 
 ### DNS 其余字段
 
@@ -1075,7 +1075,7 @@ localhost
 
 订阅自动更新独立于资源自动更新：URL订阅默认24小时，启动及前台每20分钟检查到期情况，退后台暂停应用检查、返回前台补查；本地文件/custom不远程下载。应用版本检查默认开，只提示，下载/安装沿用户确认入口。Core未运行或SSID暂停时应用请求可能直连，GitHub可达性并无无代理引导保证；不因此硬改未经来源验证的第三方镜像。
 
-来源：[订阅模型](../../apps/aerove/lib/models/profile.dart)、[订阅更新](../../apps/aerove/lib/providers/actions/profiles.dart)、[资源更新](../../apps/aerove/lib/providers/actions/resources.dart)、[请求与版本检查](../../apps/aerove/lib/common/request.dart)、[应用调度](../../apps/aerove/lib/application.dart)、[mihomo全局Geo配置](https://wiki.metacubex.one/config/general/)。
+来源：[订阅模型](../../packages/aerove_client/lib/models/profile.dart)、[订阅更新](../../packages/aerove_client/lib/providers/actions/profiles.dart)、[资源更新](../../packages/aerove_client/lib/providers/actions/resources.dart)、[请求与版本检查](../../packages/aerove_client/lib/common/request.dart)、[应用调度](../../packages/aerove_client/lib/application.dart)、[mihomo全局Geo配置](https://wiki.metacubex.one/config/general/)。
 
 <a name="section-7"></a>
 
@@ -1181,7 +1181,7 @@ localhost
 
 其余组字段：`proxies / use / usePosition / filter / excludeFilter / excludeType / includeAllProxies / includeAllProviders / icon`初始均未设置。用户添加节点、源、“全部节点/源”、筛选或图标后才形成对应列表、布尔值或表达式；`include-all`导入兼容为同时包含节点和源。`order / memberLayout`是本地排序布局记录。`name/type`为必填，不属于可空的添加参数。未被对应组类型读取的选项不输出，不把上述初值当作任意组类型都有效。
 
-来源：[组编辑器的类型条件、reset和clear](../../apps/aerove/lib/views/profiles/custom/groups.dart)、[成员与筛选](../../apps/aerove/lib/views/profiles/custom/members.dart)、[模型与definition输出](../../apps/aerove/lib/models/clash_config.dart)、[mihomo代理组](https://wiki.metacubex.one/config/proxy-groups/)。
+来源：[组编辑器的类型条件、reset和clear](../../packages/aerove_client/lib/views/profiles/custom/groups.dart)、[成员与筛选](../../packages/aerove_client/lib/views/profiles/custom/members.dart)、[模型与definition输出](../../packages/aerove_client/lib/models/clash_config.dart)、[mihomo代理组](https://wiki.metacubex.one/config/proxy-groups/)。
 
 ### 自定义代理源
 
@@ -1253,7 +1253,7 @@ localhost
 
 `filter / exclude-filter`保留用户筛选；没有表达式时不预填正则。添加空prefix/suffix同样不形成有效override。上述选项移除为`null`；普通订阅内原有provider设置仍由源配置/脚本处理，不能把自定义配置空表当成清除所有来源设置。
 
-来源：[源选项添加入口](../../apps/aerove/lib/views/profiles/custom/providers.dart)、[ProviderHealthCheck、ProviderOverride和definition](../../apps/aerove/lib/models/clash_config.dart)、[mihomo代理集合](https://wiki.metacubex.one/config/proxy-providers/)。
+来源：[源选项添加入口](../../packages/aerove_client/lib/views/profiles/custom/providers.dart)、[ProviderHealthCheck、ProviderOverride和definition](../../packages/aerove_client/lib/models/clash_config.dart)、[mihomo代理集合](https://wiki.metacubex.one/config/proxy-providers/)。
 
 ### 自定义节点
 
@@ -1453,7 +1453,7 @@ localhost
 
 `CustomProxy.definition={}`、`emptyOptions={}`为模型初值，`emptyOptions`只记表单可见空行，不送Core。删除选项去掉键及空父map；更换network/plugin/type会清除不再适用的子选项。`name / type / server / port`是基础资料，`dialer-proxy`另由每配置的拨号链显式绑定，不默认创建链。原始YAML/分享链接的其他协议字段保持输入及Core校验，不凭空赋“国内最佳”值。
 
-来源：[ProxyField完整枚举](../../apps/aerove/lib/enum/enum.dart)、[协议条件及类型切换](../../apps/aerove/lib/models/clash_config.dart)、[节点创建和添加初值](../../apps/aerove/lib/views/profiles/custom/custom_proxies.dart)、[拨号链](../../apps/aerove/lib/views/profiles/custom/dialers.dart)。
+来源：[ProxyField完整枚举](../../packages/aerove_client/lib/enum/enum.dart)、[协议条件及类型切换](../../packages/aerove_client/lib/models/clash_config.dart)、[节点创建和添加初值](../../packages/aerove_client/lib/views/profiles/custom/custom_proxies.dart)、[拨号链](../../packages/aerove_client/lib/views/profiles/custom/dialers.dart)。
 
 ### 证书覆盖不是应用下载校验开关
 
@@ -1461,13 +1461,13 @@ localhost
 
 全局`AppSettingProps.checkCertificate=true`控制应用HTTP下载及Core资源下载的宽松证书钩子，**不会覆盖每个节点/代理源中独立设置的skip-cert-verify**。`tls=true`、客户端指纹、Reality与证书校验也不是同一个开关。应优先使用正确证书、可信链及匹配的SNI；来源要求例外时由用户判断，不能把官方文档示例中的true当成推荐默认。
 
-依据：[mihomo节点TLS字段](https://wiki.metacubex.one/config/proxies/tls/)、[应用下载证书边界](../../apps/aerove/lib/common/http.dart)、[Core资源HTTP钩子](../../apps/aerove/core/hooks.go)、[证书实现](../../apps/aerove/core/certificate.go)。
+依据：[mihomo节点TLS字段](https://wiki.metacubex.one/config/proxies/tls/)、[应用下载证书边界](../../packages/aerove_client/lib/common/http.dart)、[Core资源HTTP钩子](../../apps/aerove/core/hooks.go)、[证书实现](../../apps/aerove/core/certificate.go)。
 
 ### Windows 环回入口
 
 网络→系统中的`LoopbackItem`是仅Windows显示的操作入口：用户点击后以提权方式启动随软件提供的`EnableLoopback.exe`。它没有`AppSettingProps`默认布尔值，也不代表安装或打开设置页就自动启用全部UWP环回豁免；实际Windows豁免状态由系统/该工具管理。本轮不运行工具、不更改豁免名单。
 
-来源：[Windows环回入口及平台条件](../../apps/aerove/lib/views/config/network.dart)。
+来源：[Windows环回入口及平台条件](../../packages/aerove_client/lib/views/config/network.dart)。
 
 <a name="section-8"></a>
 
@@ -1560,7 +1560,7 @@ localhost
 - **决定：** 保留
 
 
-依据：[mihomo嗅探配置](https://wiki.metacubex.one/config/sniff/)、[NTP配置](https://wiki.metacubex.one/config/ntp/)、[模型与覆盖选择](../../apps/aerove/lib/models/clash_config.dart)、[捆绑脚本](../../apps/aerove/assets/data/smart-config-kit-flclash.js)。
+依据：[mihomo嗅探配置](https://wiki.metacubex.one/config/sniff/)、[NTP配置](https://wiki.metacubex.one/config/ntp/)、[模型与覆盖选择](../../packages/aerove_client/lib/models/clash_config.dart)、[捆绑脚本](../../apps/aerove/assets/data/smart-config-kit-flclash.js)。
 
 <a name="section-9"></a>
 

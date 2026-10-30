@@ -72,7 +72,7 @@ void main() {
     if (ui.ImageFilter.isShaderFilterSupported) {
       await GlassInk.prepare().timeout(const Duration(seconds: 30));
       await ui.FragmentProgram.fromAsset(
-        'shaders/liquid_glass.frag',
+        'packages/fl_clash/shaders/liquid_glass.frag',
       ).timeout(const Duration(seconds: 30));
     }
   });

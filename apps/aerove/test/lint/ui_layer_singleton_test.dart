@@ -1,7 +1,8 @@
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import '../helpers/client_sources.dart';
 
 const _uiRoots = [
   'lib/ui',
@@ -29,7 +30,7 @@ void main() {
     final offenders = <String>[];
 
     for (final root in _uiRoots) {
-      final directory = Directory(root);
+      final directory = clientSourceDirectory(root);
       if (!directory.existsSync()) {
         fail('$root no longer exists; update _uiRoots.');
       }
@@ -37,7 +38,7 @@ void main() {
         if (entity is! File || !entity.path.endsWith('.dart')) {
           continue;
         }
-        final relative = p.relative(entity.path);
+        final relative = clientSourcePath(entity.path);
         if (_isGenerated(relative)) {
           continue;
         }

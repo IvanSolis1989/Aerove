@@ -1,0 +1,9 @@
+include: ../../apps/aerove/lint_options.yaml
+
+analyzer:
+  exclude:
+    - lib/l10n/intl/**
+    - lib/**/generated/**
+    - build/**
+  errors:
+    invalid_annotation_target: ignore
