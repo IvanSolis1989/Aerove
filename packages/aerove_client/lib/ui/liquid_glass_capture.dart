@@ -40,6 +40,11 @@ typedef LiquidGlassCapture = ({
   int entryInversions,
   int invertedEntries,
   int bodySourceSearches,
+  int paneAncestorSearchSteps,
+  int opacityAncestorSearchSteps,
+  int gatherVisitedLayers,
+  int gatheredCoverage,
+  int flatPanes,
   List<
     ({
       Rect pane,
@@ -440,6 +445,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   int _coverageModeChecks = 0;
   int _entryInversions = 0;
   int _bodySourceSearches = 0;
+  int _paneAncestorSearchSteps = 0;
+  int _opacityAncestorSearchSteps = 0;
+  int _gatherVisitedLayers = 0;
   final _invertedEntries = <_Behind>{};
 
   Matrix4? _entryInverse(_Behind entry, {bool tryInvert = false}) {
@@ -573,6 +581,9 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       _coverageModeChecks = 0;
       _entryInversions = 0;
       _bodySourceSearches = 0;
+      _paneAncestorSearchSteps = 0;
+      _opacityAncestorSearchSteps = 0;
+      _gatherVisitedLayers = 0;
       _invertedEntries.clear();
       return true;
     }());
@@ -745,6 +756,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         entryInversions: _entryInversions,
         invertedEntries: _invertedEntries.length,
         bodySourceSearches: _bodySourceSearches,
+        paneAncestorSearchSteps: _paneAncestorSearchSteps,
+        opacityAncestorSearchSteps: _opacityAncestorSearchSteps,
+        gatherVisitedLayers: _gatherVisitedLayers,
+        gatheredCoverage: coverage.length,
+        flatPanes: found.where((entry) => entry.flatContent).length,
         skippedPanes: _skippedPanes,
         snapshots: snapshots,
         keptBands: keptBands,
@@ -790,14 +806,26 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     List<_Behind> found,
     Set<_LiquidGlassLayer> panes,
     List<_GlassCoverage> coverage,
-    _GlassVisibility visibility,
-  ) {
+    _GlassVisibility visibility, {
+    _LiquidGlassOcclusionLayer? nearestBoundary,
+    bool hasNonOpaqueOpacityAncestor = false,
+  }) {
     if (layer is _LiquidGlassDecorationLayer) {
       layer.enabled = quality == LiquidGlassQuality.ultra;
       if (!layer.enabled) return;
     }
+    final boundary = layer is _LiquidGlassOcclusionLayer
+        ? layer
+        : nearestBoundary;
+    final nonOpaque =
+        hasNonOpaqueOpacityAncestor ||
+        layer is OpacityLayer && layer.alpha != 255;
     chain.add(layer);
     for (Layer? child = layer.firstChild; child != null;) {
+      assert(() {
+        _gatherVisitedLayers++;
+        return true;
+      }());
       switch (child) {
         case final _LiquidGlassLayer pane:
           panes.add(pane);
@@ -810,9 +838,6 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             pane._capturedPass = _pass;
             break;
           }
-          final boundary = chain
-              .whereType<_LiquidGlassOcclusionLayer>()
-              .lastOrNull;
           found.add(
             _Behind(
                 pane,
@@ -833,10 +858,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           final offscreen = _drawsOffscreen(container);
           final transform = _within(container, toHost);
           if (container is _ColorFieldLayer) _field = (container, transform);
-          if (container is _LiquidGlassOcclusionLayer &&
-              !chain.any(
-                (layer) => layer is OpacityLayer && layer.alpha != 255,
-              )) {
+          if (container is _LiquidGlassOcclusionLayer && !nonOpaque) {
             coverage.add(_GlassCoverage(container, transform, found.length));
           }
           _gather(
@@ -849,6 +871,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             panes,
             coverage,
             visibility.through(container, transform),
+            nearestBoundary: boundary,
+            hasNonOpaqueOpacityAncestor: nonOpaque,
           );
       }
       child = child.nextSibling;

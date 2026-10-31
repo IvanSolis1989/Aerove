@@ -244,7 +244,9 @@ CURRENT_IMPELLER_PATHS = [
     'test/widgets/glass_capture_work_test.dart',
     'test/widgets/glass_uniform_work_test.dart',
     'test/widgets/glass_ink_idle_work_test.dart',
+    'test/widgets/glass_capture_geometry_work_test.dart',
     'test/views/dashboard/scroll_build_work_test.dart',
+    'test/views/dashboard/clear_paint_work_test.dart',
 ]
 
 CURRENT_REGRESSION_PATHS = [

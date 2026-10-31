@@ -51,7 +51,9 @@ class CombinationCoverageTest(unittest.TestCase):
             self.assertIn('test/widgets/glass_capture_work_test.dart', command)
             self.assertIn('test/widgets/glass_uniform_work_test.dart', command)
             self.assertIn('test/widgets/glass_ink_idle_work_test.dart', command)
+            self.assertIn('test/widgets/glass_capture_geometry_work_test.dart', command)
             self.assertIn('test/views/dashboard/scroll_build_work_test.dart', command)
+            self.assertIn('test/views/dashboard/clear_paint_work_test.dart', command)
 
     def test_current_regressions_are_selected_in_every_existing_software_shard(self):
         tests = [

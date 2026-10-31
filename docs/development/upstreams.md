@@ -302,6 +302,8 @@ Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f921
 
 前台参数复用另只读核对同一 SDK 的 `FragmentShader.setFloat` 对 `Float32List` 的写入，以及 `setImageSampler` 的独立原生接口，沿用项目已有差量更新方式；后台字体预览复用现有 `AppStateManager`、`RouteMotionHoldMixin` 和 Flutter 的 `TickerMode`、调度器门禁。未复制引擎算法或新增依赖，操作计数与独立微基准不冒充手机帧率或功耗结论。
 
+同轮玻璃来源几何复用另只读参考同一 SDK 的 `TransformLayer` 懒求逆方式，沿用本项目单次捕获的作用域；不跨帧保留来源矩阵，不改变逐面板的采样、稳定与边缘判定。仪表盘装饰绘制复用现有 painter，仅在所有绘图分支均无输出时提前返回，实际玻璃裁剪、聚焦和形变路径保持。未复制框架私有实现或引入新依赖。
+
 #### [flutter/core-packages：vector_math](https://github.com/flutter/core-packages/tree/a9e1d5880f83790c59a80e874b339779079f2571/packages/vector_math)
 
 **固定版本 / revision：** `vector_math 2.4.3`，tag `vector_math-v2.4.3`，提交 `a9e1d5880f83790c59a80e874b339779079f2571`；沿用现有锁定依赖，不升级版本。
