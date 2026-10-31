@@ -48,6 +48,8 @@ class CombinationCoverageTest(unittest.TestCase):
             command = ci_verify.command('regression-impeller', shard)
             self.assertIn('--enable-impeller', command)
             self.assertIn('test/widgets/glass_geometry_cache_test.dart', command)
+            self.assertIn('test/widgets/glass_capture_work_test.dart', command)
+            self.assertIn('test/views/dashboard/scroll_build_work_test.dart', command)
 
     def test_current_regressions_are_selected_in_every_existing_software_shard(self):
         tests = [

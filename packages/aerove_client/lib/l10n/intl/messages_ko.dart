@@ -1232,8 +1232,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyType": MessageLookupByLibrary.simpleMessage("프록시 유형"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("캐시 정리"),
     "publicKey": MessageLookupByLibrary.simpleMessage("공개 키"),
-    "pureBlack": MessageLookupByLibrary.simpleMessage("퓨어 블랙"),
-    "pureBlackMode": MessageLookupByLibrary.simpleMessage("퓨어 블랙 모드"),
+    "pureBlack": MessageLookupByLibrary.simpleMessage("다크"),
+    "pureBlackMode": MessageLookupByLibrary.simpleMessage("다크 모드"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QR 코드"),
     "qrcodeDesc": MessageLookupByLibrary.simpleMessage("QR 코드를 스캔하여 프로필 가져오기"),
     "qrcodeTooLongTip": MessageLookupByLibrary.simpleMessage(

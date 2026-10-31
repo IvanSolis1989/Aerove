@@ -1146,8 +1146,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyType": MessageLookupByLibrary.simpleMessage("代理类型"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("修剪缓存"),
     "publicKey": MessageLookupByLibrary.simpleMessage("公钥"),
-    "pureBlack": MessageLookupByLibrary.simpleMessage("纯黑"),
-    "pureBlackMode": MessageLookupByLibrary.simpleMessage("纯黑模式"),
+    "pureBlack": MessageLookupByLibrary.simpleMessage("暗黑"),
+    "pureBlackMode": MessageLookupByLibrary.simpleMessage("暗黑模式"),
     "qrcode": MessageLookupByLibrary.simpleMessage("二维码"),
     "qrcodeDesc": MessageLookupByLibrary.simpleMessage("扫描二维码获取配置文件"),
     "qrcodeTooLongTip": MessageLookupByLibrary.simpleMessage(

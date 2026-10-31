@@ -298,6 +298,16 @@ Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f921
 
 **许可证、署名与证据：** BSD-3-Clause（Flutter）；字体按原 `roboto_license.txt`；`apps/aerove-lite/app/src/main/assets/optics/NOTICE.md`、`FLUTTER_LICENSE`、`apps/aerove/test/fixtures/fonts/SOURCE.json`
 
+滚动布局优化另只读核对同一固定 SDK 的 `LayoutBuilder` 与 `SliverLayoutBuilder`：仪表盘只依赖可用宽度时，使用既有 box 布局入口，避免将滚动偏移误作卡片配置变化；保留原 Column、卡片身份和编辑交互。未复制框架私有实现或新增依赖。
+
+#### [flutter/core-packages：vector_math](https://github.com/flutter/core-packages/tree/a9e1d5880f83790c59a80e874b339779079f2571/packages/vector_math)
+
+**固定版本 / revision：** `vector_math 2.4.3`，tag `vector_math-v2.4.3`，提交 `a9e1d5880f83790c59a80e874b339779079f2571`；沿用现有锁定依赖，不升级版本。
+
+**用途与采用方式：** 只读核对 `lib/src/vector_math_64/matrix4.dart` 的 `Matrix4.inverted`、`tryInvert` 和奇异矩阵错误语义；玻璃遮挡处理中复用现有 API 缓存单次求逆结果，保留失败行为，未移植数值算法。历史实现另对照 [google/vector_math.dart](https://github.com/google/vector_math.dart/tree/cf3b5db7340d317dd3489e5a35434b408020a852)，固定提交 `cf3b5db7340d317dd3489e5a35434b408020a852`；该旧仓库已归档，实际依赖来源以上述 Flutter 包为准。
+
+**许可证、署名与证据：** BSD-3-Clause；保留 Flutter Authors 及历史 Google 作者署名，现有依赖的 `LICENSE` 不变。采用依据为锁定包的 `pubspec.yaml`、`LICENSE` 与上述矩阵源码；没有新增第三方运行时依赖。
+
 #### [fzyzcjy/flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge)
 
 **固定版本 / revision：** `5463b190636ca9edf705be0b168471875e675ebf`

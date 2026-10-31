@@ -1625,14 +1625,9 @@ class AppLocalizations {
     );
   }
 
-  /// `Pure black mode`
+  /// `Dark mode`
   String get pureBlackMode {
-    return Intl.message(
-      'Pure black mode',
-      name: 'pureBlackMode',
-      desc: '',
-      args: [],
-    );
+    return Intl.message('Dark mode', name: 'pureBlackMode', desc: '', args: []);
   }
 
   /// `Background blur lets the desktop behind the window show through the sidebar.`
@@ -3480,9 +3475,9 @@ class AppLocalizations {
     return Intl.message('Fade', name: 'fade', desc: '', args: []);
   }
 
-  /// `Pure black`
+  /// `Dark`
   String get pureBlack {
-    return Intl.message('Pure black', name: 'pureBlack', desc: '', args: []);
+    return Intl.message('Dark', name: 'pureBlack', desc: '', args: []);
   }
 
   /// `Custom color`

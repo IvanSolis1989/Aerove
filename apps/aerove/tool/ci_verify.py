@@ -239,7 +239,11 @@ REGRESSION_SOFTWARE_PATHS = ['test/application_theme_test.dart',
  'test/l10n/',
  'test/lint/']
 
-CURRENT_IMPELLER_PATHS = ['test/widgets/glass_geometry_cache_test.dart']
+CURRENT_IMPELLER_PATHS = [
+    'test/widgets/glass_geometry_cache_test.dart',
+    'test/widgets/glass_capture_work_test.dart',
+    'test/views/dashboard/scroll_build_work_test.dart',
+]
 
 CURRENT_REGRESSION_PATHS = [
     'test/product_boundary_test.dart',
