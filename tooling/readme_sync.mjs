@@ -43,10 +43,10 @@ export function selectReleases(raw) {
   if (!stable) fail('No published Standard stable release; refusing to replace existing README versions');
   const preview = releases.find(r => r.prerelease);
   // Do not silently fall back to an older release when a current Standard candidate is corrupt.
-  // GitHub's channel may promote an accepted preview without changing its original build identity.
+  // Historical -X releases used GitHub's stable channel; only the displayed releases need validation.
   for (const r of [stable, preview].filter(Boolean)) {
     const parsed = SEMVER.exec(r.tag_name);
-    if (!parsed || !Number.isFinite(Date.parse(r.published_at))) fail(`Invalid Standard release identity: ${r.tag_name}`);
+    if (!parsed || Boolean(parsed[4]) !== r.prerelease || !Number.isFinite(Date.parse(r.published_at))) fail(`Invalid Standard release identity: ${r.tag_name}`);
     releaseUrl(r.html_url, `/IvanSolis1989/Aerove/releases/tag/${r.tag_name}`);
     const apks = r.assets.filter(a => a?.name === APK);
     if (apks.length !== 1) fail(`Expected exactly one ${APK}`);
