@@ -54,8 +54,20 @@ test('selects published Standard channels by publication time, excluding draft a
   assert.equal(result.stable.tag_name, stable().tag_name);
   assert.equal(result.preview.tag_name, preview().tag_name);
 });
-test('rejects unavailable stable, API errors, malformed SemVer and mismatched channel', () => {
-  for (const data of [[], [preview()], { message: 'API rate limit' }, [release('v01.2.3+4')], [release('v1.2.3-beta.01+4', true)], [release('v1.2.3+0')], [release('v1.2.3-beta.1+2')]]) assert.throws(() => selectReleases(data));
+test('rejects unavailable stable, API errors and malformed SemVer', () => {
+  for (const data of [[], [preview()], { message: 'API rate limit' }, [release('v01.2.3+4')], [release('v1.2.3-beta.01+4', true)], [release('v1.2.3+0')]]) assert.throws(() => selectReleases(data));
+});
+test('promoting an accepted preview changes its public channel while preserving the original tag and APK URL', t => {
+  const root = sandbox(t);
+  const original = preview();
+  const promoted = { ...original, prerelease: false, published_at: '2026-10-30T14:31:32Z' };
+  assert.equal(selectReleases([stable(), promoted]).stable, promoted);
+  syncReadmes({ root, releases: [stable(), promoted] });
+  const text = readFileSync(join(root, 'README.md'), 'utf8');
+  assert.ok(text.includes(`**稳定版** · [0.11.0-beta.17](${original.html_url})`));
+  assert.ok(text.includes(original.assets[0].browser_download_url));
+  assert.ok(text.includes('构建 `2026102294`'));
+  assert.match(readFileSync(join(root, 'docs/i18n/README.en.md'), 'utf8'), /\*\*Stable\*\* · \[0\.11\.0-beta\.17\]/);
 });
 test('strict repository, exact tag and exact APK URL checks reject forged metadata', () => {
   for (const url of ['https://evil.test/x', `${repo}.evil.test/releases/tag/x`, `${repo}/releases/tag/v0.9.1+2026102203?x=1`, `${repo}/releases/tag/../x`]) {
