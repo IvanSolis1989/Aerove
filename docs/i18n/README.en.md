@@ -16,7 +16,7 @@ Flutter + Mihomo; Android, Windows, macOS and Linux.
 
 <!-- aerove:releases:start -->
 - **Stable** · [0.11.0](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0%2B2026102298) · Build `2026102298` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0%2B2026102298/Aerove-android-arm64.apk)
-- **Public preview** · [0.11.1-beta.2](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.2%2B2026102304) · Build `2026102304` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.2%2B2026102304/Aerove-android-arm64.apk)
+- **Public preview** · [0.11.1-beta.3](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.3%2B2026102307) · Build `2026102307` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.3%2B2026102307/Aerove-android-arm64.apk)
 <!-- aerove:releases:end -->
 
 ## AEROVE Lite
@@ -71,7 +71,7 @@ Twelve combinations of the Standard development interface. Click an image for fu
 
 <a href="../../docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="../../docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="Liquid clear · Aurora · Light"></a> <a href="../../docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="../../docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="Liquid clear · Aurora · Dark"></a>
 
-Source: [`2bc470c537969881f143a8cd7b562f2af706a81b`](https://github.com/IvanSolis1989/Aerove/commit/2bc470c537969881f143a8cd7b562f2af706a81b) · [Render provenance](../../docs/assets/screenshots/showcase/render-info.json)
+Source: [`3ce4525a3a758c44e5ca2a837d25b9098698dff6`](https://github.com/IvanSolis1989/Aerove/commit/3ce4525a3a758c44e5ca2a837d25b9098698dff6) · [Render provenance](../../docs/assets/screenshots/showcase/render-info.json)
 <!-- aerove:showcase:end -->
 
 The historical codebase comes from [FlClash](https://github.com/chen08209/FlClash); original attribution and licenses are
