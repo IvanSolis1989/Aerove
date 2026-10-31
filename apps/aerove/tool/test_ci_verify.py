@@ -49,10 +49,13 @@ class CombinationCoverageTest(unittest.TestCase):
             self.assertIn('--enable-impeller', command)
             self.assertIn('test/widgets/glass_geometry_cache_test.dart', command)
             self.assertIn('test/widgets/glass_capture_work_test.dart', command)
+            self.assertIn('test/widgets/glass_uniform_work_test.dart', command)
+            self.assertIn('test/widgets/glass_ink_idle_work_test.dart', command)
             self.assertIn('test/views/dashboard/scroll_build_work_test.dart', command)
 
     def test_current_regressions_are_selected_in_every_existing_software_shard(self):
         tests = [
+            'test/views/font_preview_activity_test.dart',
             'test/product_boundary_test.dart',
             'test/common/preferences_store_skip_test.dart',
             'test/common/system_test_font_test.dart',

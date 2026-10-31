@@ -39,6 +39,7 @@ typedef LiquidGlassCapture = ({
   int coverageModeChecks,
   int entryInversions,
   int invertedEntries,
+  int bodySourceSearches,
   List<
     ({
       Rect pane,
@@ -438,6 +439,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   int _coverageGroupings = 0;
   int _coverageModeChecks = 0;
   int _entryInversions = 0;
+  int _bodySourceSearches = 0;
   final _invertedEntries = <_Behind>{};
 
   Matrix4? _entryInverse(_Behind entry, {bool tryInvert = false}) {
@@ -570,6 +572,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       _coverageGroupings = 0;
       _coverageModeChecks = 0;
       _entryInversions = 0;
+      _bodySourceSearches = 0;
       _invertedEntries.clear();
       return true;
     }());
@@ -588,8 +591,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       coverage,
       _GlassVisibility(bounds, 1 / devicePixelRatio),
     );
-    final viewport = wallpaperOnly ? _field : null;
+    final viewport = wallpaperOnly && found.isNotEmpty ? _field : null;
     final source = viewport == null ? null : viewport.$1.source(viewport.$2);
+    assert(() {
+      if (viewport != null) _bodySourceSearches++;
+      return true;
+    }());
     final snapshot = source?.$1 ?? viewport?.$1;
     final image = found.isEmpty ? null : snapshot?.capture();
     final _Wallpaper? wallpaper = image == null
@@ -737,6 +744,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         coverageModeChecks: _coverageModeChecks,
         entryInversions: _entryInversions,
         invertedEntries: _invertedEntries.length,
+        bodySourceSearches: _bodySourceSearches,
         skippedPanes: _skippedPanes,
         snapshots: snapshots,
         keptBands: keptBands,

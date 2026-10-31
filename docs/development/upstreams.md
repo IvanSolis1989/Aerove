@@ -300,6 +300,8 @@ Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f921
 
 滚动布局优化另只读核对同一固定 SDK 的 `LayoutBuilder` 与 `SliverLayoutBuilder`：仪表盘只依赖可用宽度时，使用既有 box 布局入口，避免将滚动偏移误作卡片配置变化；保留原 Column、卡片身份和编辑交互。未复制框架私有实现或新增依赖。
 
+前台参数复用另只读核对同一 SDK 的 `FragmentShader.setFloat` 对 `Float32List` 的写入，以及 `setImageSampler` 的独立原生接口，沿用项目已有差量更新方式；后台字体预览复用现有 `AppStateManager`、`RouteMotionHoldMixin` 和 Flutter 的 `TickerMode`、调度器门禁。未复制引擎算法或新增依赖，操作计数与独立微基准不冒充手机帧率或功耗结论。
+
 #### [flutter/core-packages：vector_math](https://github.com/flutter/core-packages/tree/a9e1d5880f83790c59a80e874b339779079f2571/packages/vector_math)
 
 **固定版本 / revision：** `vector_math 2.4.3`，tag `vector_math-v2.4.3`，提交 `a9e1d5880f83790c59a80e874b339779079f2571`；沿用现有锁定依赖，不升级版本。
