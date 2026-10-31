@@ -31,8 +31,8 @@ Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正�
 [稳定版 APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk) · [全部发行](https://github.com/IvanSolis1989/Aerove/releases)
 
 <!-- aerove:releases:start -->
-- **稳定版** · [0.11.0-beta.17](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.17%2B2026102294) · 构建 `2026102294` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0-beta.17%2B2026102294/Aerove-android-arm64.apk)
-- **公开预览版** · [0.11.0-beta.15](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.15%2B2026102283) · 构建 `2026102283` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0-beta.15%2B2026102283/Aerove-android-arm64.apk)
+- **稳定版** · [0.9.1](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.9.1%2B2026102203) · 构建 `2026102203` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.9.1%2B2026102203/Aerove-android-arm64.apk)
+- **公开预览版** · [0.11.0-beta.17](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.17%2B2026102294) · 构建 `2026102294` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0-beta.17%2B2026102294/Aerove-android-arm64.apk)
 <!-- aerove:releases:end -->
 
 预览版与稳定版属于同一标准版产品，安装前请确认版本与数据备份；稳定版入口持续指向稳定发行。
