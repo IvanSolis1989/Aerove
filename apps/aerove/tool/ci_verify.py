@@ -239,6 +239,8 @@ REGRESSION_SOFTWARE_PATHS = ['test/application_theme_test.dart',
  'test/l10n/',
  'test/lint/']
 
+CURRENT_IMPELLER_PATHS = ['test/widgets/glass_geometry_cache_test.dart']
+
 CURRENT_REGRESSION_PATHS = [
     'test/product_boundary_test.dart',
     'test/common/preferences_store_skip_test.dart',
@@ -309,7 +311,7 @@ SUITES = {
         'shards': 3,
     },
     'regression-impeller': {
-        'paths': REGRESSION_IMPELLER_PATHS,
+        'paths': REGRESSION_IMPELLER_PATHS + CURRENT_IMPELLER_PATHS,
         'impeller': True,
         'require_impeller': 'true',
         'rust': True,

@@ -1123,6 +1123,10 @@ class LiquidGlassPane {
 
   final VoidCallback onReady;
 
+  @visibleForTesting
+  int get debugCornerCurveComputations =>
+      _layer.layer?._cornerComputations ?? 0;
+
   final _layer = LayerHandle<_LiquidGlassLayer>();
   final _rimLayer = LayerHandle<_LiquidGlassDecorationLayer>();
   Path? _profiled;
@@ -1337,6 +1341,21 @@ class _LiquidGlassLayer extends Layer {
   LiquidGlassRim? rim;
   bool contentBackdrop = false;
   bool _simpleBlur = false;
+  int _cornerComputations = 0;
+  (Size, BorderRadius)? _cornerKey;
+  List<double> _curves = const [];
+
+  List<double> _cornerCurves() {
+    final key = (rect.size, corners);
+    if (_cornerKey == key) return _curves;
+    assert(() {
+      _cornerComputations++;
+      return true;
+    }());
+    _curves = liquidGlassCornerCurves(rect.size, corners);
+    _cornerKey = key;
+    return _curves;
+  }
 
   void _setSimpleBlur(bool value) {
     if (_simpleBlur == value) return;
@@ -1619,7 +1638,7 @@ class _LiquidGlassLayer extends Layer {
     corners.topRight.x,
     corners.bottomRight.x,
     corners.bottomLeft.x,
-    ...liquidGlassCornerCurves(rect.size, corners),
+    ..._cornerCurves(),
     style.refraction,
     style.saturation,
     style.brightness,

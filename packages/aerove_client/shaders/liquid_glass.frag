@@ -403,7 +403,9 @@ void main() {
   float alpha = base.a;
   vec3 color = base.rgb / max(alpha, 1e-4);
   color = mix(vec3(dot(color, kLuma)), color, uOptics.y) * uOptics.z;
-  color *= 1.0 - uLight.z * abs(normal.x) * exp(-inset / kEndShade);
+  if (uLight.z != 0.0) {
+    color *= 1.0 - uLight.z * abs(normal.x) * exp(-inset / kEndShade);
+  }
 
   float clash = 0.0;
   if (uGlow.w != 0.0) {
@@ -459,10 +461,12 @@ void main() {
     coverage = mix(coverage, under.a, line);
   }
 
-  vec2 toGlow = point - uGlow.xy;
-  float reach = max(uGlowSpread.x * uGlowSpread.x, 1.0);
-  glass += uGlow.z * coverage
-      * mix(exp(-dot(toGlow, toGlow) / reach), 1.0, uGlowSpread.y);
+  if (uGlow.z != 0.0) {
+    vec2 toGlow = point - uGlow.xy;
+    float reach = max(uGlowSpread.x * uGlowSpread.x, 1.0);
+    glass += uGlow.z * coverage
+        * mix(exp(-dot(toGlow, toGlow) / reach), 1.0, uGlowSpread.y);
+  }
 
   // A pixel the rim crosses takes the bands it covers, as the rasterizer
   // weighs the rest by its coverage.

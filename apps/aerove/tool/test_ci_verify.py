@@ -25,6 +25,10 @@ class CombinationCoverageTest(unittest.TestCase):
         self.assertEqual(set(ci_verify.SUITES), set(LEGACY_DIGESTS))
         for name, suite in ci_verify.SUITES.items():
             original = {key: value for key, value in suite.items() if key != 'shards'}
+            if name == 'regression-impeller':
+                self.assertEqual(suite['paths'], ci_verify.REGRESSION_IMPELLER_PATHS
+                                 + ci_verify.CURRENT_IMPELLER_PATHS)
+                original['paths'] = ci_verify.REGRESSION_IMPELLER_PATHS
             if name == 'regression-software':
                 self.assertEqual(suite['paths'], ci_verify.REGRESSION_SOFTWARE_PATHS
                                  + ci_verify.CURRENT_REGRESSION_PATHS)
@@ -35,6 +39,15 @@ class CombinationCoverageTest(unittest.TestCase):
             with self.subTest(suite=name):
                 self.assertEqual(digest, LEGACY_DIGESTS[name])
                 self.assertTrue(all(path.startswith('test/') for path in suite['paths']))
+
+    def test_current_geometry_regression_requires_impeller_in_every_shard(self):
+        suite = ci_verify.SUITES['regression-impeller']
+        self.assertTrue(suite['impeller'])
+        self.assertEqual(suite['require_impeller'], 'true')
+        for shard in range(suite['shards']):
+            command = ci_verify.command('regression-impeller', shard)
+            self.assertIn('--enable-impeller', command)
+            self.assertIn('test/widgets/glass_geometry_cache_test.dart', command)
 
     def test_current_regressions_are_selected_in_every_existing_software_shard(self):
         tests = [
