@@ -93,7 +93,7 @@ Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正�
 
 <a href="docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="流光清透 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="流光清透 · 灵动极光 · 深色"></a>
 
-来源: [`15e28918d3d2f68c3d58d327939422b0e1b056d5`](https://github.com/IvanSolis1989/Aerove/commit/15e28918d3d2f68c3d58d327939422b0e1b056d5) · [完整渲染记录](docs/assets/screenshots/showcase/render-info.json)
+来源: [`985b7751b384132f9e5d5b589b62133edabf817e`](https://github.com/IvanSolis1989/Aerove/commit/985b7751b384132f9e5d5b589b62133edabf817e) · [完整渲染记录](docs/assets/screenshots/showcase/render-info.json)
 <!-- aerove:showcase:end -->
 
 ## 按需深入
