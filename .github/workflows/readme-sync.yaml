@@ -1,0 +1,194 @@
+name: Sync README
+
+on:
+  release:
+    types: [published, edited, unpublished, deleted]
+  workflow_run:
+    workflows: [Aerove Android, README UI preview]
+    types: [completed]
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/readme-sync.yaml'
+      - 'tooling/readme_sync.mjs'
+      - 'tooling/readme_sync.test.mjs'
+      - 'tooling/website/flatten_releases.mjs'
+      - 'website/assets/shared.js'
+
+permissions:
+  contents: write
+  actions: read
+
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+
+concurrency:
+  group: readme-sync-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: >-
+      github.repository == 'IvanSolis1989/Aerove' &&
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      ((github.event.workflow_run.name == 'Aerove Android' && github.event.workflow_run.head_branch == 'main') ||
+      (github.event.workflow_run.name == 'README UI preview' &&
+      contains(fromJSON('["main","codex/aerove-shared-client-extraction"]'), github.event.workflow_run.head_branch)))))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout current trusted main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate completed workflow and immutable artifact identity
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          import subprocess
+          from pathlib import Path
+          repo = os.environ['GITHUB_REPOSITORY']
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          def api(path, pages=False):
+              command = ['gh', 'api', f'repos/{repo}/{path}']
+              if pages:
+                  command += ['--paginate', '--slurp']
+              return json.loads(subprocess.check_output(command, text=True))
+          result = {'sync': 'true', 'gallery': 'false'}
+          if os.environ['GITHUB_EVENT_NAME'] == 'workflow_run':
+              original = event['workflow_run']
+              run = api(f'actions/runs/{original["id"]}')
+              expected = {'Aerove Android': '.github/workflows/xclash-android.yaml', 'README UI preview': '.github/workflows/readme-preview.yaml'}
+              if (run.get('name') not in expected or run.get('path') != expected[run['name']]
+                  or run.get('status') != 'completed' or run.get('conclusion') != 'success'
+                  or run.get('repository', {}).get('full_name') != repo
+                  or run.get('head_repository', {}).get('full_name') != repo
+                  or run.get('head_sha') != original['head_sha'] or run.get('run_attempt') != original['run_attempt']
+                  or run.get('event') not in ('push', 'workflow_dispatch', 'workflow_run')
+                  or run.get('head_branch') not in ['main', 'codex/aerove-shared-client-extraction']):
+                  raise SystemExit('Untrusted workflow completion event')
+              if run['name'] == 'Aerove Android':
+                  if run['head_branch'] != 'main':
+                      raise SystemExit('Only main can publish Standard releases')
+                  pages = api(f'actions/runs/{run["id"]}/attempts/{run["run_attempt"]}/jobs?per_page=100', True)
+                  jobs = [job for page in pages for job in page['jobs']]
+                  if (not pages or any(page['total_count'] != pages[0]['total_count'] for page in pages)
+                      or len(jobs) != pages[0]['total_count'] or len({j['id'] for j in jobs}) != len(jobs)
+                      or any(job.get('run_id') != run['id'] or job.get('head_sha') != run['head_sha']
+                          or job.get('run_attempt', run['run_attempt']) != run['run_attempt'] for job in jobs)):
+                      raise SystemExit('Incomplete workflow job metadata')
+                  release = [job for job in jobs if job['name'] == 'release']
+                  result['sync'] = str(len(release) == 1 and release[0]['status'] == 'completed' and release[0]['conclusion'] == 'success').lower()
+              else:
+                  pages = api(f'actions/runs/{run["id"]}/artifacts?per_page=100', True)
+                  artifacts = [a for page in pages for a in page['artifacts']]
+                  expected_name = f'AEROVE-readme-preview-attempt-{run["run_attempt"]}'
+                  matches = [a for a in artifacts if a['name'] == expected_name and not a['expired']]
+                  if len(matches) > 1:
+                      raise SystemExit('Ambiguous preview artifact')
+                  if matches:
+                      result.update(gallery='true', run_id=str(run['id']), artifact_name=expected_name)
+                  else:
+                      print('Producer rendered no new UI artifact; synchronize release metadata only.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              for key, value in result.items():
+                  out.write(f'{key}={value}\n')
+          PY
+
+      - name: Test trusted synchronization tooling
+        if: steps.gate.outputs.sync == 'true'
+        run: node --test tooling/readme_sync.test.mjs
+
+      - name: Download data from the exact successful producer attempt
+        if: steps.gate.outputs.sync == 'true' && steps.gate.outputs.gallery == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ steps.gate.outputs.artifact_name }}
+          run-id: ${{ steps.gate.outputs.run_id }}
+          github-token: ${{ github.token }}
+          repository: IvanSolis1989/Aerove
+          path: ${{ runner.temp }}/readme-preview
+
+      - name: Validate preview freshness and provenance without executing artifact code
+        if: steps.gate.outputs.sync == 'true' && steps.gate.outputs.gallery == 'true'
+        id: preview
+        env:
+          PREVIEW_DIR: ${{ runner.temp }}/readme-preview
+          PRODUCER_RUN_ID: ${{ steps.gate.outputs.run_id }}
+        run: |
+          node --input-type=module - <<'JS'
+          import { validatePreview } from './tooling/readme_sync.mjs';
+          import { createHash } from 'node:crypto';
+          import { existsSync, readFileSync, appendFileSync } from 'node:fs';
+          import { execFileSync, spawnSync } from 'node:child_process';
+          const { manifest: m } = validatePreview(process.env.PREVIEW_DIR);
+          const allowed = ['main', 'codex/aerove-shared-client-extraction'];
+          if (!allowed.includes(m.source.ref) || String(m.source.workflowRun) !== process.env.PRODUCER_RUN_ID || !/^[1-9][0-9]*$/.test(String(m.source.workflowRun)) || m.nativeAssets !== false || m.locale !== 'zh_CN') throw Error('Untrusted producer provenance');
+          const currentFile = 'docs/assets/screenshots/showcase/render-info.json';
+          const current = existsSync(currentFile) ? JSON.parse(readFileSync(currentFile)) : {};
+          const previous = current.source?.workflowRun;
+          if (previous != null && !/^[1-9][0-9]*$/.test(String(previous))) throw Error('Invalid existing producer run identity');
+          const fresh = previous == null || BigInt(m.source.workflowRun) > BigInt(previous);
+          const git = args => execFileSync('git', args);
+          git(['fetch', '--no-tags', 'origin', `refs/heads/${m.source.ref}`]);
+          const head = git(['rev-parse', 'FETCH_HEAD']).toString().trim();
+          git(['merge-base', '--is-ancestor', m.source.commit, head]);
+          if (git(['rev-parse', `${m.source.commit}^{tree}`]).toString().trim() !== m.source.tree) throw Error('Source Git tree mismatch');
+          const ui = commit => createHash('sha256').update(git(['ls-tree', '-r', commit, 'packages/aerove_client/lib', 'packages/aerove_client/assets', 'packages/aerove_client/shaders', 'apps/aerove/lib', 'apps/aerove/assets'])).digest('hex');
+          if (ui(m.source.commit) !== m.source.uiTreeSha256) throw Error('Source UI tree hash mismatch');
+          const inputs = JSON.parse(readFileSync('tooling/readme_preview_inputs.json'));
+          const harness = createHash('sha256').update(readFileSync('tooling/readme_showcase_test.dart')).digest('hex');
+          let superseded = false;
+          if (/^[0-9a-f]{40}$/.test(current.source?.commit ?? '') && current.source.uiTreeSha256 !== m.source.uiTreeSha256 && current.source.commit !== m.source.commit) {
+            git(['fetch', '--no-tags', 'origin', current.source.commit]);
+            const ancestor = spawnSync('git', ['merge-base', '--is-ancestor', m.source.commit, current.source.commit]);
+            if (ancestor.status !== 0 && ancestor.status !== 1) throw Error('Cannot compare incoming and existing source ancestry');
+            superseded = ancestor.status === 0;
+          }
+          const latest = !superseded && m.source.uiTreeSha256 === ui(head) && m.source.harness.sha256 === harness && m.font?.sha256 === inputs.font.sha256;
+          if (!fresh || !latest) console.log('Stale preview retained as evidence; current README images will be preserved.');
+          appendFileSync(process.env.GITHUB_OUTPUT, `import=${fresh && latest}\n`);
+          JS
+
+      - name: Read published release facts and synchronize owned blocks
+        if: steps.gate.outputs.sync == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMPORT_PREVIEW: ${{ steps.preview.outputs.import }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/readme-release-pages.json"
+          node tooling/website/flatten_releases.mjs "$RUNNER_TEMP/readme-release-pages.json" "$RUNNER_TEMP/readme-releases.json"
+          args=(--releases "$RUNNER_TEMP/readme-releases.json")
+          if test "$IMPORT_PREVIEW" = true; then
+            args+=(--preview-dir "$RUNNER_TEMP/readme-preview")
+          fi
+          node tooling/readme_sync.mjs "${args[@]}"
+
+      - name: Commit only synchronized README data and push main
+        if: steps.gate.outputs.sync == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git add -- README.md docs/i18n/README.en.md docs/assets/screenshots/showcase
+          if git diff --cached --quiet; then
+            echo 'README metadata and screenshots are already synchronized.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'docs(readme): 同步发行信息与开发界面预览' -m 'Changelog: skip'
+          gh auth setup-git
+          if ! git push origin HEAD:main; then
+            echo '::error::main changed concurrently or rejected the push; no force push or overwrite was attempted.'
+            exit 1
+          fi

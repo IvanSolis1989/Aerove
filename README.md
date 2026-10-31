@@ -30,8 +30,10 @@ Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正�
 
 [稳定版 APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk) · [全部发行](https://github.com/IvanSolis1989/Aerove/releases)
 
-- **稳定版**：[0.9.1](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.9.1%2B2026102203)，构建号 2026102203。
-- **公开预览版**：[0.10.0-beta.6](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.10.0-beta.6%2B2026102232)，构建号 2026102232。希望体验新变化时，请先阅读该版本说明。
+<!-- aerove:releases:start -->
+- **稳定版** · [0.9.1](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.9.1%2B2026102203) · 构建 `2026102203` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.9.1%2B2026102203/Aerove-android-arm64.apk)
+- **公开预览版** · [0.11.0-beta.17](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.17%2B2026102294) · 构建 `2026102294` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0-beta.17%2B2026102294/Aerove-android-arm64.apk)
+<!-- aerove:releases:end -->
 
 预览版与稳定版属于同一标准版产品，安装前请确认版本与数据备份；稳定版入口持续指向稳定发行。
 版本变化与兼容说明见[更新记录](docs/aerove/CHANGELOG.md)。
@@ -58,14 +60,41 @@ Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正�
 **主题与材质**　简约纯色、柔光磨砂、流光清透，配合随选单色、灵动极光与浅深色模式。
 两款产品以[共同外观规格](docs/shared/appearance.md)为目标，Lite 的完整呈现仍在验证中。
 
-<p align="center">
-  <img src="docs/assets/screenshots/readme-light.png" width="300" alt="AEROVE 标准版浅色仪表盘，离线未连接状态">
-  <img src="docs/assets/screenshots/readme-dark.png" width="300" alt="AEROVE 标准版深色仪表盘，离线未连接状态">
-</p>
+<!-- aerove:showcase:start -->
+标准版开发界面的十二种组合，点击图片查看原图。来自实际 Flutter 组件的离线单屏渲染，呈现空配置、未连接状态；不作为 Android 真机或 Lite 验收。
 
-<sub>展示图来自标准版真实 Flutter 组件树的离线渲染，呈现空配置、未连接状态；
-不是 Android 真机截图，也不代表当前预览版或 Lite 的完整界面。来源与渲染信息见
-<a href="docs/assets/screenshots/render-info.json">图片记录</a>。</sub>
+### 简约纯色
+
+**经典单色**
+
+<a href="docs/assets/screenshots/showcase/solid-classic-light.png"><img src="docs/assets/screenshots/showcase/solid-classic-light.png" width="300" alt="简约纯色 · 经典单色 · 浅色"></a> <a href="docs/assets/screenshots/showcase/solid-classic-dark.png"><img src="docs/assets/screenshots/showcase/solid-classic-dark.png" width="300" alt="简约纯色 · 经典单色 · 深色"></a>
+
+**灵动极光**
+
+<a href="docs/assets/screenshots/showcase/solid-aurora-light.png"><img src="docs/assets/screenshots/showcase/solid-aurora-light.png" width="300" alt="简约纯色 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/solid-aurora-dark.png"><img src="docs/assets/screenshots/showcase/solid-aurora-dark.png" width="300" alt="简约纯色 · 灵动极光 · 深色"></a>
+
+### 柔光磨砂
+
+**经典单色**
+
+<a href="docs/assets/screenshots/showcase/frost-classic-light.png"><img src="docs/assets/screenshots/showcase/frost-classic-light.png" width="300" alt="柔光磨砂 · 经典单色 · 浅色"></a> <a href="docs/assets/screenshots/showcase/frost-classic-dark.png"><img src="docs/assets/screenshots/showcase/frost-classic-dark.png" width="300" alt="柔光磨砂 · 经典单色 · 深色"></a>
+
+**灵动极光**
+
+<a href="docs/assets/screenshots/showcase/frost-aurora-light.png"><img src="docs/assets/screenshots/showcase/frost-aurora-light.png" width="300" alt="柔光磨砂 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/frost-aurora-dark.png"><img src="docs/assets/screenshots/showcase/frost-aurora-dark.png" width="300" alt="柔光磨砂 · 灵动极光 · 深色"></a>
+
+### 流光清透
+
+**经典单色**
+
+<a href="docs/assets/screenshots/showcase/clear-classic-light.png"><img src="docs/assets/screenshots/showcase/clear-classic-light.png" width="300" alt="流光清透 · 经典单色 · 浅色"></a> <a href="docs/assets/screenshots/showcase/clear-classic-dark.png"><img src="docs/assets/screenshots/showcase/clear-classic-dark.png" width="300" alt="流光清透 · 经典单色 · 深色"></a>
+
+**灵动极光**
+
+<a href="docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="流光清透 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="流光清透 · 灵动极光 · 深色"></a>
+
+来源: [`4140e67bdb56101e2fd4c144ea44f4f1ecea1adb`](https://github.com/IvanSolis1989/Aerove/commit/4140e67bdb56101e2fd4c144ea44f4f1ecea1adb) · [完整渲染记录](docs/assets/screenshots/showcase/render-info.json)
+<!-- aerove:showcase:end -->
 
 ## 按需深入
 

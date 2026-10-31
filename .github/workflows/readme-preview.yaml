@@ -1,0 +1,194 @@
+name: README UI preview
+
+on:
+  push:
+    branches: [main, codex/aerove-shared-client-extraction]
+    paths:
+      - 'packages/aerove_client/lib/**'
+      - 'packages/aerove_client/assets/**'
+      - 'packages/aerove_client/shaders/**'
+      - 'apps/aerove/lib/**'
+      - 'apps/aerove/assets/**'
+      - 'tooling/readme_showcase_test.dart'
+      - 'tooling/readme_preview_inputs.json'
+      - '.github/workflows/readme-preview.yaml'
+  workflow_run:
+    workflows: [Aerove Android]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: main, codex/aerove-shared-client-extraction, or a commit reachable from either branch
+        type: string
+        default: main
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+
+concurrency:
+  group: readme-preview-${{ github.event.workflow_run.head_branch || inputs.source_ref || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    if: >-
+      github.repository == 'IvanSolis1989/Aerove' &&
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      contains(fromJSON('["main","codex/aerove-shared-client-extraction"]'), github.event.workflow_run.head_branch)))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout trusted tooling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Resolve an allowed source commit
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_REF: ${{ inputs.source_ref }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          from urllib.parse import quote
+          repo = os.environ['GITHUB_REPOSITORY']
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          allowed = ['main', 'codex/aerove-shared-client-extraction']
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/{path}'], text=True))
+          kind = os.environ['GITHUB_EVENT_NAME']
+          if kind == 'workflow_run':
+              run = event['workflow_run']
+              current = api(f'actions/runs/{run["id"]}')
+              if (current['path'] != '.github/workflows/xclash-android.yaml' or current['conclusion'] != 'success'
+                  or current['head_repository']['full_name'] != repo or current['head_branch'] not in allowed
+                  or current['head_sha'] != run['head_sha'] or current['run_attempt'] != run['run_attempt']):
+                  raise SystemExit('Untrusted Android workflow event')
+              requested, branch = current['head_sha'], current['head_branch']
+          elif kind == 'push':
+              requested, branch = event['after'], os.environ['GITHUB_REF_NAME']
+              if branch not in allowed:
+                  raise SystemExit('Unapproved push branch')
+          else:
+              requested = os.environ.get('REQUESTED_REF') or 'main'
+              if requested not in allowed and not re.fullmatch(r'[0-9a-f]{40}', requested):
+                  raise SystemExit('source_ref must be an allowed branch or a reachable 40-hex commit')
+              branch = requested if requested in allowed else None
+          commit = api('commits/' + quote(requested, safe=''))['sha']
+          if not re.fullmatch(r'[0-9a-f]{40}', commit):
+              raise SystemExit('Invalid resolved commit')
+          for candidate in ([branch] if branch else allowed):
+              comparison = api('compare/' + commit + '...' + quote(candidate, safe=''))
+              if comparison['status'] in ('ahead', 'identical'):
+                  branch = candidate
+                  break
+          else:
+              raise SystemExit('Source commit is not reachable from an allowed branch')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'sha={commit}\nbranch={branch}\n')
+          PY
+
+      - name: Checkout the UI source without credentials
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Compare actual UI tree and trusted renderer inputs
+        id: changed
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re, subprocess
+          from pathlib import Path
+          inputs = json.loads(Path('tooling/readme_preview_inputs.json').read_text())
+          font = inputs.get('font', {})
+          if (inputs.get('schema') != 1 or not re.fullmatch(r'[0-9a-f]{64}', font.get('sha256') or '')
+              or not re.fullmatch(r'https://raw\.githubusercontent\.com/[^/]+/[^/]+/[0-9a-f]{40}/[^\s]+', font.get('url') or '')
+              or font.get('file') != 'NotoSansCJKsc-Regular.otf'):
+              raise SystemExit('Verified fixed-commit Noto font inputs are required; placeholder inputs cannot render')
+          tree = subprocess.check_output(['git', '-C', 'source', 'ls-tree', '-r', 'HEAD',
+              'packages/aerove_client/lib', 'packages/aerove_client/assets', 'packages/aerove_client/shaders', 'apps/aerove/lib', 'apps/aerove/assets'])
+          ui_hash = hashlib.sha256(tree).hexdigest()
+          harness = hashlib.sha256(Path('tooling/readme_showcase_test.dart').read_bytes()).hexdigest()
+          current_file = Path('docs/assets/screenshots/showcase/render-info.json')
+          current = json.loads(current_file.read_text()) if current_file.exists() else {}
+          same = (current.get('complete') is True and current.get('source', {}).get('workflowRun') is not None
+              and current.get('source', {}).get('uiTreeSha256') == ui_hash
+              and current.get('source', {}).get('harness', {}).get('sha256') == harness
+              and current.get('font', {}).get('sha256') == font['sha256'] and current.get('locale') == 'zh_CN')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'render={str(not same).lower()}\n')
+          if same:
+              print('UI tree, harness, font and locale match the current showcase; no render needed.')
+          PY
+
+      - name: Set up Flutter 3.47.6
+        if: steps.changed.outputs.render == 'true'
+        uses: ./.github/actions/flutter
+        with:
+          flutter-version: '3.47.6'
+          channel: stable
+          cache: 'false'
+
+      - name: Install the verified test font
+        if: steps.changed.outputs.render == 'true'
+        run: |
+          font_url=$(jq -er '.font.url' tooling/readme_preview_inputs.json)
+          font_sha=$(jq -er '.font.sha256' tooling/readme_preview_inputs.json)
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$font_url" -o "$RUNNER_TEMP/NotoSansCJKsc-Regular.otf"
+          printf '%s  %s\n' "$font_sha" "$RUNNER_TEMP/NotoSansCJKsc-Regular.otf" | sha256sum --check --strict
+
+      - name: Render twelve offline widget cases without native build hooks
+        if: steps.changed.outputs.render == 'true'
+        env:
+          AEROVE_README_RENDER_DIR: ${{ runner.temp }}/readme-render
+          AEROVE_README_FONT: ${{ runner.temp }}/NotoSansCJKsc-Regular.otf
+          AEROVE_README_LOCALE: zh_CN
+          GITHUB_REF_NAME: ${{ steps.source.outputs.branch }}
+        run: |
+          mkdir -p source/tooling
+          cp tooling/readme_showcase_test.dart source/tooling/readme_showcase_test.dart
+          cd source/apps/aerove
+          flutter pub get --enforce-lockfile
+          cp pubspec.yaml "$RUNNER_TEMP/readme-standard-pubspec.yaml"
+          restore_pubspecs() {
+            cp "$RUNNER_TEMP/readme-standard-pubspec.yaml" pubspec.yaml
+          }
+          trap restore_pubspecs EXIT
+          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml
+          if ! test -f core/Clash.Meta/component/ca/ca-certificates.crt; then
+            sed -i '\|^    - core/Clash.Meta/component/ca/ca-certificates.crt$|d' pubspec.yaml
+          fi
+          flutter test --no-pub --enable-impeller ../../tooling/readme_showcase_test.dart
+
+      - name: Validate original pixels and provenance using trusted main tooling
+        if: steps.changed.outputs.render == 'true'
+        env:
+          RENDER_DIR: ${{ runner.temp }}/readme-render
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          node --input-type=module - <<'JS'
+          import { validatePreview } from './tooling/readme_sync.mjs';
+          const { manifest: m } = validatePreview(process.env.RENDER_DIR);
+          if (m.source.commit !== process.env.SOURCE_SHA || String(m.source.workflowRun) !== process.env.GITHUB_RUN_ID || m.locale !== 'zh_CN' || m.nativeAssets !== false) throw Error('Producer provenance mismatch');
+          JS
+
+      - name: Upload twelve PNGs and their manifest
+        if: steps.changed.outputs.render == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: AEROVE-readme-preview-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/readme-render/
+          if-no-files-found: error
+          retention-days: 14

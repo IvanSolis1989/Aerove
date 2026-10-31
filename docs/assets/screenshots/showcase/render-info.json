@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "product": "standard",
+  "method": "flutter-widget-test",
+  "source": {
+    "commit": "4140e67bdb56101e2fd4c144ea44f4f1ecea1adb",
+    "tree": "d08d33b4d648bf9316070c2a017228c3e9ee5a8d",
+    "uiTreeSha256": "da5e5173784e39a78431a80735a28509e7d7857753a0bbbe87f38aa10c523a76",
+    "ref": "codex/readme-release-preview104",
+    "workflowRun": null,
+    "producerDirty": true,
+    "harness": {
+      "file": "tooling/readme_showcase_test.dart",
+      "sha256": "b72119dc90188da94745e3a3c2315bc4de316f0884550479804ce947e53e7624"
+    }
+  },
+  "viewport": {
+    "width": 430.0,
+    "height": 932.0,
+    "devicePixelRatio": 2.0
+  },
+  "fixture": "offline",
+  "androidDevice": false,
+  "nativeAssets": false,
+  "omittedAssets": [
+    "core/Clash.Meta/component/ca/ca-certificates.crt"
+  ],
+  "locale": "zh_CN",
+  "testOverrides": {
+    "managers": "ThemeManager only; no startup/Core/VPN managers",
+    "platform": "Android widget theme/layout only",
+    "profiles": "empty",
+    "isStart": false,
+    "outboundProbe": "offline failed; no IP",
+    "serviceProbes": "offline pending; no requests",
+    "disableAnimations": true,
+    "fontFamily": "ReadmeShowcase"
+  },
+  "font": {
+    "file": "D:/CodexTemp/aerove-independent-20261022/session-20261023/claude-resume-20261025-01/codex-resume-20261026/root/readme-font104/NotoSansCJKsc-Regular.otf",
+    "sha256": "2c76254f6fc379fddfce0a7e84fb5385bb135d3e399294f6eeb6680d0365b74b"
+  },
+  "pureBlack": false,
+  "networkAttempts": 0,
+  "cases": [
+    {
+      "id": "solid-classic-light",
+      "material": "solid",
+      "colorMode": "classic",
+      "brightness": "light",
+      "file": "solid-classic-light.png",
+      "sha256": "e16437eb1f7c900378870d6e207c5ee4b761b8ce1d47932374f75905736126a7",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "solid-classic-dark",
+      "material": "solid",
+      "colorMode": "classic",
+      "brightness": "dark",
+      "file": "solid-classic-dark.png",
+      "sha256": "d84089023c51d3fc6dd146ce4a5e2f3f6dc14139ef048fe597a948c952ae8072",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "solid-aurora-light",
+      "material": "solid",
+      "colorMode": "aurora",
+      "brightness": "light",
+      "file": "solid-aurora-light.png",
+      "sha256": "cd13dadad0f53bc564c2926047b5808d368fe628d1cb47e100e4f3b55c50ae2f",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "solid-aurora-dark",
+      "material": "solid",
+      "colorMode": "aurora",
+      "brightness": "dark",
+      "file": "solid-aurora-dark.png",
+      "sha256": "137d8c35a570b121e658af132d38e3190521512f94597d7d296b387d2c28b343",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "frost-classic-light",
+      "material": "frost",
+      "colorMode": "classic",
+      "brightness": "light",
+      "file": "frost-classic-light.png",
+      "sha256": "549b029dad16ae0c685a111601b72efb45820516ce4634e8b9f43e08a3cdba49",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "frost-classic-dark",
+      "material": "frost",
+      "colorMode": "classic",
+      "brightness": "dark",
+      "file": "frost-classic-dark.png",
+      "sha256": "e19cc431f378f930112206f92add97aa5a1548dae17a60f9f191c41b103a2cdb",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "frost-aurora-light",
+      "material": "frost",
+      "colorMode": "aurora",
+      "brightness": "light",
+      "file": "frost-aurora-light.png",
+      "sha256": "37a2981a7ca588d2ce5f17f810ada9858d0f863629928eb9db4624aa72f536fe",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "frost-aurora-dark",
+      "material": "frost",
+      "colorMode": "aurora",
+      "brightness": "dark",
+      "file": "frost-aurora-dark.png",
+      "sha256": "5247e301cbbc63a00eb740588d9def435e71b0365663d261185deb0c6f677c0e",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "clear-classic-light",
+      "material": "clear",
+      "colorMode": "classic",
+      "brightness": "light",
+      "file": "clear-classic-light.png",
+      "sha256": "e21b8eb619b4982b3e07b61c9e88fc03003c179dfc1ff351b6b335e07e0cde7b",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "clear-classic-dark",
+      "material": "clear",
+      "colorMode": "classic",
+      "brightness": "dark",
+      "file": "clear-classic-dark.png",
+      "sha256": "71fdbf3130bfc59b22c24e65ed6a1ba857d2ff78eaaba9d3d90a1a6da88d26f6",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "clear-aurora-light",
+      "material": "clear",
+      "colorMode": "aurora",
+      "brightness": "light",
+      "file": "clear-aurora-light.png",
+      "sha256": "6a23085b7ee922ab689e662441fb31201c60c6991f90e4cd42f7869f64137b47",
+      "width": 860,
+      "height": 1864
+    },
+    {
+      "id": "clear-aurora-dark",
+      "material": "clear",
+      "colorMode": "aurora",
+      "brightness": "dark",
+      "file": "clear-aurora-dark.png",
+      "sha256": "7610cfae6b34c45ee6d6822e533c7cf1e50e537e2a374e1fcc887e0582f41ea4",
+      "width": 860,
+      "height": 1864
+    }
+  ],
+  "complete": true
+}

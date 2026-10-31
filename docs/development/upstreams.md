@@ -18,6 +18,14 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 ### 来源条目
 
+#### [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk)
+
+**固定版本 / revision：** `f8d157532fbfaeda587e826d4cd5b21a49186f7c`
+
+**用途与采用方式：** README 十二图的离线 Flutter 渲染使用 `Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf`，CI 按固定地址下载并校验 SHA-256；不安装系统字体，不加入 App 依赖或安装包。字体 Git blob 为 `dc15562470b4f842321894787a0d066879ccff8b`，16,437,364 字节；SHA-256 由 `tooling/readme_preview_inputs.json` 固定。
+
+**许可证、署名与证据：** SIL Open Font License 1.1；[固定字体](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf)、[原许可证](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE)，许可证 Git blob `d952d62c065f3f35fb83a173496e90b21525aef3`；原字体与许可证保持原样，公开图片保留渲染来源记录。
+
 #### [chen08209/FlClash](https://github.com/chen08209/FlClash)
 
 **固定版本 / revision：** 历史整合 `v0.9.2-pre.1` / `7220961f7c5e494df831ca196ab53ef08a17e926`；2026-10-25 按用户授权选择性整合 `v0.9.2` / `7fd417fb9a9a277c6a9339a8ac87f907df7c25f7`（以第二父提交保留血缘，合并树不整套采用）；只读参照 `8d4f9744948751f1273fe871e1d05276fac09b0e`

@@ -14,6 +14,11 @@ Flutter + Mihomo; Android, Windows, macOS and Linux.
 
 **Source:** [apps/aerove](../../apps/aerove/) · **Release:** [Stable APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk)
 
+<!-- aerove:releases:start -->
+- **Stable** · [0.9.1](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.9.1%2B2026102203) · Build `2026102203` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.9.1%2B2026102203/Aerove-android-arm64.apk)
+- **Public preview** · [0.11.0-beta.17](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0-beta.17%2B2026102294) · Build `2026102294` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0-beta.17%2B2026102294/Aerove-android-arm64.apk)
+<!-- aerove:releases:end -->
+
 ## AEROVE Lite
 
 Native Android + meow-rs (in development); Android 13+.
@@ -30,6 +35,44 @@ by the pinned Rust engine may be deferred. Keep product versions, packages, sign
 - [AEROVE changelog](../aerove/CHANGELOG.md)
 - [Workspace and document policy](../development/REPOSITORY_LAYOUT.md)
 - [Development commands](../../.agents/commands.md)
+
+## Interface preview
+
+<!-- aerove:showcase:start -->
+Twelve combinations of the Standard development interface. Click an image for full size. Actual Flutter widgets rendered offline with no profile or connection; not Android device or Lite acceptance.
+
+### Solid
+
+**Classic monochrome**
+
+<a href="../../docs/assets/screenshots/showcase/solid-classic-light.png"><img src="../../docs/assets/screenshots/showcase/solid-classic-light.png" width="300" alt="Solid · Classic monochrome · Light"></a> <a href="../../docs/assets/screenshots/showcase/solid-classic-dark.png"><img src="../../docs/assets/screenshots/showcase/solid-classic-dark.png" width="300" alt="Solid · Classic monochrome · Dark"></a>
+
+**Aurora**
+
+<a href="../../docs/assets/screenshots/showcase/solid-aurora-light.png"><img src="../../docs/assets/screenshots/showcase/solid-aurora-light.png" width="300" alt="Solid · Aurora · Light"></a> <a href="../../docs/assets/screenshots/showcase/solid-aurora-dark.png"><img src="../../docs/assets/screenshots/showcase/solid-aurora-dark.png" width="300" alt="Solid · Aurora · Dark"></a>
+
+### Soft frost
+
+**Classic monochrome**
+
+<a href="../../docs/assets/screenshots/showcase/frost-classic-light.png"><img src="../../docs/assets/screenshots/showcase/frost-classic-light.png" width="300" alt="Soft frost · Classic monochrome · Light"></a> <a href="../../docs/assets/screenshots/showcase/frost-classic-dark.png"><img src="../../docs/assets/screenshots/showcase/frost-classic-dark.png" width="300" alt="Soft frost · Classic monochrome · Dark"></a>
+
+**Aurora**
+
+<a href="../../docs/assets/screenshots/showcase/frost-aurora-light.png"><img src="../../docs/assets/screenshots/showcase/frost-aurora-light.png" width="300" alt="Soft frost · Aurora · Light"></a> <a href="../../docs/assets/screenshots/showcase/frost-aurora-dark.png"><img src="../../docs/assets/screenshots/showcase/frost-aurora-dark.png" width="300" alt="Soft frost · Aurora · Dark"></a>
+
+### Liquid clear
+
+**Classic monochrome**
+
+<a href="../../docs/assets/screenshots/showcase/clear-classic-light.png"><img src="../../docs/assets/screenshots/showcase/clear-classic-light.png" width="300" alt="Liquid clear · Classic monochrome · Light"></a> <a href="../../docs/assets/screenshots/showcase/clear-classic-dark.png"><img src="../../docs/assets/screenshots/showcase/clear-classic-dark.png" width="300" alt="Liquid clear · Classic monochrome · Dark"></a>
+
+**Aurora**
+
+<a href="../../docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="../../docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="Liquid clear · Aurora · Light"></a> <a href="../../docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="../../docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="Liquid clear · Aurora · Dark"></a>
+
+Source: [`4140e67bdb56101e2fd4c144ea44f4f1ecea1adb`](https://github.com/IvanSolis1989/Aerove/commit/4140e67bdb56101e2fd4c144ea44f4f1ecea1adb) · [Render provenance](../../docs/assets/screenshots/showcase/render-info.json)
+<!-- aerove:showcase:end -->
 
 The historical codebase comes from [FlClash](https://github.com/chen08209/FlClash); original attribution and licenses are
 preserved. AEROVE now owns its architecture and release process. Mihomo and meow-rs are independently pinned upstreams. Lite has no public release yet.
