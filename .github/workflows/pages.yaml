@@ -75,9 +75,11 @@ jobs:
               result = subprocess.run(command, check=True, capture_output=True, text=True)
               return result.stdout if raw else json.loads(result.stdout)
 
-          def valid_run(run, *, on_main=True):
+          def valid_run(run, *, on_main=True, expected_source=None):
+              if expected_source is None:
+                  expected_source = event['head_sha']
               return (run.get('name') == 'Aerove Android' and run.get('path') == workflow
-                      and run.get('head_sha') == event['head_sha']
+                      and run.get('head_sha') == expected_source
                       and isinstance(run.get('head_branch'), str) and bool(run['head_branch'])
                       and (not on_main or run['head_branch'] == 'main')
                       and run.get('event') in ('push', 'workflow_dispatch')
@@ -113,13 +115,15 @@ jobs:
           def original_build(info, tag):
               match = re.fullmatch(re.escape(server + '/' + repository + '/actions/runs/') + r'([1-9][0-9]*)',
                                    info.get('workflow', ''))
-              if (not match or info.get('source') != event['head_sha'] or info.get('version') != tag[1:]
+              source = info.get('source')
+              if (not match or not isinstance(source, str) or not re.fullmatch(r'[0-9a-f]{40}', source)
+                      or info.get('version') != tag[1:]
                       or info.get('applicationId') != 'com.follow.clash.dev'
                       or info.get('signing') != 'persistent Android test key'):
                   return False
               run_id = int(match[1])
               run = api(f'actions/runs/{run_id}')
-              if run.get('id') != run_id or not valid_run(run, on_main=False):
+              if run.get('id') != run_id or not valid_run(run, on_main=False, expected_source=source):
                   return False
               found = jobs(run)
               return succeeded(found, 'verify') and succeeded(found, 'apk')
