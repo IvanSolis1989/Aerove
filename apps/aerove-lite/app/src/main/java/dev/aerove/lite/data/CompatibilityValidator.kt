@@ -120,6 +120,8 @@ class CompatibilityValidator private constructor(
     private val coreSchema: ProfileCompatibilitySchema?,
 ) : ProfileValidator {
     constructor(native: NativeConfigValidator, resourceDirectory: File? = null) : this(native, resourceDirectory, null)
+    internal fun withTunReconciliation(value: MeowTunReconciliation?): CompatibilityValidator =
+        if (value == null) this else CompatibilityValidator(native, resourceDirectory, checkNotNull(coreSchema).withTunReconciliation(value))
     val coreVersion: String get() = coreSchema?.coreVersion ?: CORE_VERSION
     internal fun resourceInput(yaml: String): MutableMap<String, Any?> = coreSchema?.resourceInput(yaml) ?: ConfigYaml.parse(yaml)
     internal fun providerDownloadInput(yaml: String): String = coreSchema?.providerDownloadInput(yaml) ?: yaml

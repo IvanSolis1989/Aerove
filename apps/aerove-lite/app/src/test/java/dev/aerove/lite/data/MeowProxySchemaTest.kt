@@ -82,7 +82,7 @@ class MeowProxySchemaTest {
         reject("flow", "vless", "$uuid, flow: xtls-rprx-vision")
         reject("smux.padding", "vless", "$uuid, smux: {enabled: true, protocol: muxcool, padding: true}")
         reject("smux.statistic", "vless", "$uuid, smux: {enabled: true, statistic: true}")
-        reject("ech-opts.config", "vless", "$uuid, tls: true, ech-opts: {enable: true}")
+        reject("ech-opts.config", "vless", "$uuid, tls: true, ech-opts: {enable: true, config: '%%%'}")
         reject("reality-opts.short-id", "vless", "$uuid, tls: true, client-fingerprint: chrome, reality-opts: {public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA, short-id: 1234}")
     }
 
@@ -123,4 +123,56 @@ class MeowProxySchemaTest {
         val fingerprint = assertThrows(ConfigValidationException::class.java) { ss("restls", "{host: example.com}", ", client-fingerprint: chrome") }
         assertEquals("$.proxies[0].client-fingerprint", fingerprint.issues.single().path)
     }
+    private fun compat(type: String, extra: String) = MeowCompatibilityValidator.normalize(yaml(type, extra),
+        features + setOf("ss", "trojan", "vmess", "anytls", "kcptun", "ech-tls-tunnel"))
+    private fun compatReject(field: String, type: String, extra: String) {
+        val error = assertThrows(ConfigValidationException::class.java) { compat(type, extra) }
+        assertEquals("$.proxies[0].$field", error.issues.single().path)
+    }
+    @Test fun supportedTcpFactoriesKeepTheirExactDialerField() {
+        for ((type, options) in listOf("http" to "", "socks5" to "", "ss" to "cipher: aes-128-gcm, password: secret,",
+                "trojan" to "password: secret,", "vmess" to "$uuid,", "vless" to "$uuid,", "snell" to "psk: secret,",
+                "trusttunnel" to "username: user, password: secret,")) {
+            val result = ConfigYaml.parse(compat(type, "$options dialer-proxy: ' FRONT '"))
+            assertEquals(" FRONT ", ((result["proxies"] as List<*>).single() as Map<*, *>)["dialer-proxy"])
+        }
+    }
+    @Test fun unthreadedFactoriesAndExternalPluginsCannotClaimActiveChains() {
+        for ((type, options) in listOf("direct" to "", "anytls" to "password: secret,", "hysteria2" to "password: secret,",
+                "trusttunnel" to "username: user, password: secret, quic: true,",
+                "ss" to "cipher: aes-128-gcm, password: secret, plugin: external-program,"))
+            compatReject("dialer-proxy", type, "$options dialer-proxy: FRONT")
+    }
+    @Test fun dialerShapeAndSelfReferenceAreRejectedWithoutDroppingUnknownFields() {
+        for (target in listOf("123", "true", "[]", "{}", "'   '", "t", "null"))
+            compatReject("dialer-proxy", "http", "dialer-proxy: $target")
+        compatReject("unknown-chain-option", "http", "dialer-proxy: FRONT, unknown-chain-option: true")
+        compatReject("type", "tuic", "dialer-proxy: FRONT")
+    }
+    @Test fun emptyDialerPreservesTheCoreUnsetSemantics() {
+        for ((type, options) in listOf("http" to "", "anytls" to "password: secret,", "hysteria2" to "password: secret,",
+                "trusttunnel" to "username: user, password: secret, quic: true,"))
+            assertTrue(compat(type, "$options dialer-proxy: ''").contains("dialer-proxy"))
+        assertTrue(MeowCompatibilityValidator.normalize("proxies: [{name: t, type: direct, dialer-proxy: ''}]").contains("dialer-proxy"))
+    }
+    @Test fun vlessDnsEchPreservesAbsentInlineConfigAndQueryName() {
+        for (opts in listOf("{enable: true}", "{enable: true, query-server-name: ech.example}",
+                "{enable: true, config: '', query-server-name: ech.example}")) {
+            val result = ConfigYaml.parse(compat("vless", "$uuid, tls: true, ech-opts: $opts"))
+            val node = (result["proxies"] as List<*>).single() as Map<*, *>
+            val ech = node["ech-opts"] as Map<*, *>
+            assertEquals(true, ech["enable"])
+            if (opts.contains("query-server-name")) assertEquals("ech.example", ech["query-server-name"])
+            if (!opts.contains("config:")) assertFalse(ech.containsKey("config"))
+        }
+    }
+    @Test fun dnsEchStillRejectsIgnoredWrongTypedAndIncompatiblePolicies() {
+        compatReject("ech-opts.query-server-name", "vless", "$uuid, tls: true, ech-opts: {enable: true, query-server-name: 3}")
+        compatReject("ech-opts.query-server-name", "vless", "$uuid, tls: true, ech-opts: {enable: false, query-server-name: ech.example}")
+        compatReject("ech-opts.query-server-name", "vless", "$uuid, tls: true, ech-opts: {enable: true, config: AQID, query-server-name: ech.example}")
+        compatReject("ech-opts.unknown", "vless", "$uuid, tls: true, ech-opts: {enable: true, unknown: true}")
+        compatReject("ech-opts", "vless", "$uuid, ech-opts: {enable: true}")
+        compatReject("ech-opts", "vless", "$uuid, tls: true, client-fingerprint: chrome, reality-opts: {public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}, ech-opts: {enable: true}")
+    }
+
 }

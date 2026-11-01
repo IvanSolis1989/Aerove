@@ -49,16 +49,19 @@ class MeowTunnelBackendTest {
     }
     private inner class Fixture(parked: Boolean = false, tunMode: Boolean = false, profileId: String = "profile",
         revision: String = "source-revision", generation: String = "resource-generation", port: Int = 49152,
-        settingsOverride: LiteSettings? = null) {
+        settingsOverride: LiteSettings? = null, startupGated: Boolean = false) {
         val settings = settingsOverride ?: LiteSettings(network = NetworkSettings(vpnEnabled = tunMode))
         val plan = VpnPlan(profileId,settings)
         val yaml = "proxies: [{name: direct, type: direct}]\nrules: ['MATCH,direct']"
         val bundle = File(temp.root,"resources/bundles/profile/resource-generation").apply{mkdirs()}
         val prepared = PreparedProfile(profileId,yaml,yaml,revision,generation,
             if (profileId.startsWith("flutter:")) null else bundle,null)
-        val config = MeowRuntimeConfigComposer(temp.root,cacheDirectory=File(temp.root,"meow-cache/session").apply{mkdirs()}).compose(prepared,settings,if(tunMode && !parked)42 else -1,port,"0123456789abcdef0123456789abcdef",
+        val config = MeowRuntimeConfigComposer(temp.root,cacheDirectory=File(temp.root,"meow-cache/session").apply{mkdirs()}).compose(prepared,if (startupGated) settings.copy(externalController = settings.externalController.copy(enabled = false)) else settings,if(tunMode && !parked)42 else -1,port,"0123456789abcdef0123456789abcdef",
             initiallyParked=parked,physicalNetworkHandle="42")
         var current = true;var released = 0;var verified = 0;var failRelease = false
+        var startupGate = startupGated; var startupResume = true
+        var restoreStartup: suspend () -> Unit = {}
+        val startupEvents = mutableListOf<String>()
         var admission: () -> Boolean = { true }
         var stages=0;var commits=0;var parkedFds=0;var discarded=0;var networkCommits=0;var identityClears=0
         var identityCallback: (() -> Unit)? = null; var observerClosed = false; var usable = 0
@@ -74,7 +77,13 @@ class MeowTunnelBackendTest {
             override val coreDnsEnabled = false
             override val builderReservedFakeIpRanges = emptyList<String>()
             override val coreReservedFakeIpRanges = emptyList<String>()
-            override val startupPolicies = MeowHostPolicyTarget.from(settings, "AEROVE-Lite")
+            override val startupPolicies = MeowHostPolicyTarget.from(if (startupGated) settings.copy(externalController = settings.externalController.copy(enabled = false)) else settings, "AEROVE-Lite")
+            override val startupSettings get() = settings.takeIf { startupGate }
+            override suspend fun restoreStartupSelection(endpoint: CoreEndpoint): Boolean {
+                assertFalse(native.listeners(1).listening); assertFalse(native.status(1).tunReady)
+                startupEvents += "restore"; restoreStartup(); startupEvents += "readback"
+                return startupResume
+            }
             override val establishedBuilderSettings get() = settings.takeIf { !tunMode || commits > 0 || !parked }
             override fun currentPolicies(fallback: LiteSettings) = MeowHostPolicyTarget.from(fallback, "AEROVE-Lite")
             override suspend fun captureNetwork(expectedDns: SystemDnsSnapshot) = object : MeowTunnelBackend.NetworkReceipt {
@@ -452,6 +461,74 @@ class MeowTunnelBackendTest {
         assertNotNull(failure);assertTrue(failure!!.message!!.contains("unconfirmed"))
         assertEquals(0,f.networkCommits);assertEquals(0,f.released);assertEquals(0,f.native.stops)
         session.stop();assertEquals(1,f.released)
+    }
+
+    @Test fun sharedStartupRestoresBeforeAttachAndPublishesTheActualInitialListener() = runBlocking {
+        val f = Fixture(parked = true, tunMode = true)
+        f.startupGate = true
+        f.native.onListener = { action, fd ->
+            assertEquals(listOf("restore", "readback"), f.startupEvents)
+            assertEquals("attachTun", action); assertEquals(43, fd)
+            f.startupEvents += "attach"
+        }
+        val session = f.backend.open(f.plan)
+        session.awaitReady()
+        assertEquals(listOf("restore", "readback", "attach"), f.startupEvents)
+        assertTrue(session.initialListenerReadback!!.listening)
+        assertTrue(session.initialListenerReadback!!.tunReady)
+        assertEquals(1, f.stages); assertEquals(1, f.commits); assertEquals(1, f.usable)
+        session.stop(); assertEquals(1, f.native.stops); assertEquals(1, f.released)
+    }
+
+    @Test fun startupFailureAndSupersededReadbackStopAndJoinBeforeLeaseReleaseWithoutAttach() = runBlocking {
+        for (superseded in listOf(false, true)) {
+            val f = Fixture(parked = true, tunMode = true); f.startupGate = true
+            f.restoreStartup = { if (superseded) f.current = false else error("CAS readback failed") }
+            f.native.onStop = { assertEquals(0, f.released); f.startupEvents += "native-joined" }
+            val session = f.backend.open(f.plan)
+            try { session.awaitReady(); fail("A failed startup was made usable") } catch (_: IllegalStateException) { }
+            assertEquals(0, f.stages); assertEquals(0, f.commits); assertEquals(0, f.usable)
+            assertEquals(1, f.native.stops); assertEquals(1, f.released)
+            assertTrue(f.startupEvents.contains("native-joined"))
+            session.stop(); assertEquals(1, f.native.stops)
+        }
+    }
+
+    @Test fun startupCancellationJoinsBeforeReleaseAndNeverAttaches() = runBlocking {
+        val f = Fixture(parked = true, tunMode = true); f.startupGate = true
+        val entered = CompletableDeferred<Unit>(); val left = CompletableDeferred<Unit>()
+        f.restoreStartup = { try { entered.complete(Unit); awaitCancellation() } finally { left.complete(Unit) } }
+        f.native.onStop = { assertTrue(left.isCompleted); assertEquals(0, f.released) }
+        val session = f.backend.open(f.plan)
+        val ready = launch { session.awaitReady() }
+        withTimeout(3000) { entered.await() }
+        ready.cancelAndJoin()
+        assertEquals(0, f.stages); assertEquals(0, f.usable)
+        assertEquals(1, f.native.stops); assertEquals(1, f.released)
+    }
+
+    @Test fun sharedOnDemandParkedRestoresButDoesNotAttachAndLegacyDoesNotRunTheGate() = runBlocking {
+        val f = Fixture(parked = true, tunMode = true); f.startupGate = true; f.startupResume = false
+        val parked = f.backend.open(f.plan); parked.awaitReady()
+        assertEquals(listOf("restore", "readback"), f.startupEvents)
+        assertFalse(parked.initialListenerReadback!!.listening); assertEquals(0, f.stages); parked.stop()
+        val legacy = Fixture(parked = true)
+        val old = legacy.backend.open(legacy.plan); old.awaitReady()
+        assertTrue(legacy.startupEvents.isEmpty()); assertFalse(old.initialListenerReadback!!.listening); old.stop()
+    }
+
+    @Test fun enabledUserControllerIsHeldUntilRestoreReadbackAndEnabledBeforeAttach() = runBlocking {
+        val desired = LiteSettings(network = NetworkSettings(vpnEnabled = true), externalController =
+            dev.aerove.lite.controllerprefs.ExternalControllerPreferences(true, "saved-secret"))
+        val f = Fixture(parked = true, tunMode = true, settingsOverride = desired, startupGated = true)
+        f.restoreStartup = { assertFalse("User controller exposed pre-restore", f.native.policy.enabled) }
+        f.native.onListener = { _, _ ->
+            assertEquals(listOf("restore", "readback"), f.startupEvents)
+            assertTrue(f.native.policy.enabled)
+        }
+        val session = f.backend.open(f.plan); session.awaitReady()
+        assertTrue(f.native.policy.enabled); assertTrue(session.initialListenerReadback!!.tunReady)
+        assertTrue(f.settings.externalController.enabled); session.stop()
     }
 
 }

@@ -25,6 +25,8 @@ const (
 	decryptConfigMethod            CoreMethod = "decryptConfig"
 	validateProxiesMethod          CoreMethod = "validateProxies"
 	validateFiltersMethod          CoreMethod = "validateFilters"
+	matchFiltersMethod             CoreMethod = "matchFilters"
+	cancelFilterMatchMethod        CoreMethod = "cancelFilterMatch"
 	convertProxiesMethod           CoreMethod = "convertProxies"
 	encodeShareLinksMethod         CoreMethod = "encodeShareLinks"
 	decodeShareLinksMethod         CoreMethod = "decodeShareLinks"

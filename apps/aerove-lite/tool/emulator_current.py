@@ -107,9 +107,60 @@ def original_sample_phase_selector(phase, sample, runtime):
     return original_sample_selector(sample, runtime['runtimeTarget'])
 
 
+def guard_flutter_phase(phase, sample=None, runtime=None):
+    if phase != 'flutter-ui':
+        return
+    if (sample is not None or any(os.environ.get(name) for name in (
+            'AEROVE_ORIGINAL84_PROOF', 'AEROVE_ORIGINAL_RUNTIME_PROOF',
+            'AEROVE_ORIGINAL_RUNTIME_TARGET', 'AEROVE_ORIGINAL_SAMPLE',
+            'AEROVE_ORIGINAL_SAMPLE_SELECTOR')) or os.environ.get('AEROVE_BETA14_PROFILE') == '1'
+            or runtime and any(runtime.get(name) for name in (
+                'runtimeTarget', 'diagnosticOriginal84', 'originalAppIdentity'))):
+        raise ValueError('flutter-ui requires current production runtime, without original/profile/sample opt-ins')
+
+
+def flutter_ui_inputs(directory, runtime):
+    """Require the inspected BUILD_INFO in the same verified transport before starting an emulator."""
+    guard_flutter_phase('flutter-ui', runtime=runtime)
+    directory = Path(directory)
+    info_path = directory / 'BUILD_INFO.json'
+    manifest = json.loads((directory / 'source-manifest.json').read_text())
+    entries = [row for row in manifest['files'] if row['path'] == 'BUILD_INFO.json']
+    if (info_path.is_symlink() or not info_path.is_file() or len(entries) != 1
+            or entries[0]['bytes'] != info_path.stat().st_size or entries[0]['sha256'] != sha(info_path)):
+        raise ValueError('flutter-ui requires the sealed runtime BUILD_INFO.json')
+    info = json.loads(info_path.read_text())
+    from verify_apk import FLUTTER_ASSET_PREFIX, FLUTTER_RELEASE_ASSETS
+    packaging = info.get('flutter_packaging', {})
+    if (packaging.get('schema') != 1 or packaging.get('abi') != 'x86_64'
+            or set(packaging.get('libraries', {})) != {'lib/x86_64/libapp.so', 'lib/x86_64/libflutter.so'}
+            or set(packaging.get('assets', {})) != {FLUTTER_ASSET_PREFIX + name for name in FLUTTER_RELEASE_ASSETS}):
+        raise ValueError('flutter-ui requires inspected Flutter release packaging')
+    inputs = dict(apk=(APK_ROOT / 'release/app-release.apk').resolve(),
+                  test_apk=(APK_ROOT / 'androidTest/release/app-release-androidTest.apk').resolve(),
+                  build_info=info_path.resolve())
+    from flutter_android_qa import validate_binding
+    validate_binding(inputs['apk'], inputs['test_apk'], info, dict(runtime, owner='emulator_current.py'))
+    return inputs
+
+
+def phase_acceptance_command(phase, directory, flutter_inputs=None):
+    if phase != 'flutter-ui':
+        return ['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', phase]
+    if flutter_inputs is None:
+        raise ValueError('flutter-ui requires validated original APK and BUILD_INFO inputs')
+    sdk = Path(os.environ.get('ANDROID_SDK_ROOT', os.environ['ANDROID_HOME']))
+    return [sys.executable, 'apps/aerove-lite/tool/flutter_android_qa.py',
+            '--apk', str(flutter_inputs['apk']), '--test-apk', str(flutter_inputs['test_apk']),
+            '--build-info', str(flutter_inputs['build_info']),
+            '--adb', str(sdk / 'platform-tools/adb'),
+            '--apksigner', str(sdk / 'build-tools/37.0.0/apksigner'),
+            '--serial', 'emulator-5554', '--output', str(Path(directory) / 'production-ui')]
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample'])
+    parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample', 'flutter-ui'])
     parser.add_argument('--runtime-directory', type=Path, required=True)
     parser.add_argument('--sample')
     args = parser.parse_args()
@@ -119,12 +170,17 @@ def main():
         raise ValueError('The real acceptance owner requires the existing Linux/KVM runner')
     if os.environ.get('AEROVE_QA79_PROOF') or os.environ.get('AEROVE_CURRENT_RENDERER_PROOF'):
         raise ValueError('Current owner requires fresh, unmixed renderer proof')
+    guard_flutter_phase(args.phase, args.sample)
     current = verify_current_runtime(args.runtime_directory)
     sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
+    flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase == 'flutter-ui' else None
     directory = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics' / args.phase
     directory.mkdir(parents=True, exist_ok=True)
     emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
+    if args.phase == 'flutter-ui':
+        receipt.update(phase='flutter-ui', representativeOnly=True, functionalAcceptance=False,
+                       visualApproved=False, performanceAccepted=False, releaseAccepted=False)
     if sample_selector:
         receipt.update(sample=args.sample, testSelector=sample_selector, diagnosticOnly=True, accepted=False, promotionAccepted=False)
     environment = dict(os.environ, ANDROID_SERIAL='emulator-5554')
@@ -172,7 +228,9 @@ def main():
                 write_owner_receipt(profile_owner, receipt)
                 environment['AEROVE_BETA14_PROFILE_OWNER'] = str(profile_owner.resolve())
             check_cancelled(receipt)
-            acceptance_command = ['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', args.phase]
+            acceptance_command = phase_acceptance_command(args.phase, directory, flutter_inputs)
+            if args.phase == 'flutter-ui':
+                receipt['acceptanceCommand'] = acceptance_command
             if args.sample:
                 environment['AEROVE_ORIGINAL_RUNTIME_TARGET'] = current['runtimeTarget']
                 environment['AEROVE_ORIGINAL_SAMPLE'] = args.sample

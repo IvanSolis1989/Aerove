@@ -495,21 +495,35 @@ class MeowSetupProtocolTest {
         val server = MockWebServer()
         server.start()
         try {
-            fun route(pick: String, version: String) = """{"core-epoch":"2","route-version":"$version","picks":{"Pick":"$pick"}}"""
-            fun proxies(pick: String) = """{"proxies":{"Pick":{"type":"Selector","now":"$pick","all":["first","second"]},"first":{"type":"Direct"},"second":{"type":"Direct"}}}"""
-            listOf(route("second", "1"), proxies("second"), "{}", proxies("first"), route("first", "2")).forEach { server.enqueue(MockResponse().setBody(it)) }
+            fun snapshot(pick: String, version: String, intent: String, requested: Boolean = false) =
+                JSONObject().put("graph-token", "19").put("selection-intent", intent)
+                    .put("requested", if (requested) JSONObject().put("Pick", "removed") else JSONObject())
+                    .put("route", JSONObject().put("core-epoch", "2").put("route-version", version).put("picks", JSONObject().put("Pick", pick)))
+                    .put("groups", JSONObject().put("Pick", JSONObject().put("type", "Selector").put("current", pick)
+                        .put("fixed", JSONObject.NULL).put("members", org.json.JSONArray(listOf("first", "second")))))
+                    .put("startup-consumption", JSONObject()).toString()
+            listOf(snapshot("second", "1", "7"), snapshot("first", "2", "8", true), snapshot("first", "2", "8"))
+                .forEach { server.enqueue(MockResponse().setBody(it)) }
             CoreApiClient(ControlEndpoint(server.port, "x".repeat(32))).use { client ->
                 val receipt = MeowRuntimeSelection(client).apply(mapOf("Pick" to "removed")) { true }
                 assertEquals("first", receipt.selected["Pick"])
                 assertEquals(2uL, receipt.coreEpoch)
-                assertEquals("/aerove/route", server.takeRequest().path)
-                assertEquals("/proxies", server.takeRequest().path)
+                val before = server.takeRequest()
+                assertEquals("GET", before.method)
+                assertEquals("/aerove/selection-cache", before.path)
                 val selection = server.takeRequest()
-                assertEquals("PUT", selection.method)
-                assertEquals("/proxies/Pick", selection.path)
-                assertEquals("first", JSONObject(selection.body.readUtf8()).getString("name"))
-                assertEquals("/proxies", server.takeRequest().path)
-                assertEquals("/aerove/route", server.takeRequest().path)
+                assertEquals("POST", selection.method)
+                assertEquals("/aerove/selection-cache", selection.path)
+                val request = JSONObject(selection.body.readUtf8())
+                assertEquals("removed", request.getJSONObject("requested").getString("Pick"))
+                assertEquals("2", request.getString("expectedCoreEpoch"))
+                assertEquals("1", request.getString("expectedRouteVersion"))
+                assertEquals("7", request.getString("expectedSelectionIntent"))
+                assertEquals("19", request.getString("expectedGraphToken"))
+                val readback = server.takeRequest()
+                assertEquals("GET", readback.method)
+                assertEquals("/aerove/selection-cache", readback.path)
+                assertEquals(3, server.requestCount)
             }
         } finally { server.shutdown() }
     }

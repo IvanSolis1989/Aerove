@@ -1,8 +1,11 @@
 import 'package:fl_clash/product.dart';
 
+import 'native_legacy_migration.dart';
+
 // Source and content identity: app/src/main/assets/scripts/*.source.json.
 final liteProduct = ProductSpec(
   id: 'aerove-lite',
+  beforeDataBootstrap: prepareNativeLegacyData,
   displayName: 'AEROVE Lite',
   expectedCoreId: 'meow-rs',
   minimumAndroidApi: 33,

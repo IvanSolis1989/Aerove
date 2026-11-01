@@ -62,6 +62,15 @@ void _reportOptimisticFailure(Object error, StackTrace stackTrace) {
 /// would briefly undo its optimistic value, so they wait for [idle]. One
 /// turned away may carry a write made outside the notifier, so the rows are
 /// read again once the writes settle.
+int _databasePendingWrites = 0;
+int databaseWriteGeneration = 0;
+Completer<void>? _databaseWritesIdle;
+Future<void> waitForDatabaseWrites() async {
+  while (_databasePendingWrites != 0) {
+    await _databaseWritesIdle!.future;
+  }
+}
+
 class _Writes {
   final void Function() _reread;
   var _pending = 0;
@@ -78,10 +87,17 @@ class _Writes {
 
   Future<void> track(Future<void> Function() write) async {
     _pending++;
+    if (_databasePendingWrites++ == 0) _databaseWritesIdle = Completer<void>();
+    databaseWriteGeneration++;
     try {
       await write();
     } finally {
       _pending--;
+      databaseWriteGeneration++;
+      if (--_databasePendingWrites == 0) {
+        _databaseWritesIdle!.complete();
+        _databaseWritesIdle = null;
+      }
       if (idle && _missed) {
         _missed = false;
         _reread();
@@ -385,7 +401,16 @@ class Profiles extends _$Profiles {
   void updateProfile(int profileId, Profile Function(Profile profile) builder) {
     final index = state.indexWhere((element) => element.id == profileId);
     if (index == -1) return;
-    final newProfile = builder(state[index]);
+    final built = builder(state[index]);
+    final oldOptions = state[index].overrides.proxyProviders;
+    final newProfile = built.copyWith(
+      overrides: built.overrides.copyWith(
+        proxyProviders: {
+          for (final entry in built.overrides.proxyProviders.entries)
+            entry.key: entry.value.withNativeEditsSince(oldOptions[entry.key]),
+        },
+      ),
+    );
     if (newProfile == state[index]) return;
     final next = List<Profile>.from(state);
     next[index] = newProfile;
@@ -777,6 +802,44 @@ Future<Profile Function(Profile profile)?> _renameProxyIn(
       .renamedPicks(names, members: members, groups: group);
 }
 
+Future<Profile Function(Profile)?> _includeGroupLibraryNodes(
+  int profileId,
+  Iterable<ProxyGroup> groups,
+) async {
+  final profiles = await database.profilesDao.query().get();
+  final profile = profiles
+      .where((profile) => profile.id == profileId)
+      .singleOrNull;
+  final scope = profile?.overrides.scopedCustomProxyIds;
+  if (profile == null || scope == null) return null;
+  final nodes = await database.customProxiesDao.query().get();
+  final owned = {
+    for (final profile in profiles) ...profile.overrides.ownedCustomProxyIds,
+  };
+  final existingNames = {
+    for (final node in nodes)
+      if (scope.contains(node.id))
+        profile.overrides.proxyAliases[node.id] ?? node.name,
+  };
+  final added = <int>[];
+  for (final name in {for (final group in groups) ...?group.proxies}) {
+    if (existingNames.contains(name)) continue;
+    final matches = nodes
+        .where((node) => node.name == name && !owned.contains(node.id))
+        .toList();
+    if (matches.length > 1)
+      throw StateError('profile.group.proxies: ambiguous library node');
+    if (matches.isNotEmpty) added.add(matches.single.id);
+  }
+  if (added.isEmpty) return null;
+  return (Profile current) => current.copyWith.overrides(
+    scopedCustomProxyIds: {
+      ...?current.overrides.scopedCustomProxyIds,
+      ...added,
+    }.toList(),
+  );
+}
+
 @riverpod
 class ProxyGroups extends _$ProxyGroups
     with AsyncNotifierMixin, OptimisticMixin {
@@ -840,18 +903,39 @@ class ProxyGroups extends _$ProxyGroups
 
     optimistic(
       next,
-      renamedFrom == null
-          ? () => database.transaction(write)
-          : () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
-              final change = await _renameProxyIn(
+      () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
+        final rename = renamedFrom == null
+            ? null
+            : await _renameProxyIn(
                 profileId,
                 oldName: renamedFrom,
                 newName: nextProxyGroup.name,
                 group: true,
               );
-              await write();
-              return {profileId: ?change};
-            }),
+        final include = await _includeGroupLibraryNodes(profileId, [
+          nextProxyGroup,
+        ]);
+        await write();
+        return {
+          if (rename != null || include != null)
+            profileId: (Profile current) {
+              var next = rename?.call(current) ?? current;
+              next = include?.call(next) ?? next;
+              if (renamedFrom != null)
+                next = next.copyWith.overrides(
+                  filterManualMembers: {
+                    for (final entry
+                        in next.overrides.filterManualMembers.entries)
+                      entry.key: [
+                        for (final name in entry.value)
+                          name == renamedFrom ? nextProxyGroup.name : name,
+                      ],
+                  },
+                );
+              return next;
+            },
+        };
+      }),
     );
     return true;
   }
@@ -864,13 +948,17 @@ class ProxyGroups extends _$ProxyGroups
     ];
     optimistic(
       next,
-      () => database.batch(
-        (b) => database.proxyGroupsDao.setProfileGroupsWithBatch(
-          profileId,
-          b,
-          next,
-        ),
-      ),
+      () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
+        final include = await _includeGroupLibraryNodes(profileId, next);
+        await database.batch(
+          (b) => database.proxyGroupsDao.setProfileGroupsWithBatch(
+            profileId,
+            b,
+            next,
+          ),
+        );
+        return {if (include != null) profileId: include};
+      }),
     );
   }
 
@@ -950,11 +1038,33 @@ class CustomProxies extends _$CustomProxies
     final idSet = ids.toSet();
     optimistic(
       value.where((item) => !idSet.contains(item.id)).toList(),
-      () => database.customProxiesDao.delAll(idSet),
+      () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
+        await database.customProxiesDao.delAll(idSet);
+        return {
+          for (final profile in await database.profilesDao.query().get())
+            if (profile.overrides.scopedCustomProxyIds != null)
+              profile.id: (Profile current) => current.copyWith.overrides(
+                scopedCustomProxyIds: current.overrides.scopedCustomProxyIds!
+                    .where((id) => !idSet.contains(id))
+                    .toList(),
+                ownedCustomProxyIds: current.overrides.ownedCustomProxyIds
+                    .difference(idSet),
+                proxyAliases: {
+                  for (final entry in current.overrides.proxyAliases.entries)
+                    if (!idSet.contains(entry.key)) entry.key: entry.value,
+                },
+              ),
+        };
+      }),
     );
   }
 
-  void put(CustomProxy proxy) {
+  void put(CustomProxy proxy) => _put(proxy);
+
+  void putForProfile(CustomProxy proxy, int profileId) =>
+      _put(proxy, profileId: profileId);
+
+  void _put(CustomProxy proxy, {int? profileId}) {
     final previous = value;
     final index = previous.indexWhere((item) => item.id == proxy.id);
     final renamedFrom = index != -1 && previous[index].name != proxy.name
@@ -974,24 +1084,69 @@ class CustomProxies extends _$CustomProxies
     }
     optimistic(
       next,
-      renamedFrom == null
-          ? () => database.customProxies.put(nextProxy.toCompanion())
-          : () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
-              final changes = <int, Profile Function(Profile profile)>{};
-              for (final profileId
-                  in await database.profilesDao.customIds().get()) {
-                if (await _renameProxyIn(
-                      profileId,
-                      oldName: renamedFrom,
-                      newName: nextProxy.name,
-                    )
-                    case final change?) {
-                  changes[profileId] = change;
-                }
-              }
-              await database.customProxies.put(nextProxy.toCompanion());
-              return changes;
-            }),
+      () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
+        final changes = <int, Profile Function(Profile)>{};
+        final profiles = await database.profilesDao.query().get();
+        if (renamedFrom != null) {
+          for (final profile in profiles.where(
+            (profile) => profile.type == ProfileType.custom,
+          )) {
+            final scope = profile.overrides.scopedCustomProxyIds;
+            if (scope != null && !scope.contains(nextProxy.id) ||
+                profile.overrides.proxyAliases.containsKey(nextProxy.id))
+              continue;
+            final change = await _renameProxyIn(
+              profile.id,
+              oldName: renamedFrom,
+              newName: nextProxy.name,
+            );
+            changes[profile.id] = (current) {
+              final next = change?.call(current) ?? current;
+              return next.copyWith.overrides(
+                filterManualMembers: {
+                  for (final entry
+                      in next.overrides.filterManualMembers.entries)
+                    entry.key: [
+                      for (final name in entry.value)
+                        name == renamedFrom ? nextProxy.name : name,
+                    ],
+                },
+              );
+            };
+          }
+        }
+        if (profileId != null) {
+          final owner = profiles
+              .where(
+                (profile) =>
+                    profile.id == profileId &&
+                    profile.type == ProfileType.custom,
+              )
+              .singleOrNull;
+          if (owner == null)
+            throw StateError(
+              'customProxy.profileId: editing profile is missing',
+            );
+          if (owner.overrides.scopedCustomProxyIds != null) {
+            final previousChange = changes[profileId];
+            changes[profileId] = (current) {
+              final next = previousChange?.call(current) ?? current;
+              return next.copyWith.overrides(
+                scopedCustomProxyIds: {
+                  ...?next.overrides.scopedCustomProxyIds,
+                  nextProxy.id,
+                }.toList(),
+                ownedCustomProxyIds: {
+                  ...next.overrides.ownedCustomProxyIds,
+                  if (index == -1) nextProxy.id,
+                },
+              );
+            };
+          }
+        }
+        await database.customProxies.put(nextProxy.toCompanion());
+        return changes;
+      }),
     );
   }
 

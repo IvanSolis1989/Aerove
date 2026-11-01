@@ -27,9 +27,96 @@ class LiteApplication : Application() {
 
     internal val physicalNetworks by lazy { dev.aerove.lite.platform.PhysicalNetworkMonitor(applicationContext, providerResetOwner::network) }
 
+    val usesSharedFlutterClient: Boolean
+        get() = packageManager.getLaunchIntentForPackage(packageName)?.component?.className == "dev.aerove.lite.FlutterMainActivity"
+
+    private val externalSharedCommands by lazy {
+        dev.aerove.lite.flutter.createMeowFlutterCommandFacade(this,
+            canPrepare = { !maintenanceActive }, canConnect = { !maintenanceActive })
+    }
+
+    internal fun verifySharedStartSource(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot): org.json.JSONObject {
+        val phase=dev.aerove.lite.flutter.NativeLiteDataAuthority.phase(filesDir)
+        check(phase == "shared" || phase == null && !hasLegacyBusinessSource()) { "native_data_migration_required" }
+        val proof=org.json.JSONObject(snapshot.handoff.runtimeSettingsJson).getJSONObject("flutterSetup").getJSONObject("data-source-proof")
+        val config=dev.aerove.lite.flutter.verifyNativeLiteBusinessSource(this,proof)
+        check(config.getJSONObject("appSettingProps").getInt("acceptedDisclaimerVersion") >= 1) { "shared_disclaimer_required" }
+        check(!config.isNull("currentProfileId")) { "shared_profile_required" }
+        return config
+    }
+
+    suspend fun startSharedExternal(autoRun: Boolean, expectedStartEpoch: Long): Boolean {
+        val requested=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            nativeLifecycle.withLock {
+                check(usesSharedFlutterClient && !maintenanceActive && startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
+                val snapshot=checkNotNull(runtimeHandoffs.readCurrent()) { "shared_runtime_configuration_required" }
+                val config=verifySharedStartSource(snapshot)
+                if(autoRun && !config.getJSONObject("appSettingProps").getBoolean("autoRun")) return@withLock null
+                val vpnRequired=org.json.JSONObject(snapshot.handoff.vpnOptionsJson).getBoolean("enable")
+                check(!vpnRequired || android.net.VpnService.prepare(this@LiteApplication) == null) { "shared_vpn_authorization_required" }
+                check(vpnRequired || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) { "shared_notification_authorization_required" }
+                check(startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
+                retireParkedGraph()
+                runtimeHandoffs.beginStart(snapshot.revision,snapshot.intentEpoch)
+            }
+        } ?: return false
+        var sent=false
+        try {
+            sent=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                if(startIntentEpoch() != expectedStartEpoch) return@withContext false
+                val request=externalSharedCommands.prepareOwnedConnect(dev.aerove.lite.flutter.MeowFlutterRuntimeBinding(requested.revision,requested.intentEpoch)) ?: return@withContext false
+                externalSharedCommands.connectOwned(request)
+            }
+            return sent
+        } finally {
+            if(!sent) kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                val current=runtimeHandoffs.readCurrent()
+                if(current?.revision == requested.revision && current.intentEpoch == requested.intentEpoch && current.userRequested) runtimeHandoffs.invalidate(requested.intentEpoch)
+            }
+        }
+    }
+
+    private val legacyMigration by lazy {
+        dev.aerove.lite.flutter.MeowLegacyMigrationOwner(filesDir,
+            dev.aerove.lite.flutter.MeowLegacyMigrationExport(filesDir, profiles, settings, overrideRepository),
+            verifyTarget = { receipt, digest -> dev.aerove.lite.flutter.verifyNativeLiteTarget(this, receipt, digest) })
+    }
+    private fun hasLegacyBusinessSource() = listOf("profiles/index.json", "settings/settings.json", "settings/overrides.json",
+        "settings/builder-resources.yaml", "backups/webdav.json").any { File(filesDir, it).exists() }
+    suspend fun beginLegacyMigration(session: String): Map<String, Any?> {
+        if (!hasLegacyBusinessSource() && dev.aerove.lite.flutter.NativeLiteDataAuthority.phase(filesDir) == null)
+            return mapOf("status" to "absent")
+        return withMaintenance { nativeLifecycle.withLock {
+            if (dev.aerove.lite.flutter.NativeLiteDataAuthority.phase(filesDir) != "shared") requireMigrationStopped()
+            legacyMigration.begin(session)
+        } }
+    }
+    private fun requireMigrationStopped() {
+        check(vpn.value.phase == VpnPhase.Stopped && vpn.value.endpoint == null && flutterRuntimeIdentity.value == null) {
+            "migration_runtime_owner_active"
+        }
+    }
+    suspend fun validateLegacyMigration(lease: String, digest: String) = withMaintenance { nativeLifecycle.withLock {
+        requireMigrationStopped(); legacyMigration.validate(lease, digest)
+    } }
+    suspend fun commitLegacyMigration(lease: String, receipt: String, digest: String) = withMaintenance { nativeLifecycle.withLock {
+        requireMigrationStopped(); legacyMigration.commit(lease, receipt, digest)
+    } }
+    suspend fun prepareLegacyMigrationFiles(lease: String, plan: String, digest: String) = withMaintenance { nativeLifecycle.withLock { requireMigrationStopped(); legacyMigration.prepareFiles(lease,plan,digest) } }
+    suspend fun confirmLegacyMigration(source: String, receipt: String) = legacyMigration.confirmTransferred(source,receipt)
+    fun releaseLegacyMigration(lease: String) = legacyMigration.release(lease)
+    fun releaseLegacyMigrationSession(session: String) {
+        runtimeScope.launch(kotlinx.coroutines.Dispatchers.IO) { withMaintenance { legacyMigration.releaseSession(session) } }
+    }
+
     val runtimeHandoffs by lazy {
         dev.aerove.lite.flutter.RuntimeHandoffStore(filesDir, validateProjection = {
             dev.aerove.lite.flutter.MeowRuntimeSnapshotSettings.validate(it)
+        }, validateSource = { handoff ->
+            if (usesSharedFlutterClient) {
+                val proof = org.json.JSONObject(handoff.runtimeSettingsJson).getJSONObject("flutterSetup").getJSONObject("data-source-proof")
+                dev.aerove.lite.flutter.verifyNativeLiteBusinessSource(this, proof)
+            }
         })
     }
     internal val nativeLifecycle = Mutex()
@@ -39,7 +126,7 @@ class LiteApplication : Application() {
         dev.aerove.lite.flutter.MeowParkedGraphOwner(runtimeHandoffs, claimOwner = {
             check(vpn.value.phase == VpnPhase.Stopped && vpn.value.endpoint == null && !maintenanceActive) { "runtime_service_not_stopped" }
             claimGraphOwner()
-        }, ownsOwner = ::ownsGraphOwner, backendFactory = { _, testUrl, current ->
+        }, ownsOwner = ::ownsGraphOwner, backendFactory = { graphOwner, testUrl, current ->
             dev.aerove.lite.vpn.MeowTunnelBackend(dev.aerove.lite.vpn.MeowAndroidHost(null, this,
                 capturePhysical = {
                     val manager = getSystemService(android.net.ConnectivityManager::class.java)
@@ -49,10 +136,10 @@ class LiteApplication : Application() {
                                 it.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
                         } == true }
                     }
-                }, initialListening = { false }, captureOwnerIntent = { current }, graphOnly = true, graphTestUrl = { testUrl }))
+                }, initialListening = { false }, captureOwnerIntent = { current }, graphOnly = true, graphTestUrl = { testUrl }, geoOwner = { graphOwner }))
         }, publish = { graphOwner, query ->
             publishFlutterRuntimeIdentity(graphOwner, query?.identity)
-        })
+        }, verifyMetadata = { previous, params -> dev.aerove.lite.flutter.meowVerifyMetadataSource(this,previous,params) })
     }
     internal suspend fun retireParkedGraph() = parkedGraph.retire()
     suspend fun ensureParkedGraph(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot): dev.aerove.lite.flutter.RuntimeAppliedIdentity = parkedGraphGate.withLock {
@@ -103,6 +190,12 @@ class LiteApplication : Application() {
     suspend fun setFlutterRuntimeListening(expected: dev.aerove.lite.flutter.MeowSetupRuntime, enabled: Boolean) = flutterRuntime().setListening(expected, enabled)
     suspend fun applyFlutterRuntimeUpdate(expected: dev.aerove.lite.flutter.MeowSetupRuntime, projection: dev.aerove.lite.flutter.MeowSetupProjection) = flutterRuntime().applyUpdate(expected, projection)
     suspend fun refreshFlutterRuntimeSetup(expected: dev.aerove.lite.flutter.MeowSetupRuntime, setupParamsJson: String) = flutterRuntime().refreshSetup(expected, setupParamsJson)
+    suspend fun applyFlutterGeo(expected: dev.aerove.lite.flutter.MeowSetupRuntime, transactionId: String,
+        candidate: dev.aerove.lite.data.MeowGeoCandidate, resources: dev.aerove.lite.data.FlutterRuntimeResources.Geo,
+        projection: dev.aerove.lite.flutter.RuntimeHandoff, rawSelectedMap: Map<String,String>, admit: suspend () -> Boolean) =
+        flutterRuntime().applyGeo(expected,transactionId,candidate,resources,projection,rawSelectedMap,admit)
+    suspend fun flutterGeoStatus(expected: dev.aerove.lite.flutter.MeowSetupRuntime, transactionId: String, abort: Boolean) =
+        flutterRuntime().geoStatus(expected,transactionId,abort)
     suspend fun flutterRuntimeDefaultTestUrl(expected: dev.aerove.lite.flutter.MeowSetupRuntime) = flutterRuntime().defaultTestUrl(expected)
     suspend fun replaceFlutterRuntimeGraph(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot) = flutterRuntime().applyStaged(snapshot)
     private val maintenanceGate = Mutex()

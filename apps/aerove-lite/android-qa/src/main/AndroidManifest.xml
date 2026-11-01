@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="${targetApplicationId}" />
+    </queries>
+    <application android:label="AEROVE Lite Flutter QA"
+        android:allowBackup="false" android:testOnly="true" />
+    <instrumentation android:name="androidx.test.runner.AndroidJUnitRunner"
+        android:targetPackage="${targetApplicationId}"
+        android:functionalTest="false" android:handleProfiling="false" />
+</manifest>

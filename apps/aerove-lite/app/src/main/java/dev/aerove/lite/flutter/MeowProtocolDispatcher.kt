@@ -260,7 +260,7 @@ class MeowProtocolDispatcher(
     companion object {
         val METHODS: Set<String> = setOf(
             "message", "initClash", "getIsInit", "forceGc", "shutdown", "validateConfig", "decryptConfig",
-            "validateProxies", "validateFilters", "convertProxies", "encodeShareLinks", "decodeShareLinks",
+            "validateProxies", "validateFilters", "matchFilters", "cancelFilterMatch", "convertProxies", "encodeShareLinks", "decodeShareLinks",
             "updateConfig", "getConfig", "getProfileBase", "getProfileOutbounds", "getProxyDefinition",
             "buildProfile", "dumpRuleSet", "compileRuleSet", "getProxies", "changeProxy", "getTraffic",
             "getTotalTraffic", "resetTraffic", "asyncTestDelay", "getLatestDelays", "probe", "outboundIp",

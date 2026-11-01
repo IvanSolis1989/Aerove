@@ -27,6 +27,7 @@ import java.net.ServerSocket
 import java.nio.file.Files
 import java.security.SecureRandom
 import java.util.UUID
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /** Native lease adapter; only a Service-backed TUN plan may establish a VPN. */
@@ -37,6 +38,7 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
     private val verifiedNativeFeatures: () -> Set<String> = { MeowNativeCore.readVerifiedFeatures() },
     private val graphOnly: Boolean = false,
     private val graphTestUrl: () -> String = { dev.aerove.lite.flutter.MEOW_DEFAULT_TEST_URL },
+    private val geoOwner: () -> Long = { 0 },
 ) : MeowTunnelBackend.Host {
     private val gate = Any()
     private val retained = mutableSetOf<Resources>()
@@ -47,6 +49,7 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
         try {
             if (!graphOnly) application.retireParkedGraph()
             acquireMeowLifecycleLock(application.nativeLifecycle, resources) { resources.locked = true }
+            application.runtimeHandoffs.discardAbandonedGeoAfterNativeJoin()
             if (plan.profileId.startsWith("flutter:")) {
                 val snapshot = checkNotNull(application.runtimeHandoffs.readCurrent()) { "runtime_snapshot_missing" }
                 check(snapshot.profileId == plan.profileId) { "runtime_start_superseded" }
@@ -81,41 +84,69 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
             val mode = runtimeMode(plan)
             resources.startupPlan = plan
             resources.controlPort = port
-            val parked = !initialListening(plan)
+            val initial = initialListening(plan)
+            val startupGate = resources.runtimeSnapshot != null && !graphOnly
+            val parked = startupGate || !initial
             val captured = capturePhysical()
             resources.physicalValue = captured
             val physical = captured.network
             val dns = captured.dns
             resources.coreDnsEnabled = effectiveProfileDnsEnabled(resources.prepared)
             resources.builderDnsEnabled = plan.vpnDnsEnabled ?: resources.coreDnsEnabled
-            val profileRanges = profileFakeIpRanges(resources.prepared.yaml)
-            resources.coreReservedFakeIpRanges = vpnReservedRanges(profileRanges, resources.coreDnsEnabled, vpnBuilderIpv6(plan))
+            val sourceRanges = MeowTunReconciliation.reservedRanges(resources.prepared.yaml, vpnBuilderIpv6(plan))
+            resources.coreReservedFakeIpRanges = sourceRanges.takeIf { resources.coreDnsEnabled } ?: emptyList()
             resources.builderReservedFakeIpRanges = plan.vpnReservedFakeIpRanges?.toList()
-                ?: vpnReservedRanges(profileRanges, resources.builderDnsEnabled, vpnBuilderIpv6(plan))
+                ?: sourceRanges.takeIf { resources.builderDnsEnabled } ?: emptyList()
             check(resources.isCurrent()) { "Meow Host intent was superseded" }
             check(!graphOnly || mode == NativeCore.RuntimeMode.Proxy && parked) { "Query graph must be private-only Proxy" }
+            val actualBuilder = if (graphOnly && resources.runtimeSnapshot != null)
+                dev.aerove.lite.flutter.meowFlutterBuilderSettings(plan.settings, checkNotNull(resources.runtimeSnapshot).handoff.vpnOptionsJson)
+                else plan.builderSettings()
+            val actualTun = TunRuntimeOptions(actualBuilder.network.mtu, actualBuilder.network.dnsHijacking, actualBuilder.ipv6,
+                actualBuilder.network.tunInet4Address, actualBuilder.network.tunInet6Address, actualBuilder.network.tunDnsHijack, actualBuilder.network)
+            val requestedTun = plan.settings.copy(ipv6 = actualBuilder.ipv6)
+            MeowTunReconciliation.requireActual(resources.prepared.yaml, requestedTun, actualTun, resources.builderReservedFakeIpRanges)
+            val tunReconciliation = MeowTunReconciliation.reconcile(resources.prepared.yaml, requestedTun)
             if (mode == NativeCore.RuntimeMode.Tun) resources.resolver = ConnectionOwnerResolver.forTun(checkNotNull(service), resources.admission::admitted)
-            if (mode == NativeCore.RuntimeMode.Tun && !parked) {
-                resources.tun = establishAndroidTun(checkNotNull(service), plan, port, resources.builderDnsEnabled, dns, resources.builderReservedFakeIpRanges) { physical }
-                resources.admission.established()
+            if (mode == NativeCore.RuntimeMode.Tun && initial) {
+                val fd = establishAndroidTun(checkNotNull(service), plan, port, resources.builderDnsEnabled, dns, resources.builderReservedFakeIpRanges) { physical }
+                if (startupGate) {
+                    // Retain this same FD until the private startup CAS/readback permits attach.
+                    resources.initialAttachment = resources.Attachment(fd).also { resources.staged += it }
+                } else { resources.tun = fd; resources.admission.established() }
             }
             val cache = File(runtime, "meow-cache/${UUID.randomUUID()}").canonicalFile
             check(cache.toPath().startsWith(File(runtime,"meow-cache").canonicalFile.toPath()) && cache.mkdirs()) { "Could not create private Meow cache" }
             resources.cache = cache
-            val baseline = plan.builderSettings()
-            val startup = if (resources.runtimeSnapshot != null) plan.settings else runtimePoliciesForStart(plan.settings, application.settings.read())
+            val desiredStartup = if (resources.runtimeSnapshot != null) plan.settings else runtimePoliciesForStart(plan.settings, application.settings.read())
+            val startup = if (startupGate) desiredStartup.copy(externalController = desiredStartup.externalController.copy(enabled = false)) else desiredStartup
             resources.startupPolicies = MeowHostPolicyTarget.from(startup, resources.requestUserAgent)
             val composer = MeowRuntimeConfigComposer(runtime, resources.requestUserAgent, cache)
             val composed = if (resources.runtimeSnapshot != null) composer.composeFlutter(resources.prepared,
                 checkNotNull(resources.flutterResources), startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
-                TunRuntimeOptions(baseline.network.mtu, baseline.network.dnsHijacking, baseline.ipv6), parked,
-                captured.networkHandle, verifiedNativeFeatures().toSet())
+                actualTun, parked,
+                captured.networkHandle, verifiedNativeFeatures().toSet(), tunReconciliation)
             else composer.compose(resources.prepared, startup, resources.tun?.fd ?: -1, port, secret, mode, dns,
-                    TunRuntimeOptions(baseline.network.mtu, baseline.network.dnsHijacking, baseline.ipv6), parked,
-                    captured.networkHandle, verifiedNativeFeatures().toSet())
+                    actualTun, parked,
+                    captured.networkHandle, verifiedNativeFeatures().toSet(), tunReconciliation)
             resources.configValue = resources.ruleResources?.configure(composed) ?: composed.withResources(
                 composed.engineYaml, checkNotNull(resources.prepared.resourceDirectory),
                 resources.prepared.revision, resources.prepared.generation)
+            resources.runtimeSnapshot?.let { snapshot ->
+                MeowNativeCore.requireGeoInterfaces()
+                val setup = JSONObject(snapshot.handoff.runtimeSettingsJson).getJSONObject("flutterSetup")
+                val proof = setup.getJSONObject("data-source-proof")
+                var raw: Map<String, String>? = null
+                dev.aerove.lite.flutter.verifyNativeLiteBusinessSource(application, proof) { raw = it }
+                val selected = checkNotNull(raw)
+                val requested = setup.getJSONObject("selected-map").let { row -> row.keys().asSequence().associateWith(row::getString) }
+                check(selected == requested) { "shared_source_selected_map_changed" }
+                check(resources.isCurrent()) { "Meow Host intent was superseded" }
+                val binding = MeowGeoHostBinding(geoOwner(), checkNotNull(plan.runtimeSessionGeneration), snapshot.intentEpoch,
+                    snapshot.handoff.compiledSha256, dev.aerove.lite.flutter.meowGeoSourceGuard(proof))
+                resources.configValue = resources.configValue.withGeoHostBinding(binding,
+                    checkNotNull(resources.flutterResources).geoReadRootAuthority, selected)
+            }
             val appliedFile = File(directory, "meow-${UUID.randomUUID()}.yaml")
             resources.file = appliedFile
             appliedFile.apply {
@@ -158,6 +189,7 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
         var ruleResources: SessionRuleResources? = null
         var flutterResources: FlutterRuntimeResources? = null
         var tun: ParcelFileDescriptor? = null
+        var initialAttachment: Attachment? = null
         var file: File? = null
         var cache: File? = null
         var resolver: ConnectionOwnerResolver? = null
@@ -176,6 +208,21 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
         override var coreReservedFakeIpRanges: List<String> = emptyList()
         lateinit var physicalValue: CapturedMeowPhysical
         override lateinit var startupPolicies: MeowHostPolicyTarget
+        override val startupSettings get() = startupPlan.settings.takeIf { runtimeSnapshot != null && !graphOnly }
+        override suspend fun restoreStartupSelection(endpoint: CoreEndpoint): Boolean {
+            check(startupSettings != null && configuration.initiallyParked && isCurrent()) { "Shared startup owner is unavailable" }
+            val runtime = checkNotNull(runtimeSnapshot)
+            val setup = dev.aerove.lite.flutter.MeowServiceSetup(
+                JSONObject(runtime.handoff.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), checkNotNull(service).startupFlutterTestUrl())
+            check(startupPlan.settings.requests.checkCertificate == !setup.skipCertVerify) { "skip-cert-verify: Startup policy differs from compiled setup" }
+            val requested = setup.selectedMap
+            CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client ->
+                dev.aerove.lite.flutter.MeowRuntimeSelection(client).apply(requested, ::isCurrent)
+            }
+            currentCoroutineContext().ensureActive()
+            check(isCurrent()) { "Shared startup selection was superseded" }
+            return initialListening(startupPlan)
+        }
         override val establishedBuilderSettings get() = startupPlan.builderSettings().takeIf { configuration.runtimeMode == NativeCore.RuntimeMode.Proxy || tun != null }
         override fun currentPolicies(fallback: dev.aerove.lite.LiteSettings) = MeowHostPolicyTarget.from(
             if (runtimeSnapshot != null) fallback else application.settings.changes.value ?: fallback,
@@ -226,6 +273,12 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
             check(captured.networkHandle == physicalValue.networkHandle && captured.dns.json() == physicalValue.dns.json()) {
                 "Physical network changed; Meow network policy update is required before TUN attach"
             }
+            initialAttachment?.let { attachment ->
+                check(attachment in staged) { "Initial Meow TUN receipt was lost" }
+                admission.established()
+                initialAttachment = null
+                return@withLock attachment
+            }
             val fd = establishAndroidTun(checkNotNull(service),startupPlan,controlPort,builderDnsEnabled,captured.dns,builderReservedFakeIpRanges) { captured.network }
             try { admission.established();Attachment(fd).also { staged += it } }
             catch(failure:Throwable) { try { fd.close() } catch(cleanup:Throwable) { failure.addSuppressed(cleanup) };throw failure }
@@ -242,8 +295,18 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
         } }
         override suspend fun parkedTun() { cleanup.withLock {
             admission.park()
+            initialAttachment = null
             tun?.close();tun = null
             staged.toList().forEach { it.file.close();staged -= it }
+        } }
+        override suspend fun commitGeo(candidate: MeowGeoCandidate, binding: MeowGeoHostBinding) = withContext(NonCancellable+Dispatchers.IO) { cleanup.withLock {
+            check(runtimeSnapshot != null && ruleResources == null && !sharedCleaned && isCurrent()) { "Geo receipt belongs to another runtime lease" }
+            val target=checkNotNull(file)
+            require(target.toPath() == target.toPath().toRealPath() && Files.isRegularFile(target.toPath(),java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            PrivateStorage(checkNotNull(target.parentFile)).write(target.name,candidate.engineYaml)
+            require(sha256(target) == sha256(candidate.engineYaml)) { "Applied Geo engine readback differs" }
+            preparedValue=preparedValue.copy(generation=candidate.compiledSha256)
+            configValue=configValue.withAppliedGeo(candidate,binding)
         } }
         override suspend fun reloadRules(next: PreparedProfile, endpoint: CoreEndpoint, current: () -> Boolean): Boolean =
             ruleResources?.reload(next, endpoint, current) ?: false
@@ -260,6 +323,7 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
             packageLoader?.close(); packageLoader = null
             try {
                 staged.toList().forEach { it.file.close();staged -= it }
+                initialAttachment = null
                 cache?.let { root ->
                     // This generated private session directory is owned by this receipt; never follow child symlinks.
                     if (root.exists()) Files.walk(root.toPath()).use { files -> files.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } }

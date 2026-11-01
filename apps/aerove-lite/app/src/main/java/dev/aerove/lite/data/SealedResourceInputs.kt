@@ -5,17 +5,52 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import org.json.JSONObject
 
-internal class SealedResourceInputs(val origins: List<Origin>) {
+internal class SealedResourceInputs(val origins: List<Origin>, val shared: List<SharedInput> = emptyList()) {
+    class SharedInput(val key: String, val file: SealedFlutterResource, val receiptFile: SealedFlutterResource?, val metadata: JSONObject?)
+
+    fun cached(key: String, url: String, behavior: String, format: String, fetch: ProviderFetchPolicy?, policy: ProviderRequestPolicy?, now: Long): SharedInput? {
+        val input=shared.singleOrNull {it.key==key} ?: return null
+        val data=input.metadata ?: return null
+        val source=data.optJSONObject("sourceDefinition") ?: return null
+        if(source.optString("type")!="http" || source.optString("url")!=url || source.optString("behavior")!=behavior || source.optString("format",if(key in setOf("$.mmdb","$.asn-mmdb","$.geosite")) "" else "yaml")!=format) return null
+        val stored=ProviderFetchPolicy.from(source.keys().asSequence().associateWith { unwrap(source.opt(it)) }) ?: ProviderFetchPolicy(null,emptyMap())
+        if(stored != (fetch ?: ProviderFetchPolicy(null,emptyMap()))) return null
+        val originalPolicy=data.optJSONObject("requestPolicy")
+        if(originalPolicy!=null && policy!=null && (originalPolicy.optString("userAgent")!=policy.userAgent || originalPolicy.optBoolean("checkCertificate")!=policy.checkCertificate)) return null
+        val at=data.getLong("updatedAt");val interval=data.getLong("interval")
+        if(at<=0 || at>now || interval<0 || interval>Long.MAX_VALUE/1000 || interval>0 && now-at>interval*1000 || data.has("cacheMaxAgeMillis") && (data.getLong("cacheMaxAgeMillis")<0 || now-at>data.getLong("cacheMaxAgeMillis"))) return null
+        checkedShared(input)
+        return input
+    }
+    private fun unwrap(value: Any?): Any? = when(value) {
+        null,JSONObject.NULL ->null
+        is JSONObject ->value.keys().asSequence().associateWith {unwrap(value.opt(it))}
+        is org.json.JSONArray ->(0 until value.length()).map {unwrap(value.opt(it))}
+        else ->value
+    }
+    private fun checkedShared(input: SharedInput) {
+        for(file in listOfNotNull(input.file,input.receiptFile)) {
+            val source=File(file.sourcePath)
+            require(source.toPath()==source.toPath().toRealPath() && Files.isRegularFile(source.toPath(),NOFOLLOW_LINKS) && sha256(source)==file.sha256) { "Shared resource changed during preparation" }
+        }
+    }
     class Origin(val lease: ResourceGenerationLease, val files: List<SealedFlutterResource>)
 
-    fun resolve(path: String): SealedFlutterResource? = origins.asSequence().flatMap { it.files.asSequence() }
+    fun resolve(path: String, key: String? = null): SealedFlutterResource? = shared.firstOrNull {
+        (key==null || it.key==key) && (File(it.file.sourcePath).absoluteFile==File(path).absoluteFile || it.metadata?.optJSONObject("nativeRecord")?.optString("localPath")==path)
+    }?.file ?: origins.asSequence().flatMap { it.files.asSequence() }
         .firstOrNull { it.relativePath.startsWith("assets/") && File(it.sourcePath).absoluteFile == File(path).absoluteFile }
 
-    fun verify() = origins.forEach { origin ->
-        require(readFiles(origin.lease.directory) == origin.files) { "Sealed input changed during preparation" }
+    fun verify() {
+        origins.forEach { origin ->require(readFiles(origin.lease.directory)==origin.files) { "Sealed input changed during preparation" } }
+        shared.forEach(::checkedShared)
     }
 
-    fun close() = origins.asReversed().forEach { it.lease.close() }
+    fun close() {
+        var failure: Throwable?=null
+        origins.asReversed().forEach { origin ->try {origin.lease.close()} catch(problem: Throwable) {if(failure==null) failure=problem else failure!!.addSuppressed(problem)} }
+        failure?.let {throw it}
+    }
 
     companion object {
         fun readFiles(directory: File): List<SealedFlutterResource> {

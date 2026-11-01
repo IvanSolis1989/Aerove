@@ -15,6 +15,7 @@ import org.json.JSONObject
 /** One atomic settings record; profile bindings are remapped by the backup owner on restore. */
 class OverrideRepository(privateDirectory: File, private val bundledScript: (() -> ByteArray)? = null) {
     private val storage = PrivateStorage(File(privateDirectory, "settings"))
+    internal val migrationRoot: File get() = storage.root.parentFile!!
     private val bundledResource by lazy { BundledMeowScript.resource(requireNotNull(bundledScript) { "Bundled script loader unavailable" }()) }
     private data class SeedSource(val key: Any?, val bytes: Long, val modified: FileTime)
     private var deferredSeed: SeedSource? = null
@@ -23,6 +24,10 @@ class OverrideRepository(privateDirectory: File, private val bundledScript: (() 
     private fun seedSource(): SeedSource? = storage.file(FILE_NAME).takeIf { it.isFile }?.let { file ->
         val attributes = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
         SeedSource(attributes.fileKey(), attributes.size(), attributes.lastModifiedTime())
+    }
+
+    internal suspend fun migrationSnapshot(): OverrideSnapshot? = dev.aerove.lite.data.privateDomainReadOnlyTransaction(storage.root.parentFile!!) {
+        if (storage.file(FILE_NAME).exists()) decode(storage.read(FILE_NAME, MAX_LIBRARY_BYTES)) else null
     }
 
     suspend fun snapshot(): OverrideSnapshot = storage.transaction { read() }

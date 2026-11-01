@@ -45,8 +45,62 @@ import org.json.JSONObject
 object MeowFlutterHost {
     fun attach(activity: FlutterActivity, engine: FlutterEngine) {
         check(activity.application is LiteApplication) { "Meow host requires the Lite application" }
+        if (!engine.plugins.has(MeowLegacyMigrationPlugin::class.java)) engine.plugins.add(MeowLegacyMigrationPlugin())
         if (!engine.plugins.has(MeowAppPlugin::class.java)) engine.plugins.add(MeowAppPlugin())
         if (!engine.plugins.has(MeowServiceBridge::class.java)) engine.plugins.add(MeowServiceBridge())
+    }
+}
+
+private class MeowLegacyMigrationPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
+    private val session = java.util.UUID.randomUUID().toString()
+    private lateinit var graph: LiteApplication
+    private lateinit var channel: MethodChannel
+    private lateinit var scope: CoroutineScope
+    private val replies = ConcurrentHashMap.newKeySet<MigrationReply>()
+    @Volatile private var attached = false
+    override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        graph = binding.applicationContext as LiteApplication
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        channel = MethodChannel(binding.binaryMessenger, "dev.aerove.lite/native-migration")
+        attached = true
+        channel.setMethodCallHandler(this)
+    }
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        val reply = MigrationReply(result).also(replies::add)
+        if (!attached) { reply.error("migration_engine_detached"); return }
+        scope.launch {
+            try {
+                fun text(key: String) = requireNotNull(call.argument<String>(key)) { "migration_argument_missing" }
+                val value: Any? = when (call.method) {
+                    "begin" -> graph.beginLegacyMigration(session)
+                    "validate" -> { graph.validateLegacyMigration(text("leaseId"), text("sha256")); null }
+                    "commit" -> { graph.commitLegacyMigration(text("leaseId"), text("receipt"), text("sha256")); null }
+                    "prepareFiles" -> { graph.prepareLegacyMigrationFiles(text("leaseId"), text("plan"), text("sha256")); null }
+                    "confirm" -> { graph.confirmLegacyMigration(text("sourceDigest"), text("receiptSha256")); null }
+                    "release" -> { graph.releaseLegacyMigration(text("leaseId")); null }
+                    else -> error("migration_method_unknown")
+                }
+                reply.success(value)
+            } catch (_: CancellationException) { reply.error("migration_cancelled") }
+            catch (failure: Exception) {
+                val reason = (failure as? MeowLegacyExportException)?.legacyField ?: failure.message?.takeIf {
+                    it.matches(Regex("migration_[a-z0-9_:.-]+"))
+                } ?: "migration_private_source_or_target_invalid"
+                reply.error(reason)
+            } finally { replies.remove(reply) }
+        }
+    }
+    override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        attached = false
+        channel.setMethodCallHandler(null)
+        replies.forEach { it.error("migration_engine_detached") }; replies.clear()
+        scope.cancel()
+        graph.releaseLegacyMigrationSession(session)
+    }
+    private class MigrationReply(private val result: MethodChannel.Result) {
+        private val completed = AtomicBoolean()
+        fun success(value: Any?) { if (completed.compareAndSet(false, true)) result.success(value) }
+        fun error(reason: String) { if (completed.compareAndSet(false, true)) result.error("native_migration_blocked", reason, null) }
     }
 }
 
@@ -165,8 +219,20 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                                 override suspend fun setListening(expected: MeowSetupRuntime, enabled: Boolean) = graph.setFlutterRuntimeListening(expected, enabled)
                                 override suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection) = graph.applyFlutterRuntimeUpdate(expected, projection)
                                 override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String) = graph.refreshFlutterRuntimeSetup(expected, setupParamsJson)
+                                override suspend fun applyGeo(expected: MeowSetupRuntime, transactionId: String,
+                                    candidate: dev.aerove.lite.data.MeowGeoCandidate, resources: dev.aerove.lite.data.FlutterRuntimeResources.Geo,
+                                    projection: RuntimeHandoff, rawSelectedMap: Map<String,String>, admit: suspend () -> Boolean) =
+                                    graph.applyFlutterGeo(expected,transactionId,candidate,resources,projection,rawSelectedMap,admit)
+                                override suspend fun geoStatus(expected: MeowSetupRuntime, transactionId: String, abort: Boolean) =
+                                    graph.flutterGeoStatus(expected,transactionId,abort)
                                 override suspend fun defaultTestUrl(expected: MeowSetupRuntime) = graph.flutterRuntimeDefaultTestUrl(expected)
-                            }, resourceSealer = graph.flutterResourceSealer)
+                            }, resourceSealer = graph.flutterResourceSealer, geoCatalog = graph.geoResourceCatalog, sourceVerifier = { verifyNativeLiteBusinessSource(graph, it); Unit },
+                            selectedSourceVerifier = { proof ->
+                                var selected: Map<String, String>? = null
+                                verifyNativeLiteBusinessSource(graph, proof) { selected = it }
+                                checkNotNull(selected)
+                            }, definitionSourceVerifier = { proof -> verifyNativeLiteBusinessSourceReceipt(graph, proof).definitionSha256 },
+                            geoSourceVerifier = { proof -> verifyNativeLiteBusinessSourceReceipt(graph, proof).let { Triple(it.config,it.selectedMap,it.definitionSha256) } })
                     }
                     ""
                 }

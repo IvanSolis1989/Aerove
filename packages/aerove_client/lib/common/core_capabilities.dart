@@ -6,6 +6,8 @@ class CoreCapabilities {
     required this.tunCongestionControllers,
     required this.defaultTunCongestionController,
     required this.androidHostTun,
+    required this.globalTcpKeepAliveTuning,
+    required this.geoDataLoaderSelection,
   });
 
   static const mihomo = CoreCapabilities._(
@@ -15,6 +17,8 @@ class CoreCapabilities {
     tunCongestionControllers: ['cubic', 'reno', 'bbr', 'bbr3'],
     defaultTunCongestionController: 'cubic',
     androidHostTun: false,
+    globalTcpKeepAliveTuning: true,
+    geoDataLoaderSelection: true,
   );
   static const meow = CoreCapabilities._(
     coreId: 'meow-rs',
@@ -23,6 +27,8 @@ class CoreCapabilities {
     tunCongestionControllers: ['builtin'],
     defaultTunCongestionController: 'builtin',
     androidHostTun: true,
+    globalTcpKeepAliveTuning: false,
+    geoDataLoaderSelection: false,
   );
 
   static CoreCapabilities forCore(String coreId) => switch (coreId) {
@@ -37,4 +43,6 @@ class CoreCapabilities {
   final List<String> tunCongestionControllers;
   final String defaultTunCongestionController;
   final bool androidHostTun;
+  final bool globalTcpKeepAliveTuning;
+  final bool geoDataLoaderSelection;
 }

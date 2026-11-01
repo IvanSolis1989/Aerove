@@ -374,9 +374,12 @@ class _CustomProxiesViewState extends ConsumerState<CustomProxiesView> {
   }
 
   void _handleAddOrUpdate({CustomProxy? proxy}) {
+    final owner = proxy == null
+        ? null
+        : customProxyOwnerId(ref.read(profilesProvider), proxy.id);
     showNestedFormSheet<CustomProxy>(
       context: context,
-      profileId: null,
+      profileId: owner ?? ProfileIdProvider.of(context)?.profileId,
       overrides: [
         customProxyProvider.overrideWithBuild(
           (_, _) =>
@@ -766,7 +769,12 @@ Future<bool> _handleSaveCustomProxy(
   }
   final issues = customProxyIssues(
     proxy,
-    proxies: ref.read(customProxiesProvider).value ?? const [],
+    proxies: availableCustomProxiesForProfile(
+      ref.read(profilesProvider),
+      ref.read(customProxiesProvider).value ?? const [],
+      ProfileIdProvider.of(context)?.profileId,
+      includeLibrary: false,
+    ),
     groupNames: groupNames,
   );
   if (issues.isEmpty) {
@@ -796,7 +804,12 @@ Future<bool> _handleSaveCustomProxy(
     return false;
   }
   final saved = proxy.id == -1 ? proxy.copyWith(id: snowflake.id) : proxy;
-  ref.read(customProxiesProvider.notifier).put(saved);
+  final owner = ProfileIdProvider.of(context)?.profileId;
+  if (owner == null) {
+    ref.read(customProxiesProvider.notifier).put(saved);
+  } else {
+    ref.read(customProxiesProvider.notifier).putForProfile(saved, owner);
+  }
   // The closing form would otherwise take its stored copy for another proxy
   // with its name.
   ref.read(customProxyProvider.notifier).value = saved;

@@ -86,6 +86,14 @@ abstract class GenerateAndroidTestAppKeepRules @Inject constructor(
     }
 }
 
+// Flutter's black-box runner is packaged by the independent android-qa build.
+// Keeping its device tests here would couple test compilation to production R8.
+if (flutterHost) {
+    androidComponents.beforeVariants { variant ->
+        variant.enableAndroidTest = false
+    }
+}
+
 androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
     val androidTest = variant.deviceTests[DeviceTestBuilder.ANDROID_TEST_TYPE] ?: return@onVariants
     val infer = tasks.register<GenerateAndroidTestAppKeepRules>(
@@ -171,7 +179,10 @@ android.apply {
         versionCode = product.getProperty("versionCode").toInt()
         versionName = product.getProperty("version")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk { abiFilters += providers.gradleProperty("liteAbi").getOrElse("arm64-v8a") }
+        ndk {
+            if (flutterHost) abiFilters.clear()
+            abiFilters += providers.gradleProperty("liteAbi").getOrElse("arm64-v8a")
+        }
     }
 
     compileOptions {

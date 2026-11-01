@@ -11,6 +11,9 @@ class ClashProviders extends Table {
 
   TextColumn get label => text()();
 
+  TextColumn get sourceDefinition =>
+      text().map(const JsonMapConverter()).nullable()();
+
   TextColumn get url => text()();
 
   TextColumn get behavior => textEnum<RuleProviderBehavior>().nullable()();
@@ -86,6 +89,7 @@ extension RawClashProviderExt on RawClashProvider {
     return ClashProvider(
       id: id,
       label: label,
+      sourceDefinition: sourceDefinition,
       url: url,
       behavior: behavior ?? RuleProviderBehavior.classical,
       format: format ?? RuleProviderFormat.yaml,
@@ -100,6 +104,7 @@ extension ClashProvidersCompanionExt on ClashProvider {
       id: Value(id),
       kind: ProviderKind.rule,
       label: label,
+      sourceDefinition: Value(sourceDefinition),
       url: url,
       behavior: Value(behavior),
       format: Value(format),

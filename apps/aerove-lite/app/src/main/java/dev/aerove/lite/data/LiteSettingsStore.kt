@@ -33,6 +33,7 @@ import org.json.JSONObject
 
 class LiteSettingsStore(privateDirectory: File) {
     private val storage = PrivateStorage(File(privateDirectory, "settings"))
+    internal val migrationRoot: File get() = storage.root.parentFile!!
     private val savedSettings = MutableStateFlow<LiteSettings?>(null)
     val changes = savedSettings.asStateFlow()
     private val publicationGate = Mutex()
@@ -71,6 +72,11 @@ class LiteSettingsStore(privateDirectory: File) {
             override val defaultUserAgent = defaultUserAgent
             override fun snapshot() = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) { read().requests }
         }
+    }
+
+    internal suspend fun migrationSnapshot(): LiteSettings = privateDomainReadOnlyTransaction(storage.root.parentFile!!) {
+        require(storage.file("settings.json").isFile) { "settings/settings.json: missing source" }
+        load()
     }
 
     suspend fun read(): LiteSettings = storage.transaction { load().also(::publish) }

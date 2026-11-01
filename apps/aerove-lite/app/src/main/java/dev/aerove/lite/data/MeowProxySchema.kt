@@ -3,10 +3,25 @@ package dev.aerove.lite.data
 /** Exact option consumers in fixed meow-config/proxy_parser.rs, not serde's permissive map. */
 internal object MeowProxySchema {
     private enum class Kind { TEXT, BOOL, UINT, TEXTS, HEADERS }
-    private val base = mapOf("name" to Kind.TEXT, "type" to Kind.TEXT, "server" to Kind.TEXT, "port" to Kind.UINT, "udp" to Kind.BOOL)
+    private val base = mapOf("name" to Kind.TEXT, "type" to Kind.TEXT, "server" to Kind.TEXT, "port" to Kind.UINT, "udp" to Kind.BOOL, "dialer-proxy" to Kind.TEXT)
     private fun text(vararg keys: String) = keys.associateWith { Kind.TEXT }
     private fun flags(vararg keys: String) = keys.associateWith { Kind.BOOL }
     private fun numbers(vararg keys: String) = keys.associateWith { Kind.UINT }
+
+    fun validateDialer(p: Map<String, Any?>, path: String) {
+        if (!p.containsKey("dialer-proxy")) return
+        val target = str(p["dialer-proxy"], "$path.dialer-proxy")
+        if (target.isEmpty()) return
+        if (target.isBlank()) fail("$path.dialer-proxy", "Whitespace is not an unset dialer")
+        if (target.trim() == p["name"]) fail("$path.dialer-proxy", "Dialer cannot point to the node itself")
+        val type = p["type"]
+        if (type !in setOf("ss", "trojan", "vmess", "vless", "http", "socks5", "snell", "trusttunnel") ||
+            type == "trusttunnel" && p["quic"] == true)
+            fail("$path.dialer-proxy", "Fixed strict factory does not carry an injected TCP dialer for this transport")
+        val plugin = p["plugin"] as? String
+        if (type == "ss" && !plugin.isNullOrEmpty() && !MeowSsPluginOptions.isBuiltin(plugin))
+            fail("$path.dialer-proxy", "External SIP003 process cannot honor the injected dialer")
+    }
 
     fun validate(p: MutableMap<String, Any?>, path: String, features: Set<String>) {
         val type = str(p["type"], "$path.type")
@@ -156,11 +171,15 @@ internal object MeowProxySchema {
             nonempty(p["client-fingerprint"], "$path.client-fingerprint")
         }
         p["ech-opts"]?.let { v ->
-            val o = map(v, "$path.ech-opts"); schema(o, "$path.ech-opts", flags("enable") + text("config"))
+            val o = map(v, "$path.ech-opts"); schema(o, "$path.ech-opts", flags("enable") + text("config", "query-server-name"))
             if (o["enable"] == true) {
-                val config = nonempty(o["config"], "$path.ech-opts.config")
-                try { if (java.util.Base64.getDecoder().decode(config).isEmpty()) fail("$path.ech-opts.config", "Empty ECH config") } catch (_: IllegalArgumentException) { fail("$path.ech-opts.config", "Invalid base64 ECH config") }
-            } else if (o.containsKey("config")) fail("$path.ech-opts.config", "ECH config would be ignored without enable: true")
+                if (p.containsKey("reality-opts")) fail("$path.ech-opts", "REALITY cannot be combined with ECH on the same TLS layer")
+                val config = o["config"] as? String
+                if (!config.isNullOrEmpty()) {
+                    if (o.containsKey("query-server-name")) fail("$path.ech-opts.query-server-name", "Inline ECH config does not consume a DNS query name")
+                    try { if (java.util.Base64.getDecoder().decode(config).isEmpty()) fail("$path.ech-opts.config", "Empty ECH config") } catch (_: IllegalArgumentException) { fail("$path.ech-opts.config", "Invalid base64 ECH config") }
+                }
+            } else for (key in listOf("config", "query-server-name")) if (o.containsKey(key)) fail("$path.ech-opts.$key", "ECH option would be ignored without enable: true")
         }
         val blocks = mapOf("ws-opts" to "ws", "grpc-opts" to "grpc", "h2-opts" to "h2", "http-upgrade-opts" to "httpupgrade", "xhttp-opts" to "xhttp")
         for ((key, transport) in blocks) p[key]?.let { v ->

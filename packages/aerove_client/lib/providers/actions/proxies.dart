@@ -48,6 +48,7 @@ class ProxiesAction extends _$ProxiesAction {
 
   final Map<String, String> _pendingSelectedRollback = {};
   int _groupsRevision = 0;
+  int _selectionMetadataRevision = 0;
 
   @override
   void build() {
@@ -111,6 +112,10 @@ class ProxiesAction extends _$ProxiesAction {
   }
 
   void changeProxyDebounce(String groupName, String proxyName) {
+    final lite = ClientProduct.current.expectedCoreId == 'meow-rs';
+    final revision = lite ? ++_selectionMetadataRevision : null;
+    final profileId = ref.read(currentProfileProvider)?.id;
+    final groupsRevision = _groupsRevision;
     _pendingSelectedRollback.putIfAbsent(
       groupName,
       () => _currentSelectedName(groupName),
@@ -122,7 +127,13 @@ class ProxiesAction extends _$ProxiesAction {
       String groupName,
       String proxyName,
     ) async {
-      await changeProxy(groupName: groupName, proxyName: proxyName);
+      await _changeProxy(
+        groupName: groupName,
+        proxyName: proxyName,
+        selectionRevision: revision,
+        profileId: profileId,
+        groupsRevision: groupsRevision,
+      );
       updateGroupsDebounce();
     }, args: [groupName, proxyName]);
   }
@@ -252,7 +263,37 @@ class ProxiesAction extends _$ProxiesAction {
   Future<void> changeProxy({
     required String groupName,
     required String proxyName,
+  }) => _changeProxy(
+    groupName: groupName,
+    proxyName: proxyName,
+    selectionRevision: ClientProduct.current.expectedCoreId == 'meow-rs'
+        ? ++_selectionMetadataRevision
+        : null,
+    profileId: ref.read(currentProfileProvider)?.id,
+    groupsRevision: _groupsRevision,
+  );
+
+  Future<void> _changeProxy({
+    required String groupName,
+    required String proxyName,
+    required int? selectionRevision,
+    required int? profileId,
+    required int groupsRevision,
   }) async {
+    final lite = ClientProduct.current.expectedCoreId == 'meow-rs';
+    bool current() =>
+        ref.mounted &&
+        selectionRevision == _selectionMetadataRevision &&
+        groupsRevision == _groupsRevision &&
+        ref.read(coreStatusProvider) == CoreStatus.connected &&
+        ref.read(currentProfileProvider)?.id == profileId &&
+        ref.read(currentProfileProvider)?.selectedMap[groupName] == proxyName;
+    if (lite &&
+        (!ref.mounted ||
+            selectionRevision != _selectionMetadataRevision ||
+            ref.read(currentProfileProvider)?.id != profileId ||
+            groupsRevision != _groupsRevision))
+      return;
     final profilesAction = ref.read(profilesActionProvider.notifier);
     final rollbackName =
         _pendingSelectedRollback.remove(groupName) ??
@@ -271,12 +312,25 @@ class ProxiesAction extends _$ProxiesAction {
         'changeProxy($groupName -> $proxyName) failed: $error',
         logLevel: coreFailureLogLevel(error),
       );
+      if (lite && !current()) return;
       profilesAction.updateCurrentSelectedMap(groupName, rollbackName);
       dialogs.showNotifier(
         currentAppLocalizations.changeProxyFailedTip,
         level: MessageLevel.error,
       );
       return;
+    }
+    if (lite) {
+      if (!current() || profileId == null) return;
+      await ref
+          .read(setupActionProvider.notifier)
+          .refreshSelectionMetadata(
+            profileId: profileId,
+            groupName: groupName,
+            proxyName: proxyName,
+            isCurrent: current,
+          );
+      if (!current()) return;
     }
     if (!result.changed) {
       return;

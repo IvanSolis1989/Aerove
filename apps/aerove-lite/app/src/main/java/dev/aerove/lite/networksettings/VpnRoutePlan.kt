@@ -97,7 +97,7 @@ private fun toCidrs(ranges: List<RouteRange>): List<String> = buildList {
 }
 
 private data class RouteKey(val included: List<String>, val excluded: List<String>, val bypassPrivate: Boolean,
-    val ipv6: Boolean, val reserved: List<String>)
+    val ipv6: Boolean, val reserved: List<String>, val auto: Boolean, val familyDefaults: Boolean)
 private val routeCache = object : LinkedHashMap<RouteKey, List<String>>(16, 0.75f, true) {
     override fun removeEldestEntry(eldest: MutableMap.MutableEntry<RouteKey, List<String>>?) = size > 16
 }
@@ -105,9 +105,11 @@ private val routeCache = object : LinkedHashMap<RouteKey, List<String>>(16, 0.75
 /** Run uncached large edits on the existing worker; repeated effective comparisons reuse a bounded cache. */
 fun planVpnRoutes(settings: NetworkSettings, ipv6: Boolean, reservedFakeIpRanges: List<String> = emptyList()): List<String> {
     val key = RouteKey(settings.routeAddress.toList(), settings.routeExcludeAddress.toList(), settings.bypassPrivateRoute,
-        ipv6, reservedFakeIpRanges.toList())
+        ipv6, reservedFakeIpRanges.toList(), settings.routeAuto, settings.routeDefaultsPerFamily)
     synchronized(routeCache) { routeCache[key]?.let { return it.toList() } }
-    val included = if (key.included.isEmpty()) listOf(whole(32), whole(128)) else key.included.map(::parseRoute)
+    val specified = key.included.map(::parseRoute)
+    val included = if (key.familyDefaults && key.auto) listOf(32,128).flatMap { family -> specified.filter { it.bits == family }.ifEmpty { listOf(whole(family)) } }
+        else if (specified.isEmpty()) { if (key.auto) listOf(whole(32), whole(128)) else emptyList() } else specified
     val private = if (key.bypassPrivate) subtractRoutes(standardPrivateRoutes.map(::parseRoute), key.reserved.map(::parseRoute)) else emptyList()
     val excluded = key.excluded.map(::parseRoute) + private
     val result = toCidrs(subtractRoutes(included.filter { ipv6 || it.bits == 32 }, excluded))

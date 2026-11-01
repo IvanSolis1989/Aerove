@@ -29,6 +29,7 @@ object MeowNativeCore {
 
     fun readCapabilities() = MeowCapabilitiesCodec.decode(capabilities())
     fun readVerifiedFeatures(): Set<String> = readCapabilities().verifiedFeatures
+    fun requireGeoInterfaces() = readCapabilities().requireGeoInterfaces()
 
     fun park(handle: Long) = MeowStatusCodec.listeners(listenerCommand(handle, "park", -1))
     fun resumeProxy(handle: Long) = MeowStatusCodec.listeners(listenerCommand(handle, "resumeProxy", -1))
@@ -45,7 +46,14 @@ class MeowCapabilitySource internal constructor(val repository: String, val comm
     val rawFileManifestSha256: String, val adaptedFileManifestSha256: String, val overlaySha256: String)
 
 /** Fixed offline factory proof only; never a protocol handshake or Android transport assertion. */
-class MeowCapabilities internal constructor(val source: MeowCapabilitySource, compiled: List<String>, verified: List<String>) {
+class MeowCapabilities internal constructor(val source: MeowCapabilitySource, compiled: List<String>, verified: List<String>,
+    interfaces: Map<String,Int> = emptyMap()) {
+    val interfaceVersions: Map<String,Int> = java.util.Collections.unmodifiableMap(LinkedHashMap(interfaces))
+    fun requireGeoInterfaces() {
+        listOf("hostBindingPlan","selectionWitness","geoOwnedReload").forEach { key ->
+            require(interfaceVersions[key] == 1) { "Meow compiled interface version mismatch: $key requires 1" }
+        }
+    }
     val compiledFeatures: Set<String> = java.util.Collections.unmodifiableSet(LinkedHashSet(compiled))
     val verifiedFeatures: Set<String> = java.util.Collections.unmodifiableSet(LinkedHashSet(verified))
     val wireVerified = false
@@ -67,7 +75,17 @@ object MeowCapabilitiesCodec {
     }
     fun decode(json: String): MeowCapabilities {
         val row = JSONObject(json)
-        row.exact(setOf("schemaVersion", "source", "compiledFeatures", "verifiedFeatures", "builtInProtocols", "verification", "wireVerified"))
+        val baseFields=setOf("schemaVersion", "source", "compiledFeatures", "verifiedFeatures", "builtInProtocols", "verification", "wireVerified")
+        row.exact(baseFields + if(row.has("interfaceVersions"))setOf("interfaceVersions") else emptySet())
+        val interfaces=if(!row.has("interfaceVersions"))emptyMap() else {
+            val versions=row.getJSONObject("interfaceVersions")
+            versions.keys().asSequence().associateWith { key ->
+                require(key in setOf("hostBindingPlan","selectionWitness","geoOwnedReload")) { "Unknown Meow compiled interface: $key" }
+                val version=versions.get(key)
+                require(version is Int && version > 0) { "Invalid Meow compiled interface version: $key" }
+                version
+            }
+        }
         require(row.get("schemaVersion") is Int && row.get("schemaVersion") == 1) { "Invalid Meow capability schema" }
         require(row.text("verification") == "fixedOfflineFactory" && row.get("wireVerified") == false) { "Invalid Meow capability verification scope" }
         val raw = row.getJSONObject("source")
@@ -86,7 +104,7 @@ object MeowCapabilitiesCodec {
             "trusttunnel-h3" to setOf("trusttunnel")).forEach { (feature, required) ->
             require(feature !in compiled || compiled.containsAll(required)) { "Meow feature dependency mismatch: $feature" }
         }
-        return MeowCapabilities(source, compiled, verified)
+        return MeowCapabilities(source, compiled, verified, interfaces)
     }
 }
 

@@ -108,6 +108,7 @@ internal class PrivateStorage(directory: File) {
     }
 
     suspend fun <T> transaction(action: suspend () -> T): T = privateDomainTransaction(domain) { withContext(Dispatchers.IO) {
+        if (root.name in setOf("profiles", "settings", "backups")) dev.aerove.lite.flutter.NativeLiteDataAuthority.requireNativeStore(root.parentFile!!)
         mutex.withLock {
             FileChannel.open(
                 File(root, ".lock").toPath(),
@@ -157,16 +158,27 @@ private class StorageDomain(val paths: Set<String>) : AbstractCoroutineContextEl
 
 private val domainLocks = ConcurrentHashMap<String, Mutex>()
 
-internal suspend fun <T> privateDomainTransaction(directory: File, action: suspend () -> T): T {
+internal suspend fun <T> privateDomainTransaction(directory: File, action: suspend () -> T): T =
+    privateDomainTransactionImpl(directory, false, action)
+
+internal suspend fun <T> privateDomainReadOnlyTransaction(directory: File, action: suspend () -> T): T =
+    privateDomainTransactionImpl(directory, true, action)
+
+private suspend fun <T> privateDomainTransactionImpl(directory: File, readOnly: Boolean, action: suspend () -> T): T {
     val root = directory.canonicalFile
     val held = currentCoroutineContext()[StorageDomain]?.paths.orEmpty()
     if (root.path in held) return action()
     return withContext(Dispatchers.IO) {
         domainLocks.computeIfAbsent(root.path) { Mutex() }.withLock {
-            check(root.isDirectory || root.mkdirs()) { "Cannot create data domain" }
-            FileChannel.open(File(root, ".domain.lock").toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE).use { channel ->
+            check(root.isDirectory || (!readOnly && root.mkdirs())) { "Cannot open data domain" }
+            val lock = File(root, ".domain.lock").toPath()
+            require(!Files.isSymbolicLink(lock)) { "Unsafe data domain lock" }
+            val options = if (readOnly) arrayOf(StandardOpenOption.WRITE)
+                else arrayOf(StandardOpenOption.CREATE, StandardOpenOption.WRITE)
+            FileChannel.open(lock, *options).use { channel ->
                 channel.lock().use {
-                    recoverDomainRestore(root)
+                    if (readOnly) check(!Files.exists(File(root, ".restore-journal").toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) { "Pending restore journal requires owner recovery" }
+                    else recoverDomainRestore(root)
                     withContext(StorageDomain(held + root.path)) { action() }
                 }
             }

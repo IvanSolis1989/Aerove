@@ -9,6 +9,10 @@ import java.io.File
 import java.util.Base64
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -26,8 +30,8 @@ class MeowOfflineMethodsTest {
         "type" to "ss", "server" to "node.example", "port" to 443, "cipher" to "aes-128-gcm", "password" to "p@ss:word").apply { if (udp != null) put("udp", udp) }
     private fun ssLink(name: String = "Node") = "ss://${Base64.getEncoder().withoutPadding().encodeToString("aes-128-gcm:p@ss:word".toByteArray())}@node.example:443#$name"
 
-    @Test fun registersExactlyTheSixSharedMethods() {
-        assertEquals(setOf("decryptConfig", "validateProxies", "validateFilters", "convertProxies", "encodeShareLinks", "decodeShareLinks"), methods(home()).methods)
+    @Test fun registersExactlyTheSharedMethods() {
+        assertEquals(setOf("decryptConfig", "validateProxies", "validateFilters", "matchFilters", "cancelFilterMatch", "convertProxies", "encodeShareLinks", "decodeShareLinks"), methods(home()).methods)
     }
 
     @Test fun decryptReturnsOriginalPlaintextWithoutSpillOrDatabase() = runBlocking {
@@ -181,6 +185,54 @@ class MeowOfflineMethodsTest {
         assertEquals(1, success.getJSONArray("result").length())
         assertEquals(0, success.getJSONArray("result").getJSONArray(0).length())
         assertTrue(dispatcher.closeAndJoin())
+    }
+
+    @Test fun dispatcherWhitelistedMatcherRoundTripsActualJsonResultAndCancellation()=runBlocking {
+        val api=methods(home(),filters=ExactFilterExecutor { _,_,_,_ ->listOf(1,0) })
+        val dispatcher=MeowProtocolDispatcher(home(),api.methods.associateWith { method ->MeowProtocolMethod { api.invoke(method,it) } })
+        val call=JSONObject().put("id","filter-call").put("method","matchFilters").put("arguments",JSONObject(matchArgs()))
+        val result=JSONObject(dispatcher.invoke(call.toString()).toString(Charsets.UTF_8))
+        assertFalse(result.has("error"));assertEquals("filter-call",result.getString("id"))
+        assertEquals(listOf(1,0),(0 until result.getJSONArray("result").length()).map {result.getJSONArray("result").getInt(it)})
+        val cancel=JSONObject(dispatcher.invoke("""{"id":"cancel","method":"cancelFilterMatch","arguments":{"request-id":"before-json"}}""").toString(Charsets.UTF_8))
+        assertTrue(cancel.getBoolean("result"));assertTrue(dispatcher.closeAndJoin())
+    }
+
+    private fun matchArgs(id: String="match",timeout: Int=10000)=mapOf("request-id" to id,"patterns" to listOf("b","a"),"names" to listOf("a","b","b"),"timeout-ms" to timeout)
+
+    @Test fun exactMatcherKeepsEngineOrderAndRejectsInvalidOrOversizedResults()=runBlocking<Unit> {
+        var calls=0
+        val api=methods(home(),filters=ExactFilterExecutor { include,exclude,names,validate ->
+            calls++;assertEquals(listOf("b","a"),include);assertTrue(exclude.isEmpty());assertEquals(listOf("a","b","b"),names);assertFalse(validate);listOf(1,0)
+        })
+        assertEquals(listOf(1,0),api.invoke("matchFilters",matchArgs()))
+        failure("bad_argument") {api.invoke("matchFilters",matchArgs("large")+("names" to List(10001){"a"}))}
+        assertEquals(1,calls)
+        failure("filter_engine_failed") {methods(home(),filters=ExactFilterExecutor { _,_,_,_ ->listOf(3) }).invoke("matchFilters",matchArgs())}
+    }
+
+    @Test fun matchCancellationJoinsTheOwnedExecutorAndPreCancellationDoesNotRunIt()=runBlocking {
+        val entered=CompletableDeferred<Unit>();val stopped=CompletableDeferred<Unit>()
+        val api=methods(home(),filters=ExactFilterExecutor { _,_,_,_ ->
+            entered.complete(Unit)
+            try {awaitCancellation()} finally {stopped.complete(Unit)}
+        })
+        val matching=async {try {api.invoke("matchFilters",matchArgs());null} catch(failure:CancellationException){failure} }
+        entered.await()
+        assertEquals(true,api.invoke("cancelFilterMatch",mapOf("request-id" to "match")))
+        assertTrue(stopped.isCompleted);assertNotNull(matching.await())
+        var calls=0
+        val before=methods(home(),filters=ExactFilterExecutor { _,_,_,_ ->calls++;emptyList() })
+        assertEquals(true,before.invoke("cancelFilterMatch",mapOf("request-id" to "before")))
+        try {before.invoke("matchFilters",matchArgs("before"));fail("Expected cancellation")} catch(_:CancellationException){}
+        assertEquals(0,calls)
+    }
+
+    @Test fun matchDeadlineIsVisibleAndJoinsBeforeFailure()=runBlocking {
+        var stopped=false
+        val api=methods(home(),filters=ExactFilterExecutor { _,_,_,_ ->try {delay(10000);emptyList()} finally {stopped=true} })
+        failure("filter_timeout") {api.invoke("matchFilters",matchArgs(timeout=5))}
+        assertTrue(stopped)
     }
 
     private suspend fun failure(code: String, operation: suspend () -> Any?): MeowProtocolFailure {

@@ -113,6 +113,68 @@ class CurrentOwnerTests(unittest.TestCase):
         self.assertEqual(2, result['runAttempt'])
         self.assertEqual(current.RENDERER_LABEL, result['rendererBackend'])
 
+    def flutter_runtime(self):
+        from verify_apk import FLUTTER_ASSET_PREFIX, FLUTTER_RELEASE_ASSETS
+        self.expected.update(sourceRevision='a' * 40, sourceTree='b' * 40, workflowRun='95')
+        app = self.runtime / 'apks/app-release.apk'
+        with zipfile.ZipFile(app, 'a') as archive:
+            for name in ('libapp.so', 'libflutter.so', 'libaerove_meow_core.so'):
+                archive.writestr('lib/x86_64/' + name, b'\x7fELFhost-contract-fixture')
+        (self.apks / 'release/app-release.apk').write_bytes(app.read_bytes())
+        info = dict(product='AEROVE Lite', application_id='dev.aerove.lite',
+                    launcher_activity='dev.aerove.lite.FlutterMainActivity', abi='x86_64',
+                    apk_sha256=current.sha(app), source=self.expected['sourceRevision'], tree=self.expected['sourceTree'],
+                    workflow='https://github.com/IvanSolis1989/Aerove/actions/runs/95', run_number=90, run_attempt=2,
+                    flutter_packaging=dict(schema=1, client_kind='flutter-aot', abi='x86_64',
+                        libraries={f'lib/x86_64/{name}': {} for name in ('libapp.so', 'libflutter.so')},
+                        assets={FLUTTER_ASSET_PREFIX + name: {} for name in FLUTTER_RELEASE_ASSETS}))
+        self.seal_flutter_info(info)
+        return info
+
+    def seal_flutter_info(self, info):
+        info_path = self.runtime / 'BUILD_INFO.json'
+        info_path.write_text(json.dumps(info))
+        rows = [dict(path=path.relative_to(self.runtime).as_posix(), bytes=path.stat().st_size,
+                     sha256=current.sha(path)) for path in (self.runtime / 'apks').iterdir()]
+        rows.append(dict(path='BUILD_INFO.json', bytes=info_path.stat().st_size, sha256=current.sha(info_path)))
+        (self.runtime / 'source-manifest.json').write_text(json.dumps(dict(self.expected,
+            abi='x86_64', prebuiltApks=True, apkInspectorOutcome='success', files=rows)))
+
+    def test_flutter_phase_uses_exact_verified_transport_inputs_and_command(self):
+        self.flutter_runtime()
+        inputs = current.flutter_ui_inputs(self.runtime, current.verify_current_runtime(self.runtime))
+        with patch.dict(os.environ, ANDROID_HOME='/sdk-home', ANDROID_SDK_ROOT='/sdk-pinned'):
+            command = current.phase_acceptance_command('flutter-ui', self.root / 'flutter-ui', inputs)
+        self.assertEqual(command, [current.sys.executable, 'apps/aerove-lite/tool/flutter_android_qa.py',
+            '--apk', str((self.apks / 'release/app-release.apk').resolve()),
+            '--test-apk', str((self.apks / 'androidTest/release/app-release-androidTest.apk').resolve()),
+            '--build-info', str((self.runtime / 'BUILD_INFO.json').resolve()),
+            '--adb', str(Path('/sdk-pinned/platform-tools/adb')),
+            '--apksigner', str(Path('/sdk-pinned/build-tools/37.0.0/apksigner')),
+            '--serial', 'emulator-5554', '--output', str(self.root / 'flutter-ui/production-ui')])
+        for phase in ('matrix', 'remaining', 'original-sample'):
+            self.assertEqual(['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', phase],
+                             current.phase_acceptance_command(phase, self.root))
+
+    def test_flutter_phase_rejects_unsealed_legacy_or_cross_run_build_info(self):
+        info = self.flutter_runtime()
+        (self.runtime / 'BUILD_INFO.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError, 'sealed runtime BUILD_INFO'):
+            current.flutter_ui_inputs(self.runtime, dict(identity=self.expected))
+        for key, value in (('launcher_activity', 'dev.aerove.lite.MainActivity'),
+                           ('workflow', 'https://github.com/IvanSolis1989/Aerove/actions/runs/other'),
+                           ('flutter_packaging', {})):
+            with self.subTest(key=key):
+                self.seal_flutter_info(dict(info, **{key: value}))
+                with self.assertRaises(ValueError):
+                    current.flutter_ui_inputs(self.runtime, current.verify_current_runtime(self.runtime))
+        self.seal_flutter_info(info)
+        manifest = json.loads((self.runtime / 'source-manifest.json').read_text())
+        manifest['files'] = [row for row in manifest['files'] if row['path'] != 'BUILD_INFO.json']
+        (self.runtime / 'source-manifest.json').write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(ValueError, 'sealed runtime BUILD_INFO'):
+            current.flutter_ui_inputs(self.runtime, dict(identity=self.expected))
+
 
 class Original84BoundaryTests(unittest.TestCase):
     def test_optin_delegates_runtime_and_renderer_to_strict_original_adapter(self):
@@ -175,7 +237,7 @@ class Original84BoundaryTests(unittest.TestCase):
 
 class CurrentCancellationTests(unittest.TestCase):
     """Real harmless children at main's cancellation seam; never Android."""
-    def exercise_cancellation(self, cleanup_error=False, mode='runtime'):
+    def exercise_cancellation(self, cleanup_error=False, mode='runtime', phase='matrix'):
         import signal
         import subprocess
         import sys
@@ -184,6 +246,7 @@ class CurrentCancellationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             children = {}
+            spawn_commands = []
             waits = {}
             original_popen = subprocess.Popen
             unrelated = original_popen([sys.executable, '-c', 'import time; time.sleep(20)'],
@@ -198,6 +261,7 @@ class CurrentCancellationTests(unittest.TestCase):
 
             def spawn(command, **kwargs):
                 nonlocal emitted_second
+                spawn_commands.append(command)
                 name = 'emulator' if '-gpu' in command else 'acceptance'
                 if name == 'emulator':
                     code = "import time; print('Graphics Adapter ANGLE (Google SwiftShader)',flush=True); time.sleep(20)"
@@ -242,7 +306,7 @@ class CurrentCancellationTests(unittest.TestCase):
 
             def adb(command, **kwargs):
                 if 'getprop' in command:
-                    log = root / 'lite-diagnostics/matrix/emulator.stdout.log'
+                    log = root / 'lite-diagnostics' / phase / 'emulator.stdout.log'
                     deadline = time.monotonic() + 3
                     while 'SwiftShader' not in log.read_text():
                         if time.monotonic() > deadline:
@@ -300,8 +364,9 @@ class CurrentCancellationTests(unittest.TestCase):
                                    GITHUB_SHA='new-source', GITHUB_RUN_ID='new-run')
                 with patch.dict(os.environ, environment), \
                         patch.object(current.sys, 'platform', 'linux'), \
-                        patch.object(current.sys, 'argv', ['owner', 'matrix', '--runtime-directory', str(root)]), \
+                        patch.object(current.sys, 'argv', ['owner', phase, '--runtime-directory', str(root)]), \
                         patch.object(current, 'verify_current_runtime', return_value=dict(identity={'source': 'fixture'})), \
+                        patch.object(current, 'flutter_ui_inputs', return_value=dict(apk='owned-app.apk', test_apk='owned-test.apk', build_info='owned-BUILD_INFO.json')), \
                         patch.object(current, 'crash_inventory', return_value={}), \
                         patch.object(current, 'preserve_owned_crash', return_value={'status': 'fixture; not Android'}), \
                         patch.object(current.subprocess, 'Popen', side_effect=spawn), \
@@ -323,7 +388,7 @@ class CurrentCancellationTests(unittest.TestCase):
                         self.assertEqual(0, exit_code)
                     else:
                         self.assertNotEqual(0, exit_code)
-                receipt = json.loads((root / 'lite-diagnostics/matrix/EMULATOR-OWNER.json').read_text())
+                receipt = json.loads((root / 'lite-diagnostics' / phase / 'EMULATOR-OWNER.json').read_text())
                 expected_signals = [signal.SIGTERM, signal.SIGINT] if mode == 'runtime' else [] if mode == 'normal' else [signal.SIGTERM]
                 self.assertEqual(expected_signals, receipt['interruptSignals'])
                 self.assertEqual(0 if mode == 'normal' else 1, receipt['result'])
@@ -337,6 +402,13 @@ class CurrentCancellationTests(unittest.TestCase):
                     self.assertEqual([], receipt['cleanupErrors'])
                 self.assertTrue(delayed_exit.is_file())
                 self.assertEqual({'emulator', 'acceptance'}, set(children))
+                self.assertEqual(1, sum('-gpu' in command for command in spawn_commands))
+                self.assertEqual(2, len(spawn_commands))
+                if phase == 'flutter-ui':
+                    self.assertIn('apps/aerove-lite/tool/flutter_android_qa.py', spawn_commands[1])
+                    self.assertNotIn('emulator_acceptance.sh', ' '.join(spawn_commands[1]))
+                    self.assertIs(receipt['representativeOnly'], True)
+                    self.assertIs(receipt['functionalAcceptance'], False)
                 for name, child in children.items():
                     self.assertIsNotNone(child.poll(), name)
                     self.assertGreater(waits[name], 0, name)
@@ -370,6 +442,38 @@ class CurrentCancellationTests(unittest.TestCase):
 
     def test_normal_main_still_joins_children_and_atomically_records_success(self):
         self.exercise_cancellation(mode='normal')
+
+    def test_flutter_phase_cancellation_joins_same_two_children_without_orphans(self):
+        self.exercise_cancellation(phase='flutter-ui')
+
+
+class FlutterPhaseBoundaryTests(unittest.TestCase):
+    def test_original_optins_are_rejected_before_runtime_lookup_or_spawn(self):
+        flags = ('AEROVE_ORIGINAL84_PROOF', 'AEROVE_ORIGINAL_RUNTIME_PROOF',
+                 'AEROVE_ORIGINAL_RUNTIME_TARGET', 'AEROVE_ORIGINAL_SAMPLE',
+                 'AEROVE_ORIGINAL_SAMPLE_SELECTOR', 'AEROVE_BETA14_PROFILE')
+        for flag in flags:
+            with self.subTest(flag=flag), patch.dict(os.environ, {flag: '1'}), \
+                    patch.object(current.sys, 'platform', 'linux'), \
+                    patch.object(current.sys, 'argv', ['owner', 'flutter-ui', '--runtime-directory', 'runtime']), \
+                    patch.object(current, 'verify_current_runtime') as verify, \
+                    patch.object(current.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(ValueError, 'without original/profile/sample'):
+                    current.main()
+                verify.assert_not_called()
+                spawn.assert_not_called()
+
+    def test_flutter_sample_and_historical_runtime_are_rejected(self):
+        with self.assertRaises(ValueError):
+            current.guard_flutter_phase('flutter-ui', sample='solid')
+        for runtime in ({'runtimeTarget': 'beta14'}, {'diagnosticOriginal84': True}, {'originalAppIdentity': {'source': 'old'}}):
+            with self.subTest(runtime=runtime), self.assertRaises(ValueError):
+                current.guard_flutter_phase('flutter-ui', runtime=runtime)
+        with patch.object(current.sys, 'argv', ['owner', 'flutter-ui', '--runtime-directory', 'runtime', '--sample', 'solid']), \
+                patch.object(current.subprocess, 'Popen') as spawn:
+            with self.assertRaises(SystemExit):
+                current.main()
+            spawn.assert_not_called()
 
 
 class OriginalSamplePhaseTests(unittest.TestCase):

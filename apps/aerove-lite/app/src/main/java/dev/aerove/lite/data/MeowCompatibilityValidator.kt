@@ -28,11 +28,12 @@ internal object MeowCompatibilityValidator {
         if (type in setOf("tuic", "ssh", "wireguard", "tailscale", "shadowquic")) fail("$path.type", "No outbound implementation in fixed Meow v0.26.1")
         if (type in setOf("ss", "trojan", "anytls", "vmess", "vless", "hysteria2", "snell", "trusttunnel") && type !in features)
             fail("$path.type", "Core supports $type; native feature verification required: $type")
+        MeowProxySchema.validateDialer(p, path)
         if (type in setOf("ss", "vless", "http", "socks5", "hysteria2", "snell", "trusttunnel")) {
             MeowProxySchema.validate(p, path, features)
             return
         }
-        val common = setOf("name", "type", "server", "port", "udp")
+        val common = setOf("name", "type", "server", "port", "udp", "dialer-proxy")
         val fields = when (type) {
             "ss" -> setOf("password", "cipher")
             "trojan", "anytls" -> setOf("password", "sni", "skip-cert-verify")
@@ -41,7 +42,7 @@ internal object MeowCompatibilityValidator {
             // A pending admission audit is a delivery gate, never a claim of missing core capability.
             else -> fail("$path.type", "Unknown proxy type or spelling")
         }
-        checkFields(p, path, if (type == "direct") setOf("name", "type") else common + fields)
+        checkFields(p, path, if (type == "direct") setOf("name", "type", "dialer-proxy") else common + fields)
         string(p["name"], "$path.name")
         if (type == "direct") return
         string(p["server"], "$path.server")

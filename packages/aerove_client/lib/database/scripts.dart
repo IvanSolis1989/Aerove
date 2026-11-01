@@ -11,6 +11,8 @@ class Scripts extends Table {
 
   DateTimeColumn get lastUpdateTime => dateTime()();
 
+  IntColumn get lastUpdateTimeMillis => integer().nullable()();
+
   TextColumn get url => text().nullable()();
 
   IntColumn get order => integer().nullable()();
@@ -87,7 +89,9 @@ extension RawScriptExt on RawScript {
     return Script(
       id: id,
       label: label,
-      lastUpdateTime: lastUpdateTime,
+      lastUpdateTime: lastUpdateTimeMillis == null
+          ? lastUpdateTime
+          : DateTime.fromMillisecondsSinceEpoch(lastUpdateTimeMillis!),
       url: url,
       order: order,
     );
@@ -100,6 +104,7 @@ extension ScriptsCompanionExt on Script {
       id: Value(id),
       label: label,
       lastUpdateTime: lastUpdateTime,
+      lastUpdateTimeMillis: Value(lastUpdateTime.millisecondsSinceEpoch),
       url: Value(url),
       order: Value(order ?? this.order),
     );

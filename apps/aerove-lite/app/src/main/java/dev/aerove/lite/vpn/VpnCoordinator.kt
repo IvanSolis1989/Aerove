@@ -25,7 +25,8 @@ import kotlinx.coroutines.sync.withLock
 data class VpnPlan(val profileId: String, val settings: LiteSettings,
     val vpnNetwork: NetworkSettings? = null, val vpnIpv6: Boolean? = null,
     val vpnSettings: LiteSettings? = null, val vpnReservedFakeIpRanges: List<String>? = null,
-    val vpnDnsEnabled: Boolean? = null, val ownerIntentToken: Long? = null)
+    val vpnDnsEnabled: Boolean? = null, val ownerIntentToken: Long? = null,
+    val runtimeSessionGeneration: Long? = null)
 class CoreEndpoint @JvmOverloads constructor(
     val port: Int,
     val secret: String,
@@ -139,6 +140,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                 withContext(NonCancellable) {
                     // Read after the previous session's join barrier, immediately before opening its successor.
                     openedPlan = if (request.internalReconnect) reconnectPlan(requestedPlan) else requestedPlan
+                    openedPlan = openedPlan.copy(runtimeSessionGeneration = request.generation)
                     session = try { backend.open(openedPlan) }
                     catch (failure: Throwable) { openingFailure = failure; throw failure }
                 }
@@ -361,6 +363,17 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
         if (!reloaded || !owns()) return@withLock false
         check(endpoint.profileRevision == next.revision && endpoint.resourceGeneration == next.generation) { "Rule reload lineage was not published" }
         true
+    }
+
+    internal suspend fun <T> withMeowSession(endpoint: CoreEndpoint, expectedGeneration: Long,
+        current: () -> Boolean, action: suspend (MeowTunnelBackend.Session, () -> Boolean) -> T): T = policyLock.withLock {
+        val owned=synchronized(this) { activeSession } ?: error("Meow session is unavailable")
+        fun owns() = !closed && owned.generation == generation.get() && owned.generation == expectedGeneration &&
+            mutableState.value.phase == VpnPhase.Running && mutableState.value.endpoint === endpoint && current()
+        check(owns()) { "Meow session was superseded" }
+        val result=action(owned.session as? MeowTunnelBackend.Session ?: error("Not a Meow session"),::owns)
+        check(owns()) { "Meow session was superseded" }
+        result
     }
 
     suspend fun configurePolicies(settings: LiteSettings) = policyLock.withLock {

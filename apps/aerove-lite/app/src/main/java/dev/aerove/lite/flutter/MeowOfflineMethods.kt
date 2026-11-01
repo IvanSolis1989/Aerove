@@ -35,6 +35,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
 
 class MeowOfflineMethods(homeDir: File,
@@ -48,6 +53,9 @@ class MeowOfflineMethods(homeDir: File,
     private val home = MeowFlutterSpill.checkedHome(homeDir)
     private val age = AgeProfileSourceDecoder(ageTransport)
     private val limits = ProfileLinkLimits()
+    private val matchGate=Any()
+    private val matchJobs=mutableMapOf<String,Job>()
+    private val cancelledMatches=mutableMapOf<String,Long>()
     val methods: Set<String> get() = METHODS
 
     suspend fun invoke(method: String, arguments: Any?): Any = withContext(Dispatchers.IO) {
@@ -55,6 +63,8 @@ class MeowOfflineMethods(homeDir: File,
         when (method) {
             "decryptConfig" -> decrypt(arguments)
             "validateProxies" -> validateProxies(mappings(arguments))
+            "matchFilters" -> matchFilters(arguments)
+            "cancelFilterMatch" -> cancelFilterMatch(arguments)
             "validateFilters" -> validateFilters(strings(arguments, 4096, FilterProtocol.MAX_BYTES))
             "convertProxies" -> decodeLinks(text(read(path(arguments), limits.maxInputBytes), "$.path"), "$.path")
             "decodeShareLinks" -> {
@@ -99,6 +109,59 @@ class MeowOfflineMethods(homeDir: File,
         currentCoroutineContext().ensureActive()
         try { checkedProxy(proxy, "$.proxies[$index]"); "" }
         catch (failure: ProxyDiagnostic) { failure.message ?: "$.proxies[$index]: Invalid proxy" }
+    }
+
+    private fun matchId(row: Map<*,*>): String = (row["request-id"] as? String)?.takeIf {
+        it.matches(Regex("[A-Za-z0-9_:.-]{1,64}"))
+    } ?: bad("$.request-id","Expected a bounded filter request identity")
+
+    private fun expireMatches() {
+        val now=System.nanoTime()
+        cancelledMatches.entries.removeIf { now-it.value>30_000_000_000L }
+    }
+
+    private suspend fun cancelFilterMatch(arguments: Any?): Boolean {
+        val row=arguments as? Map<*,*> ?: bad("$","Expected filter cancellation arguments")
+        if(row.keys != setOf("request-id")) bad("$","Unexpected cancellation field")
+        val id=matchId(row)
+        val job=synchronized(matchGate) {
+            expireMatches()
+            matchJobs[id] ?: run {
+                if(cancelledMatches.size>=256) throw MeowProtocolFailure("busy","Filter cancellation ledger is full")
+                cancelledMatches[id]=System.nanoTime();null
+            }
+        }
+        job?.cancelAndJoin()
+        return true
+    }
+
+    private suspend fun matchFilters(arguments: Any?): List<Int> {
+        val row=arguments as? Map<*,*> ?: bad("$","Expected filter matching arguments")
+        if(row.keys != setOf("request-id","patterns","names","timeout-ms")) bad("$","Unexpected filter matching field")
+        val id=matchId(row)
+        val deadline=(row["timeout-ms"] as? Number)?.takeIf { it is Int || it is Long }?.toLong()
+            ?.takeIf { it in 1..10000 } ?: bad("$.timeout-ms","Expected a deadline in 1..10000 milliseconds")
+        fun values(key: String, maximum: Int): List<String> = try { strings(row[key],maximum,FilterProtocol.MAX_BYTES) }
+            catch(_: MeowProtocolFailure) { bad("$.$key","Expected a bounded UTF-8 string list") }
+        val patterns=values("patterns",4096);val names=values("names",10000)
+        if(utf8(org.json.JSONObject(row).toString(),"$").size>FilterProtocol.MAX_BYTES) bad("$","Filter batch exceeds 4 MiB")
+        val owned=currentCoroutineContext().job
+        synchronized(matchGate) {
+            expireMatches()
+            if(cancelledMatches.remove(id)!=null) throw CancellationException("Filter matching was cancelled")
+            if(matchJobs.containsKey(id) || matchJobs.size>=8) throw MeowProtocolFailure("busy","Filter matching request is active or the queue is full")
+            matchJobs[id]=owned
+        }
+        try {
+            val result=withTimeout(deadline) { filters.indices(patterns,emptyList(),names,false) }
+            currentCoroutineContext().ensureActive()
+            if(result.any { it !in names.indices } || result.distinct().size!=result.size) throw MeowProtocolFailure("filter_engine_failed","Exact matcher returned invalid indices")
+            return result
+        } catch(_: TimeoutCancellationException) { throw MeowProtocolFailure("filter_timeout","Exact filter matching exceeded its deadline") }
+        catch(cancelled: CancellationException) { throw cancelled }
+        catch(failure: MeowProtocolFailure) { throw failure }
+        catch(_: Exception) { throw MeowProtocolFailure("filter_match_failed","Exact filter matching failed") }
+        finally { synchronized(matchGate) { matchJobs.remove(id) } }
     }
 
     private suspend fun validateFilters(values: List<String>): List<String> = values.mapIndexed { index, filter ->
@@ -277,7 +340,7 @@ class MeowOfflineMethods(homeDir: File,
     private fun bad(field: String, reason: String): Nothing = throw MeowProtocolFailure("bad_argument", reason, mapOf("field" to field))
     private fun blocked(field: String, reason: String): Nothing = throw MeowProtocolFailure("implementation_blocked", reason, mapOf("field" to field))
     companion object {
-        val METHODS: Set<String> = setOf("decryptConfig", "validateProxies", "validateFilters", "convertProxies", "encodeShareLinks", "decodeShareLinks")
+        val METHODS: Set<String> = setOf("decryptConfig", "validateProxies", "validateFilters", "matchFilters", "cancelFilterMatch", "convertProxies", "encodeShareLinks", "decodeShareLinks")
         private val FILTER_DIAGNOSTIC = Regex("^\\$\\.include\\[0]\\.parts\\[[0-9]+]:")
     }
 }

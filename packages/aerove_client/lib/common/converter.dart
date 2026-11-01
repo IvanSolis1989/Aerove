@@ -2,6 +2,10 @@ import 'package:fl_clash/enum/enum.dart';
 
 import 'print.dart';
 
+class AtomicDecodeException extends FormatException {
+  const AtomicDecodeException(super.message, super.source);
+}
+
 T decodeOrRestoreDefault<T>(
   String label,
   T Function() decode,
@@ -32,6 +36,8 @@ T decodeSalvaging<T>(
       try {
         decode(candidate as Map<String, Object?>);
         return true;
+      } on AtomicDecodeException {
+        rethrow;
       } catch (_) {
         return false;
       }
@@ -78,8 +84,15 @@ Object? _salvage(
   List<String> dropped,
   String path,
 ) {
-  if (accepts(value)) {
-    return value;
+  try {
+    if (accepts(value)) {
+      return value;
+    }
+  } on AtomicDecodeException catch (error) {
+    if (identical(error.source, value)) {
+      dropped.add(path);
+      return _dropped;
+    }
   }
   final nestedDropped = <String>[];
   final salvaged = switch (value) {

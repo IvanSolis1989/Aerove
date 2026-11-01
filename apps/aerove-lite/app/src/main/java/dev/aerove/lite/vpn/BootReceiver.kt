@@ -19,6 +19,10 @@ class BootReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val application = context.applicationContext as LiteApplication
+                if(application.usesSharedFlutterClient) {
+                    application.startSharedExternal(autoRun=true,expectedStartEpoch=application.startIntentEpoch())
+                    return@launch
+                }
                 val settings = application.settings.read()
                 if (!application.maintenanceActive && settings.autoStart && canStartRuntime(settings.network.vpnEnabled) { VpnService.prepare(context) == null } &&
                     application.profiles.snapshot().selectedId != null) {

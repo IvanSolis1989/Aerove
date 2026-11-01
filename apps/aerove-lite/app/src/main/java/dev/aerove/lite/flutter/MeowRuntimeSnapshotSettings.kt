@@ -36,6 +36,19 @@ object MeowRuntimeSnapshotSettings {
                 options.getBoolean("allowBypass") == settings.network.allowBypass &&
                 options.getBoolean("systemProxy") == settings.network.systemProxy) { "runtime_projection_conflict: vpnOptions" }
         }
+        if (options.has("rawRouteAddress")) {
+            fun rows(key: String) = options.getJSONArray(key).let { values -> (0 until values.length()).map { values.getString(it) } }
+            require(rows("rawRouteAddress") == settings.network.routeAddress && rows("rawRouteExcludeAddress") == settings.network.routeExcludeAddress &&
+                options.getBoolean("bypassPrivateRoute") == settings.network.bypassPrivateRoute && options.getBoolean("routeAuto") == settings.network.routeAuto &&
+                options.getBoolean("routeDefaultsPerFamily") == settings.network.routeDefaultsPerFamily) { "runtime_projection_conflict: original route policy" }
+        }
+        val builder = meowFlutterBuilderSettings(settings, handoff.vpnOptionsJson)
+        val requested = settings.copy(ipv6 = builder.ipv6)
+        dev.aerove.lite.data.MeowTunReconciliation.requireActual(handoff.compiledYaml, requested,
+            dev.aerove.lite.data.TunRuntimeOptions(builder.network.mtu, builder.network.dnsHijacking, builder.ipv6,
+                builder.network.tunInet4Address, builder.network.tunInet6Address, builder.network.tunDnsHijack, builder.network))
+        if (options.has("mtu")) require((options.getInt("mtu").takeIf { it > 0 } ?: 9000) == builder.network.mtu) { "runtime_projection_conflict: vpnOptions.mtu" }
+        if (options.has("rawRouteAddress") && options.has("routeAuto")) require((0 until options.getJSONArray("routeAddress").length()).map { options.getJSONArray("routeAddress").getString(it) } == dev.aerove.lite.networksettings.planVpnRoutes(builder.network, builder.ipv6, dev.aerove.lite.data.MeowTunReconciliation.reservedRanges(handoff.compiledYaml, builder.ipv6))) { "runtime_projection_conflict: vpnOptions.routeAddress" }
         require(notification.getBoolean("onlyStatisticsProxy") == settings.backgroundPolicy.onlyStatisticsProxy &&
             notification.getBoolean("showStopAction") == settings.backgroundPolicy.showNotificationStopAction) { "runtime_projection_conflict: notification" }
     }

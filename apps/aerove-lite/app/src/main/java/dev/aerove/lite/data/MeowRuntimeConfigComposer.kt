@@ -20,10 +20,23 @@ class MeowRuntimeConfig internal constructor(
     val physicalNetwork: MeowPhysicalNetwork,
     val resourceReadRoot: File?,
     val cacheRoot: File?,
+    val geoHostBinding: MeowGeoHostBinding? = null,
+    val geoReadRootAuthority: File? = null,
+    val hostRawSelectedMap: Map<String, String>? = null,
 ) {
     internal fun withResources(yaml: String, readRoot: File, revision: String?, generation: String?): MeowRuntimeConfig =
         MeowRuntimeConfig(yaml, privateControl, tun, userInboundYaml, hostPolicyYaml, initiallyParked,
-            profileId, revision, generation, runtimeMode, physicalNetwork, readRoot, cacheRoot)
+            profileId, revision, generation, runtimeMode, physicalNetwork, readRoot, cacheRoot, geoHostBinding, geoReadRootAuthority, hostRawSelectedMap)
+
+    internal fun withGeoHostBinding(binding: MeowGeoHostBinding, authority: File, raw: Map<String, String>) =
+        MeowRuntimeConfig(engineYaml, privateControl, tun, userInboundYaml, hostPolicyYaml, initiallyParked,
+            profileId, revision, resourceGeneration, runtimeMode, physicalNetwork, resourceReadRoot, cacheRoot,
+            binding, authority, raw.toMap())
+
+    internal fun withAppliedGeo(candidate: MeowGeoCandidate, binding: MeowGeoHostBinding) =
+        MeowRuntimeConfig(candidate.engineYaml, privateControl, tun, userInboundYaml, hostPolicyYaml, initiallyParked,
+            profileId, revision, candidate.compiledSha256, runtimeMode, physicalNetwork, resourceReadRoot, cacheRoot,
+            binding, geoReadRootAuthority, hostRawSelectedMap)
 
     fun planJson(): String = JSONObject().put("schemaVersion", 1).put("runtimeMode", runtimeMode.wireValue)
         .put("initiallyParked", initiallyParked).put("engineYaml", engineYaml)
@@ -34,16 +47,24 @@ class MeowRuntimeConfig internal constructor(
         .put("profileId", profileId ?: JSONObject.NULL).put("revision", revision ?: JSONObject.NULL)
         .put("resourceGeneration", resourceGeneration ?: JSONObject.NULL)
         .put("resourceReadRoot", resourceReadRoot?.path ?: JSONObject.NULL)
+        .apply {
+            if(geoHostBinding != null) {
+                put("hostBinding",geoHostBinding.json())
+                put("geoReadRootAuthority",checkNotNull(geoReadRootAuthority).path)
+                put("hostRawSelectedMap",JSONObject(checkNotNull(hostRawSelectedMap)))
+            } else require(geoReadRootAuthority == null && hostRawSelectedMap == null) { "Partial trusted Geo plan" }
+        }
         .put("cacheRoot", checkNotNull(cacheRoot) { "A trusted private session cacheRoot is required" }.path).toString()
 
     override fun toString() = "MeowRuntimeConfig(parked=$initiallyParked, tun=${tun != null}, credentials=<redacted>)"
 }
 
 class MeowTunPlan internal constructor(val descriptor: Int?, val rawYaml: String, val mtu: Int,
-    val ipv6: Boolean, val dnsHijack: List<String>) {
+    val ipv6: Boolean, val dnsHijack: List<String>,
+    val inet4Address: String = "198.18.0.1/30", val inet6Address: String = "fdfe:dcba:9876::1/126") {
     internal fun json(): JSONObject = JSONObject().put("mtu", mtu).put("ipv6", ipv6)
-        .put("inet4Address", "198.18.0.1/30")
-        .put("inet6Address", if (ipv6) "fdfe:dcba:9876::1/126" else JSONObject.NULL)
+        .put("inet4Address", inet4Address)
+        .put("inet6Address", if (ipv6) inet6Address else JSONObject.NULL)
         .put("dnsHijack", org.json.JSONArray(dnsHijack)).put("autoRoute", false)
     override fun toString() = "MeowTunPlan(descriptorPresent=${descriptor != null})"
 }
@@ -65,10 +86,10 @@ class MeowRuntimeConfigComposer(privateDirectory: File, private val defaultUserA
     fun compose(prepared: PreparedProfile, settings: LiteSettings, tunFd: Int, port: Int, secret: String,
         runtimeMode: RuntimeMode = if (settings.network.vpnEnabled) RuntimeMode.Tun else RuntimeMode.Proxy,
         systemDns: SystemDnsSnapshot = SystemDnsSnapshot(),
-        tunOptions: TunRuntimeOptions = TunRuntimeOptions(settings.network.mtu, settings.network.dnsHijacking, settings.ipv6),
+        tunOptions: TunRuntimeOptions = TunRuntimeOptions(settings.network.mtu, settings.network.dnsHijacking, settings.ipv6, settings.network.tunInet4Address, settings.network.tunInet6Address, settings.network.tunDnsHijack, settings.network),
         initiallyParked: Boolean = false, physicalNetworkHandle: String? = null,
-        verifiedNativeFeatures: Set<String> = emptySet()): MeowRuntimeConfig {
-        val input = input(prepared.yaml)
+        verifiedNativeFeatures: Set<String> = emptySet(), tunReconciliation: MeowTunReconciliation? = null): MeowRuntimeConfig {
+        val input = input(prepared.yaml, settings, tunOptions, tunReconciliation)
         val composed = shared.compose(prepared.copy(yaml = ConfigYaml.dump(input.first)), settings, tunFd, port,
             secret, runtimeMode, systemDns, tunOptions, initiallyParked)
         return finish(composed, input.second, tunFd, runtimeMode, tunOptions, initiallyParked,
@@ -78,10 +99,10 @@ class MeowRuntimeConfigComposer(privateDirectory: File, private val defaultUserA
     fun compose(source: String, settings: LiteSettings, tunFd: Int, port: Int, secret: String,
         runtimeMode: RuntimeMode = if (settings.network.vpnEnabled) RuntimeMode.Tun else RuntimeMode.Proxy,
         systemDns: SystemDnsSnapshot = SystemDnsSnapshot(),
-        tunOptions: TunRuntimeOptions = TunRuntimeOptions(settings.network.mtu, settings.network.dnsHijacking, settings.ipv6),
+        tunOptions: TunRuntimeOptions = TunRuntimeOptions(settings.network.mtu, settings.network.dnsHijacking, settings.ipv6, settings.network.tunInet4Address, settings.network.tunInet6Address, settings.network.tunDnsHijack, settings.network),
         initiallyParked: Boolean = false, physicalNetworkHandle: String? = null,
-        verifiedNativeFeatures: Set<String> = emptySet()): MeowRuntimeConfig {
-        val input = input(source)
+        verifiedNativeFeatures: Set<String> = emptySet(), tunReconciliation: MeowTunReconciliation? = null): MeowRuntimeConfig {
+        val input = input(source, settings, tunOptions, tunReconciliation)
         return finish(shared.compose(ConfigYaml.dump(input.first), settings, tunFd, port, secret,
             runtimeMode, systemDns, tunOptions, initiallyParked), input.second, tunFd, runtimeMode,
             tunOptions, initiallyParked, null, null, null, MeowPhysicalNetwork(physicalNetworkHandle, systemDns), verifiedNativeFeatures.toSet(), null, settings)
@@ -90,8 +111,8 @@ class MeowRuntimeConfigComposer(privateDirectory: File, private val defaultUserA
     fun composeFlutter(prepared: PreparedProfile, lease: FlutterRuntimeResources, settings: LiteSettings, tunFd: Int,
         port: Int, secret: String, runtimeMode: RuntimeMode, systemDns: SystemDnsSnapshot,
         tunOptions: TunRuntimeOptions, initiallyParked: Boolean, physicalNetworkHandle: String?,
-        verifiedNativeFeatures: Set<String>): MeowRuntimeConfig {
-        val input = input(prepared.yaml)
+        verifiedNativeFeatures: Set<String>, tunReconciliation: MeowTunReconciliation? = null): MeowRuntimeConfig {
+        val input = input(prepared.yaml, settings, tunOptions, tunReconciliation)
         val composed = shared.composeFlutter(prepared, lease, settings, tunFd,
             port, secret, runtimeMode, systemDns, tunOptions, initiallyParked, ConfigYaml.dump(input.first))
         return finish(composed, input.second, tunFd, runtimeMode, tunOptions, initiallyParked,
@@ -101,7 +122,11 @@ class MeowRuntimeConfigComposer(privateDirectory: File, private val defaultUserA
 
     private fun invalid(path: String, reason: String): Nothing = throw ConfigValidationException(listOf(ConfigIssue(path, reason)))
 
-    private fun input(source: String): Pair<MutableMap<String, Any?>, List<Any?>> = MeowSourceConfig.input(source)
+    private fun input(source: String, settings: LiteSettings, actual: TunRuntimeOptions, reconciliation: MeowTunReconciliation?): Pair<MutableMap<String, Any?>, List<Any?>> {
+        val builder = settings.copy(network = actual.builderNetwork ?: settings.network.copy(mtu = actual.mtu, dnsHijacking = actual.dnsHijacking, tunInet4Address = actual.inet4Address, tunInet6Address = actual.inet6Address, tunDnsHijack = actual.dnsHijackTargets), ipv6 = actual.ipv6)
+        MeowTunReconciliation.requireActual(source, reconciliation?.settings ?: builder, actual)
+        return MeowSourceConfig.input(source, reconciliation)
+    }
 
     private fun finish(composed: String, named: List<Any?>, fd: Int, mode: RuntimeMode, actual: TunRuntimeOptions,
         parked: Boolean, profile: String?, revision: String?, generation: String?, physicalNetwork: MeowPhysicalNetwork,
@@ -128,10 +153,10 @@ class MeowRuntimeConfigComposer(privateDirectory: File, private val defaultUserA
         if (dns?.containsKey("listen") == true) user["dns-listen"] = dns.remove("listen")
         val tun = if (mode == RuntimeMode.Proxy) null else MeowTunPlan(if (parked) null else fd,
             ConfigYaml.dump(linkedMapOf<String, Any?>("enable" to true, "auto-route" to false,
-                "inet4-address" to "198.18.0.1/30", "mtu" to actual.mtu,
-                "dns-hijack" to if (dns?.get("enable") == true && actual.dnsHijacking) listOf("any:53") else emptyList<String>())
-                .apply { if (actual.ipv6) put("inet6-address", "fdfe:dcba:9876::1/126") }), actual.mtu, actual.ipv6,
-            if (dns?.get("enable") == true && actual.dnsHijacking) listOf("any:53") else emptyList())
+                "inet4-address" to actual.inet4Address, "mtu" to actual.mtu,
+                "dns-hijack" to if (dns?.get("enable") == true && actual.dnsHijacking) actual.dnsHijackTargets ?: listOf("any:53") else emptyList<String>())
+                .apply { if (actual.ipv6) put("inet6-address", actual.inet6Address) }), actual.mtu, actual.ipv6,
+            if (dns?.get("enable") == true && actual.dnsHijacking) actual.dnsHijackTargets ?: listOf("any:53") else emptyList(), actual.inet4Address, actual.inet6Address)
         root["tun"] = linkedMapOf("enable" to false, "auto-route" to false)
         @Suppress("UNCHECKED_CAST")
         val geo = (root["geodata"] as? MutableMap<String, Any?>) ?: linkedMapOf()

@@ -203,7 +203,8 @@ class _DnsOverrideSpec extends OverrideSpec<DnsOverrideKey, Dns> {
     ),
     DnsOverrideKey.ipv6 => ToggleOverrideField(
       (dns) => dns.ipv6,
-      (dns, value) => dns.copyWith(ipv6: value),
+      (dns, value) =>
+          dns.copyWith(ipv6: value).withExplicitDnsKey(DnsOverrideKey.ipv6),
     ),
     DnsOverrideKey.ipv6Timeout => NumberOverrideField(
       (dns) => dns.ipv6Timeout,
@@ -240,7 +241,9 @@ class _DnsOverrideSpec extends OverrideSpec<DnsOverrideKey, Dns> {
     ),
     DnsOverrideKey.fakeIpRange6 => TextOverrideField(
       (dns) => dns.fakeIpRange6,
-      (dns, value) => dns.copyWith(fakeIpRange6: value),
+      (dns, value) => dns
+          .copyWith(fakeIpRange6: value)
+          .withExplicitDnsKey(DnsOverrideKey.fakeIpRange6),
       maxLength: TextInputLimits.cidr,
       validator: validateCidr,
     ),

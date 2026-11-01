@@ -1,10 +1,8 @@
 package dev.aerove.lite.vpn
 
 import android.app.PendingIntent
-import android.content.Intent
 import android.net.Network
 import android.os.ParcelFileDescriptor
-import dev.aerove.lite.MainActivity
 import dev.aerove.lite.LiteApplication
 import dev.aerove.lite.data.ProfileLease
 import dev.aerove.lite.data.SystemDnsSnapshot
@@ -18,18 +16,14 @@ internal fun establishAndroidTun(service: LiteVpnService, plan: VpnPlan, port: I
         check(android.net.VpnService.prepare(service) == null) { "VPN authorization is required" }
         val builder = service.Builder()
             .setSession("AEROVE Lite")
-            .addAddress("198.18.0.1", 30)
             .setBlocking(false)
             .setMetered(false)
             .setConfigureIntent(PendingIntent.getActivity(
-                service, 0, Intent(service, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE,
+                service, 0, dev.aerove.lite.platform.LiteLaunchIntent.create(service), PendingIntent.FLAG_IMMUTABLE,
             ))
         val networkPlan = vpnBuilderNetworkPlan(plan, port, reservedRanges)
         applyVpnNetworkPolicy(builder, networkPlan)
         applyVpnTunPolicy(builder, networkPlan)
-        if (vpnBuilderIpv6(plan)) {
-            builder.addAddress("fdfe:dcba:9876::1", 126)
-        }
         val builderSettings = plan.builderSettings()
         val applications = vpnApplicationPolicy(builderSettings.appFilterMode, builderSettings.packages, service.packageName)
         fun addApplication(name: String, include: Boolean) {

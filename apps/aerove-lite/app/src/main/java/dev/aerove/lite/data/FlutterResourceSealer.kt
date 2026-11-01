@@ -13,7 +13,7 @@ data class SealedFlutterResource(val relativePath: String, val sourcePath: Strin
 
 internal class ResourceGenerationLease(val directory: File, private val release: () -> Unit) {
     private var closed = false
-    @Synchronized fun close() { if (!closed) { release(); closed = true } }
+    @Synchronized fun close() { if (!closed) { try { release() } finally { closed = true } } }
 }
 
 /** Owns the manager's candidate protection until the caller has copied and read back every file. */
@@ -25,6 +25,8 @@ class FlutterResourceLease internal constructor(val yaml: String, val directory:
 /** No profile/preferences repository: the sole input is the shared client's already compiled YAML. */
 class FlutterResourceSealer(private val manager: ResourceBundleManager, private val defaultUserAgent: String) {
     init { require(dev.aerove.lite.requests.RequestPreferences.validUserAgent(defaultUserAgent)) }
+
+    fun requiresGeoCapture(source: String): Boolean = manager.requiresGeoCapture(source)
 
     suspend fun borrow(source: String, directory: File): FlutterResourceLease {
         var retained: ResourceGenerationLease? = null
@@ -39,7 +41,7 @@ class FlutterResourceSealer(private val manager: ResourceBundleManager, private 
         }
     }
 
-    suspend fun prepare(source: String, checkCertificate: Boolean, selectedMap: Map<String, String> = emptyMap()): FlutterResourceLease {
+    suspend fun prepare(source: String, checkCertificate: Boolean, selectedMap: Map<String, String> = emptyMap(), tunReconciliation: MeowTunReconciliation? = null, geoResourceReader: HostGeoResourceReader? = null): FlutterResourceLease {
         val root = ConfigYaml.parse(source)
         val userAgent = root["global-ua"]?.let {
             it as? String ?: throw ConfigValidationException(listOf(ConfigIssue("$.global-ua", "Expected string host policy")))
@@ -53,13 +55,14 @@ class FlutterResourceSealer(private val manager: ResourceBundleManager, private 
         var bundle: ResourceBundle? = null
         try {
             withContext(Dispatchers.IO) { inputs = manager.retainSealedInputs(root) }
-            val prepared = manager.prepare(owner, source, policyFingerprint = sha256(policy.json().toString() + "\n" + JSONObject(selectedMap.toSortedMap())),
-                requestPolicy = policy, selectedMap = selectedMap.toMap(), sealedInputs = inputs)
+            val executableSource=if(root.remove("aerove-native-resource-manifest")!=null) ConfigYaml.dump(root) else source
+            val prepared = manager.prepare(owner, executableSource, logicalOriginalSource=source, policyFingerprint = sha256(policy.json().toString() + "\n" + JSONObject(selectedMap.toSortedMap())),
+                requestPolicy = policy, selectedMap = selectedMap.toMap(), sealedInputs = inputs,tunReconciliation=tunReconciliation,geoResourceReader=geoResourceReader)
             bundle = prepared
             currentCoroutineContext().ensureActive()
             val directory = prepared.directory.toPath().toRealPath().toFile()
             val manifest = JSONObject(File(directory, "manifest.json").readText())
-            require(manifest.getString("compiledInputSha256") == sha256(source) &&
+            require(manifest.getString("sourceSha256")==sha256(source) && manifest.getString("compiledInputSha256") == sha256(executableSource) &&
                 manifest.getString("configSha256") == sha256(prepared.yaml)) { "Sealed Flutter source changed" }
             val resources = withContext(Dispatchers.IO) { inputs.verify(); SealedResourceInputs.readFiles(directory) }
             return FlutterResourceLease(prepared.yaml, directory, resources) {

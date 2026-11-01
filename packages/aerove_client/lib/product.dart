@@ -36,6 +36,7 @@ class ProductSpec {
     required this.releaseAssetPattern,
     required this.changelogPath,
     required this.coreSourceUrl,
+    this.beforeDataBootstrap,
   });
 
   final String id;
@@ -48,6 +49,7 @@ class ProductSpec {
   final String releaseAssetPattern;
   final String changelogPath;
   final String coreSourceUrl;
+  final Future<void> Function()? beforeDataBootstrap;
 
   CoreCapabilities get coreCapabilities =>
       CoreCapabilities.forCore(expectedCoreId);
@@ -82,4 +84,8 @@ class ClientProduct {
   static CoreHandlerInterface createBackend() =>
       (_backendFactory ??
       (throw StateError('Core backend is not configured')))();
+}
+
+Future<void> runProductDataPrerequisite(ProductSpec product) async {
+  await product.beforeDataBootstrap?.call();
 }

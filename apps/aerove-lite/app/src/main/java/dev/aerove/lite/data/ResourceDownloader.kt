@@ -31,12 +31,18 @@ class ResourceDownloader(client: OkHttpClient, private val source: RequestPolicy
         .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    internal suspend fun download(url: String, destination: File, limit: Long): ResourceDigest = withTimeout(20_000) {
-        withContext(Dispatchers.IO) { downloadBounded(url, destination, limit) }
+    internal fun policyIdentity(preferences: dev.aerove.lite.requests.RequestPreferences): String =
+        sha256(org.json.JSONObject().put("userAgent",preferences.globalUserAgent ?: source.defaultUserAgent)
+            .put("checkCertificate",preferences.checkCertificate).toString())
+
+    internal suspend fun download(url: String, destination: File, limit: Long): ResourceDigest =
+        download(url,destination,limit,source.snapshot())
+
+    internal suspend fun download(url: String, destination: File, limit: Long, preferences: dev.aerove.lite.requests.RequestPreferences): ResourceDigest = withTimeout(20_000) {
+        withContext(Dispatchers.IO) { downloadBounded(url, destination, limit, preferences) }
     }
 
-    private suspend fun downloadBounded(url: String, destination: File, limit: Long): ResourceDigest {
-        val preferences = source.snapshot()
+    private suspend fun downloadBounded(url: String, destination: File, limit: Long, preferences: dev.aerove.lite.requests.RequestPreferences): ResourceDigest {
         val scoped = http.forDownload(preferences)
         var target = SubscriptionDownloader.parseUrl(url)
         val cancellation = DownloadCancellation(currentCoroutineContext())

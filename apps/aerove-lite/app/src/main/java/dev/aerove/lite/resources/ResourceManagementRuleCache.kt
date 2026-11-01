@@ -28,7 +28,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okio.utf8Size
 import org.json.JSONArray
@@ -51,13 +50,19 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
     private val storage = PrivateStorage(directory)
     private val state = states.computeIfAbsent(storage.root.path) { CacheState() }
     private val mutex = state.mutex
+    private val mutations = dev.aerove.lite.data.ResourceBundleManager.migrationFence(storage.root.parentFile!!)
 
     suspend fun sync(name: String, url: String, behavior: String, format: String, input: InputStream? = null,
         expected: ManagedRuleResource? = null, assetKind: String = "ruleset"): ManagedRuleResource =
         sync(name, url, behavior, format, input, expected, assetKind, isCurrent = { true })
 
     suspend fun sync(name: String, url: String, behavior: String, format: String, input: InputStream? = null,
-        expected: ManagedRuleResource? = null, assetKind: String = "ruleset", isCurrent: () -> Boolean): ManagedRuleResource = withContext(Dispatchers.IO) {
+        expected: ManagedRuleResource? = null, assetKind: String = "ruleset", isCurrent: () -> Boolean): ManagedRuleResource =
+        syncWithPolicy(name,url,behavior,format,input,expected,assetKind,isCurrent,null)
+
+    suspend fun syncWithPolicy(name: String, url: String, behavior: String, format: String, input: InputStream? = null,
+        expected: ManagedRuleResource? = null, assetKind: String = "ruleset", isCurrent: () -> Boolean,
+        requests: dev.aerove.lite.requests.RequestPreferences?): ManagedRuleResource = mutations.mutation { withContext(Dispatchers.IO) {
         val key = identity(name, url, behavior, format, assetKind)
         val baseline = locked {
             if (!isCurrent()) throw CancellationException("Resource source changed")
@@ -66,23 +71,24 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
         val staging = File(storage.root, ".staging/${UUID.randomUUID()}").apply { check(mkdirs()) }
         try {
             val file = File(staging, "payload.bin")
-            val digest = if (input == null) downloader.download(url, file, limit(assetKind))
-                else input.use { copyResource(it, file, limit(assetKind)) }
+            val digest = if (input == null) {
+                if (requests == null) downloader.download(url,file,limit(assetKind)) else downloader.download(url,file,limit(assetKind),requests)
+            } else input.use { copyResource(it, file, limit(assetKind)) }
             currentCoroutineContext().ensureActive()
             locked {
                 if (!isCurrent()) throw CancellationException("Resource source changed")
                 check(state.restoreEpoch == baseline.first && indexDigest(key) == baseline.second) { "Resource source changed during download" }
                 currentCoroutineContext().ensureActive()
-                file.inputStream().use { publish(name, url, behavior, format, it, expected, assetKind, prune = true, sourceDigest = digest, commitGuard = isCurrent) }
+                file.inputStream().use { publish(name, url, behavior, format, it, expected, assetKind, prune = true, sourceDigest = digest, commitGuard = isCurrent, requestPolicyIdentity = requests?.let(downloader::policyIdentity)) }
             }
         } finally { withContext(NonCancellable) { deletePrivateTree(storage.root, staging) } }
-    }
+    } }
 
     suspend fun storePrepared(name: String, url: String, localId: String?, source: File, digest: ResourceDigest,
-        inspected: RulePayloadInspection): ManagedRuleResource = withContext(Dispatchers.IO) { locked {
+        inspected: RulePayloadInspection): ManagedRuleResource = mutations.mutation { withContext(Dispatchers.IO) { locked {
         source.inputStream().use { publish(name, url, inspected.behavior, inspected.format, it, null, "ruleset", true,
             localId, inspected, digest, true) }
-    } }
+    } } }
 
     suspend fun <T> withPayload(name: String, url: String, behavior: String, format: String, localId: String?,
         action: suspend (ManagedRuleResource, File) -> T): T = withContext(Dispatchers.IO) { locked {
@@ -90,7 +96,7 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
         action(saved.first.copy(name = name), saved.second)
     } }
 
-    suspend fun pruneLocal(retainedIds: Set<String>) = withContext(Dispatchers.IO) { locked {
+    suspend fun pruneLocal(retainedIds: Set<String>) = mutations.mutation { withContext(Dispatchers.IO) { locked {
         val unused = storage.root.listFiles().orEmpty().filter { it.name.matches(Regex("[0-9a-f]{64}\\.json")) }
             .mapNotNull { index -> read(index.nameWithoutExtension)?.first?.takeIf { it.localId != null && it.localId !in retainedIds }?.let { index } }
         for (index in unused) {
@@ -98,12 +104,12 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
             java.nio.file.Files.deleteIfExists(index.toPath())
             deletePrivateTree(storage.root, File(storage.root, index.nameWithoutExtension))
         }
-    } }
+    } } }
 
     private suspend fun publish(name: String, url: String, behavior: String, format: String, input: InputStream?,
         expected: ManagedRuleResource?, assetKind: String, prune: Boolean, localId: String? = null,
         inspected: RulePayloadInspection? = null, sourceDigest: ResourceDigest? = null, normalized: Boolean = false,
-        commitGuard: () -> Boolean = { true }): ManagedRuleResource {
+        commitGuard: () -> Boolean = { true }, requestPolicyIdentity: String? = null): ManagedRuleResource {
         val identity = identity(name, url, behavior, format, assetKind, localId)
         val directory = File(storage.root, "$identity/${UUID.randomUUID()}").apply { check(mkdirs()) }
         var committed = false
@@ -144,6 +150,7 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
             if (expected?.runtimeSha256 != null) require(value.runtimeSha256 == expected.runtimeSha256 && value.runtimeBytes == expected.runtimeBytes) { "Restored materialized rule payload changed" }
             val row = encode(value).put("schema", 1).put("file", storage.root.toPath().relativize(file.toPath()).joinToString("/"))
                 .put("runtimeFile", if (normalized) storage.root.toPath().relativize(runtimeFile.toPath()).joinToString("/") else JSONObject.NULL)
+            if (requestPolicyIdentity != null) row.put("requestPolicySha256",requestPolicyIdentity)
             PrivateStorage(directory).write("manifest.json", row.toString())
             currentCoroutineContext().ensureActive()
             val previous = runCatching { read(identity) }.getOrNull()?.second?.parentFile
@@ -160,7 +167,7 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
         }
     }
 
-    suspend fun <T> withRestoreTransaction(invalidateInFlight: Boolean = false, action: suspend (LibraryCacheRestore) -> T): T = withContext(Dispatchers.IO) {
+    suspend fun <T> withRestoreTransaction(invalidateInFlight: Boolean = false, action: suspend (LibraryCacheRestore) -> T): T = mutations.mutation { withContext(Dispatchers.IO) {
         locked {
             if (invalidateInFlight) state.restoreEpoch++
             val owner = checkNotNull(currentCoroutineContext()[CacheLock])
@@ -175,14 +182,23 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
                 }
             })
         }
+    } }
+
+    private suspend fun <T> locked(rejectBusy: Boolean = false, action: suspend () -> T): T {
+        if (currentCoroutineContext()[CacheLock]?.let { it.path == storage.root.path && it.active } == true) return action()
+        if (rejectBusy) check(mutex.tryLock()) { "runtime/resources/library: active resource reader" }
+        else mutex.lock()
+        val owner = CacheLock(storage.root.path)
+        try { return withContext(owner) { action() } }
+        finally { owner.active = false; mutex.unlock() }
     }
 
-    private suspend fun <T> locked(action: suspend () -> T): T {
-        if (currentCoroutineContext()[CacheLock]?.let { it.path == storage.root.path && it.active } == true) return action()
-        return mutex.withLock {
-            val owner = CacheLock(storage.root.path)
-            try { withContext(owner) { action() } } finally { owner.active = false }
+    internal suspend fun <T> withMigrationSnapshot(action: suspend () -> T): T = locked(rejectBusy = true) {
+        storage.root.listFiles().orEmpty().filter { it.name.matches(Regex("[0-9a-f]{64}\\.json")) }.forEach { index ->
+            try { checkNotNull(read(index.nameWithoutExtension)) }
+            catch (_: Exception) { throw IllegalStateException("runtime/resources/library/${index.name}: invalid original index or payload") }
         }
+        action()
     }
 
     private fun indexDigest(key: String): String? = storage.file("$key.json").takeIf { it.isFile }?.let(::sha256)
@@ -202,6 +218,12 @@ internal class ResourceManagementRuleCache(directory: File, private val validato
     suspend fun snapshot(name: String, url: String, behavior: String, format: String, assetKind: String = "ruleset", localId: String? = null): ManagedRuleResource? = withContext(Dispatchers.IO) {
         locked { read(identity(name, url, behavior, format, assetKind, localId))?.first?.copy(name = name) }
     }
+
+    suspend fun policyMatches(name: String, url: String, assetKind: String, requests: dev.aerove.lite.requests.RequestPreferences): Boolean =
+        withContext(Dispatchers.IO) { locked {
+            val key=identity(name,url,"","",assetKind)
+            if (read(key)==null) false else JSONObject(storage.read("$key.json",16384)).optString("requestPolicySha256") == downloader.policyIdentity(requests)
+        } }
 
     suspend fun copyInto(name: String, url: String, behavior: String, format: String, destination: File, maxBytes: Long, assetKind: String = "ruleset", localId: String? = null): ResourceDigest? =
         withContext(Dispatchers.IO) { locked {

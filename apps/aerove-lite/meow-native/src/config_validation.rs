@@ -478,6 +478,9 @@ async fn validate_offline_cancellable(normalized: &str, cancel: &CancellationTok
         Err(panic) => std::panic::resume_unwind(panic),
     }
 }
+fn builtin_ss_plugin(plugin: &str) -> bool {
+    ["obfs", "simple-obfs", "v2ray-plugin", "gost-plugin", "shadow-tls", "restls", "jls", "kcptun", "ech-tls-tunnel"].contains(&plugin)
+}
 fn normalize_proxy_options(root: &mut Value) -> Result<(), String> {
     let Some(nodes) = root.get_mut("proxies").and_then(Value::as_sequence_mut) else { return Ok(()); };
     for (i, node) in nodes.iter_mut().enumerate() {
@@ -496,7 +499,7 @@ fn normalize_proxy_options(root: &mut Value) -> Result<(), String> {
         if opts.is_some() && plugin.is_none() { return Err(format!("{path}.plugin-opts: no selected plugin consumer")); }
         let Some(plugin) = plugin else { continue; };
         if m.contains_key(&Value::String("client-fingerprint".into())) && plugin != "shadow-tls" { return Err(format!("{path}.client-fingerprint: only shadow-tls consumes node TLS fingerprint")); }
-        let builtin = ["obfs", "simple-obfs", "v2ray-plugin", "gost-plugin", "shadow-tls", "restls", "jls", "kcptun", "ech-tls-tunnel"].contains(&plugin.as_str());
+        let builtin = builtin_ss_plugin(&plugin);
         if !builtin { continue; } // actual owned converter rejects external plugins before execution
         if m.get(&Value::String("udp".into())).and_then(Value::as_bool) == Some(true) && !["obfs", "simple-obfs", "kcptun"].contains(&plugin.as_str()) { return Err(format!("{path}.udp: {plugin} does not implement UDP relay")); }
         if let Some(opts) = opts {
@@ -639,6 +642,21 @@ fn proxy_fields(node: &Value, path: &str) -> Result<(), String> {
     };
     for key in row.keys() { let key = key.as_str().ok_or_else(|| format!("{path}: keys must be strings"))?; if !common.contains(&key) && !specific.contains(&key) { return Err(format!("{path}.{key}: no consumed field in fixed protocol factory")); } }
     if kind == "direct" { for key in row.keys() { let key = key.as_str().unwrap_or(""); if !["name", "type", "dns", "connect-timeout", "dialer-proxy"].contains(&key) { return Err(format!("{path}.{key}: direct factory has no consumer")); } } }
+    if let Some(value) = node.get("dialer-proxy") {
+        let target = value.as_str().ok_or_else(|| format!("{path}.dialer-proxy: expected string"))?;
+        if !target.is_empty() {
+            if target.trim().is_empty() || node.get("name").and_then(Value::as_str) == Some(target.trim()) {
+                return Err(format!("{path}.dialer-proxy: whitespace or self-reference is not an admissible dialer"));
+            }
+            if !matches!(kind, "ss" | "trojan" | "vmess" | "vless" | "http" | "socks5" | "snell" | "trusttunnel")
+                || (kind == "trusttunnel" && node.get("quic").and_then(Value::as_bool) == Some(true)) {
+                return Err(format!("{path}.dialer-proxy: fixed strict factory does not carry an injected TCP dialer for this transport"));
+            }
+            if kind == "ss" && node.get("plugin").and_then(Value::as_str).filter(|plugin| !plugin.is_empty()).is_some_and(|plugin| !builtin_ss_plugin(plugin)) {
+                return Err(format!("{path}.dialer-proxy: external SIP003 process cannot honor the injected dialer"));
+            }
+        }
+    }
     for key in ["udp", "tls", "skip-cert-verify", "reuse", "fast-open", "quic"] {
         if let Some(value) = node.get(key) { if !value.is_bool() { return Err(format!("{path}.{key}: expected boolean")); } }
     }
@@ -662,7 +680,7 @@ fn proxy_fields(node: &Value, path: &str) -> Result<(), String> {
         ("http-upgrade-opts", &["path", "host", "headers"][..]),
         ("xhttp-opts", &["path", "host", "mode", "headers", "no-grpc-header", "x-padding-bytes"][..]),
         ("reality-opts", &["public-key", "short-id", "support-x25519mlkem768"][..]),
-        ("ech-opts", &["enable", "config"][..]),
+        ("ech-opts", &["enable", "config", "query-server-name"][..]),
         ("smux", &["enabled", "protocol", "padding", "max-connections", "min-streams", "max-streams", "only-tcp"][..]),
         ("mux", &["enabled", "protocol", "padding", "max-connections", "min-streams", "max-streams", "only-tcp"][..]),
         ("obfs-opts", &["mode", "host"][..]),
@@ -678,6 +696,24 @@ fn proxy_fields(node: &Value, path: &str) -> Result<(), String> {
                 for (key, value) in headers { if key.as_str().is_none() || value.as_str().is_none() { return Err(format!("{path}.{field}.headers: expected string pairs")); } }
             }
             for key in options.keys() { let key = key.as_str().ok_or_else(|| format!("{path}.{field}: expected string keys"))?; if !allowed.contains(&key) { return Err(format!("{path}.{field}.{key}: unknown or ignored protocol option")); } }
+        }
+    }
+    if kind == "vless" {
+        if let Some(ech) = node.get("ech-opts") {
+            if ech.get("enable").is_some_and(|value| !value.is_bool()) { return Err(format!("{path}.ech-opts.enable: expected boolean")); }
+            for key in ["config", "query-server-name"] {
+                if ech.get(key).is_some_and(|value| !value.is_string()) { return Err(format!("{path}.ech-opts.{key}: expected string")); }
+            }
+            if ech.get("enable").and_then(Value::as_bool) == Some(true) {
+                if node.get("reality-opts").is_some() { return Err(format!("{path}.ech-opts: REALITY cannot be combined with ECH on the same TLS layer")); }
+                if ech.get("config").and_then(Value::as_str).is_some_and(|value| !value.is_empty()) && ech.get("query-server-name").is_some() {
+                    return Err(format!("{path}.ech-opts.query-server-name: inline ECH config does not consume a DNS query name"));
+                }
+            } else {
+                for key in ["config", "query-server-name"] {
+                    if ech.get(key).is_some() { return Err(format!("{path}.ech-opts.{key}: ECH option would be ignored without enable true")); }
+                }
+            }
         }
     }
     if let Some(ws) = node.get("ws-opts") {
@@ -1478,5 +1514,77 @@ mod opened_object_tests {
         assert_eq!(read_open_file(file, MAX_TEXT_BYTES, &Default::default()).unwrap(), b"original.test\n");
         assert!(open_regular_file(&path).unwrap_err().contains("regular file"));
         std::fs::remove_dir(&path).unwrap(); std::fs::remove_file(root.join("old")).unwrap(); std::fs::remove_dir(root).unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod core_field_compat_tests {
+    use super::*;
+
+    fn config(kind: &str, options: &str) -> String {
+        let endpoint = if kind == "direct" { "" } else { "server: example.com, port: 443," };
+        format!("strict: true\ndns: {{enable: false, use-system-hosts: false}}\nproxies: [{{name: OUT, type: {kind}, {endpoint} {options}}}]\nrules: ['MATCH,OUT']\n")
+    }
+
+    #[test]
+    fn dialer_projection_preserves_supported_factories_and_rejects_unthreaded_transports() {
+        for (kind, options) in [("http", ""), ("socks5", ""), ("ss", "cipher: aes-128-gcm, password: secret,"),
+            ("trojan", "password: secret,"), ("vmess", "uuid: 12345678-1234-1234-1234-123456789012,"),
+            ("vless", "uuid: 12345678-1234-1234-1234-123456789012,"), ("snell", "psk: secret,"),
+            ("trusttunnel", "username: user, password: secret,")] {
+            let result = normalize_config_fields(&config(kind, &format!("{options} dialer-proxy: ' FRONT '"))).unwrap();
+            let parsed: Value = serde_yaml::from_str(&result).unwrap();
+            assert_eq!(parsed["proxies"][0]["dialer-proxy"].as_str(), Some(" FRONT "));
+        }
+        for (kind, options) in [("direct", ""), ("anytls", "password: secret,"), ("hysteria2", "password: secret,"),
+            ("trusttunnel", "username: user, password: secret, quic: true,"),
+            ("ss", "cipher: aes-128-gcm, password: secret, plugin: external-program,")] {
+            assert!(normalize_config_fields(&config(kind, &format!("{options} dialer-proxy: FRONT"))).unwrap_err().contains("$.proxies[0].dialer-proxy"));
+        }
+        for target in ["123", "true", "[]", "{}", "'   '", "OUT", "null"] {
+            assert!(normalize_config_fields(&config("http", &format!("dialer-proxy: {target}"))).unwrap_err().contains("$.proxies[0].dialer-proxy"));
+        }
+        assert!(normalize_config_fields(&config("http", "dialer-proxy: ''")).is_ok());
+        assert!(normalize_config_fields("proxies: [{name: OUT, type: direct, dialer-proxy: ''}]\n").is_ok());
+        assert!(normalize_config_fields(&config("http", "dialer-proxy: FRONT, unknown-chain-option: true")).unwrap_err().contains("unknown-chain-option"));
+        assert!(normalize_config_fields(&config("tuic", "dialer-proxy: FRONT")).unwrap_err().contains("unsupported protocol"));
+    }
+
+    #[tokio::test]
+    async fn existing_offline_factory_validates_real_chain_graph_and_refuses_missing_target() {
+        let source = "strict: true\ndns: {enable: false, use-system-hosts: false}\nproxies: [{name: FRONT, type: socks5, server: 127.0.0.1, port: 9}, {name: OUT, type: http, server: 127.0.0.1, port: 10, dialer-proxy: FRONT}]\nrules: ['MATCH,OUT']\n";
+        validate_config(source).await.unwrap();
+        assert!(validate_config(&source.replace("dialer-proxy: FRONT", "dialer-proxy: MISSING")).await.is_err());
+    }
+
+    #[test]
+    fn dns_ech_projection_preserves_names_and_rejects_ignored_incompatible_or_unknown_options() {
+        let uuid = "uuid: 12345678-1234-1234-1234-123456789012, tls: true,";
+        for options in ["{enable: true}", "{enable: true, query-server-name: ech.example}",
+            "{enable: true, config: '', query-server-name: ech.example}"] {
+            let result = normalize_config_fields(&config("vless", &format!("{uuid} ech-opts: {options}"))).unwrap();
+            let parsed: Value = serde_yaml::from_str(&result).unwrap();
+            assert_eq!(parsed["proxies"][0]["ech-opts"]["enable"].as_bool(), Some(true));
+            if options.contains("query-server-name") { assert_eq!(parsed["proxies"][0]["ech-opts"]["query-server-name"].as_str(), Some("ech.example")); }
+            if !options.contains("config:") { assert!(parsed["proxies"][0]["ech-opts"].get("config").is_none()); }
+        }
+        for (options, field) in [("{enable: true, query-server-name: 3}", "query-server-name"),
+            ("{enable: false, query-server-name: ech.example}", "query-server-name"),
+            ("{enable: true, config: AQID, query-server-name: ech.example}", "query-server-name"),
+            ("{enable: true, unknown: true}", "unknown"), ("{enable: bad}", "enable")] {
+            assert!(normalize_config_fields(&config("vless", &format!("{uuid} ech-opts: {options}"))).unwrap_err().contains(&format!("ech-opts.{field}")));
+        }
+        assert!(normalize_config_fields(&config("vless", &format!("{uuid} reality-opts: {{public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA}}, ech-opts: {{enable: true}}"))).unwrap_err().contains("REALITY"));
+    }
+
+    #[cfg(feature = "vless")]
+    #[tokio::test]
+    async fn dns_ech_uses_existing_fixed_offline_factory_without_inline_configuration_or_network() {
+        let uuid = "uuid: 12345678-1234-1234-1234-123456789012, tls: true,";
+        for options in ["{enable: true}", "{enable: true, query-server-name: ech.example}"] {
+            validate_config(&config("vless", &format!("{uuid} ech-opts: {options}"))).await.unwrap();
+        }
+        assert!(validate_config(&config("vless", &format!("{uuid} ech-opts: {{enable: true, query-server-name: 'bad..name'}}"))).await.is_err());
     }
 }

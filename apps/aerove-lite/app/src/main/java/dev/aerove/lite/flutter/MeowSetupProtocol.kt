@@ -7,6 +7,7 @@ import dev.aerove.lite.ProxyMode
 import dev.aerove.lite.controllerprefs.ExternalControllerPreferences
 import dev.aerove.lite.core.JniResourceFetch
 import dev.aerove.lite.core.MeowNativeCore
+import dev.aerove.lite.data.HostGeoResourceReader
 import dev.aerove.lite.data.ConfigYaml
 import dev.aerove.lite.data.MeowProfileValidator
 import dev.aerove.lite.data.NativeConfigValidator
@@ -21,6 +22,7 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.StandardOpenOption.READ
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -39,6 +41,7 @@ interface MeowSetupEffects {
     suspend fun readRuntime(): MeowSetupRuntime?
     suspend fun applyUpdate(expected: MeowSetupRuntime?, projection: MeowSetupProjection)
     suspend fun refreshApplied(expected: MeowSetupRuntime, setupParamsJson: String): Boolean
+    suspend fun requireBuilderCompatible(settings: LiteSettings, vpnOptionsJson: String) {}
     suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) {
         throw MeowConfigProtocolException("implementation_blocked", "A runtime graph owner must apply the staged configuration")
     }
@@ -48,19 +51,26 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
     private val effects: MeowSetupEffects, private val preparedValidator: NativePreparedConfigValidator? = null,
     private val verifiedFeatures: () -> Set<String> = { MeowNativeCore.readVerifiedFeatures() },
     private val validator: NativeConfigValidator = NativeConfigValidator { yaml -> JniResourceFetch.offlineRead { MeowNativeCore.validate(it, yaml) } },
-    private val resourceSealer: dev.aerove.lite.data.FlutterResourceSealer? = null) {
+    private val resourceSealer: dev.aerove.lite.data.FlutterResourceSealer? = null,
+    private val sourceVerifier: ((JSONObject) -> Unit)? = null,
+    private val geoResourceReaderFactory: ((LiteSettings, () -> Boolean) -> HostGeoResourceReader)? = null,
+    private val selectedSourceVerifier: ((JSONObject) -> Map<String, String>)? = null,
+    private val definitionSourceVerifier: ((JSONObject) -> String)? = null,
+    private val geoSourceVerifier: ((JSONObject) -> Triple<JSONObject,Map<String,String>,String>)? = null) {
     private val home = MeowFlutterSpill.checkedHome(homeDir)
     private val gate = Mutex()
     private var settings = LiteSettings()
     private var shared: JSONObject? = null
     private var update: JSONObject? = null
     private var setup: JSONObject? = null
+    private var geoOrigin: dev.aerove.lite.data.MeowGeoOrigin? = null
 
     suspend fun syncState(arguments: Map<String, Any?>): String = gate.withLock {
         val row = json(arguments)
         val previousReceipt = if (shared == null) store.readLastApplied() else null
         val previousRuntime = previousReceipt?.handoff?.runtimeSettingsJson?.let(::JSONObject)
         val baseline = previousReceipt?.handoff?.runtimeSettingsJson?.let(MeowRuntimeSnapshotSettings::decode) ?: settings
+        val retainedGeoOrigin = previousRuntime?.optJSONObject("flutterGeoOrigin")?.let(dev.aerove.lite.data.MeowGeoOrigin::stored) ?: geoOrigin
         val previousUpdate = update ?: previousRuntime?.optJSONObject("flutterUpdate")
         val previousSetup = setup ?: previousRuntime?.optJSONObject("flutterSetup")
         exact(row, setOf("setupParams", "vpnOptions", "stopTip", "startTip", "localNetworkTip", "currentProfileName", "stopText", "onlyStatisticsProxy", "showStopAction"), "$", setOf("setupParams", "vpnOptions", "showStopAction"))
@@ -70,10 +80,24 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         var next = baseline.copy(backgroundPolicy = baseline.backgroundPolicy.copy(onlyStatisticsProxy = onlyProxy, showNotificationStopAction = showStop))
         if (!row.isNull("vpnOptions")) next = vpn(objectAt(row, "vpnOptions", "$.vpnOptions"), next)
         val nextSetup = if (row.isNull("setupParams")) previousSetup else setupParams(objectAt(row, "setupParams", "$.setupParams"))
+        if (sourceVerifier != null && nextSetup != null && previousSetup != null) {
+            listOf("applied", "base", "data-source-proof").forEach { key ->
+                if (!nextSetup.has(key) && previousSetup.has(key)) nextSetup.put(key, previousSetup.get(key))
+            }
+        }
+        if (row.isNull("vpnOptions")) {
+            val retained = shared?.optJSONObject("vpnOptions") ?: previousReceipt?.handoff?.vpnOptionsJson?.let(::JSONObject)
+            if (retained != null) row.put("vpnOptions", JSONObject(retained.toString()))
+        }
+        val appliedSource = store.readLastApplied()?.handoff?.compiledYaml
+        val reconciled = if (appliedSource != null && !row.isNull("vpnOptions")) meowReconcileFlutterTun(appliedSource, next, row) else null
+        next = reconciled?.settings ?: next
+        val effectiveRow = reconciled?.shared ?: row
         validateSettings(next)
-        val projection = MeowSetupProjection(next, row.toString(), previousUpdate?.toString(), nextSetup?.toString())
+        effects.requireBuilderCompatible(next, effectiveRow.optJSONObject("vpnOptions")?.toString() ?: previousReceipt?.handoff?.vpnOptionsJson ?: "{}")
+        val projection = MeowSetupProjection(next, effectiveRow.toString(), previousUpdate?.toString(), nextSetup?.toString())
         effects.applyUpdate(effects.readRuntime(), projection)
-        settings = next; shared = row; setup = nextSetup; update = previousUpdate
+        settings = next; shared = effectiveRow; setup = nextSetup; update = previousUpdate; geoOrigin = retainedGeoOrigin
         ""
     }
 
@@ -81,9 +105,31 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         val row = json(arguments)
         val active = effects.readRuntime()
         val previous = shared ?: bad("$.sharedState", "syncState must precede updateConfig")
-        val next = decodeUpdate(row, active)
-        effects.applyUpdate(active, MeowSetupProjection(next, previous.toString(), row.toString(), setup?.toString()))
-        settings = next; update = row
+        val proof = row.optJSONObject("data-source-proof")
+        row.remove("data-source-proof")
+        val nextSetup = setup?.let { JSONObject(it.toString()) }
+        if (sourceVerifier != null) {
+            val source = proof ?: bad("$.data-source-proof", "Current shared business source proof is required")
+            sourceVerifier.invoke(source)
+            if (nativeLiteJsonHash(row) != source.getString("liveSha256"))
+                bad("$.data-source-proof", "Live parameters do not match current business settings")
+            if (active != null) {
+                val prior = nextSetup?.optJSONObject("data-source-proof") ?: bad("$.data-source-proof", "Applied source is missing")
+                if (listOf("setupSha256", "tables", "files").any { nativeLiteJsonHash(prior.get(it)) != nativeLiteJsonHash(source.get(it)) })
+                    throw MeowConfigProtocolException("superseded", "Selected setup dependencies changed; setupConfig is required")
+                nextSetup.put("data-source-proof", source)
+            }
+        }
+        val decoded = decodeUpdate(row, active)
+        val origin = if (active == null) geoOrigin else store.readLastApplied()?.handoff?.runtimeSettingsJson?.let(::JSONObject)
+            ?.optJSONObject("flutterGeoOrigin")?.let(dev.aerove.lite.data.MeowGeoOrigin::stored)
+        if (active != null && sourceVerifier != null && origin == null)
+            blocked("$.aerove-geo-origin", "The actual producer's sparse Geo origin is required before changing global fallback policy")
+        val next = decoded.copy(geoResources = origin?.apply(decoded.geoResources) ?: decoded.geoResources)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+        effects.applyUpdate(active, MeowSetupProjection(next, previous.toString(), row.toString(), nextSetup?.toString()))
+        proof?.let { sourceVerifier?.invoke(it) }
+        settings = next; update = row; setup = nextSetup; geoOrigin = origin
         ""
     }
 
@@ -113,7 +159,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         if (controller.isNotEmpty() && (secret.isEmpty() || secret != secret.trim() || secret.length > 512 || secret.any { it.code < 32 || it.code == 127 }))
             bad("$.secret", "Enabled native controller requires a canonical non-empty Bearer secret")
         val geo = objectAt(row, "geox-url", "$.geox-url")
-        val urls = settings.geoResources.urls.toMutableMap()
+        val urls = dev.aerove.lite.resources.GeoResourcePreferences().urls.toMutableMap()
         geo.keys().forEach { key ->
             val kind = GeoResourceKind.entries.firstOrNull { it.wire == key } ?: blocked("$.geox-url.$key", "No equivalent native geo-resource format")
             urls[kind] = text(geo, key, "$.geox-url.$key")
@@ -161,19 +207,40 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                 config.buildProfile(sourceFile.path, base.getString("overlay")).also { temporary = it }
             }
             val input = read(checkedFile(File(path)), 4 * 1024 * 1024)
+            val sourceSha = runtimeSha256(sourceBytes)
+            fun checkSource() {
+                sourceVerifier?.invoke(params.optJSONObject("data-source-proof") ?: bad("$.data-source-proof", "Current shared business source proof is required"))
+                if (read(checkedFile(File(path)), 4 * 1024 * 1024) != input)
+                    throw MeowConfigProtocolException("superseded", "Compiled input changed while sealing resources")
+                if (runtimeSha256(Files.newInputStream(checkedFile(sourceFile).toPath(), READ, NOFOLLOW_LINKS).use { it.readBounded(4 * 1024 * 1024) }) != sourceSha)
+                    throw MeowConfigProtocolException("superseded", "Compiled source changed while staging")
+            }
+            val sourceContext = kotlinx.coroutines.currentCoroutineContext()
             val setupUpdate = updateFromYaml(input, params)
             val decoded = decodeUpdate(setupUpdate, null)
             val inputRoot = ConfigYaml.parse(input)
+            val inputGeoOrigin = dev.aerove.lite.data.MeowGeoOrigin.read(inputRoot)
+            if (sourceVerifier != null && inputGeoOrigin == null)
+                blocked("$.aerove-geo-origin", "The actual shared producer's sparse Geo origin is required")
             val sourceUa = inputRoot["global-ua"]?.let {
                 if (it !is String || !dev.aerove.lite.requests.RequestPreferences.validUserAgent(it)) bad("$.global-ua", "Invalid HTTP User-Agent")
                 it
             }
-            val projected = decoded.copy(requests = decoded.requests.copy(globalUserAgent = sourceUa))
+            val decodedPolicies = decoded.copy(requests = decoded.requests.copy(globalUserAgent = sourceUa))
+            val tun = meowReconcileFlutterTun(input, decodedPolicies, state)
+            val projected = tun.settings
+            val effectiveState = tun.shared
+            effects.requireBuilderCompatible(projected, effectiveState.getJSONObject("vpnOptions").toString())
             val selections = params.getJSONObject("selected-map").let { row -> row.keys().asSequence().associateWith { row.getString(it) } }
-            val hasRemoteProviders = listOf("proxy-providers", "rule-providers").any { namespace ->
-                (inputRoot[namespace] as? Map<*, *>)?.values?.any { (it as? Map<*, *>)?.get("type") == "http" } == true
+            val geoReader = geoResourceReaderFactory?.invoke(projected) {
+                if (!sourceContext.isActive) false else {
+                    checkSource()
+                    val current = store.peekCurrent()
+                    current?.revision == before?.revision && current?.intentEpoch == before?.intentEpoch
+                }
             }
-            if (hasRemoteProviders) resourceLease = resourceSealer?.prepare(input, projected.requests.checkCertificate, selections)
+            if (meowNeedsResourceCapture(inputRoot) || resourceSealer?.requiresGeoCapture(input) == true) resourceLease = resourceSealer?.prepare(input, projected.requests.checkCertificate, selections,
+                tunReconciliation = tun.reconciliation, geoResourceReader = geoReader)
             val yaml = resourceLease?.yaml ?: input
             val existing = if (resourceLease == null) resources(yaml) else null
             if (resourceLease == null && existing?.second != null) resourceLease = resourceSealer?.borrow(yaml, checkNotNull(existing.second))
@@ -181,33 +248,104 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                 lease.resources.map { RuntimeHandoffResource(it.relativePath, it.sourcePath, it.sha256) } to lease.directory
             } ?: checkNotNull(existing)
             val prepared = preparedValidator ?: NativePreparedConfigValidator { _, _ -> blocked("$.resources", "Prepared native validation is required for sealed resources") }
-            MeowProfileValidator(validator, prepared, home, verifiedFeatures).validate(yaml, resources.second != null, resources.second)
+            MeowProfileValidator(validator, prepared, home, verifiedFeatures, tunReconciliation = tun.reconciliation).validate(yaml, resources.second != null, resources.second)
             val runtimeSettings = MeowRuntimeSnapshotSettings.encode(projected).put("flutterSetup", params).put("flutterUpdate", setupUpdate)
+            inputGeoOrigin?.let { runtimeSettings.put("flutterGeoOrigin", it.json()) }
+            val producer = RuntimeHandoffResource("flutter-producer.yaml", path, runtimeSha256(input.toByteArray()))
+            runtimeSettings.put("flutterProducer", JSONObject().put("file", producer.relativePath)
+                .put("sha256", producer.sha256).put("bytes", input.toByteArray().size))
+            definitionSourceVerifier?.let { verify ->
+                runtimeSettings.put("flutterDefinitionSha256", verify(params.getJSONObject("data-source-proof")))
+            }
             if (before?.userRequested == true && effects.hasRequestedIntent()) {
                 val prior = JSONObject(before.handoff.runtimeSettingsJson)
                 if (prior.has("flutterListeningRequested"))
                     runtimeSettings.put("flutterListeningRequested", prior.getBoolean("flutterListeningRequested"))
             }
-            val sourceSha = runtimeSha256(sourceBytes)
-            fun checkSource() {
-                if (read(checkedFile(File(path)), 4 * 1024 * 1024) != input)
-                    throw MeowConfigProtocolException("superseded", "Compiled input changed while sealing resources")
-                if (runtimeSha256(Files.newInputStream(checkedFile(sourceFile).toPath(), READ, NOFOLLOW_LINKS).use { it.readBounded(4 * 1024 * 1024) }) != sourceSha)
-                    throw MeowConfigProtocolException("superseded", "Compiled source changed while staging")
-            }
             checkSource()
             val handoff = RuntimeHandoff(MEOW_RUNTIME_CORE_SHA, sourceFile.path, sourceSha, sourceSha,
-                yaml, runtimeSha256(yaml.toByteArray()), applied.toString(), runtimeSettings.toString(), state.getJSONObject("vpnOptions").toString(),
-                notification(state).toString(), resources.first)
+                yaml, runtimeSha256(yaml.toByteArray()), applied.toString(), runtimeSettings.toString(), effectiveState.getJSONObject("vpnOptions").toString(),
+                notification(effectiveState).toString(), resources.first + producer)
             MeowRuntimeSnapshotSettings.validate(handoff)
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            effects.requireBuilderCompatible(projected, effectiveState.getJSONObject("vpnOptions").toString())
             val staged = store.commitForSetup(handoff, expectedEpoch, before?.revision, effects::hasRequestedIntent, ::checkSource)
             effects.applyStaged(staged)
-            setup = params; settings = projected; update = setupUpdate
+            setup = params; settings = projected; shared = effectiveState; update = setupUpdate; geoOrigin = inputGeoOrigin
             ""
         } finally {
             try { resourceLease?.closeAndJoin() } finally { temporary?.let(config::discard) }
         }
+    }
+
+    internal suspend fun captureGeoIntent(): MeowGeoResourceIntent = gate.withLock {
+        val runtime=effects.readRuntime() ?: throw MeowConfigProtocolException("not_running","An actually applied graph is required for Geo maintenance")
+        val snapshot=store.readLastApplied() ?: throw MeowConfigProtocolException("superseded","Applied source disappeared")
+        if (!matches(runtime,snapshot)) throw MeowConfigProtocolException("superseded","Applied Geo source changed")
+        val proof=JSONObject(snapshot.handoff.runtimeSettingsJson).getJSONObject("flutterSetup").optJSONObject("data-source-proof")
+            ?: bad("$.data-source-proof","Current shared business proof is required")
+        val verify=sourceVerifier ?: blocked("$.data-source-proof","An independent Native business source verifier is required")
+        verify(proof)
+        MeowGeoResourceIntent(MeowRuntimeSnapshotSettings.decode(snapshot.handoff.runtimeSettingsJson),runtime,snapshot,proof.toString())
+    }
+
+    internal suspend fun captureGeoIntent(request: JSONObject): MeowGeoResourceIntent = gate.withLock {
+        val runtime=effects.readRuntime() ?: throw MeowConfigProtocolException("not_running","Geo maintenance requires an actually applied graph")
+        val snapshot=store.readLastApplied() ?: throw MeowConfigProtocolException("superseded","Applied Geo source disappeared")
+        if (!matches(runtime,snapshot) || !store.isGraphCurrent(checkNotNull(store.readAppliedIdentity())))
+            throw MeowConfigProtocolException("superseded","Applied Geo owner changed")
+        val verify=geoSourceVerifier ?: blocked("$.data-source-proof","Independent complete business source admission is required")
+        val producer=MeowGeoProducer.read(home,request,snapshot,::setupParams,verify)
+        val next=MeowRuntimeSnapshotSettings.decode(snapshot.handoff.runtimeSettingsJson).copy(
+            geoResources=dev.aerove.lite.data.MeowGeoPolicy.read(ConfigYaml.parse(producer.body),settings.geoResources))
+        effects.requireBuilderCompatible(next,snapshot.handoff.vpnOptionsJson)
+        MeowGeoResourceIntent(next,runtime,snapshot,producer.setupParams.getJSONObject("data-source-proof").toString(),producer)
+    }
+
+    internal suspend fun geoProjection(intent: MeowGeoResourceIntent, resources: dev.aerove.lite.data.FlutterRuntimeResources.Geo): RuntimeHandoff = gate.withLock {
+        check(geoIntentIsCurrent(intent)) { "Geo producer was superseded" }
+        val producer=checkNotNull(intent.producer) { "A fresh producer request is required" }
+        val previous=intent.snapshot.handoff
+        val metadata=JSONObject(previous.runtimeSettingsJson)
+        val encoded=MeowRuntimeSnapshotSettings.encode(intent.settings)
+        encoded.keys().forEach { key -> metadata.put(key,encoded.get(key)) }
+        val producerFile="geo/${resources.resourceLeaseId}/producer.yaml"
+        val oldProducer=metadata.getJSONObject("flutterProducer").getString("file")
+        metadata.put("flutterSetup",producer.setupParams)
+            .put("flutterUpdate",updateFromYaml(producer.body,producer.setupParams))
+            .put("flutterProducer",JSONObject().put("file",producerFile).put("sha256",producer.sha256).put("bytes",producer.body.toByteArray().size))
+            .put("flutterDefinitionSha256",producer.definitionSha256).put("flutterGeoAssets",resources.records)
+        val preserved=previous.resources.filter { !it.relativePath.startsWith("geo/") && it.relativePath != oldProducer }
+        val all=preserved+resources.resources+RuntimeHandoffResource(producerFile,producer.file.path,producer.sha256)
+        RuntimeHandoff(previous.coreSha,previous.sourceId,previous.sourceRevision,previous.sourceSha256,
+            resources.compiledYaml,runtimeSha256(resources.compiledYaml.toByteArray()),producer.setupParams.getJSONObject("applied").toString(),
+            metadata.toString(),previous.vpnOptionsJson,previous.notificationJson,all).also(MeowRuntimeSnapshotSettings::validate)
+    }
+
+    internal suspend fun acceptGeoPublication(identity: RuntimeAppliedIdentity) = gate.withLock {
+        check(store.isGraphCurrent(identity)) { "Geo receipt was superseded" }
+        val applied=checkNotNull(store.readLastApplied())
+        val runtime=JSONObject(applied.handoff.runtimeSettingsJson)
+        settings=MeowRuntimeSnapshotSettings.decode(applied.handoff.runtimeSettingsJson)
+        setup=runtime.getJSONObject("flutterSetup");update=runtime.getJSONObject("flutterUpdate")
+        geoOrigin=runtime.optJSONObject("flutterGeoOrigin")?.let(dev.aerove.lite.data.MeowGeoOrigin::stored)
+    }
+
+    internal fun geoProducerPolicyIsApplied(intent: MeowGeoResourceIntent): Boolean {
+        val metadata=JSONObject(intent.snapshot.handoff.runtimeSettingsJson)
+        val producer=metadata.getJSONObject("flutterProducer")
+        val file=File(intent.snapshot.resourceDirectory,producer.getString("file"))
+        val body=read(checkedFile(file),4*1024*1024)
+        check(runtimeSha256(body.toByteArray()) == producer.getString("sha256"))
+        return dev.aerove.lite.data.MeowGeoPolicy.read(ConfigYaml.parse(body),settings.geoResources) == intent.settings.geoResources
+    }
+
+    internal fun geoIntentIsCurrent(intent: MeowGeoResourceIntent): Boolean {
+        if (!store.isGraphCandidate(intent.runtime.revision,intent.runtime.intentEpoch) ||
+            store.peekCurrent()?.handoff?.compiledSha256 != intent.runtime.compiledSha256) return false
+        val verify=sourceVerifier ?: return false
+        verify(JSONObject(intent.proofJson))
+        return true
     }
 
     suspend fun staged(): MeowRuntimeSnapshot? = store.readCurrent()
@@ -221,18 +359,42 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
 
     suspend fun refreshAppliedSetup(arguments: Map<String, Any?>): Boolean = gate.withLock {
         val params = setupParams(json(arguments))
+        if (sourceVerifier != null) {
+            val proof = params.optJSONObject("data-source-proof") ?: bad("$.data-source-proof", "Current shared business source proof is required")
+            val verify = selectedSourceVerifier ?: blocked("$.selected-map", "Independent current selected source verification is required")
+            if (verify(proof) != map(params.getJSONObject("selected-map"))) return@withLock false
+        }
         val next = objectAt(params, "applied", "$.applied").also(::record)
         val last = store.readLastApplied() ?: return@withLock false
         val live = effects.readRuntime() ?: return@withLock false
         if (store.currentEpoch() != live.intentEpoch) return@withLock false
         if (!matches(live, last) || JSONObject(last.handoff.setupRecordJson).getString("yaml-md5") != next.getString("yaml-md5")) return@withLock false
+        if (sourceVerifier != null) {
+            val previousProof = JSONObject(last.handoff.runtimeSettingsJson).getJSONObject("flutterSetup").getJSONObject("data-source-proof")
+            if (!meowMetadataResourcesUnchanged(previousProof, params.getJSONObject("data-source-proof"))) return@withLock false
+        }
         if (!effects.refreshApplied(live, params.toString())) return@withLock false
-        val readback = store.readLastApplied() ?: return@withLock false
+        var readback = store.readLastApplied() ?: return@withLock false
+        definitionSourceVerifier?.let { verify ->
+            val definition = verify(params.getJSONObject("data-source-proof"))
+            val identity = store.readAppliedIdentity() ?: return@withLock false
+            if (!matches(effects.readRuntime(), readback)) return@withLock false
+            val old = readback.handoff
+            val metadata = JSONObject(old.runtimeSettingsJson).put("flutterDefinitionSha256", definition)
+            val projection = RuntimeHandoff(old.coreSha, old.sourceId, old.sourceRevision, old.sourceSha256,
+                old.compiledYaml, old.compiledSha256, old.setupRecordJson, metadata.toString(),
+                old.vpnOptionsJson, old.notificationJson, old.resources)
+            if (readback.userRequested) store.commitRuntimeProjection(identity, projection, identity.proof)
+            else store.commitGraphRuntimeProjection(identity, projection, identity.proof)
+            readback = store.readLastApplied() ?: return@withLock false
+        }
         matches(effects.readRuntime(), readback) && map(JSONObject(readback.handoff.setupRecordJson)) == map(next)
     }
 
     private fun vpn(row: JSONObject, previous: LiteSettings): LiteSettings {
-        exact(row, setOf("enable", "port", "ipv6", "dnsHijacking", "accessControlProps", "allowBypass", "systemProxy", "bypassDomain", "stack", "routeAddress", "mtu", "congestionController"), "$.vpnOptions", setOf("routeAddress", "mtu", "congestionController"))
+        exact(row, setOf("enable", "port", "ipv6", "dnsHijacking", "accessControlProps", "allowBypass", "systemProxy", "bypassDomain", "stack", "routeAddress", "mtu", "congestionController", "routeAuto", "routeDefaultsPerFamily", "routeExcludeAddress", "inet4Address", "inet6Address", "dnsHijackTargets", "rawRouteAddress", "rawRouteExcludeAddress", "bypassPrivateRoute"), "$.vpnOptions", setOf("routeAddress", "mtu", "congestionController", "routeAuto", "routeDefaultsPerFamily", "routeExcludeAddress", "inet4Address", "inet6Address", "dnsHijackTargets", "rawRouteAddress", "rawRouteExcludeAddress", "bypassPrivateRoute"))
+        val rawKeys = setOf("rawRouteAddress", "rawRouteExcludeAddress", "bypassPrivateRoute")
+        if (rawKeys.any(row::has)) rawKeys.forEach { if (!row.has(it) || row.isNull(it)) bad("$.vpnOptions.$it", "A complete original route policy is required") }
         val enabled = flag(row, "enable", "$.vpnOptions.enable")
         listOf("ipv6", "dnsHijacking", "allowBypass", "systemProxy").forEach { flag(row, it, "$.vpnOptions.$it") }
         integer(row, "port", "$.vpnOptions.port", 0, 65535)
@@ -256,14 +418,21 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         val mtu = if (row.has("mtu")) integer(row, "mtu", "$.vpnOptions.mtu", 0, 65535) else 0
         return previous.copy(network = previous.network.copy(vpnEnabled = enabled, systemProxy = enabled && row.getBoolean("systemProxy"),
             allowBypass = enabled && row.getBoolean("allowBypass"), dnsHijacking = enabled && row.getBoolean("dnsHijacking"),
-            bypassDomains = if (enabled && row.getBoolean("systemProxy")) domains else emptyList(), routeAddress = if (enabled) routes else emptyList(),
-            mtu = if (enabled) mtu.takeIf { it > 0 } ?: 9000 else previous.network.mtu),
+            bypassDomains = if (enabled && row.getBoolean("systemProxy")) domains else emptyList(), routeAddress = if (row.has("rawRouteAddress")) strings(row,"rawRouteAddress","$.vpnOptions.rawRouteAddress") else routes,
+            bypassPrivateRoute = if (row.has("bypassPrivateRoute")) flag(row,"bypassPrivateRoute","$.vpnOptions.bypassPrivateRoute") else false,
+            mtu = mtu.takeIf { it > 0 } ?: 9000,
+            routeDefaultsPerFamily = if (row.has("routeDefaultsPerFamily")) flag(row,"routeDefaultsPerFamily","$.vpnOptions.routeDefaultsPerFamily") else row.has("rawRouteAddress"),
+            routeAuto = if (row.has("routeAuto")) flag(row,"routeAuto","$.vpnOptions.routeAuto") else row.has("rawRouteAddress") || routes.isEmpty(),
+            routeExcludeAddress = if (row.has("rawRouteExcludeAddress")) strings(row,"rawRouteExcludeAddress","$.vpnOptions.rawRouteExcludeAddress") else if (row.has("routeExcludeAddress")) strings(row,"routeExcludeAddress","$.vpnOptions.routeExcludeAddress") else emptyList(),
+            tunInet4Address = if(row.has("inet4Address")) text(row,"inet4Address","$.vpnOptions.inet4Address") else "198.18.0.1/30",
+            tunInet6Address = if(row.has("inet6Address")) text(row,"inet6Address","$.vpnOptions.inet6Address") else "fdfe:dcba:9876::1/126",
+            tunDnsHijack = if(row.has("dnsHijackTargets") && !row.isNull("dnsHijackTargets")) strings(row,"dnsHijackTargets","$.vpnOptions.dnsHijackTargets") else null),
             appFilterMode = if (!enabled || !accessEnabled) AppFilterMode.All else if (mode == "acceptSelected") AppFilterMode.Include else AppFilterMode.Exclude,
             packages = if (!enabled || !accessEnabled) emptySet() else (if (mode == "acceptSelected") accepts else rejects).toSet())
     }
 
     private fun setupParams(row: JSONObject): JSONObject {
-        exact(row, setOf("selected-map", "test-url", "skip-cert-verify", "base", "applied"), "$.setupParams", setOf("skip-cert-verify", "base", "applied"))
+        exact(row, setOf("selected-map", "test-url", "skip-cert-verify", "base", "applied", "data-source-proof"), "$.setupParams", setOf("skip-cert-verify", "base", "applied", "data-source-proof"))
         val selected = objectAt(row, "selected-map", "$.selected-map")
         selected.keys().forEach { text(selected, it, "$.selected-map.$it") }
         val url = text(row, "test-url", "$.test-url")
@@ -292,6 +461,11 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             .put("authentication", JSONArray(settings.network.authentication.credentials)).put("geo-auto-update", settings.geoResources.autoUpdate)
             .put("geo-update-interval", settings.geoResources.intervalHours).put("geox-url", JSONObject())
         (updateKeys - setOf("tun", "skip-cert-verify")).forEach { key -> if (root.containsKey(key)) baseline.put(key, JSONObject.wrap(root[key])) }
+        if (root.containsKey("geodata") || GeoResourceKind.entries.any { root.containsKey("${it.sourceKey}-download-url") }) {
+            val geo = dev.aerove.lite.data.MeowGeoPolicy.read(root, settings.geoResources)
+            baseline.put("geo-auto-update", geo.autoUpdate).put("geo-update-interval", geo.intervalHours)
+                .put("geox-url", JSONObject().apply { geo.urls.forEach { (kind, url) -> put(kind.wire, url) } })
+        }
         baseline.put("skip-cert-verify", params.getBoolean("skip-cert-verify"))
         return baseline
     }
@@ -393,4 +567,20 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
     private fun bad(path: String, reason: String): Nothing = throw MeowConfigProtocolException("bad_argument", "$path: $reason", mapOf("field" to path))
     private fun blocked(path: String, reason: String): Nothing = throw MeowConfigProtocolException("implementation_blocked", "$path: $reason", mapOf("field" to path, "coreSha" to MEOW_RUNTIME_CORE_SHA))
     companion object { private val updateKeys = setOf("tun", "mixed-port", "allow-lan", "find-process-mode", "mode", "log-level", "ipv6", "tcp-concurrent", "external-controller", "secret", "unified-delay", "authentication", "geo-auto-update", "geo-update-interval", "geox-url", "skip-cert-verify") }
+}
+
+internal fun meowNeedsResourceCapture(root: Map<*, *>): Boolean {
+    fun source(value: Any?) = value is String && value.isNotEmpty()
+    if (source(root["aerove-native-resource-manifest"])) return true
+    if (listOf("proxy-providers", "rule-providers").any { namespace ->
+        (root[namespace] as? Map<*, *>)?.values?.any { (it as? Map<*, *>)?.get("type") in setOf("file", "http") } == true
+    }) return true
+    val geoKeys = setOf("mmdb", "asn-mmdb", "geosite", "mmdb-download-url", "asn-mmdb-download-url", "geosite-download-url")
+    if (geoKeys.any { source(root[it]) }) return true
+    val geo = root["geodata"] as? Map<*, *>
+    if (geo != null && (listOf("mmdb-path", "asn-path", "geosite-path").any { source(geo[it]) } ||
+        (geo["url"] as? Map<*, *>)?.let { urls -> listOf("mmdb", "asn", "geosite").any { source(urls[it]) } } == true)) return true
+    return (root["proxies"] as? List<*>)?.any { raw ->
+        (raw as? Map<*, *>)?.let { row -> listOf("tls-cert", "tls-key", "ca").any { source(row[it]) } } == true
+    } == true
 }

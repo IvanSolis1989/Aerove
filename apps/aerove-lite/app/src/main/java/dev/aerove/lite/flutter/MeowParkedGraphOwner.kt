@@ -25,7 +25,8 @@ internal fun meowParkedEffectiveSettings(desired: dev.aerove.lite.LiteSettings) 
 internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
     private val claimOwner: () -> Long, private val ownsOwner: (Long) -> Boolean,
     private val backendFactory: (Long, String, () -> Boolean) -> MeowTunnelBackend,
-    private val publish: (Long, MeowQueryGraph?) -> Unit) : MeowFlutterRuntime {
+    private val publish: (Long, MeowQueryGraph?) -> Unit,
+    private val verifyMetadata: ((RuntimeHandoff, JSONObject) -> Map<String,String>)? = null) : MeowFlutterRuntime {
     private val gate = Mutex()
     private val publications = Any()
     private val intent = AtomicLong()
@@ -88,8 +89,9 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
             val owned = backendFactory(owner, setup.testUrl, ::current).also { backend = it }
             try {
                 val proxySettings = effective.copy(network = effective.network.copy(vpnEnabled = false))
+                val reservedGeneration = ++generation
                 val running = owned.open(VpnPlan(candidate.profileId, effective, vpnSettings = proxySettings,
-                    ownerIntentToken = requested)).also { held = HeldSession(requested, it) }
+                    ownerIntentToken = requested, runtimeSessionGeneration = reservedGeneration)).also { held = HeldSession(requested, it) }
                 running.awaitReady()
                 running.configurePolicies(effective)
                 val endpoint = running.endpoint
@@ -110,7 +112,7 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
                 }
                 kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 check(current()) { "runtime_graph_superseded" }
-                val proof = RuntimeAppliedProof(owner, ++generation, epoch)
+                val proof = RuntimeAppliedProof(owner, reservedGeneration, epoch)
                 val projection = meowServiceProjection(candidate.handoff, settings, null, null, null, setup.testUrl, policy.controller)
                 store.commitGraphApplied(candidate.revision, candidate.intentEpoch, proof, projection)
                 val identity = checkNotNull(store.readAppliedIdentity())
@@ -165,11 +167,69 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
     }
 
     override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String): RuntimeAppliedIdentity = gate.withLock {
-        val previous = checkNotNull(store.readLastApplied()).handoff
-        val settings = MeowRuntimeSnapshotSettings.decode(previous.runtimeSettingsJson)
-        val setup = MeowServiceSetup(setupParamsJson, defaultUrl)
-        update(expected, MeowSetupProjection(settings.copy(requests = settings.requests.copy(checkCertificate = !setup.skipCertVerify)),
-            previous.notificationJson, null, setupParamsJson))
+        val requested=intent.get()
+        val actual=requireCurrent(expected)
+        val before=actual.identity
+        val previous=checkNotNull(store.readLastApplied()).handoff
+        val params=JSONObject(setupParamsJson)
+        val verify=checkNotNull(verifyMetadata) { "Independent current metadata verifier is required" }
+        val raw=verify(previous,params)
+        val running=checkNotNull(session)
+        fun current()=requested == intent.get() && ownsOwner(before.proof.serviceOwner) && store.isGraphCandidate(before.revision,before.intentEpoch) && graph?.identity == before && session === running
+        val binding=checkNotNull(running.currentGeoBinding()) { "Trusted initial Geo binding is required" }
+        check(binding.serviceOwner == expected.serviceOwner && binding.sessionGeneration == expected.sessionGeneration &&
+            binding.intentEpoch == expected.intentEpoch && binding.compiledSha256 == expected.compiledSha256)
+        CoreApiClient(ControlEndpoint(actual.endpoint.port,actual.endpoint.secret)).use { client ->
+            val witness=client.selectionWitness()
+            check(witness.stamp.coreEpoch == expected.coreEpoch && witness.matchesRaw(raw)) { "Actual selected cache differs from SQL" }
+            check(current() && verify(previous,params) == raw)
+            running.renewGeoBinding(dev.aerove.lite.data.MeowGeoExpected(witness.stamp,binding),witness,raw,
+                meowGeoSourceGuard(params.getJSONObject("data-source-proof")),::current)
+            check(current() && verify(previous,params) == raw && client.selectionWitness().witnessId == witness.witnessId)
+        }
+        val settings=MeowRuntimeSnapshotSettings.decode(previous.runtimeSettingsJson)
+        val projection=meowServiceProjection(previous,settings,null,null,setupParamsJson,defaultUrl)
+        val identity=store.commitGraphRuntimeProjection(before,projection,before.proof)
+        synchronized(publications) {
+            check(requested == intent.get() && ownsOwner(before.proof.serviceOwner)) { "runtime_graph_superseded" }
+            graph=MeowQueryGraph(identity,actual.endpoint,false);publish(ownerToken,graph)
+        }
+        identity
+    }
+
+    override suspend fun applyGeo(expected: MeowSetupRuntime, transactionId: String,
+        candidate: dev.aerove.lite.data.MeowGeoCandidate, resources: dev.aerove.lite.data.FlutterRuntimeResources.Geo,
+        projection: RuntimeHandoff, rawSelectedMap: Map<String,String>, admit: suspend () -> Boolean): MeowGeoRuntimeResult = gate.withLock {
+        checkNotNull(session).joinPreviousGeo()
+        val actual=requireCurrent(expected);val before=actual.identity
+        val requested=intent.get();val running=checkNotNull(session)
+        fun current()=requested == intent.get() && ownsOwner(before.proof.serviceOwner) &&
+            store.isGraphCandidate(before.revision,before.intentEpoch) && graph?.identity == before && session === running
+        check(current() && admit())
+        val publication=withContext(NonCancellable) { store.stageGeoPublication(before,transactionId,projection) }
+        try {
+            running.applyGeo(transactionId,candidate,resources,rawSelectedMap,::current,admit,
+                persist={ applied ->
+                    val identity=store.commitGeoPublication(publication,before.proof.copy(coreEpoch=applied.after.coreEpoch))
+                    synchronized(publications) {
+                        check(requested == intent.get() && ownsOwner(before.proof.serviceOwner))
+                        graph=MeowQueryGraph(identity,actual.endpoint,false);publish(ownerToken,graph)
+                    }
+                    identity
+                },discard={store.abortGeoPublication(publication)})
+        } catch(failure:Throwable) {
+            if(!running.ownsGeoResources(resources)) {
+                withContext(NonCancellable) { store.abortGeoPublication(publication);resources.closeAfterNativeJoin() }
+            }
+            throw failure
+        }
+    }
+
+    override suspend fun geoStatus(expected: MeowSetupRuntime, transactionId: String, abort: Boolean): MeowGeoRuntimeResult = gate.withLock {
+        val actual=checkNotNull(queryGraph()) { "Geo query graph was retired" }
+        check(actual.identity.revision == expected.revision && actual.identity.intentEpoch == expected.intentEpoch &&
+            actual.identity.proof.serviceOwner == expected.serviceOwner && actual.identity.proof.sessionGeneration == expected.sessionGeneration)
+        checkNotNull(session).geoStatus(transactionId,abort)
     }
 
     private suspend fun update(expected: MeowSetupRuntime, projection: MeowSetupProjection): RuntimeAppliedIdentity {
@@ -182,11 +242,24 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
         val setup = MeowServiceSetup(projection.setupParamsJson ?: JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), defaultUrl)
         if (old.copy(mode = next.mode, unifiedDelay = next.unifiedDelay, tcpConcurrent = next.tcpConcurrent,
                 requests = next.requests, externalController = next.externalController, findProcessMode = next.findProcessMode,
-                backgroundPolicy = next.backgroundPolicy) != next ||
+                backgroundPolicy = next.backgroundPolicy, geoResources = next.geoResources) != next ||
             setup.testUrl != defaultUrl && meowMissingGroupTestUrl(ConfigYaml.parse(previous.compiledYaml)))
             throw MeowProtocolFailure("implementation_blocked", "Graph configuration requires setupConfig before it can be applied")
         if (setup.json.getJSONObject("applied").getString("yaml-md5") != JSONObject(previous.setupRecordJson).getString("yaml-md5"))
             throw MeowProtocolFailure("superseded", "Graph YAML identity changed")
+        val previousSetup = MeowServiceSetup(JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(),defaultUrl)
+        if (old.copy(geoResources = next.geoResources) == next && setup.selectedMap == previousSetup.selectedMap &&
+            setup.testUrl == previousSetup.testUrl && setup.skipCertVerify == previousSetup.skipCertVerify) {
+            val epoch = CoreApiClient(ControlEndpoint(actual.endpoint.port,actual.endpoint.secret)).use { it.routeSnapshot().coreEpoch.toString() }
+            check(requested == intent.get() && ownsOwner(before.proof.serviceOwner)) { "runtime_graph_superseded" }
+            val projection = meowServiceProjection(previous,next,JSONObject(projection.sharedStateJson),projection.updateParamsJson,setup.json.toString(),setup.testUrl)
+            val identity = store.commitGraphRuntimeProjection(before,projection,before.proof.copy(coreEpoch=epoch))
+            synchronized(publications) {
+                check(requested == intent.get() && ownsOwner(before.proof.serviceOwner)) { "runtime_graph_superseded" }
+                graph=MeowQueryGraph(identity,actual.endpoint,false);publish(ownerToken,graph)
+            }
+            return identity
+        }
         graph = null
         publish(ownerToken, null)
         try {
@@ -194,7 +267,8 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
             val epoch = CoreApiClient(ControlEndpoint(actual.endpoint.port, actual.endpoint.secret)).use { client ->
                 client.setMode(next.mode)
                 check(client.mode() == next.mode) { "mode: Graph policy did not converge" }
-                MeowRuntimeSelection(client).apply(setup.selectedMap) {
+                val oldSetup = MeowServiceSetup(JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), defaultUrl)
+                if (setup.selectedMap != oldSetup.selectedMap) MeowRuntimeSelection(client).apply(setup.selectedMap) {
                     requested == intent.get() && ownsOwner(before.proof.serviceOwner) && store.isGraphCandidate(before.revision, before.intentEpoch)
                 }
                 client.routeSnapshot().coreEpoch.toString()

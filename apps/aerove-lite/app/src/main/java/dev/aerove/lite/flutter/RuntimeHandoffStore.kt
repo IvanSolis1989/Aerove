@@ -11,7 +11,8 @@ import java.util.UUID
 
 /** One atomic state file arbitrates commit, stop and background restore across all store instances. */
 class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: String = MEOW_RUNTIME_CORE_SHA,
-    private val validateProjection: (RuntimeHandoff) -> Unit = {}) {
+    private val validateProjection: (RuntimeHandoff) -> Unit = {},
+    private val validateSource: (RuntimeHandoff) -> Unit = {}) {
     private val privateRoot = privateDirectory.canonicalFile
     private val storage = PrivateStorage(File(privateRoot, "runtime-handoffs"))
     private var current: MeowRuntimeSnapshot?
@@ -117,6 +118,8 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
             validateReplacement(checkNotNull(snapshot).handoff, projection)
             MeowRuntimeSnapshot(snapshotRevision, epoch, userRequested, projection, snapshot.resourceDirectory)
         }
+        validateSource(applied.handoff)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         lastApplied = applied
         appliedProof = JSONObject().put("serviceOwner", proof.serviceOwner).put("sessionGeneration", proof.sessionGeneration).put("coreEpoch", proof.coreEpoch)
         save(epoch, applied)
@@ -145,12 +148,156 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
         validateReplacement(previous.handoff, projection)
         require(JSONObject(projection.setupRecordJson).getString("yaml-md5") == JSONObject(previous.handoff.setupRecordJson).getString("yaml-md5")) { "runtime_refresh_yaml_changed" }
         val next = MeowRuntimeSnapshot(previous.revision, epoch, userRequested, projection, previous.resourceDirectory)
+        validateSource(projection)
+        kotlinx.coroutines.currentCoroutineContext().ensureActive()
         lastApplied = next
         appliedProof = JSONObject().put("serviceOwner", proof.serviceOwner).put("sessionGeneration", proof.sessionGeneration).put("coreEpoch", proof.coreEpoch)
         save(epoch, next)
         val actual = checkNotNull(load().second)
         check(meowJsonEqual(actual.handoff.json(), projection.json())) { "runtime_projection_readback_mismatch" }
         RuntimeAppliedIdentity(actual.revision, actual.intentEpoch, actual.handoff.compiledSha256, proof, actual.handoff.setupRecordJson)
+    }
+
+    /** Durable candidate bytes are published only after the same live Core returns a committed receipt. */
+    internal suspend fun stageGeoPublication(expected: RuntimeAppliedIdentity, transactionId: String,
+        projection: RuntimeHandoff): MeowGeoPublication = storage.transaction {
+        require(UUID.fromString(transactionId).toString() == transactionId)
+        val (epoch,desired)=load()
+        val previous=checkNotNull(lastApplied)
+        requireGeoExpected(expected,epoch,desired,previous)
+        check(!storage.file("geo-pending.json").exists()) { "runtime_geo_recovery_required" }
+        projection.validate(expectedCoreSha);validateProjection(projection);validateSource(projection)
+        require(previous.handoff.coreSha == projection.coreSha && previous.handoff.sourceId == projection.sourceId &&
+            previous.handoff.sourceRevision == projection.sourceRevision && previous.handoff.sourceSha256 == projection.sourceSha256 &&
+            previous.handoff.vpnOptionsJson == projection.vpnOptionsJson && previous.handoff.notificationJson == projection.notificationJson) { "runtime_geo_non_geo_projection_changed" }
+        val baseline=previous.handoff.resources.associateBy { it.relativePath }
+        val added=projection.resources.filter { it != baseline[it.relativePath] }
+        require(added.isNotEmpty() && added.all { asset ->
+            asset.relativePath.startsWith("geo/") && asset.relativePath.split('/').size == 3 &&
+                UUID.fromString(asset.relativePath.split('/')[1]).toString() == asset.relativePath.split('/')[1] &&
+                baseline[asset.relativePath] == null
+        }) { "runtime_geo_resource_scope_invalid" }
+        val copied=mutableListOf<File>()
+        try {
+            var total=0L
+            for(asset in added) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val source=File(asset.sourcePath).absoluteFile
+                require(source.toPath() == source.toPath().toRealPath() && source.toPath().startsWith(privateRoot.toPath()) &&
+                    Files.isRegularFile(source.toPath(),java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                val bytes=Files.newInputStream(source.toPath(),java.nio.file.LinkOption.NOFOLLOW_LINKS).use { it.readBounded(64*1024*1024) }
+                total+=bytes.size;require(total <= 256L*1024*1024 && runtimeSha256(bytes) == asset.sha256)
+                val target=File(previous.resourceDirectory,asset.relativePath)
+                require(!target.exists());check(target.parentFile.mkdirs() || target.parentFile.isDirectory)
+                require(target.parentFile.toPath() == target.parentFile.toPath().toRealPath())
+                java.io.FileOutputStream(target).use { it.write(bytes);it.fd.sync() };copied+=target
+                require(runtimeSha256(target.readBytes()) == asset.sha256)
+            }
+            val next=MeowRuntimeSnapshot(previous.revision,epoch,previous.userRequested,projection,previous.resourceDirectory)
+            verify(next)
+            val journal=JSONObject().put("schemaVersion",1).put("transactionId",transactionId)
+                .put("expectedCompiledSha256",expected.compiledSha256).put("revision",expected.revision)
+                .put("intentEpoch",expected.intentEpoch).put("serviceOwner",expected.proof.serviceOwner)
+                .put("sessionGeneration",expected.proof.sessionGeneration).put("coreEpoch",expected.proof.coreEpoch)
+                .put("expectedSetupRecord",JSONObject(expected.expectedSetupRecordJson)).put("handoff",projection.json())
+            storage.write("geo-pending.json",journal.toString())
+            MeowGeoPublication(transactionId,expected,next,runtimeSha256(journal.toString().toByteArray()))
+        } catch(failure:Throwable) {
+            copied.forEach { runCatching { Files.deleteIfExists(it.toPath()) } }
+            throw failure
+        }
+    }
+
+    internal suspend fun commitGeoPublication(value: MeowGeoPublication, proof: RuntimeAppliedProof): RuntimeAppliedIdentity = storage.transaction {
+        require(proof == value.expected.proof) { "runtime_geo_owner_changed" }
+        val (epoch,desired)=load();val previous=checkNotNull(lastApplied)
+        val persisted=appliedProof
+        if(epoch == value.expected.intentEpoch && desired?.revision == value.next.revision &&
+            previous.revision == value.next.revision && previous.intentEpoch == epoch &&
+            desired.userRequested == value.next.userRequested && previous.userRequested == value.next.userRequested &&
+            meowJsonEqual(desired.handoff.json(),value.next.handoff.json()) &&
+            meowJsonEqual(previous.handoff.json(),value.next.handoff.json()) && persisted != null &&
+            persisted.getLong("serviceOwner") == proof.serviceOwner &&
+            persisted.getLong("sessionGeneration") == proof.sessionGeneration && persisted.getString("coreEpoch") == proof.coreEpoch) {
+            verify(previous)
+            val pending=storage.file("geo-pending.json")
+            if(pending.exists()) {
+                require(runtimeSha256(storage.read("geo-pending.json",32*1024*1024).toByteArray()) == value.journalSha256) { "runtime_geo_journal_changed" }
+                Files.deleteIfExists(pending.toPath())
+            }
+            return@transaction RuntimeAppliedIdentity(previous.revision,epoch,previous.handoff.compiledSha256,proof,previous.handoff.setupRecordJson)
+        }
+        val journal=storage.read("geo-pending.json",32*1024*1024)
+        require(runtimeSha256(journal.toByteArray()) == value.journalSha256) { "runtime_geo_journal_changed" }
+        requireGeoExpected(value.expected,epoch,desired,previous)
+        require(proof.serviceOwner == value.expected.proof.serviceOwner && proof.sessionGeneration == value.expected.proof.sessionGeneration &&
+            proof.coreEpoch == value.expected.proof.coreEpoch) { "runtime_geo_owner_changed" }
+        verify(value.next)
+        // The source admission happened immediately before Core commit. Persist its actual historical
+        // result even if its observer was cancelled; subsequent starts still independently verify proof.
+        lastApplied=value.next
+        appliedProof=JSONObject().put("serviceOwner",proof.serviceOwner).put("sessionGeneration",proof.sessionGeneration).put("coreEpoch",proof.coreEpoch)
+        save(epoch,value.next)
+        val actual=checkNotNull(load().second)
+        require(actual.handoff.compiledSha256 == value.next.handoff.compiledSha256 && actual.handoff.setupRecordJson == value.next.handoff.setupRecordJson)
+        Files.deleteIfExists(storage.file("geo-pending.json").toPath())
+        val retained=actual.handoff.resources.map { it.relativePath }.toSet()
+        previous.handoff.resources.filter { it.relativePath.startsWith("geo/") && it.relativePath !in retained }.forEach { asset ->
+            runCatching { Files.deleteIfExists(File(previous.resourceDirectory,asset.relativePath).toPath()) }
+        }
+        RuntimeAppliedIdentity(actual.revision,epoch,actual.handoff.compiledSha256,proof,actual.handoff.setupRecordJson)
+    }
+
+    internal suspend fun abortGeoPublication(value: MeowGeoPublication) = storage.transaction {
+        val pending=storage.file("geo-pending.json")
+        if(pending.exists() && runtimeSha256(storage.read("geo-pending.json",32*1024*1024).toByteArray()) == value.journalSha256) {
+            val retained=retainedResourcePaths(load().second)
+            value.next.handoff.resources.filter { it.relativePath.startsWith("geo/") }.forEach { asset ->
+                val target=File(value.next.resourceDirectory,asset.relativePath).toPath().toAbsolutePath().normalize()
+                if(target !in retained)Files.deleteIfExists(target)
+            }
+            Files.deleteIfExists(pending.toPath())
+        }
+    }
+
+    /** Called under the exclusive Native lifecycle lock, before a new Core can read these files. */
+    internal suspend fun discardAbandonedGeoAfterNativeJoin() = storage.transaction {
+        val pending=storage.file("geo-pending.json")
+        if(!pending.exists())return@transaction
+        val row=JSONObject(storage.read("geo-pending.json",32*1024*1024))
+        require(row.getInt("schemaVersion") == 1)
+        val candidate=RuntimeHandoff.fromJson(row.getJSONObject("handoff")).also { it.validate(expectedCoreSha);validateProjection(it) }
+        val (_,desired)=load()
+        val retained=retainedResourcePaths(desired)
+        val revision=row.getString("revision").also { require(UUID.fromString(it).toString() == it) }
+        val directory=File(storage.root,"resources/$revision")
+        require(directory.toPath() == directory.toPath().toRealPath()) { "runtime_geo_recovery_resource_redirected" }
+        for(asset in candidate.resources.filter { it.relativePath.startsWith("geo/") }) {
+            val target=File(directory,asset.relativePath)
+            val path=target.toPath().toAbsolutePath().normalize()
+            if(path !in retained) {
+                require(target.parentFile.toPath() == target.parentFile.toPath().toRealPath() && path.startsWith(directory.toPath()))
+                Files.deleteIfExists(path)
+            }
+        }
+        Files.deleteIfExists(pending.toPath())
+    }
+
+    private fun retainedResourcePaths(desired: MeowRuntimeSnapshot?): Set<java.nio.file.Path> =
+        listOfNotNull(desired,lastApplied).flatMap { snapshot ->
+            snapshot.handoff.resources.map { asset ->
+                File(snapshot.resourceDirectory,asset.relativePath).toPath().toAbsolutePath().normalize()
+            }
+        }.toSet()
+
+    private fun requireGeoExpected(expected: RuntimeAppliedIdentity, epoch: Long, desired: MeowRuntimeSnapshot?, previous: MeowRuntimeSnapshot) {
+        val proof=checkNotNull(appliedProof)
+        check(epoch == expected.intentEpoch && desired?.revision == expected.revision && previous.revision == expected.revision &&
+            desired.handoff.compiledSha256 == expected.compiledSha256 && previous.handoff.compiledSha256 == expected.compiledSha256 &&
+            desired.userRequested == previous.userRequested && previous.intentEpoch == epoch &&
+            proof.getLong("serviceOwner") == expected.proof.serviceOwner && proof.getLong("sessionGeneration") == expected.proof.sessionGeneration &&
+            proof.getString("coreEpoch") == expected.proof.coreEpoch &&
+            meowJsonEqual(JSONObject(previous.handoff.setupRecordJson),JSONObject(expected.expectedSetupRecordJson))) { "runtime_geo_publication_superseded" }
     }
 
     private fun validateReplacement(previous: RuntimeHandoff, next: RuntimeHandoff) {
@@ -202,6 +349,7 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
             val next = MeowRuntimeSnapshot(revision, Math.addExact(epoch, 1), old?.userRequested == true && hasRequestedIntent(), frozen, resources)
             verify(next)
             sourceIsCurrent()
+            validateSource(frozen)
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             save(next.intentEpoch, next)
             next
@@ -306,3 +454,7 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
         private val currents = java.util.concurrent.ConcurrentHashMap<String, MeowRuntimeSnapshot>()
     }
 }
+
+
+internal class MeowGeoPublication(val transactionId: String, val expected: RuntimeAppliedIdentity,
+    val next: MeowRuntimeSnapshot, val journalSha256: String)

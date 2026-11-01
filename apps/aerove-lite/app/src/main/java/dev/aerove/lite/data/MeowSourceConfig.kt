@@ -3,30 +3,18 @@ package dev.aerove.lite.data
 /** The source-side TUN/listener/resource ownership gate shared by profile admission and composition. */
 internal object MeowSourceConfig {
     private fun invalid(path: String, reason: String): Nothing = throw ConfigValidationException(listOf(ConfigIssue(path, reason)))
-    fun input(source: String): Pair<MutableMap<String, Any?>, List<Any?>> {
+    fun input(source: String, tunReconciliation: MeowTunReconciliation? = null): Pair<MutableMap<String, Any?>, List<Any?>> {
         val root = ConfigYaml.parse(source)
+        MeowGeoPolicy.read(root, dev.aerove.lite.resources.GeoResourcePreferences())
+        MeowGeoOrigin.read(root)
+        root.remove(MeowGeoOrigin.KEY)
         if (root.containsKey("inbound-providers")) invalid("$.inbound-providers", "No Meow v0.26.1 schema; bridge support is required")
         listOf("firewall", "udp", "udp-timeout").forEach { if (root.containsKey(it)) invalid("$.$it", "Meow warns and ignores this root field") }
-        val tun = root["tun"]
-        if (tun != null && tun !is Map<*, *>) invalid("$.tun", "Expected an object")
-        (tun as? Map<*, *>)?.forEach { (key, _) ->
-            if (key !in setOf("enable", "device", "mtu", "inet4-address", "inet6-address", "auto-route", "dns-hijack"))
-                invalid("$.tun.$key", "Not consumed by the Android typed TUN plan; warn-only fields cannot be ignored")
-        }
-        // Source TUN policy must be reconciled with the Android Builder, rather than overwritten by host defaults.
-        (tun as? Map<*, *>)?.forEach { (key, value) ->
-            val valid = when (key) {
-                "enable" -> value is Boolean
-                "device" -> value is String && value.isNotBlank() && !value.startsWith("fd://")
-                "mtu" -> value is Number && value.toLong() in 1280..65535 && value.toDouble() == value.toLong().toDouble()
-                "auto-route" -> value is Boolean || value in setOf("global", "fake-ip")
-                "dns-hijack" -> value is List<*> && value.all { it is String && it == "any:53" }
-                "inet4-address", "inet6-address" -> value is String && value.isNotBlank()
-                else -> false
-            }
-            if (!valid) invalid("$.tun.$key", "Invalid Meow RawTun value")
-            if (key in setOf("device", "inet4-address", "inet6-address", "auto-route", "mtu", "dns-hijack") || (key == "enable" && value == true))
-                invalid("$.tun.$key", "Explicit source TUN policy requires Android Builder reconciliation before activation")
+        val policy = MeowTunReconciliation.sourcePolicy(source)
+        val explicit = policy.keys.firstOrNull { it != "enable" || policy[it] == true }
+        if (explicit != null) {
+            if (tunReconciliation == null) invalid("$.tun.$explicit", "Explicit source TUN policy requires Android Builder reconciliation before activation")
+            tunReconciliation.verify(source)
         }
         val raw = root.remove("listeners") ?: emptyList<Any?>()
         if (raw !is List<*>) invalid("$.listeners", "Expected a list")

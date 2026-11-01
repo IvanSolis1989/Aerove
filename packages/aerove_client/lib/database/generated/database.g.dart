@@ -79,6 +79,16 @@ class $ProfilesTable extends Profiles
         type: DriftSqlType.dateTime,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _lastUpdateDateMillisMeta =
+      const VerificationMeta('lastUpdateDateMillis');
+  @override
+  late final GeneratedColumn<int> lastUpdateDateMillis = GeneratedColumn<int>(
+    'last_update_date_millis',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   @override
   late final GeneratedColumnWithTypeConverter<ExtendType, String> extendType =
       GeneratedColumn<String>(
@@ -189,6 +199,7 @@ class $ProfilesTable extends Profiles
     url,
     ageSecretKey,
     lastUpdateDate,
+    lastUpdateDateMillis,
     extendType,
     scriptId,
     matchTarget,
@@ -255,6 +266,15 @@ class $ProfilesTable extends Profiles
         lastUpdateDate.isAcceptableOrUnknown(
           data['last_update_date']!,
           _lastUpdateDateMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_update_date_millis')) {
+      context.handle(
+        _lastUpdateDateMillisMeta,
+        lastUpdateDateMillis.isAcceptableOrUnknown(
+          data['last_update_date_millis']!,
+          _lastUpdateDateMillisMeta,
         ),
       );
     }
@@ -337,6 +357,10 @@ class $ProfilesTable extends Profiles
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_update_date'],
       ),
+      lastUpdateDateMillis: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_update_date_millis'],
+      ),
       extendType: $ProfilesTable.$converterextendType.fromSql(
         attachedDatabase.typeMapping.read(
           DriftSqlType.string,
@@ -417,6 +441,7 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
   final String url;
   final String? ageSecretKey;
   final DateTime? lastUpdateDate;
+  final int? lastUpdateDateMillis;
   final ExtendType extendType;
   final int? scriptId;
   final String? matchTarget;
@@ -435,6 +460,7 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
     required this.url,
     this.ageSecretKey,
     this.lastUpdateDate,
+    this.lastUpdateDateMillis,
     required this.extendType,
     this.scriptId,
     this.matchTarget,
@@ -463,6 +489,9 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
     }
     if (!nullToAbsent || lastUpdateDate != null) {
       map['last_update_date'] = Variable<DateTime>(lastUpdateDate);
+    }
+    if (!nullToAbsent || lastUpdateDateMillis != null) {
+      map['last_update_date_millis'] = Variable<int>(lastUpdateDateMillis);
     }
     {
       map['extend_type'] = Variable<String>(
@@ -520,6 +549,9 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
       lastUpdateDate: lastUpdateDate == null && nullToAbsent
           ? const Value.absent()
           : Value(lastUpdateDate),
+      lastUpdateDateMillis: lastUpdateDateMillis == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastUpdateDateMillis),
       extendType: Value(extendType),
       scriptId: scriptId == null && nullToAbsent
           ? const Value.absent()
@@ -558,6 +590,9 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
       url: serializer.fromJson<String>(json['url']),
       ageSecretKey: serializer.fromJson<String?>(json['ageSecretKey']),
       lastUpdateDate: serializer.fromJson<DateTime?>(json['lastUpdateDate']),
+      lastUpdateDateMillis: serializer.fromJson<int?>(
+        json['lastUpdateDateMillis'],
+      ),
       extendType: $ProfilesTable.$converterextendType.fromJson(
         serializer.fromJson<String>(json['extendType']),
       ),
@@ -591,6 +626,7 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
       'url': serializer.toJson<String>(url),
       'ageSecretKey': serializer.toJson<String?>(ageSecretKey),
       'lastUpdateDate': serializer.toJson<DateTime?>(lastUpdateDate),
+      'lastUpdateDateMillis': serializer.toJson<int?>(lastUpdateDateMillis),
       'extendType': serializer.toJson<String>(
         $ProfilesTable.$converterextendType.toJson(extendType),
       ),
@@ -618,6 +654,7 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
     String? url,
     Value<String?> ageSecretKey = const Value.absent(),
     Value<DateTime?> lastUpdateDate = const Value.absent(),
+    Value<int?> lastUpdateDateMillis = const Value.absent(),
     ExtendType? extendType,
     Value<int?> scriptId = const Value.absent(),
     Value<String?> matchTarget = const Value.absent(),
@@ -640,6 +677,9 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
     lastUpdateDate: lastUpdateDate.present
         ? lastUpdateDate.value
         : this.lastUpdateDate,
+    lastUpdateDateMillis: lastUpdateDateMillis.present
+        ? lastUpdateDateMillis.value
+        : this.lastUpdateDateMillis,
     extendType: extendType ?? this.extendType,
     scriptId: scriptId.present ? scriptId.value : this.scriptId,
     matchTarget: matchTarget.present ? matchTarget.value : this.matchTarget,
@@ -669,6 +709,9 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
       lastUpdateDate: data.lastUpdateDate.present
           ? data.lastUpdateDate.value
           : this.lastUpdateDate,
+      lastUpdateDateMillis: data.lastUpdateDateMillis.present
+          ? data.lastUpdateDateMillis.value
+          : this.lastUpdateDateMillis,
       extendType: data.extendType.present
           ? data.extendType.value
           : this.extendType,
@@ -704,6 +747,7 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
           ..write('url: $url, ')
           ..write('ageSecretKey: $ageSecretKey, ')
           ..write('lastUpdateDate: $lastUpdateDate, ')
+          ..write('lastUpdateDateMillis: $lastUpdateDateMillis, ')
           ..write('extendType: $extendType, ')
           ..write('scriptId: $scriptId, ')
           ..write('matchTarget: $matchTarget, ')
@@ -727,6 +771,7 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
     url,
     ageSecretKey,
     lastUpdateDate,
+    lastUpdateDateMillis,
     extendType,
     scriptId,
     matchTarget,
@@ -749,6 +794,7 @@ class RawProfile extends DataClass implements Insertable<RawProfile> {
           other.url == this.url &&
           other.ageSecretKey == this.ageSecretKey &&
           other.lastUpdateDate == this.lastUpdateDate &&
+          other.lastUpdateDateMillis == this.lastUpdateDateMillis &&
           other.extendType == this.extendType &&
           other.scriptId == this.scriptId &&
           other.matchTarget == this.matchTarget &&
@@ -769,6 +815,7 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
   final Value<String> url;
   final Value<String?> ageSecretKey;
   final Value<DateTime?> lastUpdateDate;
+  final Value<int?> lastUpdateDateMillis;
   final Value<ExtendType> extendType;
   final Value<int?> scriptId;
   final Value<String?> matchTarget;
@@ -787,6 +834,7 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
     this.url = const Value.absent(),
     this.ageSecretKey = const Value.absent(),
     this.lastUpdateDate = const Value.absent(),
+    this.lastUpdateDateMillis = const Value.absent(),
     this.extendType = const Value.absent(),
     this.scriptId = const Value.absent(),
     this.matchTarget = const Value.absent(),
@@ -806,6 +854,7 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
     required String url,
     this.ageSecretKey = const Value.absent(),
     this.lastUpdateDate = const Value.absent(),
+    this.lastUpdateDateMillis = const Value.absent(),
     required ExtendType extendType,
     this.scriptId = const Value.absent(),
     this.matchTarget = const Value.absent(),
@@ -832,6 +881,7 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
     Expression<String>? url,
     Expression<String>? ageSecretKey,
     Expression<DateTime>? lastUpdateDate,
+    Expression<int>? lastUpdateDateMillis,
     Expression<String>? extendType,
     Expression<int>? scriptId,
     Expression<String>? matchTarget,
@@ -851,6 +901,8 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
       if (url != null) 'url': url,
       if (ageSecretKey != null) 'age_secret_key': ageSecretKey,
       if (lastUpdateDate != null) 'last_update_date': lastUpdateDate,
+      if (lastUpdateDateMillis != null)
+        'last_update_date_millis': lastUpdateDateMillis,
       if (extendType != null) 'extend_type': extendType,
       if (scriptId != null) 'script_id': scriptId,
       if (matchTarget != null) 'match_target': matchTarget,
@@ -873,6 +925,7 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
     Value<String>? url,
     Value<String?>? ageSecretKey,
     Value<DateTime?>? lastUpdateDate,
+    Value<int?>? lastUpdateDateMillis,
     Value<ExtendType>? extendType,
     Value<int?>? scriptId,
     Value<String?>? matchTarget,
@@ -892,6 +945,7 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
       url: url ?? this.url,
       ageSecretKey: ageSecretKey ?? this.ageSecretKey,
       lastUpdateDate: lastUpdateDate ?? this.lastUpdateDate,
+      lastUpdateDateMillis: lastUpdateDateMillis ?? this.lastUpdateDateMillis,
       extendType: extendType ?? this.extendType,
       scriptId: scriptId ?? this.scriptId,
       matchTarget: matchTarget ?? this.matchTarget,
@@ -931,6 +985,11 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
     }
     if (lastUpdateDate.present) {
       map['last_update_date'] = Variable<DateTime>(lastUpdateDate.value);
+    }
+    if (lastUpdateDateMillis.present) {
+      map['last_update_date_millis'] = Variable<int>(
+        lastUpdateDateMillis.value,
+      );
     }
     if (extendType.present) {
       map['extend_type'] = Variable<String>(
@@ -987,6 +1046,7 @@ class ProfilesCompanion extends UpdateCompanion<RawProfile> {
           ..write('url: $url, ')
           ..write('ageSecretKey: $ageSecretKey, ')
           ..write('lastUpdateDate: $lastUpdateDate, ')
+          ..write('lastUpdateDateMillis: $lastUpdateDateMillis, ')
           ..write('extendType: $extendType, ')
           ..write('scriptId: $scriptId, ')
           ..write('matchTarget: $matchTarget, ')
@@ -1037,6 +1097,16 @@ class $ScriptsTable extends Scripts with TableInfo<$ScriptsTable, RawScript> {
         type: DriftSqlType.dateTime,
         requiredDuringInsert: true,
       );
+  static const VerificationMeta _lastUpdateTimeMillisMeta =
+      const VerificationMeta('lastUpdateTimeMillis');
+  @override
+  late final GeneratedColumn<int> lastUpdateTimeMillis = GeneratedColumn<int>(
+    'last_update_time_millis',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _urlMeta = const VerificationMeta('url');
   @override
   late final GeneratedColumn<String> url = GeneratedColumn<String>(
@@ -1056,7 +1126,14 @@ class $ScriptsTable extends Scripts with TableInfo<$ScriptsTable, RawScript> {
     requiredDuringInsert: false,
   );
   @override
-  List<GeneratedColumn> get $columns => [id, label, lastUpdateTime, url, order];
+  List<GeneratedColumn> get $columns => [
+    id,
+    label,
+    lastUpdateTime,
+    lastUpdateTimeMillis,
+    url,
+    order,
+  ];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
@@ -1091,6 +1168,15 @@ class $ScriptsTable extends Scripts with TableInfo<$ScriptsTable, RawScript> {
     } else if (isInserting) {
       context.missing(_lastUpdateTimeMeta);
     }
+    if (data.containsKey('last_update_time_millis')) {
+      context.handle(
+        _lastUpdateTimeMillisMeta,
+        lastUpdateTimeMillis.isAcceptableOrUnknown(
+          data['last_update_time_millis']!,
+          _lastUpdateTimeMillisMeta,
+        ),
+      );
+    }
     if (data.containsKey('url')) {
       context.handle(
         _urlMeta,
@@ -1124,6 +1210,10 @@ class $ScriptsTable extends Scripts with TableInfo<$ScriptsTable, RawScript> {
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_update_time'],
       )!,
+      lastUpdateTimeMillis: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_update_time_millis'],
+      ),
       url: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}url'],
@@ -1145,12 +1235,14 @@ class RawScript extends DataClass implements Insertable<RawScript> {
   final int id;
   final String label;
   final DateTime lastUpdateTime;
+  final int? lastUpdateTimeMillis;
   final String? url;
   final int? order;
   const RawScript({
     required this.id,
     required this.label,
     required this.lastUpdateTime,
+    this.lastUpdateTimeMillis,
     this.url,
     this.order,
   });
@@ -1160,6 +1252,9 @@ class RawScript extends DataClass implements Insertable<RawScript> {
     map['id'] = Variable<int>(id);
     map['label'] = Variable<String>(label);
     map['last_update_time'] = Variable<DateTime>(lastUpdateTime);
+    if (!nullToAbsent || lastUpdateTimeMillis != null) {
+      map['last_update_time_millis'] = Variable<int>(lastUpdateTimeMillis);
+    }
     if (!nullToAbsent || url != null) {
       map['url'] = Variable<String>(url);
     }
@@ -1174,6 +1269,9 @@ class RawScript extends DataClass implements Insertable<RawScript> {
       id: Value(id),
       label: Value(label),
       lastUpdateTime: Value(lastUpdateTime),
+      lastUpdateTimeMillis: lastUpdateTimeMillis == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastUpdateTimeMillis),
       url: url == null && nullToAbsent ? const Value.absent() : Value(url),
       order: order == null && nullToAbsent
           ? const Value.absent()
@@ -1190,6 +1288,9 @@ class RawScript extends DataClass implements Insertable<RawScript> {
       id: serializer.fromJson<int>(json['id']),
       label: serializer.fromJson<String>(json['label']),
       lastUpdateTime: serializer.fromJson<DateTime>(json['lastUpdateTime']),
+      lastUpdateTimeMillis: serializer.fromJson<int?>(
+        json['lastUpdateTimeMillis'],
+      ),
       url: serializer.fromJson<String?>(json['url']),
       order: serializer.fromJson<int?>(json['order']),
     );
@@ -1201,6 +1302,7 @@ class RawScript extends DataClass implements Insertable<RawScript> {
       'id': serializer.toJson<int>(id),
       'label': serializer.toJson<String>(label),
       'lastUpdateTime': serializer.toJson<DateTime>(lastUpdateTime),
+      'lastUpdateTimeMillis': serializer.toJson<int?>(lastUpdateTimeMillis),
       'url': serializer.toJson<String?>(url),
       'order': serializer.toJson<int?>(order),
     };
@@ -1210,12 +1312,16 @@ class RawScript extends DataClass implements Insertable<RawScript> {
     int? id,
     String? label,
     DateTime? lastUpdateTime,
+    Value<int?> lastUpdateTimeMillis = const Value.absent(),
     Value<String?> url = const Value.absent(),
     Value<int?> order = const Value.absent(),
   }) => RawScript(
     id: id ?? this.id,
     label: label ?? this.label,
     lastUpdateTime: lastUpdateTime ?? this.lastUpdateTime,
+    lastUpdateTimeMillis: lastUpdateTimeMillis.present
+        ? lastUpdateTimeMillis.value
+        : this.lastUpdateTimeMillis,
     url: url.present ? url.value : this.url,
     order: order.present ? order.value : this.order,
   );
@@ -1226,6 +1332,9 @@ class RawScript extends DataClass implements Insertable<RawScript> {
       lastUpdateTime: data.lastUpdateTime.present
           ? data.lastUpdateTime.value
           : this.lastUpdateTime,
+      lastUpdateTimeMillis: data.lastUpdateTimeMillis.present
+          ? data.lastUpdateTimeMillis.value
+          : this.lastUpdateTimeMillis,
       url: data.url.present ? data.url.value : this.url,
       order: data.order.present ? data.order.value : this.order,
     );
@@ -1237,6 +1346,7 @@ class RawScript extends DataClass implements Insertable<RawScript> {
           ..write('id: $id, ')
           ..write('label: $label, ')
           ..write('lastUpdateTime: $lastUpdateTime, ')
+          ..write('lastUpdateTimeMillis: $lastUpdateTimeMillis, ')
           ..write('url: $url, ')
           ..write('order: $order')
           ..write(')'))
@@ -1244,7 +1354,8 @@ class RawScript extends DataClass implements Insertable<RawScript> {
   }
 
   @override
-  int get hashCode => Object.hash(id, label, lastUpdateTime, url, order);
+  int get hashCode =>
+      Object.hash(id, label, lastUpdateTime, lastUpdateTimeMillis, url, order);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -1252,6 +1363,7 @@ class RawScript extends DataClass implements Insertable<RawScript> {
           other.id == this.id &&
           other.label == this.label &&
           other.lastUpdateTime == this.lastUpdateTime &&
+          other.lastUpdateTimeMillis == this.lastUpdateTimeMillis &&
           other.url == this.url &&
           other.order == this.order);
 }
@@ -1260,12 +1372,14 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
   final Value<int> id;
   final Value<String> label;
   final Value<DateTime> lastUpdateTime;
+  final Value<int?> lastUpdateTimeMillis;
   final Value<String?> url;
   final Value<int?> order;
   const ScriptsCompanion({
     this.id = const Value.absent(),
     this.label = const Value.absent(),
     this.lastUpdateTime = const Value.absent(),
+    this.lastUpdateTimeMillis = const Value.absent(),
     this.url = const Value.absent(),
     this.order = const Value.absent(),
   });
@@ -1273,6 +1387,7 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
     this.id = const Value.absent(),
     required String label,
     required DateTime lastUpdateTime,
+    this.lastUpdateTimeMillis = const Value.absent(),
     this.url = const Value.absent(),
     this.order = const Value.absent(),
   }) : label = Value(label),
@@ -1281,6 +1396,7 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
     Expression<int>? id,
     Expression<String>? label,
     Expression<DateTime>? lastUpdateTime,
+    Expression<int>? lastUpdateTimeMillis,
     Expression<String>? url,
     Expression<int>? order,
   }) {
@@ -1288,6 +1404,8 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
       if (id != null) 'id': id,
       if (label != null) 'label': label,
       if (lastUpdateTime != null) 'last_update_time': lastUpdateTime,
+      if (lastUpdateTimeMillis != null)
+        'last_update_time_millis': lastUpdateTimeMillis,
       if (url != null) 'url': url,
       if (order != null) 'order': order,
     });
@@ -1297,6 +1415,7 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
     Value<int>? id,
     Value<String>? label,
     Value<DateTime>? lastUpdateTime,
+    Value<int?>? lastUpdateTimeMillis,
     Value<String?>? url,
     Value<int?>? order,
   }) {
@@ -1304,6 +1423,7 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
       id: id ?? this.id,
       label: label ?? this.label,
       lastUpdateTime: lastUpdateTime ?? this.lastUpdateTime,
+      lastUpdateTimeMillis: lastUpdateTimeMillis ?? this.lastUpdateTimeMillis,
       url: url ?? this.url,
       order: order ?? this.order,
     );
@@ -1321,6 +1441,11 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
     if (lastUpdateTime.present) {
       map['last_update_time'] = Variable<DateTime>(lastUpdateTime.value);
     }
+    if (lastUpdateTimeMillis.present) {
+      map['last_update_time_millis'] = Variable<int>(
+        lastUpdateTimeMillis.value,
+      );
+    }
     if (url.present) {
       map['url'] = Variable<String>(url.value);
     }
@@ -1336,6 +1461,7 @@ class ScriptsCompanion extends UpdateCompanion<RawScript> {
           ..write('id: $id, ')
           ..write('label: $label, ')
           ..write('lastUpdateTime: $lastUpdateTime, ')
+          ..write('lastUpdateTimeMillis: $lastUpdateTimeMillis, ')
           ..write('url: $url, ')
           ..write('order: $order')
           ..write(')'))
@@ -2945,6 +3071,16 @@ class $IconSetsTable extends IconSets
         type: DriftSqlType.dateTime,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _lastUpdateTimeMillisMeta =
+      const VerificationMeta('lastUpdateTimeMillis');
+  @override
+  late final GeneratedColumn<int> lastUpdateTimeMillis = GeneratedColumn<int>(
+    'last_update_time_millis',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _orderMeta = const VerificationMeta('order');
   @override
   late final GeneratedColumn<int> order = GeneratedColumn<int>(
@@ -2961,6 +3097,7 @@ class $IconSetsTable extends IconSets
     url,
     icons,
     lastUpdateTime,
+    lastUpdateTimeMillis,
     order,
   ];
   @override
@@ -3003,6 +3140,15 @@ class $IconSetsTable extends IconSets
         ),
       );
     }
+    if (data.containsKey('last_update_time_millis')) {
+      context.handle(
+        _lastUpdateTimeMillisMeta,
+        lastUpdateTimeMillis.isAcceptableOrUnknown(
+          data['last_update_time_millis']!,
+          _lastUpdateTimeMillisMeta,
+        ),
+      );
+    }
     if (data.containsKey('order')) {
       context.handle(
         _orderMeta,
@@ -3040,6 +3186,10 @@ class $IconSetsTable extends IconSets
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_update_time'],
       ),
+      lastUpdateTimeMillis: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_update_time_millis'],
+      ),
       order: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}order'],
@@ -3062,6 +3212,7 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
   final String url;
   final List<IconSetIcon> icons;
   final DateTime? lastUpdateTime;
+  final int? lastUpdateTimeMillis;
   final int? order;
   const RawIconSet({
     required this.id,
@@ -3069,6 +3220,7 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
     required this.url,
     required this.icons,
     this.lastUpdateTime,
+    this.lastUpdateTimeMillis,
     this.order,
   });
   @override
@@ -3085,6 +3237,9 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
     if (!nullToAbsent || lastUpdateTime != null) {
       map['last_update_time'] = Variable<DateTime>(lastUpdateTime);
     }
+    if (!nullToAbsent || lastUpdateTimeMillis != null) {
+      map['last_update_time_millis'] = Variable<int>(lastUpdateTimeMillis);
+    }
     if (!nullToAbsent || order != null) {
       map['order'] = Variable<int>(order);
     }
@@ -3100,6 +3255,9 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
       lastUpdateTime: lastUpdateTime == null && nullToAbsent
           ? const Value.absent()
           : Value(lastUpdateTime),
+      lastUpdateTimeMillis: lastUpdateTimeMillis == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastUpdateTimeMillis),
       order: order == null && nullToAbsent
           ? const Value.absent()
           : Value(order),
@@ -3117,6 +3275,9 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
       url: serializer.fromJson<String>(json['url']),
       icons: serializer.fromJson<List<IconSetIcon>>(json['icons']),
       lastUpdateTime: serializer.fromJson<DateTime?>(json['lastUpdateTime']),
+      lastUpdateTimeMillis: serializer.fromJson<int?>(
+        json['lastUpdateTimeMillis'],
+      ),
       order: serializer.fromJson<int?>(json['order']),
     );
   }
@@ -3129,6 +3290,7 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
       'url': serializer.toJson<String>(url),
       'icons': serializer.toJson<List<IconSetIcon>>(icons),
       'lastUpdateTime': serializer.toJson<DateTime?>(lastUpdateTime),
+      'lastUpdateTimeMillis': serializer.toJson<int?>(lastUpdateTimeMillis),
       'order': serializer.toJson<int?>(order),
     };
   }
@@ -3139,6 +3301,7 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
     String? url,
     List<IconSetIcon>? icons,
     Value<DateTime?> lastUpdateTime = const Value.absent(),
+    Value<int?> lastUpdateTimeMillis = const Value.absent(),
     Value<int?> order = const Value.absent(),
   }) => RawIconSet(
     id: id ?? this.id,
@@ -3148,6 +3311,9 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
     lastUpdateTime: lastUpdateTime.present
         ? lastUpdateTime.value
         : this.lastUpdateTime,
+    lastUpdateTimeMillis: lastUpdateTimeMillis.present
+        ? lastUpdateTimeMillis.value
+        : this.lastUpdateTimeMillis,
     order: order.present ? order.value : this.order,
   );
   RawIconSet copyWithCompanion(IconSetsCompanion data) {
@@ -3159,6 +3325,9 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
       lastUpdateTime: data.lastUpdateTime.present
           ? data.lastUpdateTime.value
           : this.lastUpdateTime,
+      lastUpdateTimeMillis: data.lastUpdateTimeMillis.present
+          ? data.lastUpdateTimeMillis.value
+          : this.lastUpdateTimeMillis,
       order: data.order.present ? data.order.value : this.order,
     );
   }
@@ -3171,13 +3340,22 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
           ..write('url: $url, ')
           ..write('icons: $icons, ')
           ..write('lastUpdateTime: $lastUpdateTime, ')
+          ..write('lastUpdateTimeMillis: $lastUpdateTimeMillis, ')
           ..write('order: $order')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(id, name, url, icons, lastUpdateTime, order);
+  int get hashCode => Object.hash(
+    id,
+    name,
+    url,
+    icons,
+    lastUpdateTime,
+    lastUpdateTimeMillis,
+    order,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3187,6 +3365,7 @@ class RawIconSet extends DataClass implements Insertable<RawIconSet> {
           other.url == this.url &&
           other.icons == this.icons &&
           other.lastUpdateTime == this.lastUpdateTime &&
+          other.lastUpdateTimeMillis == this.lastUpdateTimeMillis &&
           other.order == this.order);
 }
 
@@ -3196,6 +3375,7 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
   final Value<String> url;
   final Value<List<IconSetIcon>> icons;
   final Value<DateTime?> lastUpdateTime;
+  final Value<int?> lastUpdateTimeMillis;
   final Value<int?> order;
   const IconSetsCompanion({
     this.id = const Value.absent(),
@@ -3203,6 +3383,7 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
     this.url = const Value.absent(),
     this.icons = const Value.absent(),
     this.lastUpdateTime = const Value.absent(),
+    this.lastUpdateTimeMillis = const Value.absent(),
     this.order = const Value.absent(),
   });
   IconSetsCompanion.insert({
@@ -3211,6 +3392,7 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
     required String url,
     required List<IconSetIcon> icons,
     this.lastUpdateTime = const Value.absent(),
+    this.lastUpdateTimeMillis = const Value.absent(),
     this.order = const Value.absent(),
   }) : name = Value(name),
        url = Value(url),
@@ -3221,6 +3403,7 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
     Expression<String>? url,
     Expression<String>? icons,
     Expression<DateTime>? lastUpdateTime,
+    Expression<int>? lastUpdateTimeMillis,
     Expression<int>? order,
   }) {
     return RawValuesInsertable({
@@ -3229,6 +3412,8 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
       if (url != null) 'url': url,
       if (icons != null) 'icons': icons,
       if (lastUpdateTime != null) 'last_update_time': lastUpdateTime,
+      if (lastUpdateTimeMillis != null)
+        'last_update_time_millis': lastUpdateTimeMillis,
       if (order != null) 'order': order,
     });
   }
@@ -3239,6 +3424,7 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
     Value<String>? url,
     Value<List<IconSetIcon>>? icons,
     Value<DateTime?>? lastUpdateTime,
+    Value<int?>? lastUpdateTimeMillis,
     Value<int?>? order,
   }) {
     return IconSetsCompanion(
@@ -3247,6 +3433,7 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
       url: url ?? this.url,
       icons: icons ?? this.icons,
       lastUpdateTime: lastUpdateTime ?? this.lastUpdateTime,
+      lastUpdateTimeMillis: lastUpdateTimeMillis ?? this.lastUpdateTimeMillis,
       order: order ?? this.order,
     );
   }
@@ -3271,6 +3458,11 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
     if (lastUpdateTime.present) {
       map['last_update_time'] = Variable<DateTime>(lastUpdateTime.value);
     }
+    if (lastUpdateTimeMillis.present) {
+      map['last_update_time_millis'] = Variable<int>(
+        lastUpdateTimeMillis.value,
+      );
+    }
     if (order.present) {
       map['order'] = Variable<int>(order.value);
     }
@@ -3285,6 +3477,7 @@ class IconSetsCompanion extends UpdateCompanion<RawIconSet> {
           ..write('url: $url, ')
           ..write('icons: $icons, ')
           ..write('lastUpdateTime: $lastUpdateTime, ')
+          ..write('lastUpdateTimeMillis: $lastUpdateTimeMillis, ')
           ..write('order: $order')
           ..write(')'))
         .toString();
@@ -3324,6 +3517,18 @@ class $ClashProvidersTable extends ClashProviders
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  @override
+  late final GeneratedColumnWithTypeConverter<Map<String, dynamic>?, String>
+  sourceDefinition =
+      GeneratedColumn<String>(
+        'source_definition',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      ).withConverter<Map<String, dynamic>?>(
+        $ClashProvidersTable.$convertersourceDefinitionn,
+      );
   static const VerificationMeta _urlMeta = const VerificationMeta('url');
   @override
   late final GeneratedColumn<String> url = GeneratedColumn<String>(
@@ -3368,6 +3573,7 @@ class $ClashProvidersTable extends ClashProviders
     id,
     kind,
     label,
+    sourceDefinition,
     url,
     behavior,
     format,
@@ -3433,6 +3639,13 @@ class $ClashProvidersTable extends ClashProviders
         DriftSqlType.string,
         data['${effectivePrefix}label'],
       )!,
+      sourceDefinition: $ClashProvidersTable.$convertersourceDefinitionn
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.string,
+              data['${effectivePrefix}source_definition'],
+            ),
+          ),
       url: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}url'],
@@ -3463,6 +3676,12 @@ class $ClashProvidersTable extends ClashProviders
 
   static JsonTypeConverter2<ProviderKind, String, String> $converterkind =
       const EnumNameConverter<ProviderKind>(ProviderKind.values);
+  static TypeConverter<Map<String, dynamic>, String>
+  $convertersourceDefinition = const JsonMapConverter();
+  static TypeConverter<Map<String, dynamic>?, String?>
+  $convertersourceDefinitionn = NullAwareTypeConverter.wrap(
+    $convertersourceDefinition,
+  );
   static JsonTypeConverter2<RuleProviderBehavior, String, String>
   $converterbehavior = const EnumNameConverter<RuleProviderBehavior>(
     RuleProviderBehavior.values,
@@ -3482,6 +3701,7 @@ class RawClashProvider extends DataClass
   final int id;
   final ProviderKind kind;
   final String label;
+  final Map<String, dynamic>? sourceDefinition;
   final String url;
   final RuleProviderBehavior? behavior;
   final RuleProviderFormat? format;
@@ -3490,6 +3710,7 @@ class RawClashProvider extends DataClass
     required this.id,
     required this.kind,
     required this.label,
+    this.sourceDefinition,
     required this.url,
     this.behavior,
     this.format,
@@ -3505,6 +3726,13 @@ class RawClashProvider extends DataClass
       );
     }
     map['label'] = Variable<String>(label);
+    if (!nullToAbsent || sourceDefinition != null) {
+      map['source_definition'] = Variable<String>(
+        $ClashProvidersTable.$convertersourceDefinitionn.toSql(
+          sourceDefinition,
+        ),
+      );
+    }
     map['url'] = Variable<String>(url);
     if (!nullToAbsent || behavior != null) {
       map['behavior'] = Variable<String>(
@@ -3527,6 +3755,9 @@ class RawClashProvider extends DataClass
       id: Value(id),
       kind: Value(kind),
       label: Value(label),
+      sourceDefinition: sourceDefinition == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceDefinition),
       url: Value(url),
       behavior: behavior == null && nullToAbsent
           ? const Value.absent()
@@ -3551,6 +3782,9 @@ class RawClashProvider extends DataClass
         serializer.fromJson<String>(json['kind']),
       ),
       label: serializer.fromJson<String>(json['label']),
+      sourceDefinition: serializer.fromJson<Map<String, dynamic>?>(
+        json['sourceDefinition'],
+      ),
       url: serializer.fromJson<String>(json['url']),
       behavior: $ClashProvidersTable.$converterbehaviorn.fromJson(
         serializer.fromJson<String?>(json['behavior']),
@@ -3570,6 +3804,9 @@ class RawClashProvider extends DataClass
         $ClashProvidersTable.$converterkind.toJson(kind),
       ),
       'label': serializer.toJson<String>(label),
+      'sourceDefinition': serializer.toJson<Map<String, dynamic>?>(
+        sourceDefinition,
+      ),
       'url': serializer.toJson<String>(url),
       'behavior': serializer.toJson<String?>(
         $ClashProvidersTable.$converterbehaviorn.toJson(behavior),
@@ -3585,6 +3822,7 @@ class RawClashProvider extends DataClass
     int? id,
     ProviderKind? kind,
     String? label,
+    Value<Map<String, dynamic>?> sourceDefinition = const Value.absent(),
     String? url,
     Value<RuleProviderBehavior?> behavior = const Value.absent(),
     Value<RuleProviderFormat?> format = const Value.absent(),
@@ -3593,6 +3831,9 @@ class RawClashProvider extends DataClass
     id: id ?? this.id,
     kind: kind ?? this.kind,
     label: label ?? this.label,
+    sourceDefinition: sourceDefinition.present
+        ? sourceDefinition.value
+        : this.sourceDefinition,
     url: url ?? this.url,
     behavior: behavior.present ? behavior.value : this.behavior,
     format: format.present ? format.value : this.format,
@@ -3603,6 +3844,9 @@ class RawClashProvider extends DataClass
       id: data.id.present ? data.id.value : this.id,
       kind: data.kind.present ? data.kind.value : this.kind,
       label: data.label.present ? data.label.value : this.label,
+      sourceDefinition: data.sourceDefinition.present
+          ? data.sourceDefinition.value
+          : this.sourceDefinition,
       url: data.url.present ? data.url.value : this.url,
       behavior: data.behavior.present ? data.behavior.value : this.behavior,
       format: data.format.present ? data.format.value : this.format,
@@ -3616,6 +3860,7 @@ class RawClashProvider extends DataClass
           ..write('id: $id, ')
           ..write('kind: $kind, ')
           ..write('label: $label, ')
+          ..write('sourceDefinition: $sourceDefinition, ')
           ..write('url: $url, ')
           ..write('behavior: $behavior, ')
           ..write('format: $format, ')
@@ -3625,8 +3870,16 @@ class RawClashProvider extends DataClass
   }
 
   @override
-  int get hashCode =>
-      Object.hash(id, kind, label, url, behavior, format, order);
+  int get hashCode => Object.hash(
+    id,
+    kind,
+    label,
+    sourceDefinition,
+    url,
+    behavior,
+    format,
+    order,
+  );
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3634,6 +3887,7 @@ class RawClashProvider extends DataClass
           other.id == this.id &&
           other.kind == this.kind &&
           other.label == this.label &&
+          other.sourceDefinition == this.sourceDefinition &&
           other.url == this.url &&
           other.behavior == this.behavior &&
           other.format == this.format &&
@@ -3644,6 +3898,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
   final Value<int> id;
   final Value<ProviderKind> kind;
   final Value<String> label;
+  final Value<Map<String, dynamic>?> sourceDefinition;
   final Value<String> url;
   final Value<RuleProviderBehavior?> behavior;
   final Value<RuleProviderFormat?> format;
@@ -3652,6 +3907,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
     this.id = const Value.absent(),
     this.kind = const Value.absent(),
     this.label = const Value.absent(),
+    this.sourceDefinition = const Value.absent(),
     this.url = const Value.absent(),
     this.behavior = const Value.absent(),
     this.format = const Value.absent(),
@@ -3661,6 +3917,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
     this.id = const Value.absent(),
     required ProviderKind kind,
     required String label,
+    this.sourceDefinition = const Value.absent(),
     required String url,
     this.behavior = const Value.absent(),
     this.format = const Value.absent(),
@@ -3672,6 +3929,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
     Expression<int>? id,
     Expression<String>? kind,
     Expression<String>? label,
+    Expression<String>? sourceDefinition,
     Expression<String>? url,
     Expression<String>? behavior,
     Expression<String>? format,
@@ -3681,6 +3939,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
       if (id != null) 'id': id,
       if (kind != null) 'kind': kind,
       if (label != null) 'label': label,
+      if (sourceDefinition != null) 'source_definition': sourceDefinition,
       if (url != null) 'url': url,
       if (behavior != null) 'behavior': behavior,
       if (format != null) 'format': format,
@@ -3692,6 +3951,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
     Value<int>? id,
     Value<ProviderKind>? kind,
     Value<String>? label,
+    Value<Map<String, dynamic>?>? sourceDefinition,
     Value<String>? url,
     Value<RuleProviderBehavior?>? behavior,
     Value<RuleProviderFormat?>? format,
@@ -3701,6 +3961,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
       id: id ?? this.id,
       kind: kind ?? this.kind,
       label: label ?? this.label,
+      sourceDefinition: sourceDefinition ?? this.sourceDefinition,
       url: url ?? this.url,
       behavior: behavior ?? this.behavior,
       format: format ?? this.format,
@@ -3721,6 +3982,13 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
     }
     if (label.present) {
       map['label'] = Variable<String>(label.value);
+    }
+    if (sourceDefinition.present) {
+      map['source_definition'] = Variable<String>(
+        $ClashProvidersTable.$convertersourceDefinitionn.toSql(
+          sourceDefinition.value,
+        ),
+      );
     }
     if (url.present) {
       map['url'] = Variable<String>(url.value);
@@ -3747,6 +4015,7 @@ class ClashProvidersCompanion extends UpdateCompanion<RawClashProvider> {
           ..write('id: $id, ')
           ..write('kind: $kind, ')
           ..write('label: $label, ')
+          ..write('sourceDefinition: $sourceDefinition, ')
           ..write('url: $url, ')
           ..write('behavior: $behavior, ')
           ..write('format: $format, ')
@@ -4720,6 +4989,7 @@ typedef $$ProfilesTableCreateCompanionBuilder =
       required String url,
       Value<String?> ageSecretKey,
       Value<DateTime?> lastUpdateDate,
+      Value<int?> lastUpdateDateMillis,
       required ExtendType extendType,
       Value<int?> scriptId,
       Value<String?> matchTarget,
@@ -4740,6 +5010,7 @@ typedef $$ProfilesTableUpdateCompanionBuilder =
       Value<String> url,
       Value<String?> ageSecretKey,
       Value<DateTime?> lastUpdateDate,
+      Value<int?> lastUpdateDateMillis,
       Value<ExtendType> extendType,
       Value<int?> scriptId,
       Value<String?> matchTarget,
@@ -4872,6 +5143,11 @@ class $$ProfilesTableFilterComposer
 
   ColumnFilters<DateTime> get lastUpdateDate => $composableBuilder(
     column: $table.lastUpdateDate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastUpdateDateMillis => $composableBuilder(
+    column: $table.lastUpdateDateMillis,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5079,6 +5355,11 @@ class $$ProfilesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get lastUpdateDateMillis => $composableBuilder(
+    column: $table.lastUpdateDateMillis,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get extendType => $composableBuilder(
     column: $table.extendType,
     builder: (column) => ColumnOrderings(column),
@@ -5163,6 +5444,11 @@ class $$ProfilesTableAnnotationComposer
 
   GeneratedColumn<DateTime> get lastUpdateDate => $composableBuilder(
     column: $table.lastUpdateDate,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastUpdateDateMillis => $composableBuilder(
+    column: $table.lastUpdateDateMillis,
     builder: (column) => column,
   );
 
@@ -5352,6 +5638,7 @@ class $$ProfilesTableTableManager
                 Value<String> url = const Value.absent(),
                 Value<String?> ageSecretKey = const Value.absent(),
                 Value<DateTime?> lastUpdateDate = const Value.absent(),
+                Value<int?> lastUpdateDateMillis = const Value.absent(),
                 Value<ExtendType> extendType = const Value.absent(),
                 Value<int?> scriptId = const Value.absent(),
                 Value<String?> matchTarget = const Value.absent(),
@@ -5371,6 +5658,7 @@ class $$ProfilesTableTableManager
                 url: url,
                 ageSecretKey: ageSecretKey,
                 lastUpdateDate: lastUpdateDate,
+                lastUpdateDateMillis: lastUpdateDateMillis,
                 extendType: extendType,
                 scriptId: scriptId,
                 matchTarget: matchTarget,
@@ -5391,6 +5679,7 @@ class $$ProfilesTableTableManager
                 required String url,
                 Value<String?> ageSecretKey = const Value.absent(),
                 Value<DateTime?> lastUpdateDate = const Value.absent(),
+                Value<int?> lastUpdateDateMillis = const Value.absent(),
                 required ExtendType extendType,
                 Value<int?> scriptId = const Value.absent(),
                 Value<String?> matchTarget = const Value.absent(),
@@ -5410,6 +5699,7 @@ class $$ProfilesTableTableManager
                 url: url,
                 ageSecretKey: ageSecretKey,
                 lastUpdateDate: lastUpdateDate,
+                lastUpdateDateMillis: lastUpdateDateMillis,
                 extendType: extendType,
                 scriptId: scriptId,
                 matchTarget: matchTarget,
@@ -5563,6 +5853,7 @@ typedef $$ScriptsTableCreateCompanionBuilder =
       Value<int> id,
       required String label,
       required DateTime lastUpdateTime,
+      Value<int?> lastUpdateTimeMillis,
       Value<String?> url,
       Value<int?> order,
     });
@@ -5571,6 +5862,7 @@ typedef $$ScriptsTableUpdateCompanionBuilder =
       Value<int> id,
       Value<String> label,
       Value<DateTime> lastUpdateTime,
+      Value<int?> lastUpdateTimeMillis,
       Value<String?> url,
       Value<int?> order,
     });
@@ -5595,6 +5887,11 @@ class $$ScriptsTableFilterComposer extends Composer<_$Database, $ScriptsTable> {
 
   ColumnFilters<DateTime> get lastUpdateTime => $composableBuilder(
     column: $table.lastUpdateTime,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastUpdateTimeMillis => $composableBuilder(
+    column: $table.lastUpdateTimeMillis,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5633,6 +5930,11 @@ class $$ScriptsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get lastUpdateTimeMillis => $composableBuilder(
+    column: $table.lastUpdateTimeMillis,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get url => $composableBuilder(
     column: $table.url,
     builder: (column) => ColumnOrderings(column),
@@ -5661,6 +5963,11 @@ class $$ScriptsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get lastUpdateTime => $composableBuilder(
     column: $table.lastUpdateTime,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastUpdateTimeMillis => $composableBuilder(
+    column: $table.lastUpdateTimeMillis,
     builder: (column) => column,
   );
 
@@ -5702,12 +6009,14 @@ class $$ScriptsTableTableManager
                 Value<int> id = const Value.absent(),
                 Value<String> label = const Value.absent(),
                 Value<DateTime> lastUpdateTime = const Value.absent(),
+                Value<int?> lastUpdateTimeMillis = const Value.absent(),
                 Value<String?> url = const Value.absent(),
                 Value<int?> order = const Value.absent(),
               }) => ScriptsCompanion(
                 id: id,
                 label: label,
                 lastUpdateTime: lastUpdateTime,
+                lastUpdateTimeMillis: lastUpdateTimeMillis,
                 url: url,
                 order: order,
               ),
@@ -5716,12 +6025,14 @@ class $$ScriptsTableTableManager
                 Value<int> id = const Value.absent(),
                 required String label,
                 required DateTime lastUpdateTime,
+                Value<int?> lastUpdateTimeMillis = const Value.absent(),
                 Value<String?> url = const Value.absent(),
                 Value<int?> order = const Value.absent(),
               }) => ScriptsCompanion.insert(
                 id: id,
                 label: label,
                 lastUpdateTime: lastUpdateTime,
+                lastUpdateTimeMillis: lastUpdateTimeMillis,
                 url: url,
                 order: order,
               ),
@@ -7140,6 +7451,7 @@ typedef $$IconSetsTableCreateCompanionBuilder =
       required String url,
       required List<IconSetIcon> icons,
       Value<DateTime?> lastUpdateTime,
+      Value<int?> lastUpdateTimeMillis,
       Value<int?> order,
     });
 typedef $$IconSetsTableUpdateCompanionBuilder =
@@ -7149,6 +7461,7 @@ typedef $$IconSetsTableUpdateCompanionBuilder =
       Value<String> url,
       Value<List<IconSetIcon>> icons,
       Value<DateTime?> lastUpdateTime,
+      Value<int?> lastUpdateTimeMillis,
       Value<int?> order,
     });
 
@@ -7184,6 +7497,11 @@ class $$IconSetsTableFilterComposer
 
   ColumnFilters<DateTime> get lastUpdateTime => $composableBuilder(
     column: $table.lastUpdateTime,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastUpdateTimeMillis => $composableBuilder(
+    column: $table.lastUpdateTimeMillis,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -7227,6 +7545,11 @@ class $$IconSetsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get lastUpdateTimeMillis => $composableBuilder(
+    column: $table.lastUpdateTimeMillis,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get order => $composableBuilder(
     column: $table.order,
     builder: (column) => ColumnOrderings(column),
@@ -7256,6 +7579,11 @@ class $$IconSetsTableAnnotationComposer
 
   GeneratedColumn<DateTime> get lastUpdateTime => $composableBuilder(
     column: $table.lastUpdateTime,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastUpdateTimeMillis => $composableBuilder(
+    column: $table.lastUpdateTimeMillis,
     builder: (column) => column,
   );
 
@@ -7296,6 +7624,7 @@ class $$IconSetsTableTableManager
                 Value<String> url = const Value.absent(),
                 Value<List<IconSetIcon>> icons = const Value.absent(),
                 Value<DateTime?> lastUpdateTime = const Value.absent(),
+                Value<int?> lastUpdateTimeMillis = const Value.absent(),
                 Value<int?> order = const Value.absent(),
               }) => IconSetsCompanion(
                 id: id,
@@ -7303,6 +7632,7 @@ class $$IconSetsTableTableManager
                 url: url,
                 icons: icons,
                 lastUpdateTime: lastUpdateTime,
+                lastUpdateTimeMillis: lastUpdateTimeMillis,
                 order: order,
               ),
           createCompanionCallback:
@@ -7312,6 +7642,7 @@ class $$IconSetsTableTableManager
                 required String url,
                 required List<IconSetIcon> icons,
                 Value<DateTime?> lastUpdateTime = const Value.absent(),
+                Value<int?> lastUpdateTimeMillis = const Value.absent(),
                 Value<int?> order = const Value.absent(),
               }) => IconSetsCompanion.insert(
                 id: id,
@@ -7319,6 +7650,7 @@ class $$IconSetsTableTableManager
                 url: url,
                 icons: icons,
                 lastUpdateTime: lastUpdateTime,
+                lastUpdateTimeMillis: lastUpdateTimeMillis,
                 order: order,
               ),
           withReferenceMapper: (p0) => p0
@@ -7357,6 +7689,7 @@ typedef $$ClashProvidersTableCreateCompanionBuilder =
       Value<int> id,
       required ProviderKind kind,
       required String label,
+      Value<Map<String, dynamic>?> sourceDefinition,
       required String url,
       Value<RuleProviderBehavior?> behavior,
       Value<RuleProviderFormat?> format,
@@ -7367,6 +7700,7 @@ typedef $$ClashProvidersTableUpdateCompanionBuilder =
       Value<int> id,
       Value<ProviderKind> kind,
       Value<String> label,
+      Value<Map<String, dynamic>?> sourceDefinition,
       Value<String> url,
       Value<RuleProviderBehavior?> behavior,
       Value<RuleProviderFormat?> format,
@@ -7396,6 +7730,16 @@ class $$ClashProvidersTableFilterComposer
   ColumnFilters<String> get label => $composableBuilder(
     column: $table.label,
     builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<
+    Map<String, dynamic>?,
+    Map<String, dynamic>,
+    String
+  >
+  get sourceDefinition => $composableBuilder(
+    column: $table.sourceDefinition,
+    builder: (column) => ColumnWithTypeConverterFilters(column),
   );
 
   ColumnFilters<String> get url => $composableBuilder(
@@ -7453,6 +7797,11 @@ class $$ClashProvidersTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get sourceDefinition => $composableBuilder(
+    column: $table.sourceDefinition,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get url => $composableBuilder(
     column: $table.url,
     builder: (column) => ColumnOrderings(column),
@@ -7491,6 +7840,12 @@ class $$ClashProvidersTableAnnotationComposer
 
   GeneratedColumn<String> get label =>
       $composableBuilder(column: $table.label, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<Map<String, dynamic>?, String>
+  get sourceDefinition => $composableBuilder(
+    column: $table.sourceDefinition,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get url =>
       $composableBuilder(column: $table.url, builder: (column) => column);
@@ -7540,6 +7895,8 @@ class $$ClashProvidersTableTableManager
                 Value<int> id = const Value.absent(),
                 Value<ProviderKind> kind = const Value.absent(),
                 Value<String> label = const Value.absent(),
+                Value<Map<String, dynamic>?> sourceDefinition =
+                    const Value.absent(),
                 Value<String> url = const Value.absent(),
                 Value<RuleProviderBehavior?> behavior = const Value.absent(),
                 Value<RuleProviderFormat?> format = const Value.absent(),
@@ -7548,6 +7905,7 @@ class $$ClashProvidersTableTableManager
                 id: id,
                 kind: kind,
                 label: label,
+                sourceDefinition: sourceDefinition,
                 url: url,
                 behavior: behavior,
                 format: format,
@@ -7558,6 +7916,8 @@ class $$ClashProvidersTableTableManager
                 Value<int> id = const Value.absent(),
                 required ProviderKind kind,
                 required String label,
+                Value<Map<String, dynamic>?> sourceDefinition =
+                    const Value.absent(),
                 required String url,
                 Value<RuleProviderBehavior?> behavior = const Value.absent(),
                 Value<RuleProviderFormat?> format = const Value.absent(),
@@ -7566,6 +7926,7 @@ class $$ClashProvidersTableTableManager
                 id: id,
                 kind: kind,
                 label: label,
+                sourceDefinition: sourceDefinition,
                 url: url,
                 behavior: behavior,
                 format: format,

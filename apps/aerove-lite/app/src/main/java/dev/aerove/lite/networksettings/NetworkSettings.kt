@@ -25,6 +25,11 @@ data class NetworkSettings(
     val vpnEnabled: Boolean = true,
     val dnsHijacking: Boolean = false,
     val mtu: Int = 9000,
+    val routeAuto: Boolean = true,
+    val routeDefaultsPerFamily: Boolean = false,
+    val tunInet4Address: String = "198.18.0.1/30",
+    val tunInet6Address: String = "fdfe:dcba:9876::1/126",
+    val tunDnsHijack: List<String>? = null,
     val bypassPrivateRoute: Boolean = true,
     val routeAddress: List<String> = emptyList(),
     val routeExcludeAddress: List<String> = emptyList(),
@@ -40,7 +45,7 @@ data class NetworkSettings(
     }
 
     fun snapshot(): NetworkSettings = copy(bypassDomains = bypassDomains.toList(), routeAddress = routeAddress.toList(),
-        routeExcludeAddress = routeExcludeAddress.toList())
+        routeExcludeAddress = routeExcludeAddress.toList(), tunDnsHijack = tunDnsHijack?.toList())
 }
 
 enum class NetworkIssueCode { Type, UnknownField, Version, PortRange, PortConflict, EmptyAccount, InvalidAccount,
@@ -55,6 +60,9 @@ class NetworkSettingsException(val issues: List<NetworkIssue>) : IllegalArgument
 
 fun validateNetworkSettings(settings: NetworkSettings): List<NetworkIssue> = buildList {
     if (settings.mtu !in 1280..65535) add(NetworkIssue("network.mtu", NetworkIssueCode.MtuRange))
+    if (!validTunAddress(settings.tunInet4Address, false)) add(NetworkIssue("network.tunInet4Address", NetworkIssueCode.InvalidCidr))
+    if (!validTunAddress(settings.tunInet6Address, true)) add(NetworkIssue("network.tunInet6Address", NetworkIssueCode.InvalidCidr))
+    if (settings.tunDnsHijack?.let { it.size > 16 || it.any { target -> target != "any:53" && !validTunDnsTarget(target) } } == true) add(NetworkIssue("network.tunDnsHijack", NetworkIssueCode.InvalidCidr))
     listOf("routeAddress" to settings.routeAddress, "routeExcludeAddress" to settings.routeExcludeAddress).forEach { (field, routes) ->
         routes.forEachIndexed { index, route -> if (!validateRouteCidr(route)) add(NetworkIssue("network.$field[$index]", NetworkIssueCode.InvalidCidr)) }
     }
@@ -89,4 +97,15 @@ fun NetworkSettings.requireValid(): NetworkSettings {
     val issues = validateNetworkSettings(this)
     if (issues.isNotEmpty()) throw NetworkSettingsException(issues)
     return this
+}
+
+internal fun validTunAddress(value: String, ipv6: Boolean): Boolean {
+    if (!validateRouteCidr(value) || (':' in value.substringBefore('/')) != ipv6) return false
+    val host = java.net.InetAddress.getByName(value.substringBefore('/'))
+    return host.address.size == (if (ipv6) 16 else 4) && !host.isAnyLocalAddress && !host.isMulticastAddress
+}
+private fun validTunDnsTarget(value: String): Boolean {
+    val host = if (value.startsWith('[') && value.endsWith("]:53")) value.substring(1,value.length-4)
+        else if (value.count { it == ':' } == 1 && value.endsWith(":53")) value.dropLast(3) else return false
+    return validTunAddress("$host/${if (':' in host) 128 else 32}", ':' in host)
 }

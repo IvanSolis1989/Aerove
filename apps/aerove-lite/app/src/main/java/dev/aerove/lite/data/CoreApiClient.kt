@@ -285,6 +285,48 @@ class CoreApiClient(
         request(listOf("configs"), "PATCH", JSONObject().put("mode", mode.name.lowercase(Locale.ROOT)))
     }
 
+    suspend fun selectionWitness(): MeowSelectionWitness = withContext(Dispatchers.Default) {
+        MeowSelectionWitness.decode(request(listOf("aerove", "selection-witness")))
+    }
+
+    suspend fun prepareGeo(token: MeowGeoToken, expected: MeowGeoExpected, candidate: MeowGeoCandidate): MeowGeoStatus =
+        geoRequest("prepare", token.json().put("expected",expected.json()).put("candidate",candidate.json()),token)
+    suspend fun commitGeo(token: MeowGeoToken, expected: MeowGeoExpected): MeowGeoStatus =
+        geoRequest("commit",JSONObject().put("token",token.json()).put("expected",expected.json()),token)
+    suspend fun geoStatus(token: MeowGeoToken): MeowGeoStatus = geoRequest("status",token.json(),token)
+    suspend fun abortGeo(token: MeowGeoToken): MeowGeoStatus = geoRequest("abort",token.json(),token)
+    private suspend fun geoRequest(operation: String, body: JSONObject, token: MeowGeoToken): MeowGeoStatus = withContext(Dispatchers.Default) {
+        MeowGeoStatus.decode(request(listOf("aerove","geo",operation),"POST",body,joinResponse=true)).also {
+            require(it.token == token) { "Owned Geo transaction token differs" }
+        }
+    }
+
+    suspend fun startupSelectionSnapshot(): StartupSelectionSnapshot = withContext(Dispatchers.Default) {
+        decodeStartupSelection(request(listOf("aerove", "selection-cache")))
+    }
+
+    suspend fun restoreStartupSelection(requested: Map<String, String>, before: StartupSelectionSnapshot): StartupSelectionSnapshot =
+        withContext(Dispatchers.Default) {
+            val body = JSONObject().put("expectedCoreEpoch", before.route.coreEpoch.toString())
+                .put("expectedRouteVersion", before.route.routeVersion.toString()).put("expectedSelectionIntent", before.intentVersion.toString()).put("expectedGraphToken", before.graphToken)
+                .put("requested", JSONObject(requested))
+            decodeStartupSelection(request(listOf("aerove", "selection-cache"), "POST", body, joinResponse = true, failure = { status, source ->
+                val row = runCatching { JSONObject(source) }.getOrNull()
+                val group = row?.optString("group")
+                val reason = row?.optString("reason")
+                if (status == 422 && row?.optString("error") == "selectionCacheUnsupported" && group != null && reason in setOf(
+                        "fallbackStartupStalePinConsumerGap", "fallbackStartupDeadPinConsumerGap", "groupDoesNotSupportSelection",
+                        "groupHasNoActualMembers", "unsupportedCacheSelectionGroup", "groupMemberChanged"))
+                    StartupSelectionUnsupported(group, checkNotNull(reason))
+                else CoreApiException(status, "selection-cache")
+            }))
+        }
+
+    suspend fun unpinSelection(group: String, expectedEpoch: ULong) {
+        require(group.isNotEmpty() && expectedEpoch > 0uL)
+        request(listOf("proxies", group), "DELETE", query = mapOf("coreEpoch" to expectedEpoch.toString()))
+    }
+
     suspend fun select(group: String, proxy: String) {
         require(group.isNotEmpty() && proxy.isNotEmpty())
         request(listOf("proxies", group), "PUT", JSONObject().put("name", proxy))

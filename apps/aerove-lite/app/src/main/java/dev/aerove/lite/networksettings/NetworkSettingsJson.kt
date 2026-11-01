@@ -10,6 +10,8 @@ object NetworkSettingsJson {
     fun encode(settings: NetworkSettings): JSONObject {
         val value = settings.snapshot().requireValid()
         return JSONObject().put("version", 1).put("vpnEnabled", value.vpnEnabled).put("systemProxy", value.systemProxy).put("allowBypass", value.allowBypass)
+            .put("routeAuto", value.routeAuto).put("routeDefaultsPerFamily", value.routeDefaultsPerFamily).put("tunInet4Address", value.tunInet4Address).put("tunInet6Address", value.tunInet6Address)
+            .put("tunDnsHijack", value.tunDnsHijack?.let(::JSONArray) ?: JSONObject.NULL)
             .put("dnsHijacking", value.dnsHijacking).put("mtu", value.mtu).put("bypassPrivateRoute", value.bypassPrivateRoute)
             .put("routeAddress", JSONArray(value.routeAddress)).put("routeExcludeAddress", JSONArray(value.routeExcludeAddress))
             .put("bypassDomains", JSONArray(value.bypassDomains)).put("allowLan", value.allowLan)
@@ -19,14 +21,14 @@ object NetworkSettingsJson {
             .also { checkSize(it) }
     }
 
-    /** null means absent. Explicit JSON null or wrong present types are corruption, not defaults. */
+    /** Absent fields use defaults; only the optional TUN target list admits explicit null. */
     fun decode(member: Any?): NetworkSettings {
         if (member == null) return NetworkSettings()
         val root = member as? JSONObject ?: issue("network", NetworkIssueCode.Type)
         checkSize(root)
         if (root.has("tunStack")) issue("network.tunStack", NetworkIssueCode.UnsupportedCore)
         root.only(setOf("version", "vpnEnabled", "systemProxy", "allowBypass", "bypassDomains", "allowLan", "ports", "authentication",
-            "dnsHijacking", "mtu", "bypassPrivateRoute", "routeAddress", "routeExcludeAddress"), "network")
+            "dnsHijacking", "mtu", "bypassPrivateRoute", "routeAddress", "routeExcludeAddress", "routeAuto", "routeDefaultsPerFamily", "tunInet4Address", "tunInet6Address", "tunDnsHijack"), "network")
         if (root.integer("version", 1, "network") != 1) issue("network.version", NetworkIssueCode.Version)
         val defaults = NetworkSettings()
         val ports = root.member("ports", "network")
@@ -41,6 +43,11 @@ object NetworkSettingsJson {
         return NetworkSettings(
             vpnEnabled = root.boolean("vpnEnabled", defaults.vpnEnabled, "network"),
             dnsHijacking = root.boolean("dnsHijacking", defaults.dnsHijacking, "network"),
+            routeAuto = root.boolean("routeAuto", true, "network"),
+            routeDefaultsPerFamily = root.boolean("routeDefaultsPerFamily", false, "network"),
+            tunInet4Address = root.string("tunInet4Address", defaults.tunInet4Address, "network"),
+            tunInet6Address = root.string("tunInet6Address", defaults.tunInet6Address, "network"),
+            tunDnsHijack = if (!root.has("tunDnsHijack") || root.isNull("tunDnsHijack")) null else root.strings("tunDnsHijack", emptyList(), "network"),
             mtu = root.integer("mtu", defaults.mtu, "network", NetworkIssueCode.MtuRange),
             bypassPrivateRoute = root.boolean("bypassPrivateRoute", defaults.bypassPrivateRoute, "network"),
             routeAddress = root.strings("routeAddress", emptyList(), "network"),

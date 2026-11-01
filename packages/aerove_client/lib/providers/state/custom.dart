@@ -1,5 +1,57 @@
 part of '../state.dart';
 
+int? customProxyOwnerId(Iterable<Profile> profiles, int id) {
+  final owners = profiles
+      .where((profile) => profile.overrides.ownedCustomProxyIds.contains(id))
+      .toList();
+  if (owners.length > 1)
+    throw StateError(
+      'profile.overrides.ownedCustomProxyIds: ambiguous node owner',
+    );
+  return owners.isEmpty ? null : owners.single.id;
+}
+
+List<CustomProxy> availableCustomProxiesForProfile(
+  List<Profile> profiles,
+  List<CustomProxy> proxies,
+  int? profileId, {
+  bool includeLibrary = true,
+}) {
+  final owned = {
+    for (final profile in profiles) ...profile.overrides.ownedCustomProxyIds,
+  };
+  final profile = profiles
+      .where((profile) => profile.id == profileId)
+      .firstOrNull;
+  final scope = profile?.overrides.scopedCustomProxyIds;
+  if (scope == null)
+    return proxies.where((proxy) => !owned.contains(proxy.id)).toList();
+  final own = proxies
+      .where((proxy) => scope.contains(proxy.id))
+      .map(
+        (proxy) => profile!.overrides.proxyAliases.containsKey(proxy.id)
+            ? proxy.copyWith(
+                definition: {
+                  ...proxy.definition,
+                  'name': profile.overrides.proxyAliases[proxy.id],
+                },
+              )
+            : proxy,
+      )
+      .toList();
+  if (!includeLibrary) return own;
+  final names = own.map((proxy) => proxy.name).toSet();
+  return [
+    ...own,
+    ...proxies.where(
+      (proxy) =>
+          !owned.contains(proxy.id) &&
+          !scope.contains(proxy.id) &&
+          !names.contains(proxy.name),
+    ),
+  ];
+}
+
 @riverpod
 Set<String> appProviderNames(Ref ref, ProviderKind kind) {
   return switch (kind) {
@@ -35,7 +87,14 @@ CustomProfileData? customProfileData(Ref ref, int profileId) {
         }),
       )
       .value;
-  final appProxies = ref.watch(customProxiesProvider).value;
+  final allProxies = ref.watch(customProxiesProvider).value;
+  final appProxies = allProxies == null
+      ? null
+      : availableCustomProxiesForProfile(
+          ref.watch(profilesProvider),
+          allProxies,
+          profileId,
+        );
   final profileDialers = ref.watch(proxyDialersProvider(profileId)).value;
   final ruleProvidersLoaded = ref.watch(
     clashProvidersProvider.select((state) => state.hasValue),
@@ -52,11 +111,29 @@ CustomProfileData? customProfileData(Ref ref, int profileId) {
   }
   return CustomProfileData(
     proxyProviders: proxyProviders,
-    ruleProviders: ruleProviders,
+    ruleProviders: {
+      ...ruleProviders,
+      ...?ref
+          .read(profileProvider(profileId))
+          ?.overrides
+          .sourceRuleProviders
+          .keys,
+      ...?ref
+          .read(profileProvider(profileId))
+          ?.overrides
+          .ruleProviderBindings
+          .keys,
+    },
     proxyGroups: groups,
     ruleTargets: {
       ...RuleTarget.baseTargets,
       ...groups.map((item) => item.name),
+      ...availableCustomProxiesForProfile(
+        ref.read(profilesProvider),
+        allProxies!,
+        profileId,
+        includeLibrary: false,
+      ).map((proxy) => proxy.name),
     },
     proxies: {for (final proxy in appProxies) proxy.name},
     dialers: {
@@ -172,16 +249,29 @@ Map<int, List<CustomIssue>> customProxyListIssues(Ref ref) {
       ref.watch(customProxyCoreErrorsProvider).value ?? const <int, String>{};
   final groupNames =
       ref.watch(customGroupNamesProvider).value ?? const <String>{};
-  final byName = <String, List<CustomProxy>>{};
-  for (final proxy in proxies) {
-    byName.putIfAbsent(proxy.name, () => []).add(proxy);
-  }
+  final profiles = ref.watch(profilesProvider);
   return {
     for (final proxy in proxies)
       if (customProxyIssues(
             proxy,
-            proxies: byName[proxy.name]!,
-            groupNames: groupNames,
+            proxies: availableCustomProxiesForProfile(
+              profiles,
+              proxies,
+              customProxyOwnerId(profiles, proxy.id),
+              includeLibrary: false,
+            ),
+            groupNames: customProxyOwnerId(profiles, proxy.id) != null
+                ? (ref
+                              .watch(
+                                proxyGroupsProvider(
+                                  customProxyOwnerId(profiles, proxy.id)!,
+                                ),
+                              )
+                              .value ??
+                          const <ProxyGroup>[])
+                      .map((group) => group.name)
+                      .toSet()
+                : groupNames,
             coreError: coreErrors[proxy.id],
           )
           case final issues when issues.isNotEmpty)

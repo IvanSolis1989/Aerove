@@ -9,7 +9,9 @@ import java.net.InetAddress
 import dev.aerove.lite.requests.RequestPreferences
 import org.json.JSONObject
 
-data class TunRuntimeOptions(val mtu: Int, val dnsHijacking: Boolean, val ipv6: Boolean)
+data class TunRuntimeOptions(val mtu: Int, val dnsHijacking: Boolean, val ipv6: Boolean,
+    val inet4Address: String = "198.18.0.1/30", val inet6Address: String = "fdfe:dcba:9876::1/126",
+    val dnsHijackTargets: List<String>? = null, val builderNetwork: dev.aerove.lite.networksettings.NetworkSettings? = null)
 
 data class SystemDnsSnapshot(
     val defaultInterface: String? = null,

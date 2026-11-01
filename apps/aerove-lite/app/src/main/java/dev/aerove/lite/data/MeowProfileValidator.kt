@@ -8,6 +8,7 @@ fun interface NativePreparedConfigValidator {
 }
 
 internal interface ProfileCompatibilitySchema {
+    fun withTunReconciliation(value: MeowTunReconciliation): ProfileCompatibilitySchema = error("TUN reconciliation requires the Meow schema")
     val coreVersion: String
     fun resourceInput(yaml: String): MutableMap<String, Any?>
     suspend fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight?
@@ -27,23 +28,15 @@ internal class RuleLineCheck(private val path: String, private val issue: (Strin
 
 internal class MeowProfileValidator(private val native: NativeConfigValidator,
     private val preparedNative: NativePreparedConfigValidator, private val resourceDirectory: File,
-    verifiedFeatures: () -> Set<String>, private val preparedRules: NativePreparedRuleValidator? = null) : ProfileCompatibilitySchema {
+    verifiedFeatures: () -> Set<String>, private val preparedRules: NativePreparedRuleValidator? = null,
+    private val tunReconciliation: MeowTunReconciliation? = null) : ProfileCompatibilitySchema {
+    override fun withTunReconciliation(value: MeowTunReconciliation): ProfileCompatibilitySchema = MeowProfileValidator(native, preparedNative, resourceDirectory, { features }, preparedRules, value)
     override val coreVersion = "meow-rs/0.26.1/727ddcd06f592e2f12c5222c4de6cce328df808c"
     private val features by lazy { verifiedFeatures().toSet() }
 
     override fun resourceInput(yaml: String): MutableMap<String, Any?> {
-        val (root, namedListeners) = MeowSourceConfig.input(yaml)
+        val (root, namedListeners) = MeowSourceConfig.input(yaml, tunReconciliation)
         if (namedListeners.isNotEmpty()) root["listeners"] = namedListeners
-        @Suppress("UNCHECKED_CAST")
-        val geo = root["geodata"] as? Map<String, Any?>
-        val urls = geo?.get("url") as? Map<*, *>
-        mapOf("mmdb" to "mmdb", "asn" to "asn-mmdb", "geosite" to "geosite").forEach { (key, resource) ->
-            urls?.get(key)?.let { value ->
-                if (root.containsKey("$resource-download-url") && root["$resource-download-url"] != value)
-                    fail("$.geodata.url.$key", "Conflicts with $resource-download-url")
-                root["$resource-download-url"] = value
-            }
-        }
         return root
     }
 
@@ -73,11 +66,12 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
             root.remove(old)?.let { geo[key] = it }
             root.remove("$old-download-url")
         }
-        if (geo.isNotEmpty()) root["geodata"] = geo
+        if (geo.isNotEmpty()) { geo["auto-update"] = false; root["geodata"] = geo }
         return MeowCompatibilityValidator.normalize(root, features)
     }
 
     override suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
+        tunReconciliation?.verify(yaml)
         val engine = engineView(yaml)
         val problems = mutableListOf<ConfigIssue>()
         fun check(value: Any?, path: String) {

@@ -15,6 +15,12 @@ interface MeowFlutterRuntime {
     suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection): RuntimeAppliedIdentity
     suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String): RuntimeAppliedIdentity
     suspend fun defaultTestUrl(expected: MeowSetupRuntime): String
+    suspend fun applyGeo(expected: MeowSetupRuntime, transactionId: String,
+        candidate: dev.aerove.lite.data.MeowGeoCandidate, resources: dev.aerove.lite.data.FlutterRuntimeResources.Geo,
+        projection: RuntimeHandoff, rawSelectedMap: Map<String,String>, admit: suspend () -> Boolean): MeowGeoRuntimeResult =
+        throw MeowProtocolFailure("implementation_blocked","The current runtime owner has no Geo transaction adapter")
+    suspend fun geoStatus(expected: MeowSetupRuntime, transactionId: String, abort: Boolean): MeowGeoRuntimeResult =
+        throw MeowProtocolFailure("implementation_blocked","The current runtime owner has no Geo transaction adapter")
 }
 
 data class MeowQueryGraph(val identity: RuntimeAppliedIdentity, val endpoint: dev.aerove.lite.vpn.CoreEndpoint,
@@ -32,3 +38,6 @@ internal suspend fun meowApplyStagedGraph(snapshot: MeowRuntimeSnapshot, store: 
 internal fun meowAdmitGraphReplacement(expectedOwner: Long, expectedIntent: Long, owner: Long, intent: Long,
     requested: Boolean, candidateCurrent: Boolean): Boolean = expectedOwner == owner && expectedIntent == intent &&
     requested && candidateCurrent
+
+
+data class MeowGeoRuntimeResult(val status: dev.aerove.lite.data.MeowGeoStatus, val identity: RuntimeAppliedIdentity?)

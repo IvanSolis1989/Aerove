@@ -68,6 +68,7 @@ class ProfileRepository(
     private val globalResources: BuilderResourceLibrary? = null,
 ) {
     private val storage = PrivateStorage(File(privateDirectory, "profiles"))
+    internal val migrationRoot: File get() = storage.root.parentFile!!
     private val leases = liveProfiles.computeIfAbsent(storage.root.path) { mutableMapOf() }
     private val resourceEditEpoch = resourceEditEpochs.computeIfAbsent(storage.root.path) { java.util.concurrent.atomic.AtomicLong() }
     private val resourceBackoff = MaintenanceBackoff(clock, initialMillis = 10_000)
@@ -102,6 +103,74 @@ class ProfileRepository(
     }
     private var migratedResourceStamp: String? = null // Accessed only under the shared domain transaction.
 
+    internal suspend fun <T> withMigrationSourceSnapshot(action: suspend () -> T): T =
+        privateDomainReadOnlyTransaction(storage.root.parentFile!!) {
+            if (resources != null) {
+                require(resources.migrationRoot == File(storage.root.parentFile, "runtime/resources").canonicalFile) {
+                    "runtime/resources: mismatched resource owner"
+                }
+                resources.withMigrationSnapshot(action)
+            }
+            else {
+                check(!File(storage.root.parentFile, "runtime/resources").exists()) { "runtime/resources: resource owner unavailable" }
+                action()
+            }
+        }
+
+    internal suspend fun migrationSnapshot(): ProfileSnapshot = privateDomainReadOnlyTransaction(storage.root.parentFile!!) {
+        val index = load()
+        index.entries.forEachIndexed { position, entry ->
+            val path = "profiles/index.json.profiles[$position]"
+            listOfNotNull(entry.current, entry.previous, entry.lastUsable).distinct().forEach { name ->
+                require(storage.file(name).isFile && !java.nio.file.Files.isSymbolicLink(storage.file(name).toPath())) {
+                    "$path.revision: missing or unsafe original"
+                }
+                readRevision(name)
+            }
+            try { readSource(entry) } catch (_: Exception) {
+                throw IllegalArgumentException("$path.sourceMetadata.logicalSourceSha256: original verification failed")
+            }
+            listOf(entry.bundle to entry.current, entry.previousBundle to entry.previous,
+                entry.lastUsableBundle to entry.lastUsable).forEach { (generation, revision) ->
+                if (generation != null) {
+                    require(revision != null) { "$path.bundle: missing revision binding" }
+                    val manager = checkNotNull(resources) { "$path.bundle: resource owner unavailable" }
+                    manager.load(entry.summary.id, generation, readRevision(revision))
+                }
+            }
+        }
+        val originals = index.entries.flatMap { entry ->
+            listOfNotNull(entry.current, entry.previous, entry.lastUsable).distinct().map { name ->
+                val source = readRevision(name)
+                val config = ConfigYaml.parse(source)
+                listOf("proxy-providers", "rule-providers").forEach { kind ->
+                    (config[kind] as? Map<*, *>).orEmpty().forEach { (key, value) ->
+                        val fields = value as? Map<*, *> ?: return@forEach
+                        val path = fields["path"] as? String ?: return@forEach
+                        if (fields["type"] == "file" && globalRuleLocalId(path) == null) {
+                            val original = privateResource(File(storage.root.parentFile, "runtime/resources/imports/${entry.summary.id}"), path)
+                            require(original.isFile && !java.nio.file.Files.isSymbolicLink(original.toPath())) {
+                                "profiles/index.json.$kind.$key.path: missing local original"
+                            }
+                        }
+                    }
+                }
+                source
+            }
+        }
+        val builder = File(storage.root.parentFile, "settings/builder-resources.yaml")
+        val library = if (builder.isFile) BuilderResources.parse(builder.inputStream().use { it.readBounded(16 * 1024 * 1024).strictUtf8() })
+            else BuilderResources()
+        library.referencedBy(originals)
+        val localSources = originals.flatMap(::localGlobalRuleSources) + library.ruleProviders.mapNotNull { entry ->
+            val local = if (entry.fields["type"] == "file") globalRuleLocalId(entry.fields["path"] as? String) else null
+            local?.let { LibraryRuleSource(entry.name, "", entry.fields["behavior"] as? String ?: "domain",
+                entry.fields["format"] as? String ?: "yaml", localId = it) }
+        }
+        if (resources != null) resources.verifyMigrationLibrarySources(localSources)
+        else require(localSources.isEmpty()) { "runtime/resources/library: local resource owner unavailable" }
+        ProfileSnapshot(index.entries.map { it.summary }, index.selected)
+    }
     suspend fun snapshot(): ProfileSnapshot = storage.transaction {
         val index = load()
         runCatching { collectGarbage(index) }

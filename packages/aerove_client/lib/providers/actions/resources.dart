@@ -118,7 +118,7 @@ class ResourcesAction extends _$ResourcesAction {
     return failures;
   }
 
-  /// Geo files are left to the Core, which reads the same two settings.
+  /// The existing visible sweep triggers Lite Host maintenance; Mihomo keeps its Core scheduler.
   Future<void> autoUpdate({bool Function()? isCurrent}) async {
     bool canUpdate() =>
         ref.mounted &&
@@ -135,6 +135,13 @@ class ResourcesAction extends _$ResourcesAction {
           .read(clashProvidersActionProvider.notifier)
           .resumeAutomaticUpdates(isCurrent: canUpdate);
       if (!canUpdate()) return;
+      if (ClientProduct.current.expectedCoreId == 'meow-rs' &&
+          ref.read(coreStatusProvider) == CoreStatus.connected) {
+        await ref
+            .read(setupActionProvider.notifier)
+            .updateMeowGeo('automatic', isCurrent: canUpdate);
+        if (!canUpdate()) return;
+      }
       if (!setting.geoAutoUpdate) return;
       final interval = Duration(hours: setting.geoUpdateInterval);
       bool isDue(DateTime? lastUpdateTime) =>

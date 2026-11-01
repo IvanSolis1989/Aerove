@@ -22,7 +22,12 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     private val emit: (MeowEngineAttachment, List<Map<String, Any?>>) -> Unit,
     private val warning: (Throwable) -> Unit, private val actions: MeowFlutterRuntime,
     resourceSealer: dev.aerove.lite.data.FlutterResourceSealer? = null,
-    rulePayloadInspector: NativeRulePayloadInspector = nativeRulePayloadInspector()) : MeowSetupEffects {
+    sourceVerifier: ((JSONObject) -> Unit)? = null,
+    selectedSourceVerifier: ((JSONObject) -> Map<String, String>)? = null,
+    definitionSourceVerifier: ((JSONObject) -> String)? = null,
+    geoSourceVerifier: ((JSONObject) -> Triple<JSONObject,Map<String,String>,String>)? = null,
+    rulePayloadInspector: NativeRulePayloadInspector = nativeRulePayloadInspector(),
+    private val geoCatalog: dev.aerove.lite.resources.GeoResourceCatalog? = null) : MeowSetupEffects {
     private val home = MeowFlutterSpill.checkedHome(homeDir)
     private val config = MeowConfigProtocol(home)
     private val offline = MeowOfflineMethods(home)
@@ -32,8 +37,53 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     @Volatile private var closed = false
     private var uiActive = false
     private var session: Session? = null
-    val setup = MeowSetupProtocol(home, store, config, this, preparedValidator, resourceSealer = resourceSealer)
+    val setup = MeowSetupProtocol(home, store, config, this, preparedValidator, resourceSealer = resourceSealer, sourceVerifier = sourceVerifier, selectedSourceVerifier = selectedSourceVerifier, definitionSourceVerifier = definitionSourceVerifier, geoSourceVerifier = geoSourceVerifier,
+        geoResourceReaderFactory = geoCatalog?.let { catalog -> { settings, current -> catalog.reader(settings.geoResources,settings.requests,current) } })
     val dispatcher: MeowProtocolDispatcher
+    private class GeoRequest(val id:String,val requestJson:String,val intent:MeowGeoResourceIntent) {
+        var outcome:MeowGeoRuntimeResult?=null
+        var resources:dev.aerove.lite.data.FlutterRuntimeResources.Geo?=null
+    }
+    @Volatile private var geoRequest:GeoRequest?=null
+    @Volatile private var cancelledGeoId:String?=null
+    private val geoUpdates=geoCatalog?.let { catalog -> MeowGeoResourceUpdates(scope,catalog,
+        capture={setup.captureGeoIntent()},verifyCurrent=setup::geoIntentIsCurrent,
+        apply={ value,active ->
+            val request=checkNotNull(geoRequest).also { check(it.intent.producer?.transactionId == value.producer?.transactionId) }
+            val producer=checkNotNull(value.producer)
+            val graph=actions.queryGraph();val endpoint=graph?.endpoint ?: vpn.value.endpoint ?: error("Geo runtime endpoint is missing")
+            val actual=checkNotNull(endpoint.configuration) { "Actual engine readback is required" }.read()
+            val kind=dev.aerove.lite.resources.GeoResourceKind.entries.firstOrNull { it.wire == producer.type }
+            val resources=dev.aerove.lite.data.FlutterRuntimeResources.createGeo(home,value.snapshot,actual,value.settings.geoResources,kind,
+                catalog.reader(value.settings.geoResources,value.settings.requests) { active() && setup.geoIntentIsCurrent(value) }) { active() && setup.geoIntentIsCurrent(value) }
+            request.resources=resources
+            try {
+                val catalogSnapshot=catalog.capture(value.settings.geoResources,value.settings.requests,resources.catalogKinds)
+                suspend fun admit():Boolean {
+                    if(!active() || geoRequest !== request || !setup.geoIntentIsCurrent(value))return false
+                    val fresh=setup.captureGeoIntent(JSONObject(request.requestJson))
+                    return fresh.producer?.sha256 == producer.sha256 && fresh.proofJson == value.proofJson &&
+                        fresh.runtime == value.runtime && catalog.matches(catalogSnapshot)
+                }
+                check(admit()) { "Geo catalog or source changed before submission" }
+                val projection=setup.geoProjection(value,resources)
+                val candidate=dev.aerove.lite.data.MeowGeoCandidate(resources.compiledYaml,projection.compiledSha256,
+                    resources.engineYaml,resources.readRoot,resources.resourceLeaseId,resources.assets)
+                val raw=producer.setupParams.getJSONObject("selected-map").let { row -> row.keys().asSequence().associateWith(row::getString) }
+                val outcome=actions.applyGeo(value.runtime,producer.transactionId,candidate,resources,projection,raw,::admit)
+                request.outcome=outcome
+                check(outcome.status.state == "committed") { "Geo runtime did not return a commit" }
+                val identity=checkNotNull(outcome.identity)
+                setup.acceptGeoPublication(identity)
+                dev.aerove.lite.resources.ResourceApplyReceipt(identity.compiledSha256)
+            } finally { resources.closeIfUnsubmitted() }
+        },emit={kind,updating,skipped,error ->
+            if(!closed) emit(this,listOf(mapOf("type" to "geoUpdate","data" to mapOf(
+                "type" to kind.wire,"updating" to updating,"skipped" to skipped,"error" to error))))
+        },warning=warning,capturePrepared={request -> setup.captureGeoIntent(request).also { intent ->
+            val next=GeoRequest(request.getString("transactionId"),request.toString(),intent)
+            geoRequest=next
+        } }) }
     private data class Session(val identity: RuntimeAppliedIdentity, val endpoint: CoreEndpoint,
         val client: CoreApiClient, val protocol: MeowProtocolSession)
 
@@ -57,7 +107,11 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
             true
         }
         methods["getIsInit"] = MeowProtocolMethod { meowNoArguments(it); isInitialized() }
-        methods["updateConfig"] = MeowProtocolMethod { setup.updateConfig(meowObject(it)) }
+        methods["updateGeoData"] = MeowProtocolMethod { geoMethod(meowObject(it)) }
+        methods["updateConfig"] = MeowProtocolMethod {
+            geoUpdates?.cancelCurrentAndJoin()
+            setup.updateConfig(meowObject(it))
+        }
         methods["setupConfig"] = MeowProtocolMethod { setup.setupConfig(meowObject(it)) }
         methods["getAppliedSetup"] = MeowProtocolMethod { meowNoArguments(it); setup.getAppliedSetup() }
         methods["refreshAppliedSetup"] = MeowProtocolMethod { setup.refreshAppliedSetup(meowObject(it)) }
@@ -69,6 +123,51 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
         }, translateFailure = { failure -> (failure as? MeowQueryException)?.let {
             MeowProtocolFailure(it.code, it.message ?: it.code, it.details, it)
         } }, stringResponseBudgets = mapOf("dumpRuleSet" to MeowStringResponseBudget(MAX_RULE_TEXT_BYTES.toInt())))
+    }
+
+    private suspend fun geoMethod(arguments:Map<String,Any?>):Map<String,Any?> {
+        checkOpen()
+        val request=JSONObject(arguments)
+        val operation=request.getString("operation")
+        val id=request.getString("transactionId").also { require(java.util.UUID.fromString(it).toString() == it) }
+        require(request.get("schemaVersion") == 1)
+        val updates=geoUpdates ?: throw MeowProtocolFailure("implementation_blocked","The existing Host Geo catalog is unavailable")
+        if(operation == "admit") {
+            require(arguments.keys == setOf("operation","schemaVersion","transactionId"))
+            val value=runCatching { setup.captureGeoIntent() }.getOrNull()
+            val needsSource=value == null || !setup.geoProducerPolicyIsApplied(value) || updates.automaticDue(value)
+            return mapOf("schemaVersion" to 1,"transactionId" to id,"state" to if(needsSource) "needs-source" else "skipped","active" to false)
+        }
+        if(operation == "update") {
+            if(cancelledGeoId == id)throw MeowProtocolFailure("superseded","Geo request was cancelled before admission")
+            val message=updates.update(request.getString("type"),request)
+            if(message.isNotEmpty())throw MeowProtocolFailure("geo_update_failed",message)
+        } else {
+            require(operation in setOf("status","abort") && arguments.keys == setOf("operation","schemaVersion","transactionId"))
+            val owned=geoRequest?.takeIf { it.id == id }
+            if(operation == "abort") {
+                cancelledGeoId=id
+                if(owned == null)return mapOf("schemaVersion" to 1,"transactionId" to id,"state" to "superseded","active" to false)
+                updates.cancelCurrentAndJoin()
+                if(owned.resources?.nativeOwner != true) {
+                    return mapOf("schemaVersion" to 1,"transactionId" to id,"state" to "aborted","active" to false)
+                }
+            }
+            if(owned == null)throw MeowProtocolFailure("superseded","Unknown or superseded Geo request")
+            val outcome=actions.geoStatus(owned.intent.runtime,id,operation == "abort")
+            owned.outcome=outcome
+            outcome.identity?.let { setup.acceptGeoPublication(it) }
+        }
+        val owned=geoRequest?.takeIf { it.id == id } ?: throw MeowProtocolFailure("superseded","Geo producer was superseded")
+        val outcome=owned.outcome ?: throw MeowProtocolFailure("geo_apply_unconfirmed","Host maintenance did not return an actual graph commit")
+        val identity=outcome.identity
+        val active=identity != null && store.isGraphCurrent(identity) && actions.identityIsCurrent(identity)
+        return linkedMapOf<String,Any?>("schemaVersion" to 1,"transactionId" to id,"state" to outcome.status.state,"active" to active).apply {
+            if(identity != null)put("applied",JSONObject(identity.expectedSetupRecordJson).let { row -> row.keys().asSequence().associateWith { key -> row.get(key) } })
+            put("producerSha256",owned.intent.producer?.sha256)
+            put("compiledSha256",identity?.compiledSha256)
+            outcome.status.error?.let { put("message",it) }
+        }
     }
 
     override fun isInitialized(): Boolean = initialized && !closed
@@ -103,6 +202,18 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
         if (readRuntime() != expected) throw MeowProtocolFailure("superseded", "Runtime changed before policy application")
         val receipt = actions.applyUpdate(expected, projection)
         verifyApplied(receipt)
+    }
+
+    override suspend fun requireBuilderCompatible(settings: dev.aerove.lite.LiteSettings, vpnOptionsJson: String) {
+        checkOpen()
+        val snapshot = vpn.value
+        if (snapshot.phase == VpnPhase.Running) {
+            val desired = meowFlutterBuilderSettings(settings, vpnOptionsJson)
+            if (dev.aerove.lite.vpn.requiresVpnRestart(desired, snapshot))
+                throw MeowProtocolFailure("restart_required", "Source TUN changes require an explicit VPN restart", mapOf("field" to "$.tun"))
+        } else if (snapshot.phase !in setOf(VpnPhase.Stopped, VpnPhase.Failed)) {
+            throw MeowProtocolFailure("superseded", "Android Builder ownership is changing")
+        }
     }
 
     override suspend fun refreshApplied(expected: MeowSetupRuntime, setupParamsJson: String): Boolean {
@@ -148,6 +259,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     suspend fun setUiActive(active: Boolean) = sessionGate.withLock {
         checkOpen()
         uiActive = active
+        geoUpdates?.foreground(active)
         if (active && (actions.queryGraph() != null || vpn.value.phase == VpnPhase.Running)) requireSession().protocol.setUiTelemetryActive(true)
         else session?.protocol?.setUiTelemetryActive(false)
     }
@@ -227,6 +339,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     suspend fun closeAndJoin(): Boolean {
         closed = true
         if (!dispatcher.closeAndJoin()) return false
+        geoUpdates?.closeAndJoin()
         sessionGate.withLock { retireSession() }
         config.close()
         return true

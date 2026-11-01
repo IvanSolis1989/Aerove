@@ -23,6 +23,15 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             return AutoCloseable { startupObserver.compareAndSet(registration, null) }
         }
     }
+    private class GeoEntry(val token: MeowGeoToken, val expected: MeowGeoExpected,
+        val candidate: MeowGeoCandidate, val resources: FlutterRuntimeResources.Geo,
+        val persist: suspend (MeowGeoApplied) -> dev.aerove.lite.flutter.RuntimeAppliedIdentity,
+        val discard: suspend () -> Unit) {
+        var status: MeowGeoStatus? = null
+        var identity: dev.aerove.lite.flutter.RuntimeAppliedIdentity? = null
+        var resourcesReleased = false
+    }
+
     /** Existing Service responsibilities: lifecycle lock, prepare/retain, Builder FD and applied-file lease. */
     fun interface Host { suspend fun acquire(plan: VpnPlan): Lease }
     interface TunReceipt { val descriptor: Int }
@@ -38,6 +47,8 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         val builderReservedFakeIpRanges: List<String>
         val coreReservedFakeIpRanges: List<String>
         val startupPolicies: MeowHostPolicyTarget
+        val startupSettings: LiteSettings? get() = null
+        suspend fun restoreStartupSelection(endpoint: CoreEndpoint): Boolean = error("No shared startup selection owner")
         val establishedBuilderSettings: LiteSettings?
         fun currentPolicies(fallback: LiteSettings): MeowHostPolicyTarget
         suspend fun captureNetwork(expectedDns: SystemDnsSnapshot): NetworkReceipt
@@ -53,6 +64,9 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         fun isCurrent(): Boolean
         suspend fun verifyControl(endpoint: CoreEndpoint)
         suspend fun reloadRules(next: PreparedProfile, endpoint: CoreEndpoint, current: () -> Boolean): Boolean = false
+        suspend fun commitGeo(candidate: MeowGeoCandidate, binding: MeowGeoHostBinding) {
+            error("This lease has no shared Geo runtime projection owner")
+        }
         // Must be idempotent. Release FD/file/profile/lifecycle only after confirmed Native join.
         suspend fun release()
     }
@@ -152,6 +166,104 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         override val coreDnsEnabled get() = lease.coreDnsEnabled
         override val builderReservedFakeIpRanges get() = lease.builderReservedFakeIpRanges.toList()
         override val coreReservedFakeIpRanges get() = lease.coreReservedFakeIpRanges.toList()
+        @Volatile private var geoBinding = config.geoHostBinding
+        internal fun currentGeoBinding() = geoBinding
+        internal suspend fun renewGeoBinding(expected: dev.aerove.lite.data.MeowGeoExpected,
+            witness: dev.aerove.lite.data.MeowSelectionWitness, rawSelectedMap: Map<String,String>,
+            newSourceGuard: String, current: () -> Boolean): dev.aerove.lite.data.MeowGeoHostBinding {
+            check(!stopping && lease.isCurrent() && current() && geoBinding == expected.hostBinding &&
+                witness.stamp == expected.stamp && witness.matchesRaw(rawSelectedMap)) { "Geo metadata is not the actual selected runtime" }
+            val engineSha=dev.aerove.lite.data.sha256(lease.appliedConfiguration.read())
+            val receipt=policy.renewGeoBinding(expected,engineSha,witness.witnessId,rawSelectedMap,newSourceGuard,
+                current = { !stopping && lease.isCurrent() && current() && geoBinding == expected.hostBinding },
+                committed = { geoBinding=it })
+            return receipt
+        }
+        private var geoSerial=0L
+        private var geoEntry: GeoEntry? = null
+        internal fun ownsGeoResources(resources: FlutterRuntimeResources.Geo) = geoEntry?.resources === resources
+
+        internal suspend fun joinPreviousGeo() = withContext(NonCancellable+Dispatchers.IO) { listenerChanges.withLock {
+            check(!stopping && lease.isCurrent()) { "Geo session was retired" }
+            val previous=geoEntry ?: return@withLock
+            val known=previous.status
+            if(known?.terminal == true && known.sourceReadsJoined && previous.resourcesReleased &&
+                (known.state != "committed" || previous.identity != null))return@withLock
+            CoreApiClient(ControlEndpoint(endpoint.port,endpoint.secret)).use { client ->
+                val observed=client.abortGeo(previous.token)
+                finishGeo(previous,observed)
+                check(observed.terminal && observed.sourceReadsJoined) { "Previous Geo transaction has not joined" }
+            }
+        } }
+
+        internal suspend fun applyGeo(transactionId: String, candidate: MeowGeoCandidate,
+            resources: FlutterRuntimeResources.Geo, raw: Map<String,String>, current: () -> Boolean,
+            admit: suspend () -> Boolean,
+            persist: suspend (MeowGeoApplied) -> dev.aerove.lite.flutter.RuntimeAppliedIdentity,
+            discard: suspend () -> Unit): dev.aerove.lite.flutter.MeowGeoRuntimeResult {
+            val caller=coroutineContext[Job]
+            return withContext(NonCancellable+Dispatchers.IO) { listenerChanges.withLock {
+                check(!stopping && lease.isCurrent() && current() && caller?.isActive != false)
+                val previous=geoEntry
+                check(previous == null || previous.status?.let { it.terminal && it.sourceReadsJoined } == true) { "Previous Geo transaction has not joined" }
+                val binding=checkNotNull(geoBinding) { "Trusted Geo binding is missing" }
+                CoreApiClient(ControlEndpoint(endpoint.port,endpoint.secret)).use { client ->
+                    val witness=client.selectionWitness()
+                    check(witness.matchesRaw(raw)) { "Actual Native selection witness differs from the full SQL raw map" }
+                    check(current() && admit() && caller?.isActive != false && !stopping)
+                    geoSerial=Math.addExact(geoSerial,1)
+                    val entry=GeoEntry(MeowGeoToken(transactionId,geoSerial.toString()),MeowGeoExpected(witness.stamp,binding),candidate,resources,persist,discard)
+                    resources.nativeOwner=true
+                    geoEntry=entry
+                    try {
+                        entry.status=client.prepareGeo(entry.token,entry.expected,candidate)
+                        check(entry.status?.state == "prepared") { "Native Geo preparation did not complete" }
+                        check(!stopping && lease.isCurrent() && current() && caller?.isActive != false && admit()) { "Geo source changed before commit" }
+                        entry.status=client.commitGeo(entry.token,entry.expected)
+                    } catch(failure:Throwable) {
+                        val observed=runCatching { client.geoStatus(entry.token) }.getOrNull()
+                        entry.status=observed
+                        if(observed?.state != "committed") {
+                            entry.status=runCatching { client.abortGeo(entry.token) }.getOrNull() ?: observed
+                            entry.status?.let { finishGeo(entry,it) }
+                            throw failure
+                        }
+                    }
+                    finishGeo(entry,checkNotNull(entry.status))
+                }
+            } }
+        }
+
+        internal suspend fun geoStatus(transactionId: String, abort: Boolean): dev.aerove.lite.flutter.MeowGeoRuntimeResult =
+            withContext(NonCancellable+Dispatchers.IO) { listenerChanges.withLock {
+                val entry=geoEntry?.takeIf { it.token.transactionId == transactionId } ?: error("Unknown or superseded Geo transaction")
+                check(!stopping && lease.isCurrent()) { "Geo session was retired" }
+                CoreApiClient(ControlEndpoint(endpoint.port,endpoint.secret)).use { client ->
+                    val status=if(abort) client.abortGeo(entry.token) else client.geoStatus(entry.token)
+                    finishGeo(entry,status)
+                }
+            } }
+
+        private suspend fun finishGeo(entry: GeoEntry, status: MeowGeoStatus): dev.aerove.lite.flutter.MeowGeoRuntimeResult {
+            require(status.token == entry.token);entry.status=status
+            if(status.state == "committed") {
+                val applied=checkNotNull(status.applied)
+                applied.verify(entry.candidate,entry.expected)
+                if(entry.identity == null) {
+                    check(!stopping && lease.isCurrent()) { "Committed Geo belongs to a retired session" }
+                    val binding=entry.expected.hostBinding.copy(compiledSha256=applied.compiledSha256)
+                    lease.commitGeo(entry.candidate,binding)
+                    geoBinding=binding
+                    entry.identity=entry.persist(applied)
+                }
+            }
+            if(status.terminal && status.sourceReadsJoined && !entry.resourcesReleased) {
+                if(status.state != "committed") entry.discard()
+                entry.resources.closeAfterNativeJoin();entry.resourcesReleased=true
+            }
+            return dev.aerove.lite.flutter.MeowGeoRuntimeResult(status,entry.identity)
+        }
+
         private var coreEpoch: String? = null
         private fun acceptEpoch(epoch: String) {
             val actual = MeowHttpPolicyCodec.epoch(epoch)
@@ -207,6 +319,22 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                         initialListenerReadback = ListenerReadback(actual.listening, actual.tunReady, actual.userListenersReady, checkNotNull(coreEpoch), actual.activePorts)
                         listenerReadback = initialListenerReadback
                     }
+                }
+                lease.startupSettings?.let { settings ->
+                    check(config.initiallyParked && !lease.startupPolicies.controller.enabled) { "Shared startup must be private-only" }
+                    val resume = lease.restoreStartupSelection(endpoint)
+                    coroutineContext.ensureActive()
+                    check(!stopping && lease.isCurrent()) { "Shared startup selection was superseded" }
+                    configurePolicies(settings)
+                    coroutineContext.ensureActive()
+                    check(!stopping && lease.isCurrent()) { "Shared startup policy was superseded" }
+                    if (resume) {
+                        val actual = setListening(true)
+                        synchronized(gate) {
+                            check(!stopping && lease.isCurrent()) { "Shared startup activation was superseded" }
+                            initialListenerReadback = actual
+                        }
+                    } else lease.parkedTun()
                 }
             } catch (failure: Throwable) {
                 val observer = startupObserver.get()
@@ -328,6 +456,10 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             listenerIntent.incrementAndGet()
             cleanup.withLock {
                 if (!joined) { commands.stop(handle); joined = true }
+                geoEntry?.takeIf { !it.resourcesReleased }?.let { entry ->
+                    entry.discard()
+                    entry.resources.closeAfterNativeJoin();entry.resourcesReleased=true
+                }
                 identityObserver?.close(); identityObserver = null; identityEvents.close()
                 if (!released) { release(lease); released = true }
                 synchronized(gate) { retained -= this@Session }

@@ -51,6 +51,8 @@ class QuickActionActivity : Activity() {
                 if (stopping) {
                     graph.invalidatePendingStarts()
                     startService(Intent(this@QuickActionActivity, LiteVpnService::class.java).setAction(LiteVpnService.ACTION_STOP))
+                } else if(graph.usesSharedFlutterClient) {
+                    check(graph.startSharedExternal(autoRun=false,expectedStartEpoch=epoch)) { "shared_start_rejected" }
                 } else {
                     val missing = withContext(Dispatchers.IO) {
                         val settings = graph.settings.read()

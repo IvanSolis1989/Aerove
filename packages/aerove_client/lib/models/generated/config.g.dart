@@ -6,10 +6,14 @@ part of '../config.dart';
 // JsonSerializableGenerator
 // **************************************************************************
 
-_Filter _$FilterFromJson(Map<String, dynamic> json) =>
-    _Filter(label: json['label'] as String, regex: json['regex'] as String);
+_Filter _$FilterFromJson(Map<String, dynamic> json) => _Filter(
+  id: (json['id'] as num?)?.toInt(),
+  label: json['label'] as String,
+  regex: json['regex'] as String,
+);
 
 Map<String, dynamic> _$FilterToJson(_Filter instance) => <String, dynamic>{
+  'id': ?instance.id,
   'label': instance.label,
   'regex': instance.regex,
 };

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -29,6 +30,15 @@ mixin CoreInterface {
   Future<List<String>> validateProxies(List<Map<String, dynamic>> proxies);
 
   Future<List<String>> validateFilters(List<String> filters);
+
+  Future<List<int>> matchFilters(
+    String requestId,
+    List<String> patterns,
+    List<String> names, {
+    int timeoutMillis = 10000,
+  });
+
+  Future<bool> cancelFilterMatch(String requestId);
 
   Future<List<Map<String, dynamic>>> convertProxies(String path);
 
@@ -90,6 +100,8 @@ mixin CoreInterface {
 
   Future<String> updateGeoData(String type);
 
+  Future<MeowGeoReply> updateGeoPrepared(MeowGeoRequest request);
+
   Future<String> sideLoadExternalProvider({
     required String providerName,
     required String data,
@@ -136,9 +148,7 @@ abstract class CoreHandlerInterface with CoreInterface {
   }) async {
     return await handleWatch(
       onStart: () {
-        commonPrint.log(
-          'Invoke method ${method.name} ${DateTime.now()} $arguments',
-        );
+        commonPrint.log('Invoke method ${method.name} ${DateTime.now()}');
       },
       function: () async {
         return invokeMethod<T>(
@@ -243,6 +253,59 @@ abstract class CoreHandlerInterface with CoreInterface {
     }
     return data.map((item) => item?.toString() ?? '').toList();
   }
+
+  @override
+  Future<List<int>> matchFilters(
+    String requestId,
+    List<String> patterns,
+    List<String> names, {
+    int timeoutMillis = 10000,
+  }) async {
+    final arguments = {
+      'request-id': requestId,
+      'patterns': patterns,
+      'names': names,
+      'timeout-ms': timeoutMillis,
+    };
+    if (!RegExp(r'^[A-Za-z0-9_:.-]{1,64}$').hasMatch(requestId) ||
+        timeoutMillis < 1 ||
+        timeoutMillis > 10000 ||
+        patterns.length > 4096 ||
+        names.length > 10000 ||
+        utf8.encode(jsonEncode(arguments)).length > 4 * 1024 * 1024 ||
+        [
+          ...patterns,
+          ...names,
+        ].any((value) => utf8.decode(utf8.encode(value)) != value)) {
+      throw const FormatException('Invalid filter matching batch');
+    }
+    // These are private source names and expressions, never diagnostic arguments.
+    final data = await invokeMethod<List<dynamic>>(
+      method: CoreMethod.matchFilters,
+      arguments: arguments,
+      timeout: Duration(milliseconds: timeoutMillis + 3000),
+    );
+    if (data == null ||
+        data.length > names.length ||
+        data.any(
+          (value) => value is! int || value < 0 || value >= names.length,
+        ) ||
+        data.toSet().length != data.length) {
+      throw CoreMethodException(
+        code: 'invalid_response',
+        message: 'Core returned invalid exact filter indices',
+      );
+    }
+    return data.cast<int>();
+  }
+
+  @override
+  Future<bool> cancelFilterMatch(String requestId) async =>
+      await invokeMethod<bool>(
+        method: CoreMethod.cancelFilterMatch,
+        arguments: {'request-id': requestId},
+      ) ??
+      false;
 
   @override
   Future<List<Map<String, dynamic>>> convertProxies(String path) async {
@@ -498,6 +561,38 @@ abstract class CoreHandlerInterface with CoreInterface {
   }
 
   @override
+  Future<MeowGeoReply> updateGeoPrepared(MeowGeoRequest request) async {
+    final value = await _invokeMethod<Map<String, dynamic>>(
+      method: CoreMethod.updateGeoData,
+      arguments: request.toJson(),
+    );
+    if (value == null)
+      throw const FormatException(
+        'Meow Geo owner did not return a transaction status',
+      );
+    final reply = MeowGeoReply.fromJson(value);
+    if (reply.schemaVersion != 1 ||
+        reply.transactionId != request.transactionId ||
+        !{
+          'needs-source',
+          'skipped',
+          'updating',
+          'preparing',
+          'prepared',
+          'committing',
+          'committed',
+          'aborting',
+          'aborted',
+          'failed',
+          'superseded',
+        }.contains(reply.state)) {
+      throw const FormatException(
+        'Meow Geo transaction receipt identity differs',
+      );
+    }
+    return reply;
+  }
+
   Future<String> updateGeoData(String type) async {
     return _invokeMessage(method: CoreMethod.updateGeoData, arguments: type);
   }

@@ -104,7 +104,7 @@ object MeowHostPolicyCodec {
         return value
     }
     internal fun request(id: String, epoch: String, operation: String, value: JSONObject): String {
-        require(operation in setOf("snapshot", "http", "probeDial", "process", "invalidateIdentity", "statistics", "userController", "network"))
+        require(operation in setOf("snapshot", "http", "probeDial", "process", "invalidateIdentity", "statistics", "userController", "network", "renewGeoBinding"))
         return JSONObject().put("schemaVersion", 1).put("requestId", MeowHttpPolicyCodec.requestId(id))
             .put("expectedCoreEpoch", MeowHttpPolicyCodec.epoch(epoch)).put("operation", operation).put("value", value).toString()
     }
@@ -158,6 +158,22 @@ internal class MeowHostPolicyClient(private val handle: Long, private val gate: 
     private fun initial(): MeowCompletePolicySnapshot {
         val epoch = MeowHttpPolicyCodec.epoch(commands.epoch()); accept(epoch); return snapshot(epoch)
     }
+    suspend fun renewGeoBinding(expected: dev.aerove.lite.data.MeowGeoExpected, engineSha256: String,
+        witnessId: String, rawSelectedMap: Map<String,String>, newSourceGuard: String,
+        current: () -> Boolean, committed: (dev.aerove.lite.data.MeowGeoHostBinding) -> Unit): dev.aerove.lite.data.MeowGeoHostBinding = transaction(current) { live ->
+        val before=initial();check(before.coreEpoch == expected.stamp.coreEpoch);live()
+        val (epoch,row)=command(before.coreEpoch,"renewGeoBinding",JSONObject().put("expected",expected.json())
+            .put("engineSha256",engineSha256).put("selectionWitnessId",witnessId).put("rawSelectedMap",JSONObject(rawSelectedMap))
+            .put("newSourceGuard",newSourceGuard))
+        check(epoch == before.coreEpoch)
+        check(row.keys().asSequence().toSet() == setOf("hostBinding","current","selectionWitnessId","engineSha256","pendingSourceReadsJoined"))
+        val binding=dev.aerove.lite.data.MeowGeoHostBinding.decode(row.getJSONObject("hostBinding"))
+        check(binding == expected.hostBinding.copy(sourceGuard=newSourceGuard) &&
+            dev.aerove.lite.data.MeowGeoStamp.decode(row.getJSONObject("current")) == expected.stamp &&
+            row.get("selectionWitnessId") == witnessId && row.get("engineSha256") == engineSha256 && row.get("pendingSourceReadsJoined") == true)
+        committed(binding);live();accept(epoch);binding
+    }
+
     suspend fun read(current: () -> Boolean): MeowCompletePolicySnapshot = transaction(current) { check -> initial().also { check() } }
     suspend fun apply(target: MeowHostPolicyTarget, current: () -> Boolean): MeowCompletePolicySnapshot = transaction(current) { live ->
         var before = initial(); live()

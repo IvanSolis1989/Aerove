@@ -597,11 +597,11 @@ jobs:
           apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
         if-no-files-found: warn
   flutter_host_preflight:
-    name: Shared Flutter Android host compilation (no APK)
+    name: Shared Flutter client verification and Android host compilation (no APK)
     needs: promotion_request
     if: ${{ needs.promotion_request.result == 'success' && inputs.client_preflight && inputs.accepted_build_run == '' && !inputs.publish_release && !inputs.meow_host_only && !inputs.native_preflight && !inputs.qa84_only && !inputs.qa79_only && (inputs.diagnostic_target == 'none' || inputs.diagnostic_target == '') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
@@ -630,7 +630,9 @@ jobs:
     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
       with:
         go-version: 1.27.1
-        cache-dependency-path: apps/aerove-lite/regexp2/go.sum
+        cache-dependency-path: |
+          apps/aerove-lite/regexp2/go.sum
+          apps/aerove/core/go.sum
     - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
       with:
         gradle-version: 9.6.0
@@ -638,6 +640,91 @@ jobs:
     - name: Resolve the actual Lite Flutter plugin graph
       working-directory: apps/aerove-lite
       run: flutter pub get --enforce-lockfile
+    - name: Resolve shared and Standard fixture dependencies with production hooks enabled
+      run: |-
+        (cd packages/aerove_client && flutter pub get --enforce-lockfile)
+        (cd apps/aerove && flutter pub get --enforce-lockfile)
+        python3 - <<'PY'
+        import re
+        from pathlib import Path
+        for filename, hooks in (
+            ('apps/aerove-lite/pubspec.yaml', ('rust_api',)),
+            ('packages/aerove_client/pubspec.yaml', ('rust_api',)),
+            ('apps/aerove/pubspec.yaml', ('setup', 'rust_api')),
+        ):
+            text = Path(filename).read_text()
+            for hook in hooks:
+                assert re.search(r'^    ' + hook + r':\s*\n      build_assets: true\s*$', text, re.M), (filename, hook)
+        PY
+    - name: Prepare the pinned Standard source required by the existing test hooks and assets
+      working-directory: apps/aerove
+      run: python3 tool/mihomo_source.py prepare
+    - name: Verify DNS and Geo fixtures in eight independent Flutter processes
+      timeout-minutes: 30
+      working-directory: apps/aerove
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/dart-closure"
+        mkdir -p "$evidence"
+        node_binary="$(command -v node)"
+        "$node_binary" --version | tee "$evidence/node-version.txt"
+        export AEROVE_TEST_NODE="$node_binary"
+        run_fixture() {
+          local label="$1"
+          shift
+          printf '%q ' flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true "$@" > "$evidence/$label.command.txt"
+          printf '\n' >> "$evidence/$label.command.txt"
+          set +e
+          flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true "$@" 2>&1 | tee "$evidence/$label.log"
+          local statuses=("${PIPESTATUS[@]}")
+          set -e
+          printf '%s %s\n' "${statuses[0]}" "${statuses[1]}" > "$evidence/$label.status.txt"
+        }
+        run_fixture dns-meow --dart-define=DNS99_CORE=meow-rs --dart-define="DNS99_OUTPUT=$evidence/dns-meow.json" test/common/native_lite_dns99_test.dart
+        run_fixture dns-mihomo --dart-define=DNS99_CORE=mihomo --dart-define="DNS99_OUTPUT=$evidence/dns-mihomo.json" test/common/native_lite_dns99_test.dart
+        run_fixture geo-live-meow --dart-define=DTO_CORE=meow-rs --dart-define="GEO_LIVE_FIXTURE=$evidence/geo-live-meow.json" test/common/geo_live_producer91_test.dart
+        run_fixture geo-live-mihomo --dart-define=DTO_CORE=mihomo --dart-define="GEO_LIVE_FIXTURE=$evidence/geo-live-mihomo.json" test/common/geo_live_producer91_test.dart
+        run_fixture geo-trigger-meow --dart-define=DTO_CORE=meow-rs test/common/geo_maintenance_trigger91_test.dart
+        run_fixture geo-trigger-mihomo --dart-define=DTO_CORE=mihomo test/common/geo_maintenance_trigger91_test.dart
+        run_fixture geo-selection-meow test/common/geo_selection_producer91_test.dart
+        run_fixture geo-transaction-meow test/common/native_lite_geo_transaction114_test.dart
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/dart-closure'
+        labels = ('dns-meow', 'dns-mihomo', 'geo-live-meow', 'geo-live-mihomo',
+                  'geo-trigger-meow', 'geo-trigger-mihomo', 'geo-selection-meow', 'geo-transaction-meow')
+        results = {}
+        for label in labels:
+            test, log = map(int, (output / (label + '.status.txt')).read_text().split())
+            results[label] = dict(testExit=test, logExit=log,
+                                  command=(output / (label + '.command.txt')).read_text().strip())
+        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+                       attempt=os.environ['GITHUB_RUN_ATTEMPT'], independentProcesses=True,
+                       productionHooksEnabled=True, results=results, appApkBuilt=False, acceptance=False)
+        (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        assert all(value['testExit'] == 0 and value['logExit'] == 0 for value in results.values()), results
+        PY
+    - name: Inspect the independent runner task graph without packaging an APK
+      working-directory: apps/aerove-lite
+      run: |
+        gradle --no-daemon -p android-qa assembleRelease --dry-run \
+          | tee "$RUNNER_TEMP/lite-flutter-runner-task-graph.txt"
+        python3 - <<'PY'
+        import os, re
+        from pathlib import Path
+        graph = (Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-runner-task-graph.txt').read_text()
+        graph = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', graph)
+        tasks = []
+        for line in graph.splitlines():
+            match = re.fullmatch(r'(?:> Task\s+)?(:\S+)\s+SKIPPED', line.strip())
+            if match:
+                tasks.append(match.group(1))
+        if not tasks or ':assembleRelease' not in tasks or ':prepareDriverSource' not in tasks:
+            raise SystemExit('Independent runner task graph is missing its real source or packaging producer')
+        if any(task.count(':') != 1 or re.search(r'flutter|meow|helper|r8|minify', task, re.I) for task in tasks):
+            raise SystemExit('Independent runner task graph entered a production or minification task')
+        PY
     - name: Compile the Flutter host and its real Android unit-test source graph
       working-directory: apps/aerove-lite
       run: |-
@@ -653,7 +740,7 @@ jobs:
         import json, os
         from pathlib import Path
         output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
-        roots = [Path('apps/aerove-lite/build'), Path('apps/aerove-lite/android/app/build'), Path('apps/aerove-lite/app/build')]
+        roots = [Path('apps/aerove-lite/build'), Path('apps/aerove-lite/android/app/build'), Path('apps/aerove-lite/app/build'), Path('apps/aerove-lite/android-qa/build')]
         apks = sorted({str(p) for root in roots if root.exists() for p in root.rglob('*.apk')})
         receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
                        buildRoot='apps/aerove-lite/android', requestedTasks=['compileReleaseKotlin', 'compileReleaseUnitTestKotlin'],
@@ -954,6 +1041,86 @@ jobs:
           name: Std-original40-reference-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/standard-original-reference/
           if-no-files-found: warn
+  flutter_ui_preview:
+    name: Flutter production UI preview (representative only)
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name
+      != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
+    needs:
+    - build_x86
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Fetch exact prebuilt x86 runtime
+      run: python3 apps/aerove-lite/tool/ci_artifacts.py runtime --name "AEROVE-Lite-runtime-contract-attempt-${GITHUB_RUN_ATTEMPT}" --destination "$RUNNER_TEMP/lite-runtime-input"
+    - name: Existing API33 emulator environment with unchanged configuration
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      run: |
+        set -euo pipefail
+        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/sdk-install"
+        mkdir -p "$sdk_install_dir"
+        for sdk_attempt in 1 2; do
+          sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
+          set +e
+          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
+          sdk_install_status=("${PIPESTATUS[@]}")
+          set -e
+          sdkmanager_rc="${sdk_install_status[0]}"
+          tee_rc="${sdk_install_status[1]}"
+          printf 'sdkmanager_exit=%s\ntee_exit=%s\n' "$sdkmanager_rc" "$tee_rc" > "$sdk_install_dir/attempt-${sdk_attempt}.status.txt"
+          if (( tee_rc != 0 )); then
+            printf 'SDK install log tee failed (exit %s)\n' "$tee_rc" >&2
+            exit "$tee_rc"
+          fi
+          if (( sdkmanager_rc == 0 )); then
+            break
+          fi
+          if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
+            exit "$sdkmanager_rc"
+          fi
+          if (( sdk_attempt == 1 )) &&
+              grep -Eiq 'Failed to download package archive for (emulator|system-images/android-33/google_apis/x86_64): (closed|.*connection reset|.*read (timed out|timeout)|.*EOF(Exception)?|.*unexpected end of (file|stream))([[:space:]:.]|$)' "$sdk_install_log" &&
+              ! grep -Eiq 'LicenseNotAccepted|license.*(not accepted|not been accepted)|no space left on device|insufficient.*(space|storage)|not enough.*space|failed to find package|unknown package|package .*not (found|available)|UnsupportedClassVersionError|requires? (Java|JDK)' "$sdk_install_log"; then
+            printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
+            continue
+          fi
+          exit "$sdkmanager_rc"
+        done
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics/flutter-ui"
+        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
+        grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
+        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/flutter-ui/avd-config.ini"
+    - name: Inspect the same production APK through its real Flutter launcher
+      run: python3 apps/aerove-lite/tool/emulator_current.py flutter-ui --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
+    - name: Preserve representative Flutter UI evidence without asserting full acceptance
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-Flutter-UI-preview-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-diagnostics/
+        if-no-files-found: error
   acceptance:
     if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     needs:
@@ -1192,6 +1359,7 @@ jobs:
     - build_arm
     - build_x86
     - acceptance
+    - flutter_ui_preview
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

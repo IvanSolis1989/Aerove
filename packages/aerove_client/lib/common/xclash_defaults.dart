@@ -50,7 +50,7 @@ class XClashDefaults {
   Map<String, dynamic>? _record;
 
   int? get recommendedScriptId =>
-      _record?['complete'] == true ? _record!['scriptId'] as int : null;
+      _record?['complete'] == true ? _record!['scriptId'] as int? : null;
 
   static Future<XClashDefaults?> open() async {
     final storage = await preferences.sharedPreferences;
@@ -80,7 +80,10 @@ class XClashDefaults {
     if (await _journal.exists()) {
       final record = jsonDecode(await _journal.readAsString());
       if (record is! Map<String, dynamic> ||
-          record['scriptId'] is! int ||
+          (record['scriptId'] is! int &&
+              !(record['scriptId'] == null &&
+                  record['complete'] == true &&
+                  record['nativeSourceDigest'] is String)) ||
           record['freshAndroid'] is! bool ||
           record['complete'] is! bool) {
         throw const FormatException('Invalid XClash initialization journal');
@@ -101,6 +104,37 @@ class XClashDefaults {
       'complete': false,
     };
     await _writeJournal();
+  }
+
+  Future<void> adoptNativeLibrary({
+    required String sourceDigest,
+    required int? scriptId,
+    required bool nativeBundledScriptInitialized,
+  }) async {
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(sourceDigest)) {
+      throw StateError('Invalid Native source identity');
+    }
+    if (scriptId != null &&
+        (await _database.scriptsDao.get(scriptId).getSingleOrNull() == null ||
+            !await _scriptFile(scriptId).exists())) {
+      throw StateError('Native recommended script was not imported');
+    }
+    _record = {
+      'scriptId': scriptId,
+      'freshAndroid': false,
+      'complete': true,
+      'nativeSourceDigest': sourceDigest,
+      'nativeBundledScriptInitialized': nativeBundledScriptInitialized,
+    };
+    await _writeJournal();
+    final saved = jsonDecode(await _journal.readAsString());
+    if (saved['nativeSourceDigest'] != sourceDigest ||
+        saved['scriptId'] != scriptId ||
+        saved['complete'] != true ||
+        saved['nativeBundledScriptInitialized'] !=
+            nativeBundledScriptInitialized) {
+      throw StateError('Native default installation state read-back failed');
+    }
   }
 
   bool _hasLegacyDnsConfig() {
@@ -230,7 +264,8 @@ class XClashDefaults {
     if (saved != null) {
       return profile;
     }
-    final id = record!['scriptId'] as int;
+    final id = record!['scriptId'] as int?;
+    if (id == null) return profile;
     final script = await _database.scriptsDao.get(id).getSingleOrNull();
     if (script == null || !await _scriptFile(id).exists()) {
       return profile;

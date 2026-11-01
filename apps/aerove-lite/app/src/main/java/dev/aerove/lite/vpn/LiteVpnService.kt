@@ -14,7 +14,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.VpnService
 import dev.aerove.lite.LiteApplication
-import dev.aerove.lite.MainActivity
+import dev.aerove.lite.platform.LiteLaunchIntent
 import dev.aerove.lite.R
 import dev.aerove.lite.VpnPhase
 import dev.aerove.lite.LiteSettings
@@ -82,7 +82,7 @@ class LiteVpnService : VpnService() {
         graph.publishFlutterRuntimeIdentity(owner, publication?.identity)
     }
     internal fun startupFlutterTestUrl(): String = flutterTestUrl
-    private fun currentSettings(): LiteSettings? = runtimeSettings ?: if (graph.runtimeHandoffs.hasAuthority) null else graph.settings.changes.value
+    private fun currentSettings(): LiteSettings? = runtimeSettings ?: if (graph.usesSharedFlutterClient || graph.runtimeHandoffs.hasAuthority) null else graph.settings.changes.value
     @Volatile private var lastPlan: VpnPlan? = null
     @Volatile private var ownedStart: OwnedStartServiceReceipt? = null
     private var ownedPreparation: Job? = null
@@ -113,7 +113,7 @@ class LiteVpnService : VpnService() {
         networkRuntime = NetworkRuntimeCoordinator(coreScope, { endpoint, settings, ipv6 ->
             CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client -> client.applyNetwork(settings, ipv6) }
         }, { status -> coordinator.recordNetworkStatus(status) })
-        coordinator = VpnCoordinator(coreScope, MeowTunnelBackend(MeowAndroidHost(this, graph, { physical.value }, ::initialListening, ::captureOwnerIntent)), networkRuntime::detachAndJoin,
+        coordinator = VpnCoordinator(coreScope, MeowTunnelBackend(MeowAndroidHost(this, graph, { physical.value }, ::initialListening, ::captureOwnerIntent, geoOwner = { owner })), networkRuntime::detachAndJoin,
             latestSavedSettings = { currentSettings() },
             beforeListenerPark = networkRuntime::parkBarrier, afterListenerResume = networkRuntime::resume,
             latestNetworkDns = { physical.value.takeIf { it.network != null }?.dns }, onSessionReady = { snapshot ->
@@ -139,11 +139,15 @@ class LiteVpnService : VpnService() {
             override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) = flutterReplaceGraph(snapshot)
             override suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection) = flutterApplyUpdate(expected, projection)
             override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String) = flutterRefreshSetup(expected, setupParamsJson)
+            override suspend fun applyGeo(expected: MeowSetupRuntime, transactionId: String, candidate: dev.aerove.lite.data.MeowGeoCandidate,
+                resources: dev.aerove.lite.data.FlutterRuntimeResources.Geo, projection: RuntimeHandoff,
+                rawSelectedMap: Map<String,String>, admit: suspend () -> Boolean) = flutterApplyGeo(expected,transactionId,candidate,resources,projection,rawSelectedMap,admit)
+            override suspend fun geoStatus(expected: MeowSetupRuntime, transactionId: String, abort: Boolean) = flutterGeoStatus(expected,transactionId,abort)
             override suspend fun defaultTestUrl(expected: MeowSetupRuntime): String = flutterRuntimeGate.withLock {
                 requireFlutterRuntime(expected); flutterTestUrl
             }
         })
-        policyPreferences = graph.settings.changes.value?.backgroundPolicy ?: BackgroundPolicyPreferences()
+        policyPreferences = if(graph.usesSharedFlutterClient) BackgroundPolicyPreferences() else graph.settings.changes.value?.backgroundPolicy ?: BackgroundPolicyPreferences()
         networkLease = graph.physicalNetworks.acquire(needsSsid())
         physicalObservation = scope.launch { graph.physicalNetworks.snapshots.collect { updateUnderlying() } }
         registerReceiver(locationReceiver, IntentFilter(LocationManager.MODE_CHANGED_ACTION), RECEIVER_NOT_EXPORTED)
@@ -218,9 +222,8 @@ class LiteVpnService : VpnService() {
                 if (runtime != null && snapshot.phase == VpnPhase.Running && endpointForProof != null && snapshot.sessionGeneration != appliedGeneration) {
                     val capturedIntent = intentGeneration
                     try {
-                        val setup = startupFlutterSetup(runtime)
-                        coordinator.configurePolicies(checkNotNull(runtimeSettings))
-                        applyFlutterSelections(endpointForProof, setup)
+                        startupFlutterSetup(runtime)
+                        // The same session restored selections before business listeners were activated.
                         val route = CoreApiClient(ControlEndpoint(endpointForProof.port, endpointForProof.secret)).use { it.routeSnapshot() }
                         check(capturedIntent == intentGeneration && coordinator.state.value.endpoint === endpointForProof) { "runtime_apply_superseded" }
                         graph.runtimeHandoffs.commitAppliedWithProjection(runtime.revision, runtime.intentEpoch,
@@ -269,7 +272,7 @@ class LiteVpnService : VpnService() {
             }
         }
         scope.launch {
-            if (graph.runtimeHandoffs.hasAuthority) return@launch
+            if (graph.usesSharedFlutterClient || graph.runtimeHandoffs.hasAuthority) return@launch
             collectResourceRefreshes(
                 coordinator.state.map { snapshot -> snapshot.endpoint.takeIf { snapshot.phase == VpnPhase.Running && !graph.runtimeHandoffs.hasAuthority } },
                 graph.profiles,
@@ -405,6 +408,7 @@ class LiteVpnService : VpnService() {
                     graph.runtimeHandoffs.admit(revision ?: saved.revision,
                         if (explicitSnapshot) intent!!.getLongExtra(EXTRA_RUNTIME_EPOCH, -1) else saved.intentEpoch)
                 } else null
+                if(graph.usesSharedFlutterClient) graph.verifySharedStartSource(checkNotNull(snapshot) { "shared_runtime_configuration_required" })
                 val profile = snapshot?.profileId ?: checkNotNull(graph.profiles.snapshot().selectedId) { "Import and select a configuration first" }
                 val settings = snapshot?.let { dev.aerove.lite.flutter.MeowRuntimeSnapshotSettings.decode(it.handoff.runtimeSettingsJson) }
                     ?: graph.settings.read()
@@ -665,7 +669,6 @@ class LiteVpnService : VpnService() {
         if (requiresVpnRestart(desiredBuilder, actual)) blocked("vpnOptions")
         if (old.ipv6 != next.ipv6) blocked("ipv6")
         if (old.dnsPreferences != next.dnsPreferences) blocked("dnsPreferences")
-        if (old.geoResources != next.geoResources) blocked("geox-url")
         if (old.autoStart != next.autoStart) blocked("autoStart")
         if (old.backgroundPolicy.copy(onlyStatisticsProxy = next.backgroundPolicy.onlyStatisticsProxy,
                 showNotificationStopAction = next.backgroundPolicy.showNotificationStopAction) != next.backgroundPolicy) blocked("backgroundPolicy")
@@ -683,6 +686,12 @@ class LiteVpnService : VpnService() {
         if (next.requests.checkCertificate != !setup.skipCertVerify) blocked("skip-cert-verify")
         if (setup.testUrl != flutterTestUrl && meowMissingGroupTestUrl(dev.aerove.lite.data.ConfigYaml.parse(previous.compiledYaml))) blocked("test-url")
         if (setup.json.getJSONObject("applied").getString("yaml-md5") != JSONObject(previous.setupRecordJson).getString("yaml-md5")) blocked("applied.yaml-md5")
+        if (old.copy(geoResources = next.geoResources) == next && setup.selectedMap == oldSetup.selectedMap &&
+            setup.testUrl == oldSetup.testUrl && setup.skipCertVerify == oldSetup.skipCertVerify) {
+            // Host Geo scheduling/preferences do not mutate the active Core or its VPN descriptors.
+            val handoff = meowServiceProjection(previous,next,JSONObject(projection.sharedStateJson),projection.updateParamsJson,setup.json.toString(),setup.testUrl)
+            return@withLock persistFlutterProjection(before,endpoint,handoff)
+        }
         try {
             publishFlutterRuntime(null)
             coordinator.configurePolicies(next)
@@ -716,31 +725,73 @@ class LiteVpnService : VpnService() {
     }
 
     private suspend fun flutterRefreshSetup(expected: MeowSetupRuntime, params: String): RuntimeAppliedIdentity = flutterRuntimeGate.withLock {
-        val (actual, before) = requireFlutterRuntime(expected)
-        val endpoint = checkNotNull(actual.endpoint)
-        val previous = checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff
-        val setup = MeowServiceSetup(params, flutterTestUrl)
-        if (JSONObject(previous.setupRecordJson).getString("yaml-md5") != setup.json.getJSONObject("applied").getString("yaml-md5"))
-            throw MeowProtocolFailure("superseded", "Setup YAML identity changed")
-        if (setup.testUrl != flutterTestUrl && meowMissingGroupTestUrl(dev.aerove.lite.data.ConfigYaml.parse(previous.compiledYaml)))
-            throw MeowProtocolFailure("implementation_blocked", "Existing default-URL health groups require a new compiled session", mapOf("field" to "test-url"))
-        val oldSetup = MeowServiceSetup(JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), flutterTestUrl)
-        try {
-            val next = checkNotNull(runtimeSettings).copy(requests = checkNotNull(runtimeSettings).requests.copy(checkCertificate = !setup.skipCertVerify))
-            if (oldSetup.skipCertVerify != setup.skipCertVerify || oldSetup.selectedMap != setup.selectedMap) {
-                publishFlutterRuntime(null)
-                coordinator.configurePolicies(next)
-                applyFlutterSelections(endpoint, setup)
+        val (actual,before)=requireFlutterRuntime(expected)
+        val endpoint=checkNotNull(actual.endpoint)
+        val previous=checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff
+        val setup=JSONObject(params)
+        val raw=dev.aerove.lite.flutter.meowVerifyMetadataSource(graph,previous,setup)
+        fun current() = graph.ownsVpnOwner(owner) && coordinator.state.value.endpoint === endpoint &&
+            graph.runtimeHandoffs.isCurrent(before.revision,before.intentEpoch) &&
+            coordinator.state.value.sessionGeneration == before.proof.sessionGeneration &&
+            coordinator.state.value.phase == VpnPhase.Running && ownerAdmissionAllowed && !maintenanceHold
+        coordinator.withMeowSession(endpoint,expected.sessionGeneration,::current) { running, owns ->
+            val binding=checkNotNull(running.currentGeoBinding()) { "Trusted initial Geo binding is required" }
+            check(binding.serviceOwner == expected.serviceOwner && binding.sessionGeneration == expected.sessionGeneration &&
+                binding.intentEpoch == expected.intentEpoch && binding.compiledSha256 == expected.compiledSha256)
+            CoreApiClient(ControlEndpoint(endpoint.port,endpoint.secret)).use { client ->
+                val witness=client.selectionWitness()
+                check(witness.stamp.coreEpoch == expected.coreEpoch && witness.matchesRaw(raw)) { "Actual selected cache differs from SQL" }
+                check(owns() && dev.aerove.lite.flutter.meowVerifyMetadataSource(graph,previous,setup) == raw)
+                running.renewGeoBinding(dev.aerove.lite.data.MeowGeoExpected(witness.stamp,binding),witness,raw,
+                    dev.aerove.lite.flutter.meowGeoSourceGuard(setup.getJSONObject("data-source-proof")),owns)
+                check(owns() && dev.aerove.lite.flutter.meowVerifyMetadataSource(graph,previous,setup) == raw &&
+                    client.selectionWitness().witnessId == witness.witnessId)
             }
-            val update = JSONObject(previous.runtimeSettingsJson).optJSONObject("flutterUpdate")?.put("skip-cert-verify", setup.skipCertVerify)?.toString()
-            val handoff = meowServiceProjection(previous, next, null, update, params, setup.testUrl)
-            val result = persistFlutterProjection(before, endpoint, handoff)
-            flutterTestUrl = setup.testUrl
-            result
-        } catch (failure: Throwable) {
-            coordinator.stopIfCurrent(endpoint, "Setup refresh failed: ${failure.message}")
-            throw failure
+            val handoff=meowServiceProjection(previous,checkNotNull(runtimeSettings),null,null,params,flutterTestUrl)
+            persistFlutterProjection(before,endpoint,handoff)
         }
+    }
+
+    private suspend fun flutterApplyGeo(expected: MeowSetupRuntime, transactionId: String,
+        candidate: dev.aerove.lite.data.MeowGeoCandidate, resources: dev.aerove.lite.data.FlutterRuntimeResources.Geo,
+        projection: RuntimeHandoff, rawSelectedMap: Map<String,String>, admit: suspend () -> Boolean): MeowGeoRuntimeResult = flutterRuntimeGate.withLock {
+        val (actual,before)=requireFlutterRuntime(expected);val endpoint=checkNotNull(actual.endpoint)
+        val requested=intentGeneration
+        fun current()=requested == intentGeneration && graph.ownsVpnOwner(owner) &&
+            coordinator.state.value.endpoint === endpoint && graph.runtimeHandoffs.isCurrent(before.revision,before.intentEpoch) &&
+            coordinator.state.value.sessionGeneration == before.proof.sessionGeneration &&
+            coordinator.state.value.phase == VpnPhase.Running && ownerAdmissionAllowed && !maintenanceHold
+        coordinator.withMeowSession(endpoint,expected.sessionGeneration,::current) { running,owns ->
+            running.joinPreviousGeo()
+            check(owns() && admit())
+            val publication=withContext(NonCancellable) { graph.runtimeHandoffs.stageGeoPublication(before,transactionId,projection) }
+            try {
+                running.applyGeo(transactionId,candidate,resources,rawSelectedMap,owns,admit,
+                    persist={ applied ->
+                        val identity=graph.runtimeHandoffs.commitGeoPublication(publication,before.proof.copy(coreEpoch=applied.after.coreEpoch))
+                        runtimeSnapshot=graph.runtimeHandoffs.readCurrent()
+                        runtimeSettings=MeowRuntimeSnapshotSettings.decode(projection.runtimeSettingsJson)
+                        lastPlan=lastPlan?.copy(settings=checkNotNull(runtimeSettings))
+                        policyPreferences=checkNotNull(runtimeSettings).backgroundPolicy
+                        publishFlutterRuntime(FlutterPublication(identity,endpoint,intentGeneration))
+                        graph.publishVpn(owner,coordinator.state.value)
+                        identity
+                    },discard={graph.runtimeHandoffs.abortGeoPublication(publication)})
+            } catch(failure:Throwable) {
+                if(!running.ownsGeoResources(resources)) {
+                    withContext(NonCancellable) { graph.runtimeHandoffs.abortGeoPublication(publication);resources.closeAfterNativeJoin() }
+                }
+                throw failure
+            }
+        }
+    }
+
+    private suspend fun flutterGeoStatus(expected: MeowSetupRuntime, transactionId: String, abort: Boolean): MeowGeoRuntimeResult = flutterRuntimeGate.withLock {
+        val actual=coordinator.state.value;val endpoint=checkNotNull(actual.endpoint)
+        fun current()=graph.ownsVpnOwner(owner) && owner == expected.serviceOwner &&
+            actual.sessionGeneration == expected.sessionGeneration && coordinator.state.value.endpoint === endpoint &&
+            graph.runtimeHandoffs.isCurrent(expected.revision,expected.intentEpoch)
+        coordinator.withMeowSession(endpoint,expected.sessionGeneration,::current) { running,_ -> running.geoStatus(transactionId,abort) }
     }
 
     private suspend fun initialListening(plan: VpnPlan): Boolean {
@@ -1032,7 +1083,7 @@ class LiteVpnService : VpnService() {
     }
 
     private fun notification(phase: VpnPhase): Notification {
-        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val open = PendingIntent.getActivity(this, 0, LiteLaunchIntent.create(this), PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 1, Intent(this, LiteVpnService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
         val label = if (::coordinator.isInitialized && coordinator.state.value.suspended) getString(R.string.integration_suspended) else when (phase) {
             VpnPhase.Running -> getString(R.string.vpn_running)

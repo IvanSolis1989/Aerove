@@ -11,6 +11,8 @@ abstract class SetupParams with _$SetupParams {
     @JsonKey(name: 'selected-map') required Map<String, String> selectedMap,
     @JsonKey(name: 'test-url') required String testUrl,
     @Default(false) @JsonKey(name: 'skip-cert-verify') bool skipCertVerify,
+    @JsonKey(name: 'data-source-proof', includeIfNull: false)
+    Map<String, dynamic>? dataSourceProof,
     @JsonKey(includeIfNull: false) SetupBase? base,
     @JsonKey(includeIfNull: false) SetupRecord? applied,
   }) = _SetupParams;
@@ -73,6 +75,8 @@ abstract class ProfileBase with _$ProfileBase {
 @freezed
 abstract class UpdateParams with _$UpdateParams {
   const factory UpdateParams({
+    @JsonKey(name: 'data-source-proof', includeIfNull: false)
+    Map<String, dynamic>? dataSourceProof,
     @JsonKey(toJson: _tunCoreJson) required Tun tun,
     @JsonKey(name: 'mixed-port') required int mixedPort,
     @JsonKey(name: 'allow-lan') required bool allowLan,
@@ -112,6 +116,9 @@ abstract class VpnOptions with _$VpnOptions {
     required List<String> bypassDomain,
     required String stack,
     @Default([]) List<String> routeAddress,
+    @JsonKey(includeIfNull: false) List<String>? rawRouteAddress,
+    @JsonKey(includeIfNull: false) List<String>? rawRouteExcludeAddress,
+    @JsonKey(includeIfNull: false) bool? bypassPrivateRoute,
     @Default(0) int mtu,
     @Default('') String congestionController,
   }) = _VpnOptions;
@@ -408,4 +415,57 @@ abstract class ProxiesData with _$ProxiesData {
 
   factory ProxiesData.fromJson(Map<String, Object?> json) =>
       _$ProxiesDataFromJson(json);
+}
+
+/// Meow's existing Geo method carries a complete producer input and a stable transaction id.
+@Freezed(unionKey: 'operation')
+sealed class MeowGeoRequest with _$MeowGeoRequest {
+  const factory MeowGeoRequest.update({
+    @Default(1) int schemaVersion,
+    required String transactionId,
+    required String type,
+    required MeowGeoSource source,
+    required SetupParams setupParams,
+  }) = MeowGeoUpdateRequest;
+  const factory MeowGeoRequest.admit({
+    @Default(1) int schemaVersion,
+    required String transactionId,
+  }) = MeowGeoAdmissionRequest;
+  const factory MeowGeoRequest.status({
+    @Default(1) int schemaVersion,
+    required String transactionId,
+  }) = MeowGeoStatusRequest;
+  const factory MeowGeoRequest.abort({
+    @Default(1) int schemaVersion,
+    required String transactionId,
+  }) = MeowGeoAbortRequest;
+  factory MeowGeoRequest.fromJson(Map<String, dynamic> json) =>
+      _$MeowGeoRequestFromJson(json);
+}
+
+@freezed
+abstract class MeowGeoSource with _$MeowGeoSource {
+  const factory MeowGeoSource({
+    required String path,
+    required String sha256,
+    required int bytes,
+  }) = _MeowGeoSource;
+  factory MeowGeoSource.fromJson(Map<String, dynamic> json) =>
+      _$MeowGeoSourceFromJson(json);
+}
+
+@freezed
+abstract class MeowGeoReply with _$MeowGeoReply {
+  const factory MeowGeoReply({
+    required int schemaVersion,
+    required String transactionId,
+    required String state,
+    required bool active,
+    @JsonKey(includeIfNull: false) SetupRecord? applied,
+    @JsonKey(includeIfNull: false) String? producerSha256,
+    @JsonKey(includeIfNull: false) String? compiledSha256,
+    @JsonKey(includeIfNull: false) String? message,
+  }) = _MeowGeoReply;
+  factory MeowGeoReply.fromJson(Map<String, dynamic> json) =>
+      _$MeowGeoReplyFromJson(json);
 }

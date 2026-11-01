@@ -218,8 +218,11 @@ Object? _readUserAgents(Map<dynamic, dynamic> json, String key) {
 
 @freezed
 abstract class Filter with _$Filter {
-  const factory Filter({required String label, required String regex}) =
-      _Filter;
+  const factory Filter({
+    @JsonKey(includeIfNull: false) int? id,
+    required String label,
+    required String regex,
+  }) = _Filter;
 
   factory Filter.fromJson(Map<String, Object?> json) => _$FilterFromJson(json);
 }

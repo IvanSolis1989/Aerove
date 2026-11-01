@@ -48,7 +48,7 @@ final class UpdateParamsProvider
   }
 }
 
-String _$updateParamsHash() => r'f76bb4ed3e4e77e738d7a651dd392ffcdbb3078d';
+String _$updateParamsHash() => r'bb7c294606b5ef5a519248b26128a35516a775c0';
 
 @ProviderFor(setupPatch)
 final setupPatchProvider = SetupPatchProvider._();
@@ -514,7 +514,7 @@ final class VpnOptionsProvider
   }
 }
 
-String _$vpnOptionsHash() => r'c00e87278b32dd8977ed136aace10dccfe05508d';
+String _$vpnOptionsHash() => r'fc65c7645d52850f53fb724647f73a9d9e95cbf8';
 
 @ProviderFor(AccessControlState)
 final accessControlStateProvider = AccessControlStateProvider._();
@@ -996,7 +996,7 @@ final class CustomProfileDataProvider
   }
 }
 
-String _$customProfileDataHash() => r'ac6ab2c3e19ae2724704bfbda1b8751867219e2b';
+String _$customProfileDataHash() => r'5afb69a05a4dec6ca66bd8dd68a0ef2788ffa8bb';
 
 /// Null until every source loads, so no check reads a loading one as empty.
 
@@ -1414,7 +1414,7 @@ final class CustomProxyListIssuesProvider
 }
 
 String _$customProxyListIssuesHash() =>
-    r'6395fed58b3706e97243ec974bbb7d8a6ab5496f';
+    r'10087ffcf269d26ef5986da9a683446324c809cd';
 
 @ProviderFor(customProfileIssues)
 final customProfileIssuesProvider = CustomProfileIssuesFamily._();
@@ -3498,7 +3498,7 @@ final class SetupStateProvider
   }
 }
 
-String _$setupStateHash() => r'eef9f0d2ec0ecb6196c699b1e2c2a73d922f8964';
+String _$setupStateHash() => r'f4d34a6efea5bfc5397e3f1e6b57f68fe7022911';
 
 final class SetupStateFamily extends $Family
     with $FunctionalFamilyOverride<FutureOr<SetupState>, int?> {

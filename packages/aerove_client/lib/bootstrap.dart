@@ -1,3 +1,4 @@
+import 'package:fl_clash/product.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -106,6 +107,7 @@ class Bootstrap {
   ) async {
     await _claimDataDirectory();
     globalState.packageInfo = await PackageInfo.fromPlatform();
+    await runProductDataPrerequisite(ClientProduct.current);
     xclashDefaults = await XClashDefaults.open();
     await xclashDefaults?.prepare(isAndroid: system.isAndroid);
     var config = await migration.run();

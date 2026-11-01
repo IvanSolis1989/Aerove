@@ -119,7 +119,7 @@ final class ProfilesProvider
   }
 }
 
-String _$profilesHash() => r'53170b2713de2a497c0416e8b27c3521c6336277';
+String _$profilesHash() => r'c94e27fb83d39bd607ee4965b7a37728a969ae62';
 
 abstract class _$Profiles extends $Notifier<List<Profile>> {
   List<Profile> build();
@@ -526,7 +526,7 @@ final class ProxyGroupsProvider
   }
 }
 
-String _$proxyGroupsHash() => r'4bf2d9e4c3c1e56fa03b91fbef29c898f6f2b052';
+String _$proxyGroupsHash() => r'5726a3a6c76faa135a09eb3a8fd355a2a2899716';
 
 final class ProxyGroupsFamily extends $Family
     with
@@ -599,7 +599,7 @@ final class CustomProxiesProvider
   CustomProxies create() => CustomProxies();
 }
 
-String _$customProxiesHash() => r'77e62a3276ffd7ca1d05f656199049570fb0c73a';
+String _$customProxiesHash() => r'536b7880d0d5c71f2e066e6cdd9e2134d16023ae';
 
 abstract class _$CustomProxies extends $StreamNotifier<List<CustomProxy>> {
   Stream<List<CustomProxy>> build();

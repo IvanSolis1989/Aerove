@@ -12,6 +12,8 @@ enum CoreMethod {
   decryptConfig,
   validateProxies,
   validateFilters,
+  matchFilters,
+  cancelFilterMatch,
   convertProxies,
   encodeShareLinks,
   decodeShareLinks,
