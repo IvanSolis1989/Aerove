@@ -883,7 +883,14 @@ impl RouteControl {
         gate.group_control = Some(Arc::downgrade(self));
         drop(gate);
         let control = self.clone();
-        scope.spawn_owned(async move { control.run_group_events().await; }).map_err(|_| ControlError::Cancelled)
+        let lease=scope.retain_operation().ok_or(ControlError::Cancelled)?;
+        let owner=scope.clone();let diagnostic=meow_common::probe_policy::DiagnosticToken::capture();
+        Ok(tokio::spawn(async move {
+            let _lease=lease;
+            diagnostic.scope(owner.run(async {
+                tokio::select! { biased; _=owner.cancelled()=>{}, _=control.run_group_events()=>{} }
+            })).await;
+        }))
     }
 
     async fn run_group_events(&self) {

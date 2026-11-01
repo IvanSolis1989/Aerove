@@ -29,6 +29,7 @@ pub struct NetworkPolicyReceipt {
     pub resolver_readback: bool, pub network_readback: bool, pub retired_dns_joined: bool,
 }
 pub struct NetworkPolicyOwner {
+    #[cfg(test)] network_rebind_fixture: Mutex<Option<fn(&NetworkContext,u64)->std::io::Result<NetworkContext>>>,
     pending_dns: Mutex<Vec<Arc<crate::physical_dns::PhysicalDnsOwner>>>,
     pending_scopes: Mutex<Vec<Arc<meow_config::owned_load::OwnedLoadScope>>>,
     current_scope: Mutex<Option<Arc<meow_config::owned_load::OwnedLoadScope>>>,
@@ -41,8 +42,17 @@ impl NetworkPolicyOwner {
     pub fn new(control: Arc<ControlPlane>, tunnel: Tunnel, network: Arc<NetworkContextSlot>, base_network: NetworkContext,
         dns_factory: DnsFactory, ipv6: bool, cancel: CancellationToken, initial_intent: u64) -> Result<Arc<Self>, &'static str> {
         if cancel.is_cancelled() { return Err("invalidNetworkPolicyOwner"); }
-        Ok(Arc::new(Self { pending_dns: Mutex::new(Vec::new()), pending_scopes: Mutex::new(Vec::new()), current_scope: Mutex::new(None), failure: Mutex::new(None), joined: std::sync::atomic::AtomicBool::new(false), processes: parking_lot::RwLock::new(None), control, tunnel, network, base_network: base_network.rebind_seed_context(), dns_factory, ipv6, cancel, latest_intent: AtomicU64::new(initial_intent),
+        Ok(Arc::new(Self { #[cfg(test)] network_rebind_fixture: Mutex::new(None), pending_dns: Mutex::new(Vec::new()), pending_scopes: Mutex::new(Vec::new()), current_scope: Mutex::new(None), failure: Mutex::new(None), joined: std::sync::atomic::AtomicBool::new(false), processes: parking_lot::RwLock::new(None), control, tunnel, network, base_network: base_network.rebind_seed_context(), dns_factory, ipv6, cancel, latest_intent: AtomicU64::new(initial_intent),
             intent_gate: Mutex::new(()), update_gate: tokio::sync::Mutex::new(()) }))
+    }
+    #[cfg(test)]
+    pub(crate) fn set_network_rebind_fixture(&self, rebind: fn(&NetworkContext,u64)->std::io::Result<NetworkContext>) {
+        *self.network_rebind_fixture.lock()=Some(rebind);
+    }
+    fn prepare_network(&self, handle: u64) -> std::io::Result<NetworkContext> {
+        #[cfg(test)]
+        if let Some(rebind)=*self.network_rebind_fixture.lock() { return rebind(&self.base_network,handle); }
+        self.base_network.rebind_network(handle)
     }
     pub fn failure(&self) -> Option<&'static str> { *self.failure.lock() }
     pub fn cleanup_confirmed(&self) -> bool { self.joined.load(Ordering::Acquire) }
@@ -116,7 +126,7 @@ impl NetworkPolicyOwner {
 
         // Reuse the session's Java protect callback while pinning Android's
         // network bind and LinkProperties DNS list to the same captured handle.
-        let network = self.base_network.rebind_network(captured.network_handle)
+        let network = self.prepare_network(captured.network_handle)
             .map_err(|error| format!("physicalNetworkUnavailable:{}", error.kind()))?;
         let next = PhysicalResolver::from_snapshot(&captured.dns, network, self.ipv6)
             .map_err(|error| format!("physicalDnsRejected:{}", error.kind()))?;

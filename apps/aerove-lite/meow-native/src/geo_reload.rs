@@ -648,7 +648,7 @@ mod tests {
     fn asset(roots:&Roots)->Asset{let bytes=std::fs::read(roots.new.join("geosite.dat")).unwrap();Asset{kind:Kind::Geosite,relative_path:"geosite.dat".into(),bytes:bytes.len().to_string(),sha256:sha256(&bytes)}}
     fn engine(root:&Path)->String{format!("strict: true\ndns: {{enable: true,nameserver: ['udp://127.0.0.1:9'],default-nameserver: ['127.0.0.1'],nameserver-policy: {{'geosite:unit': ['udp://127.0.0.1:10']}}}}\ngeodata: {{auto-update: false, geosite-path: '{}'}}\nproxies: [{{name: A,type: direct}},{{name: B,type: direct}}]\nproxy-groups: [{{name: P,type: select,proxies: [A,B]}}]\nrule-providers: {{RP: {{type: file,behavior: classical,format: yaml,path: '{}'}}}}\nrules: ['RULE-SET,RP,B','MATCH,A']\ntun: {{enable: false,auto-route: false}}\n",root.join("geosite.dat").display(),root.parent().unwrap().join(OLD).join("rules.yaml").display())}
     fn binding(engine:&str)->HostBinding{HostBinding{service_owner:"92".into(),session_generation:"9201".into(),intent_epoch:"7".into(),compiled_sha256:sha256(engine.as_bytes()),source_guard:"a".repeat(64)}}
-    struct Fixture{owner:Arc<crate::owned_runtime::OwnedRuntime>,control:Arc<crate::control::RouteControl>,roots:Roots,binding:HostBinding,initial_engine:String,address:std::net::SocketAddr,mixed:std::net::SocketAddr,_tun_peer:Option<UnixDatagram>,tun_fd:Option<i32>}
+    struct Fixture{owner:Arc<crate::owned_runtime::OwnedRuntime>,control:Arc<crate::control::RouteControl>,roots:Roots,binding:HostBinding,initial_engine:String,address:std::net::SocketAddr,mixed:std::net::SocketAddr,_tun_peer:Option<UnixDatagram>,_tun_caller:Option<UnixDatagram>,tun_fd:Option<i32>}
     impl Fixture {
         async fn new(tun:bool,with_binding:bool)->Self{Self::with_dns(tun,with_binding,None).await}
         async fn with_dns(tun:bool,with_binding:bool,dns:Option<String>)->Self{Self::with_no_geo(tun,with_binding,dns,false).await}
@@ -661,7 +661,7 @@ mod tests {
             }if let Some(dns)=dns{let start=engine.find('\n').unwrap()+1;let end=start+engine[start..].find('\n').unwrap()+1;engine.replace_range(start..end,&format!("{dns}\n"));}let mut binding=binding(&engine);if no_geo{binding.compiled_sha256=sha256(format!("{engine}\ngeodata: {{auto-update: true,auto-update-interval: 24,url: {{asn: https://old.invalid/asn}}}}\n").as_bytes());}
             let private=TcpListener::bind("127.0.0.1:0").await.unwrap();let address=private.local_addr().unwrap();
             let mixed_socket=TcpListener::bind("127.0.0.1:0").await.unwrap();let mixed=mixed_socket.local_addr().unwrap();
-            let (fd,peer,tun_fd)=if tun{let(a,b)=UnixDatagram::pair().unwrap();a.set_nonblocking(true).unwrap();let raw=a.as_raw_fd();(Some(OwnedFd::from(a)),Some(b),Some(raw))}else{(None,None,None)};
+            let (fd,peer,caller,tun_fd)=if tun{let(a,b)=UnixDatagram::pair().unwrap();a.set_nonblocking(true).unwrap();let raw=a.as_raw_fd();(Some(OwnedFd::from(a.try_clone().unwrap())),Some(b),Some(a),Some(raw))}else{(None,None,None,None)};
             let mut plan=serde_json::json!({"schemaVersion":1,"runtimeMode":if tun{"tun"}else{"proxy"},"initiallyParked":false,"engineYaml":engine,
                 "privateControl":{"address":address.to_string(),"secret":SECRET},"inbounds":{"configYaml":format!("mixed-port: {}\nbind-address: 127.0.0.1\n",mixed.port())},
                 "tun":if tun{serde_json::json!({"mtu":1500,"ipv6":false,"inet4Address":"198.18.0.1/30","inet6Address":null,"dnsHijack":["any:53"],"autoRoute":false})}else{serde_json::Value::Null},
@@ -674,7 +674,7 @@ mod tests {
             let owner=crate::owned_runtime::OwnedRuntime::start(plan.to_string(),fd,network,9201,cancel,Arc::new(move|control,_|{*slot.lock()=Some(control);true}),None,|_|{}).unwrap();
             timeout(Duration::from_secs(5),owner.ready()).await.unwrap().unwrap();let control=captured.lock().take().unwrap();
             let before=control.startup_selection_snapshot().unwrap();control.restore_startup_selection(crate::control::StartupSelectionRequest{expected_core_epoch:before.route.core_epoch,expected_route_version:before.route.route_version,expected_selection_intent:before.selection_intent,expected_graph_token:before.graph_token,requested:BTreeMap::new()}).unwrap();
-            Self{owner,control,roots,binding,initial_engine:engine,address,mixed,_tun_peer:peer,tun_fd}
+            Self{owner,control,roots,binding,initial_engine:engine,address,mixed,_tun_peer:peer,_tun_caller:caller,tun_fd}
         }
         fn expected(&self)->Expected{let witness=self.control.selection_witness().unwrap();Expected{core_epoch:witness.core_epoch,route_version:witness.route_version,selection_intent:witness.selection_intent,host_binding:self.binding.clone()}}
         fn request(&self,serial:u64)->Prepare{let yaml=self.initial_engine.replace(self.roots.old.join("geosite.dat").to_str().unwrap(),self.roots.new.join("geosite.dat").to_str().unwrap());Prepare{schema_version:1,transaction_id:format!("10000000-0000-4000-8000-{serial:012x}"),operation_serial:serial.to_string(),expected:self.expected(),candidate:Candidate{compiled_sha256:sha256(yaml.as_bytes()),compiled_yaml:yaml.clone(),engine_yaml:yaml,read_root:self.roots.new.to_str().unwrap().into(),resource_lease_id:NEW.into(),assets:vec![asset(&self.roots)]}}}
@@ -811,9 +811,13 @@ mod tests {
     }
     #[tokio::test]
     async fn real_physical_network_refresh_keeps_raw_ack_id_but_fences_old_live_stamp() {
-        let fixture=Fixture::new(false,true).await;let before=fixture.control.selection_witness().unwrap();let stale=fixture.request(1);
+        let fixture=Fixture::new(false,true).await;
+        fixture.owner.network_policy().unwrap().set_network_rebind_fixture(|base,handle| {
+            assert_eq!(handle,1);assert!(!base.cancelled());
+            Ok(base.fixture_network_identity(handle))
+        });let before=fixture.control.selection_witness().unwrap();let stale=fixture.request(1);
         let command=serde_json::json!({"schemaVersion":1,"requestId":"40000000-0000-4000-8000-000000000001","expectedCoreEpoch":before.core_epoch,"operation":"network","value":{"intent":"1","physicalNetwork":{"handle":"1","dns":{"defaultInterface":"first","interfaces":{"first":["127.0.0.2"]}}}}}).to_string();
-        let response=fixture.owner.host_policy_command(command).await.unwrap();let response:serde_json::Value=serde_json::from_str(&response).unwrap();assert_eq!(response["value"]["retiredDnsJoined"],true);
+        let response=fixture.owner.host_policy_command(command).await.unwrap();let response:serde_json::Value=serde_json::from_str(&response).unwrap();assert_eq!(response["value"]["retiredDnsJoined"],true);assert_eq!(response["value"]["handle"],"1");assert_eq!(response["value"]["dnsServers"],serde_json::json!(["127.0.0.2:53"]));
         let after=fixture.control.selection_witness().unwrap();assert!(after.complete);assert_eq!(after.witness_id,before.witness_id);assert_eq!(after.raw_requested,before.raw_requested);assert_eq!(after.graph_version,before.graph_version);assert_ne!(after.core_epoch,before.core_epoch);assert_eq!(after.acknowledged_core_epoch,before.acknowledged_core_epoch);
         assert!(fixture.owner.geo_prepare(stale).await.is_err());let fresh=fixture.request(2);assert_eq!(fixture.owner.geo_prepare(fresh.clone()).await.unwrap().state,"prepared");fixture.owner.geo_abort(fresh.token()).await.unwrap();fixture.close().await;
     }
