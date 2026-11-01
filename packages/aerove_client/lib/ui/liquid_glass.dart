@@ -1,5 +1,6 @@
 import 'package:fl_clash/common/client_assets.dart';
 
+import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -1136,6 +1137,9 @@ class LiquidGlassPane {
     'shaderCreations': _layer.layer?._debugShaderCreations ?? 0,
     'uniformCount': _layer.layer?._debugUniformCount ?? 0,
     'lookComputations': _layer.layer?._debugLookComputations ?? 0,
+    'uniformPasses': _layer.layer?._debugUniformPasses ?? 0,
+    'lookValuesPacked': _layer.layer?._debugLookValuesPacked ?? 0,
+    'lookValuesCompared': _layer.layer?._debugLookValuesCompared ?? 0,
     'rimComputations': _layer.layer?._debugRimComputations ?? 0,
     'cachedLookValues': _layer.layer?._lookValues.length ?? 0,
     'cachedProfileValues': _layer.layer?._lookProfile.length ?? 0,
@@ -1340,6 +1344,51 @@ class _LiquidGlassDecorationLayer extends OffsetLayer {
   }
 }
 
+class _UniformComparisonList extends ListBase<double> {
+  _UniformComparisonList(this.values, this.lookStart, this.onLookValue);
+
+  final List<double> values;
+  final int lookStart;
+  final VoidCallback onLookValue;
+
+  @override
+  int get length => values.length;
+
+  @override
+  set length(int value) => throw UnsupportedError('Read-only uniform view');
+
+  @override
+  double operator [](int index) {
+    if (index >= lookStart) onLookValue();
+    return values[index];
+  }
+
+  @override
+  void operator []=(int index, double value) =>
+      throw UnsupportedError('Read-only uniform view');
+}
+
+class _CaptureUniforms extends ListBase<double> {
+  _CaptureUniforms(this.prefix, this.look);
+
+  final List<double> prefix;
+  final List<double> look;
+
+  @override
+  int get length => prefix.length + look.length;
+
+  @override
+  set length(int value) => throw UnsupportedError('Read-only uniform view');
+
+  @override
+  double operator [](int index) =>
+      index < prefix.length ? prefix[index] : look[index - prefix.length];
+
+  @override
+  void operator []=(int index, double value) =>
+      throw UnsupportedError('Read-only uniform view');
+}
+
 class _LiquidGlassLayer extends Layer {
   static int _skipped = 0;
   static int _capturesHeld = 0;
@@ -1363,6 +1412,9 @@ class _LiquidGlassLayer extends Layer {
   int _debugShaderCreations = 0;
   int _debugUniformCount = 0;
   int _debugLookComputations = 0;
+  int _debugUniformPasses = 0;
+  int _debugLookValuesPacked = 0;
+  int _debugLookValuesCompared = 0;
   int _debugRimComputations = 0;
   List<double> _debugWrittenFloats = const [];
   ui.Image? _debugWrittenSampler;
@@ -1379,6 +1431,7 @@ class _LiquidGlassLayer extends Layer {
   _lookKey;
   List<double> _lookValues = const [];
   List<double> _lookProfile = const [];
+  bool _lookHasNaN = false;
 
   List<double> _cornerCurves() {
     final key = (rect.size, corners);
@@ -1717,6 +1770,7 @@ class _LiquidGlassLayer extends Layer {
     _lookProfile = identical(profile, _flatProfile)
         ? profile
         : List<double>.of(profile);
+    _lookHasNaN = values.any((value) => value.isNaN);
     return _lookValues = values;
   }
 
@@ -1734,6 +1788,28 @@ class _LiquidGlassLayer extends Layer {
     }
     builder.addPicture(Offset.zero, _frost!);
     builder.pop();
+  }
+
+  bool _sameCaptureUniforms(
+    List<double> previous,
+    List<double> values,
+    int lookStart,
+  ) {
+    if (previous is _CaptureUniforms &&
+        values is _CaptureUniforms &&
+        previous.prefix.length == values.prefix.length &&
+        identical(previous.look, values.look)) {
+      return listEquals(previous.prefix, values.prefix);
+    }
+    assert(() {
+      if (!_simpleBlur && !identical(previous, values)) {
+        values = _UniformComparisonList(values, lookStart, () {
+          _debugLookValuesCompared++;
+        });
+      }
+      return true;
+    }());
+    return listEquals(previous, values);
   }
 
   /// Draws the pane from [atlas], where a host laid out what lies behind it,
@@ -1759,7 +1835,7 @@ class _LiquidGlassLayer extends Layer {
       plain = Path.combine(PathOperation.difference, plain, covered);
     }
     final program = _simpleBlur ? null : this.program;
-    final uniforms = <double>[
+    final prefix = <double>[
       atlas.width.toDouble(),
       atlas.height.toDouble(),
       -rect.left,
@@ -1767,10 +1843,31 @@ class _LiquidGlassLayer extends Layer {
       1,
       1,
       ...mapping,
-      ..._simpleBlur
-          ? [style.tint.r, style.tint.g, style.tint.b, style.tint.a]
-          : _look(style),
     ];
+    final List<double> uniforms;
+    if (_simpleBlur) {
+      uniforms = prefix
+        ..add(style.tint.r)
+        ..add(style.tint.g)
+        ..add(style.tint.b)
+        ..add(style.tint.a);
+    } else {
+      final look = _look(style);
+      // NaN must keep the original element-wise comparison and rewrite behavior.
+      if (_lookHasNaN) {
+        uniforms = prefix..addAll(look);
+        assert(() {
+          _debugLookValuesPacked += uniforms.length - 6 - mapping.length;
+          return true;
+        }());
+      } else {
+        uniforms = _CaptureUniforms(prefix, look);
+      }
+    }
+    assert(() {
+      _debugUniformPasses++;
+      return true;
+    }());
     if (_captureKey
         case (
               final image,
@@ -1785,8 +1882,12 @@ class _LiquidGlassLayer extends Layer {
             identical(path, outline) &&
             mode == blendMode &&
             identical(shaded, program) &&
-            listEquals(values, uniforms) &&
+            _sameCaptureUniforms(values, uniforms, 6 + mapping.length) &&
             listEquals(coverage, coverageKey)) {
+      _captureKey = (atlas, outline, blendMode, program, uniforms, coverageKey);
+      if (program != null && _captureShader != null) {
+        _captureUniforms = uniforms;
+      }
       return;
     }
     if (program != null && _captureShader == null) {
@@ -1815,7 +1916,21 @@ class _LiquidGlassLayer extends Layer {
           return true;
         }());
       }
-      for (final (index, value) in uniforms.indexed) {
+      final uploaded = _captureUniforms;
+      final compared =
+          uniforms is _CaptureUniforms &&
+              uploaded is _CaptureUniforms &&
+              uniforms.prefix.length == uploaded.prefix.length &&
+              identical(uniforms.look, uploaded.look)
+          ? uniforms.prefix
+          : uniforms;
+      for (final (index, value) in compared.indexed) {
+        assert(() {
+          if (index >= 6 + mapping.length && _captureUniforms.length > index) {
+            _debugLookValuesCompared++;
+          }
+          return true;
+        }());
         if (_captureUniforms.length <= index ||
             _captureUniforms[index] != value) {
           shader.setFloat(index, value);
@@ -2108,6 +2223,7 @@ class _LiquidGlassLayer extends Layer {
     _lookKey = null;
     _lookValues = const [];
     _lookProfile = const [];
+    _lookHasNaN = false;
     assert(() {
       _debugWrittenFloats = const [];
       _debugWrittenSampler = null;

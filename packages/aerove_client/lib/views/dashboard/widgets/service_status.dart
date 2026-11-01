@@ -249,11 +249,16 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
         .take(_shownServiceCount)
         .toList();
     _watchShown(shown.toSet());
-    final state = ref.watch(serviceStatusProvider);
+    final entries = {
+      for (final target in shown)
+        target: ref.watch(
+          serviceStatusProvider.select((state) => state.entryOf(target)),
+        ),
+    };
     _everCached.retainAll(shown);
     // Had the card kept watching, a forgotten service would be checking now.
     bool forgotten(ServiceTarget target) {
-      if (state.entryOf(target).phase != ProbePhase.empty) {
+      if (entries[target]!.phase != ProbePhase.empty) {
         _everCached.add(target);
         return false;
       }
@@ -264,14 +269,12 @@ class _ServiceStatusCardState extends ConsumerState<ServiceStatusCard>
       for (final target in shown)
         _ServiceView(
           target,
-          state.entryOf(target),
-          forgotten(target)
-              ? ProbePhase.probing
-              : shownPhase(state.entryOf(target)),
+          entries[target]!,
+          forgotten(target) ? ProbePhase.probing : shownPhase(entries[target]!),
         ),
     ];
     final loading = shown.any(
-      (target) => state.isLoading(target) || forgotten(target),
+      (target) => entries[target]!.isLoading || forgotten(target),
     );
     return ViewportVisibility(
       visible: _inView,
@@ -845,27 +848,34 @@ class ServiceStatusSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final targets = ref.watch(enabledServiceTargetsProvider);
-    final state = ref.watch(serviceStatusProvider);
     final services = ref.read(serviceStatusProvider.notifier);
     final localizations = context.appLocalizations;
-    return CommonScaffold(
-      title: localizations.serviceStatus,
-      iconActions: [
-        IconButtonData(
-          glyph: AppGlyphs.bolt,
-          tooltip: localizations.serviceCheckAll,
-          isLoading: targets.any(state.isLoading),
-          onPressed: () => services.refresh(targets),
-        ),
-        IconButtonData(
-          glyph: AppGlyphs.sliders,
-          tooltip: localizations.serviceManage,
-          onPressed: () => Navigator.of(
-            context,
-          ).push(PagedSheetRoute(builder: (_) => const ServiceManageView())),
-        ),
-      ],
-      body: CustomScrollView(
+    return Consumer(
+      builder: (context, ref, child) {
+        final loading = ref.watch(
+          serviceStatusProvider.select((state) => targets.any(state.isLoading)),
+        );
+        return CommonScaffold(
+          title: localizations.serviceStatus,
+          iconActions: [
+            IconButtonData(
+              glyph: AppGlyphs.bolt,
+              tooltip: localizations.serviceCheckAll,
+              isLoading: loading,
+              onPressed: () => services.refresh(targets),
+            ),
+            IconButtonData(
+              glyph: AppGlyphs.sliders,
+              tooltip: localizations.serviceManage,
+              onPressed: () => Navigator.of(context).push(
+                PagedSheetRoute(builder: (_) => const ServiceManageView()),
+              ),
+            ),
+          ],
+          body: child!,
+        );
+      },
+      child: CustomScrollView(
         shrinkWrap: true,
         slivers: [
           SliverToBoxAdapter(
@@ -881,7 +891,6 @@ class ServiceStatusSheet extends ConsumerWidget {
                   position: ItemPosition.get(index, targets.length),
                   child: _ServiceRow(
                     target: target,
-                    entry: state.entryOf(target),
                     onCheck: () => services.refresh([target]),
                   ),
                 );
@@ -1028,14 +1037,9 @@ class _ServiceManageItem extends StatelessWidget {
 }
 
 class _ServiceRow extends ConsumerStatefulWidget {
-  const _ServiceRow({
-    required this.target,
-    required this.entry,
-    required this.onCheck,
-  });
+  const _ServiceRow({required this.target, required this.onCheck});
 
   final ServiceTarget target;
-  final ProbeEntry<ServiceCheck> entry;
   final VoidCallback onCheck;
 
   @override
@@ -1051,7 +1055,9 @@ class _ServiceRowState extends ConsumerState<_ServiceRow>
         .of(context)
         .copyWith(color: context.colorScheme.onSurfaceVariant);
     final target = widget.target;
-    final entry = widget.entry;
+    final entry = ref.watch(
+      serviceStatusProvider.select((state) => state.entryOf(target)),
+    );
     final check = entry.value;
     final loading = entry.isLoading;
     final node = check?.node;

@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 
 import 'package:fl_clash/ui/liquid_glass.dart';
 import 'package:fl_clash/ui/shape.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -129,7 +130,13 @@ class _PaneBox extends RenderBox {
   }
 }
 
-Widget _scene(_Pose pose, Key captureKey, Key paneKey) => SizedBox.fromSize(
+Widget _scene(
+  _Pose pose,
+  Key captureKey,
+  Key paneKey, {
+  ScrollController? scrollController,
+  Axis scrollAxis = Axis.vertical,
+}) => SizedBox.fromSize(
   size: _size,
   child: RepaintBoundary(
     key: captureKey,
@@ -144,18 +151,50 @@ Widget _scene(_Pose pose, Key captureKey, Key paneKey) => SizedBox.fromSize(
             fit: StackFit.expand,
             children: [
               CustomPaint(painter: _Backdrop(pose.background)),
-              Positioned.fromRect(
-                rect: (const Offset(40, 40) + pose.translation) & pose.size,
-                child: _Pane(
-                  key: paneKey,
-                  shape: pose.shape,
-                  style: pose.style.forQuality(pose.quality),
-                  glow: pose.glow,
-                  rim: pose.quality == LiquidGlassQuality.ultra
-                      ? pose.rim
-                      : null,
+              if (scrollController == null)
+                Positioned.fromRect(
+                  rect: (const Offset(40, 40) + pose.translation) & pose.size,
+                  child: _Pane(
+                    key: paneKey,
+                    shape: pose.shape,
+                    style: pose.style.forQuality(pose.quality),
+                    glow: pose.glow,
+                    rim: pose.quality == LiquidGlassQuality.ultra
+                        ? pose.rim
+                        : null,
+                  ),
+                )
+              else
+                ScrollConfiguration(
+                  behavior: const ScrollBehavior().copyWith(
+                    overscroll: false,
+                    scrollbars: false,
+                  ),
+                  child: ListView.builder(
+                    key: const ValueKey('uniform-scroll'),
+                    controller: scrollController,
+                    scrollDirection: scrollAxis,
+                    physics: const ClampingScrollPhysics(),
+                    padding: EdgeInsets.zero,
+                    itemExtent: scrollAxis == Axis.vertical ? 84 : 168,
+                    itemCount: 12,
+                    itemBuilder: (_, index) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox.fromSize(
+                        size: pose.size,
+                        child: _Pane(
+                          key: index == 1 ? paneKey : null,
+                          shape: pose.shape,
+                          style: pose.style.forQuality(pose.quality),
+                          glow: pose.glow,
+                          rim: pose.quality == LiquidGlassQuality.ultra
+                              ? pose.rim
+                              : null,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
               Positioned(
                 left: 72,
                 top: 144,
@@ -226,6 +265,66 @@ Future<({Uint8List rgba, Uint8List png})> _pixels(
 Map<String, int> _difference(Map<String, int> after, Map<String, int> before) =>
     {for (final key in after.keys) key: after[key]! - before[key]!};
 
+Map<String, Object?> _inputs(_Pose pose) => {
+  'size': [pose.size.width, pose.size.height],
+  'translation': [pose.translation.dx, pose.translation.dy],
+  'background': pose.background,
+  'quality': pose.quality.name,
+  'shape': pose.shape.runtimeType.toString(),
+  'covered': pose.covered,
+  'pressed': pose.pressed,
+  'style': {
+    'tint': [
+      pose.style.tint.r,
+      pose.style.tint.g,
+      pose.style.tint.b,
+      pose.style.tint.a,
+    ],
+    'contrast': pose.style.contrast,
+    'blur': pose.style.blur,
+    'haze': pose.style.haze,
+    'hazeBlur': pose.style.hazeBlur,
+    'refraction': pose.style.refraction,
+    'bevel': pose.style.bevel,
+    'saturation': pose.style.saturation,
+    'brightness': pose.style.brightness,
+    'rim': pose.style.rim,
+    'rimWidth': pose.style.rimWidth,
+    'rimTail': pose.style.rimTail,
+    'rimFocus': pose.style.rimFocus,
+    'rimAdded': pose.style.rimAdded,
+    'endShade': pose.style.endShade,
+    'dispersion': pose.style.dispersion,
+    'rimBlur': pose.style.rimBlur,
+    'hairline': pose.style.hairline,
+    'hairlineSide': pose.style.hairlineSide,
+  },
+  'glow': {
+    'center': [pose.glow.center.dx, pose.glow.center.dy],
+    'reach': pose.glow.reach,
+    'strength': pose.glow.strength,
+    'wash': pose.glow.wash,
+  },
+  'rim': pose.rim == null
+      ? null
+      : {
+          'side': pose.rim!.side,
+          'corner': pose.rim!.corner,
+          'flat': pose.rim!.flat,
+          'shine': pose.rim!.shine,
+        },
+};
+
+void _expectBaseline(Uint8List pixels, String relativePath) {
+  final baseline = Platform.environment['XCLASH_UNIFORM_BASELINE'];
+  if (baseline == null) return;
+  expect(
+    listEquals(pixels, File('$baseline/$relativePath').readAsBytesSync()),
+    isTrue,
+    reason: '$relativePath must match the saved full rawRGBA baseline',
+  );
+}
+
 void main() {
   setUpAll(() {
     if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
@@ -292,6 +391,7 @@ void main() {
         final afterSnapshot = work();
         rows.add({
           'state': state,
+          'inputs': _inputs(pose),
           'before': before,
           'afterFrame': afterFrame,
           'frameDelta': _difference(afterFrame, before),
@@ -324,6 +424,7 @@ void main() {
                   'press animations in both scenes.',
             }),
           );
+          _expectBaseline(actual.rgba, 'pane-uniform/$name-retained.rgba');
         });
         pixelChecks.add((state: state, changed: changed, maximum: maximum));
       }
@@ -369,6 +470,10 @@ void main() {
       if (Platform.environment['XCLASH_PANE_UNIFORM_MINIMAL'] != 'true') {
         pose.background = 1;
         await check('atlas-only');
+        for (var frame = 0; frame < 4; frame++) {
+          pose.background = frame + 4;
+          await check('atlas-dynamic-$frame');
+        }
         pose.translation = const Offset(-8, -6);
         await check('mapping-negative-xy');
         pose.glow = const LiquidGlassGlow(
@@ -556,8 +661,159 @@ void main() {
             'the pane look across XY motion. All rawRGBA, PNG and JSON '
             'evidence has already been saved.',
       );
+      expect(
+        motion['lookValuesPacked'],
+        0,
+        reason: 'Stable look values must not be repacked during XY motion.',
+      );
+      expect(
+        motion['lookValuesCompared'],
+        0,
+        reason: 'Stable look values must not be rescanned during XY motion.',
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
     skip: !ui.ImageFilter.isShaderFilterSupported,
   );
+
+  for (final axis in Axis.values) {
+    testWidgets('real $axis scroll reuses its warm uniform look segment', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = _size;
+      addTearDown(tester.view.reset);
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      final pose = _Pose();
+      final base = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      final directory =
+          base == null
+                ? Directory.systemTemp.createTempSync('uniform-scroll-')
+                : Directory('$base/pane-uniform-scroll-${axis.name}')
+            ..createSync(recursive: true);
+      final rows = <Map<String, Object?>>[];
+      Map<String, int> work() => tester
+          .renderObject<_PaneBox>(find.byKey(_pane))
+          .pane
+          .debugUniformWork;
+      Widget app() => Directionality(
+        textDirection: TextDirection.ltr,
+        child: _scene(
+          pose,
+          _capture,
+          _pane,
+          scrollController: controller,
+          scrollAxis: axis,
+        ),
+      );
+      await tester.pumpWidget(app());
+      if (!LiquidGlass.debugShaderReady) {
+        await tester.runAsync(
+          () => ui.FragmentProgram.fromAsset(
+            'packages/fl_clash/shaders/liquid_glass.frag',
+          ).timeout(const Duration(seconds: 30)),
+        );
+      }
+      for (var frame = 0; frame < 4; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(LiquidGlass.debugShaderReady, isTrue);
+      final initial = work();
+      Future<void> record(String tag, Map<String, int> before) async {
+        final afterFrame = work();
+        final capture = LiquidGlassHost.debugLastCapture!;
+        final pixels = await _pixels(tester, _capture);
+        rows.add({
+          'state': tag,
+          'inputs': {
+            ..._inputs(pose),
+            'axis': axis.name,
+            'scrollOffset': controller.offset,
+            'frameMicroseconds': 8333,
+          },
+          'frameDelta': _difference(afterFrame, before),
+          'afterFrame': afterFrame,
+          'snapshotDelta': _difference(work(), afterFrame),
+          'capture': {
+            'snapshots': capture.snapshots,
+            'keptBands': capture.keptBands,
+            'atlasPixels': capture.atlasPixels,
+            'panes': capture.panes.length,
+            'slots': [
+              for (final pane in capture.panes)
+                [
+                  pane.slot.left,
+                  pane.slot.top,
+                  pane.slot.width,
+                  pane.slot.height,
+                  pane.place.left,
+                  pane.place.top,
+                  pane.scale,
+                  pane.level,
+                ],
+            ],
+          },
+        });
+        await tester.runAsync(() async {
+          await File('${directory.path}/$tag.rgba').writeAsBytes(pixels.rgba);
+          await File('${directory.path}/$tag.png').writeAsBytes(pixels.png);
+          await File('${directory.path}/work.json').writeAsString(
+            const JsonEncoder.withIndent('  ').convert({
+              'size': [_size.width, _size.height],
+              'pixelRatio': 1,
+              'rows': rows,
+            }),
+          );
+          _expectBaseline(
+            pixels.rgba,
+            'pane-uniform-scroll-${axis.name}/$tag.rgba',
+          );
+        });
+      }
+
+      await record('warm', initial);
+      final beforeMotion = work();
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.byKey(const ValueKey('uniform-scroll'))),
+      );
+      for (var frame = 0; frame < 10; frame++) {
+        final before = work();
+        final delta = frame < 6 ? -8.0 : 8.0;
+        await gesture.moveBy(
+          axis == Axis.vertical ? Offset(0, delta) : Offset(delta, 0),
+        );
+        if (frame >= 4) {
+          pose.background = frame;
+          await tester.pumpWidget(app());
+        }
+        await tester.pump(const Duration(microseconds: 8333));
+        await record('drag-$frame', before);
+      }
+      final beforeCancel = work();
+      await gesture.cancel();
+      controller.jumpTo(controller.offset);
+      await tester.pump(const Duration(microseconds: 8333));
+      await record('cancel', beforeCancel);
+      final motion = _difference(work(), beforeMotion);
+      expect(
+        rows.any(
+          (row) =>
+              ((row['inputs']! as Map<String, Object?>)['scrollOffset']!
+                  as double) >
+              0,
+        ),
+        isTrue,
+        reason: 'The fixture must produce real scroll displacement.',
+      );
+      expect(motion['uniformPasses'], greaterThan(0));
+      expect(motion['lookComputations'], 0);
+      expect(motion['unchangedFloatWrites'], 0);
+      expect(motion['unchangedSamplerWrites'], 0);
+      expect(tester.takeException(), isNull);
+      expect(motion['lookValuesPacked'], 0);
+      expect(motion['lookValuesCompared'], 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }, skip: !ui.ImageFilter.isShaderFilterSupported);
+  }
 }
