@@ -48,7 +48,7 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "00e998c4b7921548b7d6797ef1debba6ccf5e248d408fb9c17fcf084bfeeda2f",
+  "overlaySha256": "36e4a70e59f542ee130fd4c9de572639a51d060b2bd5075aca0a1e4ab052370d",
   "featureBoundary": "capabilities-no-default",
   "coreTests": "policy-runtime-selection-stale-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"

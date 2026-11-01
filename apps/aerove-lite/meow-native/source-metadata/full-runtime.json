@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "d4714cdf43d53d762144f507127a90ed7a242fd1c50bc8124677d8b748f3714e",
+  "patchSha256": "bfcde14ffaab5084fa5a6509cdd319f6d5a5b2bc5881db3785a4e6906fc91d12",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "9ee23b1b382978937fbb9e3f9a685d05957802e6323c13927b6f242950451d0f",
+  "adaptedFileManifestSha256": "20080eab23f14d813bc3f1805fbebd376fbd0502593a7c03d3a88be0cc954d7f",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -99,7 +99,7 @@
     },
     "crates/meow-config/src/dns_parser.rs": {
       "beforeSha256": "841c68fa46bf17687ebaffc3b9034f4a15cbef22078edb2b7b9f6c8f8444e0d3",
-      "afterSha256": "5cfa8faa440a4ef08aa349149636d8a79c917b31bcae0e833b33486c7bbabca9"
+      "afterSha256": "be3335c07207c70b0e67f66951ef1574ee15172ce958b69338852fd6ec4fe94f"
     },
     "crates/meow-config/src/ech_dns.rs": {
       "beforeSha256": "57d852b1bd4b4f48f94242f183a771968254517d652ef2cedc235e8728d0124e",
@@ -1242,7 +1242,7 @@
     "crates/meow-dns/tests/leak_net_test.rs": "603b8a3494ee4e5e5571d12e54fa564566fd21309c81f34ccec1a54bfa64f7ea",
     "crates/meow-dns/tests/proxy_routed_dns.rs": "2cb674398c9fe06b40b9157711ba9870efe8f5cccef686d167b44f4d84a2ee0b",
     "crates/meow-config/src/auth.rs": "761fdc3332f70687c40b91f34f3a1db19ecaebd7fe4b331fe075017a35784021",
-    "crates/meow-config/src/dns_parser.rs": "5cfa8faa440a4ef08aa349149636d8a79c917b31bcae0e833b33486c7bbabca9",
+    "crates/meow-config/src/dns_parser.rs": "be3335c07207c70b0e67f66951ef1574ee15172ce958b69338852fd6ec4fe94f",
     "crates/meow-config/src/dropped_providers.rs": "aaf246eabbf6341266cad89bb090c3c2d9acc68be371941ed91e8cc36eb5beb1",
     "crates/meow-config/src/ech_dns.rs": "149f0e788e1806febbe2dcf77288153f588d01559643addf4c9e4c81c79e189d",
     "crates/meow-config/src/external_ui.rs": "e97b5df73a24748862405c7efea5f686ca404f171af460daa2f29432de18453b",

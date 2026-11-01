@@ -14,6 +14,10 @@ import 'package:yaml/yaml.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+String get _nodeExecutable =>
+    Platform.environment['AEROVE_TEST_NODE'] ??
+    (Platform.isWindows ? 'C:/Program Files/nodejs/node.exe' : 'node');
+
 Future<Map> _compile(
   Map<String, dynamic> source, {
   bool safe = false,
@@ -320,7 +324,7 @@ void main() {
       var evaluations = 0;
       scriptEvaluator = ({required String script, required String config}) async {
         evaluations++;
-        final result = await Process.run('C:/Program Files/nodejs/node.exe', [
+        final result = await Process.run(_nodeExecutable, [
           '-e',
           'const config=JSON.parse(process.argv[1]); const main=eval(process.argv[2]); process.stdout.write(JSON.stringify(main(config)));',
           config,

@@ -1935,7 +1935,7 @@
 +async fn prepare_owned_geo_dns_impl(raw:&RawConfig,previous:&RawConfig,mmdb_path:Option<&std::path::Path>,
 +    geosite:Option<Arc<meow_rules::geosite::GeositeDB>>,rule_providers:&HashMap<String,Arc<RuleProvider>>,
 +    prior:&Resolver,prior_proxy:Option<Arc<Resolver>>)->Result<DnsConfig,anyhow::Error>{
-+    if serde_json::to_value((&raw.dns,&raw.hosts,raw.ipv6))? != serde_json::to_value((&previous.dns,&previous.hosts,previous.ipv6))? {
++    if (&raw.dns, &raw.hosts, raw.ipv6) != (&previous.dns, &previous.hosts, previous.ipv6) {
 +        anyhow::bail!("owned Geo DNS source changed");
 +    }
 +    let enabled=raw.dns.as_ref().is_some_and(|dns|dns.enable.unwrap_or(false));
