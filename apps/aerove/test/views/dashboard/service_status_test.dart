@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/service_probe.dart';
@@ -15,6 +18,7 @@ import 'package:fl_clash/providers/routed_probe.dart';
 import 'package:fl_clash/providers/service_status.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
+import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
 import 'package:fl_clash/views/dashboard/widget_registry.dart';
 import 'package:fl_clash/views/dashboard/widgets/card.dart';
@@ -88,6 +92,7 @@ void main() {
     Locale locale = const Locale('en'),
     Widget body = const ServiceStatusCard(),
     IpQuality? ipQuality,
+    ThemeData? theme,
   }) {
     when(() => core.outboundIp(any())).thenAnswer((invocation) async {
       if (outboundIp == null) return Completer<OutboundIpResult?>().future;
@@ -97,6 +102,7 @@ void main() {
     });
     return TestApp(
       locale: locale,
+      theme: theme,
       overrides: [
         viewSizeProvider.overrideWithBuild((_, _) => const Size(400, 800)),
         appSettingProvider.overrideWithBuild((_, _) => settings),
@@ -1206,6 +1212,370 @@ void main() {
     expect(asked, ['google']);
     expect(container.read(serviceStatusProvider).entries, isEmpty);
   });
+
+  for (final material in ['solid', 'frost', 'clear']) {
+    testWidgets(
+      'service work $material: unrelated results retain card and rows',
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 1200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final targets = ServiceTarget.values.take(6).toList();
+        final fifth = targets[4];
+        final pending = <String, Completer<List<ServiceCheckItem>>>{};
+        final routeRequests = <String>[];
+        var sweeping = false;
+        var epoch = 1;
+        answer((params) {
+          if (sweeping) {
+            return pending
+                .putIfAbsent(
+                  params.names.single,
+                  Completer<List<ServiceCheckItem>>.new,
+                )
+                .future;
+          }
+          if (epoch == 2) routeRequests.addAll(params.names);
+          return [
+            for (final name in params.names)
+              _item(
+                name,
+                ServiceProbeStatus.available,
+                delay: 30,
+                coreEpoch: epoch,
+              ),
+          ];
+        });
+        final scene = GlobalKey();
+        final glass = material != 'solid';
+        final quality = material == 'frost'
+            ? LiquidGlassQuality.standard
+            : LiquidGlassQuality.ultra;
+        await tester.pumpWidget(
+          MediaQuery(
+            data: const MediaQueryData(size: Size(400, 1200)),
+            child: Directionality(
+              textDirection: TextDirection.ltr,
+              child: LiquidGlassScope(
+                enabled: glass,
+                foregroundEnabled: glass,
+                quality: quality,
+                child: RepaintBoundary(
+                  key: scene,
+                  child: LiquidGlassHost(
+                    enabled: glass,
+                    wallpaperOnly: true,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        const Positioned.fill(
+                          child: LiquidGlassColorField(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    Color(0xFF1B5E4A),
+                                    Color(0xFF4A1B5E),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        app(
+                          settings: only(targets),
+                          theme: ThemeData(fontFamily: 'ServiceRoboto'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        addTearDown(() async {
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump(const Duration(seconds: 1));
+        });
+        await tester.pumpAndSettle();
+        final container = containerOf(tester);
+        expect(
+          targets
+              .take(4)
+              .map(
+                (target) =>
+                    container.read(serviceStatusProvider).entryOf(target).phase,
+              ),
+          everyElement(ProbePhase.fresh),
+        );
+
+        Future<void> capture(String name) async {
+          final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+          if (directory == null) return;
+          await tester.runAsync(() async {
+            final boundary =
+                scene.currentContext!.findRenderObject()!
+                    as RenderRepaintBoundary;
+            final image = await boundary.toImage(pixelRatio: 1);
+            try {
+              final rgba = await image.toByteData(
+                format: ui.ImageByteFormat.rawRgba,
+              );
+              final png = await image.toByteData(
+                format: ui.ImageByteFormat.png,
+              );
+              final output = Directory(
+                '$directory/service_status_work/$material',
+              );
+              await output.create(recursive: true);
+              await File('${output.path}/$name.rgba').writeAsBytes(
+                rgba!.buffer.asUint8List(
+                  rgba.offsetInBytes,
+                  rgba.lengthInBytes,
+                ),
+              );
+              await File('${output.path}/$name.png').writeAsBytes(
+                png!.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
+              );
+            } finally {
+              image.dispose();
+            }
+          });
+        }
+
+        await capture('card_fresh');
+        await tester.tap(find.byType(ServiceStatusCard));
+        await tester.pumpAndSettle();
+        final sheet = find.byType(ServiceStatusSheet);
+        expect(sheet, findsOneWidget);
+        expect(LiquidGlassScope.of(tester.element(sheet)), glass);
+        expect(LiquidGlassScope.qualityOf(tester.element(sheet)), quality);
+        sweeping = true;
+        await tester.tap(checkAllButton());
+        for (var frame = 0; frame < 12; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(
+          pending.keys,
+          unorderedEquals(targets.map((target) => target.id)),
+        );
+        expect(
+          targets.map(
+            (target) =>
+                container.read(serviceStatusProvider).entryOf(target).phase,
+          ),
+          everyElement(ProbePhase.probing),
+        );
+        expect(tester.widget<IconButton>(checkAllButton()).onPressed, isNull);
+        final rows = <Element, ServiceTarget>{};
+        final rowFinder = find.byWidgetPredicate(
+          (widget) => widget.runtimeType.toString() == '_ServiceRow',
+        );
+        for (final element in rowFinder.evaluate()) {
+          final row = find.byElementPredicate(
+            (candidate) => identical(candidate, element),
+          );
+          for (final target in targets) {
+            if (find
+                .descendant(of: row, matching: find.text(target.label))
+                .evaluate()
+                .isNotEmpty) {
+              rows[element] = target;
+            }
+          }
+        }
+        expect(rows.values, contains(fifth));
+        expect(rows.length, greaterThanOrEqualTo(5));
+        final firstRow = find.byElementPredicate(
+          (element) => rows[element] == targets.first,
+        );
+        expect(
+          container
+              .read(serviceStatusProvider)
+              .entryOf(targets.first)
+              .value!
+              .delay,
+          30,
+        );
+        expect(
+          find.descendant(of: firstRow, matching: find.byType(SkeletonText)),
+          findsOneWidget,
+          reason: 'A phase-only refresh keeps the value but shows checking',
+        );
+        final fifthRow = find.byElementPredicate(
+          (element) => rows[element] == fifth,
+        );
+        expect(
+          tester.getRect(fifthRow).overlaps(tester.getRect(sheet)),
+          isTrue,
+        );
+        final before = [
+          for (final target in targets.take(4))
+            container.read(serviceStatusProvider).entryOf(target),
+        ];
+        await capture('all_probing');
+        var cardBuilds = 0;
+        var unmappedRows = 0;
+        final rowBuilds = <String, int>{};
+        final previous = debugOnRebuildDirtyWidget;
+        debugOnRebuildDirtyWidget = (element, builtOnce) {
+          previous?.call(element, builtOnce);
+          if (element.widget is ServiceStatusCard) cardBuilds++;
+          if (element.widget.runtimeType.toString() == '_ServiceRow') {
+            final target = rows[element];
+            if (target == null) {
+              unmappedRows++;
+            } else {
+              rowBuilds.update(
+                target.id,
+                (count) => count + 1,
+                ifAbsent: () => 1,
+              );
+            }
+          }
+        };
+        try {
+          pending[fifth.id]!.complete([
+            _item(fifth.id, ServiceProbeStatus.available, delay: 65),
+          ]);
+          for (var frame = 0; frame < 12; frame++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+        } finally {
+          debugOnRebuildDirtyWidget = previous;
+        }
+        expect([
+          for (final target in targets.take(4))
+            container.read(serviceStatusProvider).entryOf(target),
+        ], before);
+        expect(
+          container.read(serviceStatusProvider).entryOf(fifth).phase,
+          ProbePhase.fresh,
+        );
+        expect(rowBuilds[fifth.id], greaterThan(0));
+        expect(unmappedRows, 0);
+        expect(
+          find.descendant(of: sheet, matching: find.text('65 ms')),
+          findsOneWidget,
+        );
+        expect(tester.widget<IconButton>(checkAllButton()).onPressed, isNull);
+        await capture('fifth_fresh');
+
+        pending[targets.first.id]!.complete([
+          _item(targets.first.id, ServiceProbeStatus.available, delay: 71),
+        ]);
+        for (var frame = 0; frame < 12; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(
+          container.read(serviceStatusProvider).entryOf(targets.first).phase,
+          ProbePhase.fresh,
+        );
+        expect(
+          find.descendant(
+            of: find.byType(ServiceStatusCard),
+            matching: find.text('71 ms'),
+            skipOffstage: false,
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: sheet, matching: find.text('71 ms')),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: firstRow, matching: find.byType(SkeletonText)),
+          findsNothing,
+        );
+        await capture('first_fresh');
+        for (final target in targets) {
+          if (!pending[target.id]!.isCompleted) {
+            pending[target.id]!.complete([
+              _item(target.id, ServiceProbeStatus.available, delay: 30),
+            ]);
+          }
+        }
+        sweeping = false;
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<IconButton>(checkAllButton()).onPressed,
+          isNotNull,
+        );
+        await capture('all_fresh');
+        container
+            .read(appSettingProvider.notifier)
+            .update(
+              (state) => state.copyWith(
+                serviceOrder: targets.reversed
+                    .map((target) => target.id)
+                    .toList(),
+              ),
+            );
+        await tester.pumpAndSettle();
+        expect(tile(targets.last), findsOneWidget);
+        expect(tile(targets.first), findsNothing);
+        await capture('reordered');
+        await tester.tap(find.byTooltip('Close'));
+        await tester.pumpAndSettle();
+        expect(sheet, findsNothing);
+        epoch = 2;
+        container
+            .read(routeTrackerProvider.notifier)
+            .applySnapshot(const RouteSnapshot(coreEpoch: 2, routeVersion: 1));
+        await tester.pump();
+        expect(
+          targets.reversed
+              .take(4)
+              .map(
+                (target) =>
+                    container.read(serviceStatusProvider).entryOf(target).phase,
+              ),
+          everyElement(ProbePhase.probing),
+        );
+        expect(routeRequests, isEmpty);
+        await tester.pump(probeMoveSettleDuration);
+        await tester.pumpAndSettle();
+        expect(
+          routeRequests,
+          unorderedEquals(targets.reversed.take(4).map((target) => target.id)),
+        );
+        for (final target in targets.reversed.take(4)) {
+          final entry = container.read(serviceStatusProvider).entryOf(target);
+          expect(entry.phase, ProbePhase.fresh, reason: target.id);
+          expect(entry.value!.coreEpoch, 2, reason: target.id);
+        }
+        await capture('route_return');
+        final directory = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+        if (directory != null) {
+          await tester.runAsync(
+            () => File('$directory/service_status_work/$material/work.json')
+                .writeAsString(
+                  jsonEncode({
+                    'scene':
+                        'Real service card/check-all sheet; not an Android render',
+                    'size': [400, 1200],
+                    'material': material,
+                    'changedTarget': fifth.id,
+                    'mountedRows': rows.length,
+                    'cardBuilds': cardBuilds,
+                    'rowBuilds': rowBuilds,
+                    'unmappedRows': unmappedRows,
+                    'routeRequests': routeRequests,
+                  }),
+                ),
+          );
+        }
+        expect(tester.takeException(), isNull);
+        expect(cardBuilds, 0, reason: 'The first four entries did not change');
+        expect(
+          rowBuilds.entries.where((entry) => entry.key != fifth.id),
+          isEmpty,
+          reason: 'A fifth-service result must not rebuild unchanged rows',
+        );
+      },
+    );
+  }
 
   testWidgets('fits its card at narrow and wide sizes in every locale', (
     tester,

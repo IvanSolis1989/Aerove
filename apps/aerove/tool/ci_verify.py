@@ -243,6 +243,7 @@ CURRENT_IMPELLER_PATHS = [
     'test/widgets/glass_geometry_cache_test.dart',
     'test/widgets/glass_capture_work_test.dart',
     'test/widgets/glass_uniform_work_test.dart',
+    'test/views/dashboard/service_status_test.dart',
     'test/widgets/glass_ink_idle_work_test.dart',
     'test/widgets/glass_capture_geometry_work_test.dart',
     'test/views/dashboard/scroll_build_work_test.dart',
