@@ -71,7 +71,7 @@ Twelve combinations of the Standard development interface. Click an image for fu
 
 <a href="../../docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="../../docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="Liquid clear · Aurora · Light"></a> <a href="../../docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="../../docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="Liquid clear · Aurora · Dark"></a>
 
-Source: [`3ce4525a3a758c44e5ca2a837d25b9098698dff6`](https://github.com/IvanSolis1989/Aerove/commit/3ce4525a3a758c44e5ca2a837d25b9098698dff6) · [Render provenance](../../docs/assets/screenshots/showcase/render-info.json)
+Source: [`fb4a893e639ff5d4c4f3356557d3bf7f285b5eb8`](https://github.com/IvanSolis1989/Aerove/commit/fb4a893e639ff5d4c4f3356557d3bf7f285b5eb8) · [Render provenance](../../docs/assets/screenshots/showcase/render-info.json)
 <!-- aerove:showcase:end -->
 
 The historical codebase comes from [FlClash](https://github.com/chen08209/FlClash); original attribution and licenses are
