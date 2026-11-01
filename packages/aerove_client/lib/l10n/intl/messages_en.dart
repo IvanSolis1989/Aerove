@@ -1462,8 +1462,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyType": MessageLookupByLibrary.simpleMessage("Proxy type"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("Prune cache"),
     "publicKey": MessageLookupByLibrary.simpleMessage("Public key"),
-    "pureBlack": MessageLookupByLibrary.simpleMessage("Pure black"),
-    "pureBlackMode": MessageLookupByLibrary.simpleMessage("Pure black mode"),
+    "pureBlack": MessageLookupByLibrary.simpleMessage("Dark"),
+    "pureBlackMode": MessageLookupByLibrary.simpleMessage("Dark mode"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QR code"),
     "qrcodeDesc": MessageLookupByLibrary.simpleMessage(
       "Scan a QR code to obtain a profile",

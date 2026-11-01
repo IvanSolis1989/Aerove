@@ -2,6 +2,7 @@ import 'dart:collection';
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/features/form/form.dart';
+import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/scheduler.dart';
@@ -35,6 +36,7 @@ class FontFamilyView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
+    final appVisible = ref.watch(appVisibleProvider);
     final families = ref.watch(installedSystemFontsProvider).asData?.value;
     final installed =
         families?.map(_InstalledFont.new).toList() ?? const <_InstalledFont>[];
@@ -61,6 +63,7 @@ class FontFamilyView extends ConsumerWidget {
         _DefaultFont() => title,
         _InstalledFont(:final family) => _FontLabel(
           family: family,
+          appVisible: appVisible,
           child: title,
         ),
       },
@@ -91,34 +94,63 @@ class FontFamilyView extends ConsumerWidget {
 /// milliseconds each, so each name switches to its family on a frame of its
 /// own.
 class _FontLabel extends StatefulWidget {
-  const _FontLabel({required this.family, required this.child});
+  const _FontLabel({
+    required this.family,
+    required this.appVisible,
+    required this.child,
+  });
 
   final String family;
+  final bool appVisible;
   final Widget child;
 
   @override
   State<_FontLabel> createState() => _FontLabelState();
 }
 
-class _FontLabelState extends State<_FontLabel> {
+class _FontLabelState extends State<_FontLabel>
+    with RouteMotionHoldMixin<_FontLabel> {
   static final _shown = <String>{};
   static final _waiting = Queue<_FontLabelState>();
   static var _scheduled = false;
+  var _inTree = true;
 
   bool get _isShown => _shown.contains(widget.family);
 
+  bool get _canPreview =>
+      mounted &&
+      _inTree &&
+      !_isShown &&
+      widget.appVisible &&
+      !pageHidden &&
+      !isRouteMoving(context);
+
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
     _request();
   }
 
   @override
   void didUpdateWidget(_FontLabel oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.family != widget.family) {
+    if (oldWidget.family != widget.family ||
+        oldWidget.appVisible != widget.appVisible) {
       _request();
     }
+  }
+
+  @override
+  void deactivate() {
+    _inTree = false;
+    super.deactivate();
+  }
+
+  @override
+  void activate() {
+    super.activate();
+    _inTree = true;
+    _request();
   }
 
   @override
@@ -128,15 +160,18 @@ class _FontLabelState extends State<_FontLabel> {
   }
 
   void _request() {
-    if (_isShown || _waiting.contains(this)) {
-      return;
-    }
-    _waiting.add(this);
-    _schedule();
+    if (_isShown) return;
+    if (!_waiting.contains(this)) _waiting.add(this);
+    _resume();
+  }
+
+  void _resume() {
+    if (!_inTree || !widget.appVisible) return;
+    updateWhenRouteSettled(_schedule);
   }
 
   static void _schedule() {
-    if (_scheduled || _waiting.isEmpty) {
+    if (_scheduled || !_waiting.any((label) => label._canPreview)) {
       return;
     }
     _scheduled = true;
@@ -146,23 +181,22 @@ class _FontLabelState extends State<_FontLabel> {
   }
 
   static void _showNext(Duration _) {
-    final next = _waiting.firstOrNull;
-    if (next != null && next.mounted && isRouteMoving(next.context)) {
-      // The frames of the motion carry the queue until it stops.
-      SchedulerBinding.instance.addPostFrameCallback(_showNext);
-      return;
-    }
     _scheduled = false;
-    while (_waiting.isNotEmpty) {
-      final label = _waiting.removeFirst();
-      if (!label.mounted || label._isShown) {
-        continue;
-      }
-      _shown.add(label.widget.family);
-      label.setState(() {});
+    _waiting.removeWhere((label) => !label.mounted || label._isShown);
+    _FontLabelState? next;
+    for (final label in _waiting) {
+      if (!label._canPreview) continue;
+      next = label;
       break;
     }
-    _schedule();
+    if (next != null) {
+      _waiting.remove(next);
+      _shown.add(next.widget.family);
+      next.setState(() {});
+    }
+    for (final label in _waiting) {
+      label._resume();
+    }
   }
 
   @override

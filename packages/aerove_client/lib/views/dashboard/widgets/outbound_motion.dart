@@ -274,6 +274,12 @@ class OutboundDropletFeather extends CustomPainter with _DropletShape {
   bool shouldRebuildSemantics(OutboundDropletFeather oldDelegate) => false;
 }
 
+@visibleForTesting
+ValueChanged<OutboundDropletPainter>? debugOnOutboundDropletPaint;
+
+@visibleForTesting
+ValueChanged<OutboundDropletPainter>? debugOnOutboundDropletPath;
+
 class OutboundDropletPainter extends CustomPainter with _DropletShape {
   const OutboundDropletPainter({
     this.phase = 0,
@@ -318,10 +324,19 @@ class OutboundDropletPainter extends CustomPainter with _DropletShape {
 
   @override
   void paint(Canvas canvas, Size size) {
+    assert(() {
+      debugOnOutboundDropletPaint?.call(this);
+      return true;
+    }());
     if (size.isEmpty) return;
+    final color = this.color;
+    if (color == null && shadow.a == 0 && rim == null && ring == null) return;
     final extent = size.shortestSide;
     final path = pathOf(size);
-    final color = this.color;
+    assert(() {
+      debugOnOutboundDropletPath?.call(this);
+      return true;
+    }());
     if (shadow.a > 0) {
       canvas.save();
       if (color == null) {

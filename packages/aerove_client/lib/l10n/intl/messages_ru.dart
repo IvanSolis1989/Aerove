@@ -1523,8 +1523,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyType": MessageLookupByLibrary.simpleMessage("Тип прокси"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("Очистить кэш"),
     "publicKey": MessageLookupByLibrary.simpleMessage("Открытый ключ"),
-    "pureBlack": MessageLookupByLibrary.simpleMessage("Чисто чёрный"),
-    "pureBlackMode": MessageLookupByLibrary.simpleMessage("Чисто чёрный режим"),
+    "pureBlack": MessageLookupByLibrary.simpleMessage("Тёмный"),
+    "pureBlackMode": MessageLookupByLibrary.simpleMessage("Тёмный режим"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QR-код"),
     "qrcodeDesc": MessageLookupByLibrary.simpleMessage(
       "Сканируйте QR-код, чтобы получить профиль",

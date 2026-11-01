@@ -95,6 +95,11 @@ void main() {
   }
 
   group('theme mode', () {
+    Finder choice(String label) => find.descendant(
+      of: find.byType(PreviewChoiceGroup<ThemeMode>),
+      matching: find.text(label),
+    );
+
     testWidgets('android exposes every mode before the wallpaper settings', (
       tester,
     ) async {
@@ -110,9 +115,9 @@ void main() {
         ('Light', ThemeMode.light),
         ('Dark', ThemeMode.dark),
       ]) {
-        final choice = find.text(label).hitTestable();
-        expect(choice, findsOneWidget);
-        await tester.tap(choice);
+        final target = choice(label).hitTestable();
+        expect(target, findsOneWidget);
+        await tester.tap(target);
         await tester.pumpAndSettle();
         expect(readTheme().themeMode, mode);
       }
@@ -131,15 +136,15 @@ void main() {
     testWidgets('switches to light and back to dark', (tester) async {
       await pumpThemeView(tester);
 
-      await tester.tap(find.text('Light'));
+      await tester.tap(choice('Light'));
       await tester.pumpAndSettle();
       expect(readTheme().themeMode, ThemeMode.light);
 
-      await tester.tap(find.text('Dark'));
+      await tester.tap(choice('Dark'));
       await tester.pumpAndSettle();
       expect(readTheme().themeMode, ThemeMode.dark);
 
-      await tester.tap(find.text('Auto'));
+      await tester.tap(choice('Auto'));
       await tester.pumpAndSettle();
       expect(readTheme().themeMode, ThemeMode.system);
     });
@@ -612,15 +617,24 @@ void main() {
           );
       final saved = readTheme();
       await pumpThemeView(tester);
+      final strings = AppLocalizations.of(
+        tester.element(find.byType(ThemeView)),
+      );
+      final group = find.ancestor(
+        of: find.text(strings.pureBlackMode),
+        matching: find.byType(PreviewChoiceGroup<bool>),
+      );
+      Finder choice(String label) =>
+          find.descendant(of: group, matching: find.text(label));
 
       expect(readTheme().pureBlack, isFalse);
 
-      await tester.tap(find.text('Pure black'));
+      await tester.tap(choice(strings.pureBlack));
       await tester.pumpAndSettle();
       expect(readTheme().pureBlack, isTrue);
       expect(readTheme(), saved.copyWith(pureBlack: true));
 
-      await tester.tap(find.text('Standard').first);
+      await tester.tap(choice(strings.standard));
       await tester.pumpAndSettle();
       expect(readTheme().pureBlack, isFalse);
       expect(readTheme(), saved);

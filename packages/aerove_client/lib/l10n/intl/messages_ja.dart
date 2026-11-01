@@ -1257,8 +1257,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "proxyType": MessageLookupByLibrary.simpleMessage("プロキシタイプ"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("キャッシュを整理"),
     "publicKey": MessageLookupByLibrary.simpleMessage("公開鍵"),
-    "pureBlack": MessageLookupByLibrary.simpleMessage("ピュアブラック"),
-    "pureBlackMode": MessageLookupByLibrary.simpleMessage("ピュアブラックモード"),
+    "pureBlack": MessageLookupByLibrary.simpleMessage("ダーク"),
+    "pureBlackMode": MessageLookupByLibrary.simpleMessage("ダークモード"),
     "qrcode": MessageLookupByLibrary.simpleMessage("QRコード"),
     "qrcodeDesc": MessageLookupByLibrary.simpleMessage(
       "QRコードをスキャンしてプロファイルを取得します",

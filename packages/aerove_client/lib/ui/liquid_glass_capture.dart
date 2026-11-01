@@ -33,6 +33,18 @@ typedef LiquidGlassCapture = ({
   int atlasPixels,
   int coveredRecordings,
   int skippedPanes,
+  int bandPicturesRecorded,
+  int wallpaperDrawsRecorded,
+  int coverageGroupings,
+  int coverageModeChecks,
+  int entryInversions,
+  int invertedEntries,
+  int bodySourceSearches,
+  int paneAncestorSearchSteps,
+  int opacityAncestorSearchSteps,
+  int gatherVisitedLayers,
+  int gatheredCoverage,
+  int flatPanes,
   List<
     ({
       Rect pane,
@@ -427,6 +439,42 @@ class _LiquidGlassHostLayer extends ContainerLayer {
   final _sourceBlur = _SourceBlurCache();
   bool _trimBeforeCapture = false;
   int _skippedPanes = 0;
+  int _bandPicturesRecorded = 0;
+  int _wallpaperDrawsRecorded = 0;
+  int _coverageGroupings = 0;
+  int _coverageModeChecks = 0;
+  int _entryInversions = 0;
+  int _bodySourceSearches = 0;
+  int _paneAncestorSearchSteps = 0;
+  int _opacityAncestorSearchSteps = 0;
+  int _gatherVisitedLayers = 0;
+  final _invertedEntries = <_Behind>{};
+
+  Matrix4? _entryInverse(_Behind entry, {bool tryInvert = false}) {
+    if (entry.inverseReady) {
+      final inverse = entry.inverse;
+      if (inverse == null && !tryInvert) {
+        throw ArgumentError.value(
+          entry.toHost,
+          'other',
+          'Matrix cannot be inverted',
+        );
+      }
+      return inverse;
+    }
+    assert(() {
+      _entryInversions++;
+      _invertedEntries.add(entry);
+      return true;
+    }());
+    final inverse = tryInvert
+        ? Matrix4.tryInvert(entry.toHost)
+        : Matrix4.inverted(entry.toHost);
+    entry
+      ..inverse = inverse
+      ..inverseReady = true;
+    return inverse;
+  }
 
   void _trimCaches({
     required bool all,
@@ -526,6 +574,19 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     _pass++;
     _replayedPanes = 0;
     _skippedPanes = 0;
+    assert(() {
+      _bandPicturesRecorded = 0;
+      _wallpaperDrawsRecorded = 0;
+      _coverageGroupings = 0;
+      _coverageModeChecks = 0;
+      _entryInversions = 0;
+      _bodySourceSearches = 0;
+      _paneAncestorSearchSteps = 0;
+      _opacityAncestorSearchSteps = 0;
+      _gatherVisitedLayers = 0;
+      _invertedEntries.clear();
+      return true;
+    }());
     final found = <_Behind>[];
     final panes = <_LiquidGlassLayer>{};
     final coverage = <_GlassCoverage>[];
@@ -541,8 +602,12 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       coverage,
       _GlassVisibility(bounds, 1 / devicePixelRatio),
     );
-    final viewport = wallpaperOnly ? _field : null;
+    final viewport = wallpaperOnly && found.isNotEmpty ? _field : null;
     final source = viewport == null ? null : viewport.$1.source(viewport.$2);
+    assert(() {
+      if (viewport != null) _bodySourceSearches++;
+      return true;
+    }());
     final snapshot = source?.$1 ?? viewport?.$1;
     final image = found.isEmpty ? null : snapshot?.capture();
     final _Wallpaper? wallpaper = image == null
@@ -557,6 +622,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       pane._trimCapture();
     }
     _panes = panes;
+    final orderedCoverage = _groupCoverage(coverage);
     final placed = <_Behind>[];
     for (final (index, entry) in found.indexed) {
       if (!entry.pane.contentBackdrop) entry.wallpaper = wallpaper;
@@ -566,14 +632,14 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         entry.root = this;
         entry.rootToHost = Matrix4.identity();
       }
-      _occlude(entry, index, coverage);
+      _occlude(entry, index, orderedCoverage);
       if (entry.visible != null && entry.needsFreeze) {
         if (entry.pane._freezeCaptured()) {
           if (entry.visibleBounds.isEmpty) {
             if (entry.plain == null) {
               entry.pane._captureFrozen(_pass);
             } else {
-              final inverse = Matrix4.inverted(entry.toHost).storage;
+              final inverse = _entryInverse(entry)!.storage;
               entry.pane._captureCovered(
                 _pass,
                 entry.style,
@@ -683,6 +749,18 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             (pane: entry.device, blur: entry.style.blur),
       ];
       LiquidGlassHost.debugLastCapture = (
+        bandPicturesRecorded: _bandPicturesRecorded,
+        wallpaperDrawsRecorded: _wallpaperDrawsRecorded,
+        coverageGroupings: _coverageGroupings,
+        coverageModeChecks: _coverageModeChecks,
+        entryInversions: _entryInversions,
+        invertedEntries: _invertedEntries.length,
+        bodySourceSearches: _bodySourceSearches,
+        paneAncestorSearchSteps: _paneAncestorSearchSteps,
+        opacityAncestorSearchSteps: _opacityAncestorSearchSteps,
+        gatherVisitedLayers: _gatherVisitedLayers,
+        gatheredCoverage: coverage.length,
+        flatPanes: found.where((entry) => entry.flatContent).length,
         skippedPanes: _skippedPanes,
         snapshots: snapshots,
         keptBands: keptBands,
@@ -714,6 +792,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             ),
         ],
       );
+      _invertedEntries.clear();
       return true;
     }());
   }
@@ -727,14 +806,26 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     List<_Behind> found,
     Set<_LiquidGlassLayer> panes,
     List<_GlassCoverage> coverage,
-    _GlassVisibility visibility,
-  ) {
+    _GlassVisibility visibility, {
+    _LiquidGlassOcclusionLayer? nearestBoundary,
+    bool hasNonOpaqueOpacityAncestor = false,
+  }) {
     if (layer is _LiquidGlassDecorationLayer) {
       layer.enabled = quality == LiquidGlassQuality.ultra;
       if (!layer.enabled) return;
     }
+    final boundary = layer is _LiquidGlassOcclusionLayer
+        ? layer
+        : nearestBoundary;
+    final nonOpaque =
+        hasNonOpaqueOpacityAncestor ||
+        layer is OpacityLayer && layer.alpha != 255;
     chain.add(layer);
     for (Layer? child = layer.firstChild; child != null;) {
+      assert(() {
+        _gatherVisitedLayers++;
+        return true;
+      }());
       switch (child) {
         case final _LiquidGlassLayer pane:
           panes.add(pane);
@@ -747,9 +838,6 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             pane._capturedPass = _pass;
             break;
           }
-          final boundary = chain
-              .whereType<_LiquidGlassOcclusionLayer>()
-              .lastOrNull;
           found.add(
             _Behind(
                 pane,
@@ -770,10 +858,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           final offscreen = _drawsOffscreen(container);
           final transform = _within(container, toHost);
           if (container is _ColorFieldLayer) _field = (container, transform);
-          if (container is _LiquidGlassOcclusionLayer &&
-              !chain.any(
-                (layer) => layer is OpacityLayer && layer.alpha != 255,
-              )) {
+          if (container is _LiquidGlassOcclusionLayer && !nonOpaque) {
             coverage.add(_GlassCoverage(container, transform, found.length));
           }
           _gather(
@@ -786,6 +871,8 @@ class _LiquidGlassHostLayer extends ContainerLayer {
             panes,
             coverage,
             visibility.through(container, transform),
+            nearestBoundary: boundary,
+            hasNonOpaqueOpacityAncestor: nonOpaque,
           );
       }
       child = child.nextSibling;
@@ -793,16 +880,32 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     chain.removeLast();
   }
 
+  List<_GlassCoverage> _groupCoverage(List<_GlassCoverage> coverage) {
+    assert(() {
+      _coverageGroupings++;
+      return true;
+    }());
+    bool modeIs(_GlassCoverage cover, LiquidGlassOcclusionMode mode) {
+      assert(() {
+        _coverageModeChecks++;
+        return true;
+      }());
+      return cover.layer.mode == mode;
+    }
+
+    return [
+      ...coverage.where(
+        (cover) => modeIs(cover, LiquidGlassOcclusionMode.freeze),
+      ),
+      ...coverage.where(
+        (cover) => modeIs(cover, LiquidGlassOcclusionMode.plain),
+      ),
+    ];
+  }
+
   void _occlude(_Behind entry, int index, List<_GlassCoverage> coverage) {
     Path? visible;
-    for (final cover in [
-      ...coverage.where(
-        (cover) => cover.layer.mode == LiquidGlassOcclusionMode.freeze,
-      ),
-      ...coverage.where(
-        (cover) => cover.layer.mode == LiquidGlassOcclusionMode.plain,
-      ),
-    ]) {
+    for (final cover in coverage) {
       final plain = cover.layer.mode == LiquidGlassOcclusionMode.plain;
       final feather = cover.feather;
       if (index >= cover.before ||
@@ -844,13 +947,13 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         }
       }
       if (inBand != null && !inBand.getBounds().isEmpty) {
-        final inverse = Matrix4.tryInvert(entry.toHost);
+        final inverse = _entryInverse(entry, tryInvert: true);
         if (inverse != null) {
           entry.feathers.add(
             _GlassFeather(
               cover.layer.geometry!.$3,
               cover.layer.geometry!.$4,
-              inverse..multiply(cover.toHost),
+              inverse.clone()..multiply(cover.toHost),
               plain: plain,
             ),
           );
@@ -1047,10 +1150,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           .add(entry);
     }
     double step(double extent) => (extent / _atlasStep).ceil() * _atlasStep;
+    final bandMembers = classes.values.toList(growable: false);
     final bands = <_Band>[];
-    final pictures = <ui.Picture>[];
+    final pictures = <ui.Picture?>[];
     var top = 0.0;
-    for (final entries in classes.values) {
+    for (final entries in bandMembers) {
       var bottom = 0.0;
       var width = 0.0;
       for (final entry in entries) {
@@ -1063,61 +1167,18 @@ class _LiquidGlassHostLayer extends ContainerLayer {
           ? entries.first.blurSigma
           : 0.0;
       final drawn = <Object?>[sigma, rect.size];
-      final recorder = ui.PictureRecorder();
-      final canvas = Canvas(recorder);
-      for (final entry in entries) {
-        final place = entry.place.shift(-rect.topLeft);
-        drawn
-          ..add(place)
-          ..add(entry.slot)
-          ..addAll(entry.rootToHost.storage);
-        canvas
-          ..save()
-          ..clipRect(place)
-          ..translate(place.left, place.top)
-          ..scale(entry.texelsPerDp)
-          ..translate(-entry.slot.left, -entry.slot.top);
-        if (entry.wallpaper case final wallpaper?) {
-          final image = entry.sourceBlur ?? wallpaper.image;
-          drawn.addAll([image, wallpaper.size, ...wallpaper.toHost.storage]);
-          canvas
-            ..save()
-            ..transform(wallpaper.toHost.storage)
-            ..drawImageRect(
-              image,
-              Rect.fromLTWH(
-                0,
-                0,
-                image.width.toDouble(),
-                image.height.toDouble(),
-              ),
-              Offset.zero & wallpaper.size,
-              Paint()..filterQuality = FilterQuality.low,
-            )
-            ..restore();
-          if (entry.flatSnapshot case final cached?) {
-            drawn.addAll([cached.image, cached.bounds]);
-            canvas.drawImageRect(
-              cached.image,
-              Rect.fromLTWH(
-                0,
-                0,
-                cached.image.width.toDouble(),
-                cached.image.height.toDouble(),
-              ),
-              cached.bounds,
-              Paint()..filterQuality = FilterQuality.low,
-            );
-          }
-        } else {
-          canvas.transform(entry.rootToHost.storage);
-          final replay = _Replay(canvas, drawn, entry)..run();
-          _replayedPanes += replay.panes;
+      final wallpaperOnly = entries.every((entry) => entry.wallpaper != null);
+      final ui.Picture? picture;
+      if (wallpaperOnly) {
+        for (final entry in entries) {
+          _bandEntryKey(drawn, entry, rect);
         }
-        canvas.restore();
+        picture = null;
+      } else {
+        picture = _recordBand(entries, rect, drawn: drawn);
       }
       bands.add((rect: rect, sigma: sigma, drawn: drawn));
-      pictures.add(recorder.endRecording());
+      pictures.add(picture);
       top = rect.bottom;
     }
     final size = Size(
@@ -1136,7 +1197,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
               listEquals(band.$2.drawn, last[band.$1].drawn),
         )) {
       for (final picture in pictures) {
-        picture.dispose();
+        picture?.dispose();
       }
       return (atlas: previous.image, taken: false, kept: 0);
     }
@@ -1149,7 +1210,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
     final canvas = Canvas(recorder);
     var kept = 0;
     for (final (index, band) in bands.indexed) {
-      final picture = pictures[index];
+      var picture = pictures[index];
       final old = carry
           ? last.where((old) => listEquals(old.drawn, band.drawn)).firstOrNull
           : null;
@@ -1164,6 +1225,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         );
         kept++;
       } else {
+        picture ??= _recordBand(bandMembers[index], band.rect);
         final sigma = band.sigma;
         canvas
           ..save()
@@ -1191,7 +1253,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         }
         canvas.restore();
       }
-      picture.dispose();
+      picture?.dispose();
     }
     final picture = recorder.endRecording();
     final image = picture.toImageSync(size.width.toInt(), size.height.toInt());
@@ -1203,6 +1265,90 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       _atlases[level] = (image: image, bands: bands);
     }
     return (atlas: image, taken: true, kept: kept);
+  }
+
+  void _bandEntryKey(List<Object?> drawn, _Behind entry, Rect rect) {
+    drawn.addAll([
+      entry.place.shift(-rect.topLeft),
+      entry.slot,
+      entry.texelsPerDp,
+      entry.texels,
+      ...entry.rootToHost.storage,
+    ]);
+    if (entry.wallpaper case final wallpaper?) {
+      drawn.addAll([
+        entry.sourceBlur ?? wallpaper.image,
+        wallpaper.size,
+        ...wallpaper.toHost.storage,
+      ]);
+      if (entry.flatSnapshot case final cached?) {
+        drawn.addAll([cached.image, cached.bounds]);
+      }
+    }
+  }
+
+  ui.Picture _recordBand(
+    List<_Behind> entries,
+    Rect rect, {
+    List<Object?>? drawn,
+  }) {
+    assert(() {
+      _bandPicturesRecorded++;
+      return true;
+    }());
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    for (final entry in entries) {
+      final place = entry.place.shift(-rect.topLeft);
+      if (drawn != null) _bandEntryKey(drawn, entry, rect);
+      canvas
+        ..save()
+        ..clipRect(place)
+        ..translate(place.left, place.top)
+        ..scale(entry.texelsPerDp)
+        ..translate(-entry.slot.left, -entry.slot.top);
+      if (entry.wallpaper case final wallpaper?) {
+        assert(() {
+          _wallpaperDrawsRecorded++;
+          return true;
+        }());
+        final image = entry.sourceBlur ?? wallpaper.image;
+        canvas
+          ..save()
+          ..transform(wallpaper.toHost.storage)
+          ..drawImageRect(
+            image,
+            Rect.fromLTWH(
+              0,
+              0,
+              image.width.toDouble(),
+              image.height.toDouble(),
+            ),
+            Offset.zero & wallpaper.size,
+            Paint()..filterQuality = FilterQuality.low,
+          )
+          ..restore();
+        if (entry.flatSnapshot case final cached?) {
+          canvas.drawImageRect(
+            cached.image,
+            Rect.fromLTWH(
+              0,
+              0,
+              cached.image.width.toDouble(),
+              cached.image.height.toDouble(),
+            ),
+            cached.bounds,
+            Paint()..filterQuality = FilterQuality.low,
+          );
+        }
+      } else {
+        canvas.transform(entry.rootToHost.storage);
+        final replay = _Replay(canvas, drawn!, entry)..run();
+        _replayedPanes += replay.panes;
+      }
+      canvas.restore();
+    }
+    return recorder.endRecording();
   }
 
   void _publish(_Behind entry, ui.Image atlas) {
@@ -1224,11 +1370,11 @@ class _LiquidGlassHostLayer extends ContainerLayer {
       ],
       blendMode,
       entry.style,
-      visible: entry.visible?.transform(Matrix4.inverted(entry.toHost).storage),
+      visible: entry.visible?.transform(_entryInverse(entry)!.storage),
       coverageKey: entry.coverageKey,
       feathers: entry.feathers,
-      covered: entry.covered?.transform(Matrix4.inverted(entry.toHost).storage),
-      plain: entry.plain?.transform(Matrix4.inverted(entry.toHost).storage),
+      covered: entry.covered?.transform(_entryInverse(entry)!.storage),
+      plain: entry.plain?.transform(_entryInverse(entry)!.storage),
       prepareFreeze: entry.freezeAfterCapture,
     );
     if (entry.freezeAfterCapture && pane._freezeCaptured()) {
@@ -1236,7 +1382,7 @@ class _LiquidGlassHostLayer extends ContainerLayer {
         if (entry.plain == null) {
           pane._captureFrozen(_pass);
         } else {
-          final inverse = Matrix4.inverted(entry.toHost).storage;
+          final inverse = _entryInverse(entry)!.storage;
           pane._captureCovered(
             _pass,
             entry.style,
@@ -1326,6 +1472,8 @@ class _Behind {
   final _LiquidGlassLayer pane;
   final LiquidGlassStyle style;
   final Matrix4 toHost;
+  Matrix4? inverse;
+  bool inverseReady = false;
 
   /// The host, or below it the nearest layer that draws offscreen: a backdrop
   /// filter there would read only that layer's texture.

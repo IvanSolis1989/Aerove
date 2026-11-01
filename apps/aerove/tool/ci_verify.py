@@ -239,7 +239,18 @@ REGRESSION_SOFTWARE_PATHS = ['test/application_theme_test.dart',
  'test/l10n/',
  'test/lint/']
 
+CURRENT_IMPELLER_PATHS = [
+    'test/widgets/glass_geometry_cache_test.dart',
+    'test/widgets/glass_capture_work_test.dart',
+    'test/widgets/glass_uniform_work_test.dart',
+    'test/widgets/glass_ink_idle_work_test.dart',
+    'test/widgets/glass_capture_geometry_work_test.dart',
+    'test/views/dashboard/scroll_build_work_test.dart',
+    'test/views/dashboard/clear_paint_work_test.dart',
+]
+
 CURRENT_REGRESSION_PATHS = [
+    'test/views/font_preview_activity_test.dart',
     'test/product_boundary_test.dart',
     'test/common/preferences_store_skip_test.dart',
     'test/common/system_test_font_test.dart',
@@ -309,7 +320,7 @@ SUITES = {
         'shards': 3,
     },
     'regression-impeller': {
-        'paths': REGRESSION_IMPELLER_PATHS,
+        'paths': REGRESSION_IMPELLER_PATHS + CURRENT_IMPELLER_PATHS,
         'impeller': True,
         'require_impeller': 'true',
         'rust': True,

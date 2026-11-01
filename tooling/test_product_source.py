@@ -20,6 +20,22 @@ SHARED_STANDARD_INPUTS = (
     'apps/aerove/plugins/rust_api/rust/src/lib.rs',
     'apps/aerove/lint_options.yaml',
 )
+README_OUTPUTS = (
+    'docs/i18n/README.en.md',
+    'docs/assets/screenshots/showcase/render-info.json',
+    'docs/assets/screenshots/showcase/solid-classic-light.png',
+    'docs/assets/screenshots/showcase/solid-classic-dark.png',
+    'docs/assets/screenshots/showcase/solid-aurora-light.png',
+    'docs/assets/screenshots/showcase/solid-aurora-dark.png',
+    'docs/assets/screenshots/showcase/frost-classic-light.png',
+    'docs/assets/screenshots/showcase/frost-classic-dark.png',
+    'docs/assets/screenshots/showcase/frost-aurora-light.png',
+    'docs/assets/screenshots/showcase/frost-aurora-dark.png',
+    'docs/assets/screenshots/showcase/clear-classic-light.png',
+    'docs/assets/screenshots/showcase/clear-classic-dark.png',
+    'docs/assets/screenshots/showcase/clear-aurora-light.png',
+    'docs/assets/screenshots/showcase/clear-aurora-dark.png',
+)
 
 
 class ProductSourceTest(unittest.TestCase):
@@ -88,6 +104,64 @@ class ProductSourceTest(unittest.TestCase):
                 self.commit()
                 with self.assertRaises(source.ProjectionError):
                     self.compare()
+
+    def test_each_readme_output_preserves_both_product_projections(self):
+        for path in README_OUTPUTS:
+            self.write(path, 'original offline documentation output\n')
+        self.original = self.commit()
+        for path in README_OUTPUTS:
+            with self.subTest(path=path):
+                self.git('reset', '--hard', self.original)
+                self.write(path, 'updated offline documentation output\n')
+                self.commit()
+                for product in ('aerove', 'aerove-lite'):
+                    with self.subTest(product=product):
+                        baseline = source.equivalent(root=self.root, product=product,
+                            build_source=self.original, release_source=self.original)
+                        projected = self.compare(product)
+                        self.assertEqual([(row['path'], row['reason']) for row in projected['changed']],
+                                         [(path, 'factDocument')])
+                        self.assertEqual(projected['protected_inputs_sha256'],
+                                         baseline['protected_inputs_sha256'])
+
+    def test_readme_neighbors_producers_and_acceptance_inputs_remain_protected(self):
+        paths = (
+            'docs/assets/screenshots/showcase/unknown.png',
+            'docs/assets/screenshots/showcase/unknown.json',
+            'docs/i18n/unknown.md',
+            'tooling/readme_showcase_test.dart', 'tooling/readme_preview_inputs.json',
+            'tooling/readme_sync.mjs', '.github/workflows/readme-preview.yaml',
+            '.github/workflows/readme-sync.yaml',
+            'packages/aerove_client/lib/application.dart',
+            'packages/aerove_client/assets/images/icon.png',
+            'packages/aerove_client/shaders/clear.frag',
+            'packages/aerove_client/test/app_test.dart',
+            'packages/aerove_client/test/fixtures/config.yaml',
+            'docs/shared/UI_CONTRACT.md', 'docs/shared/ACCEPTANCE.md',
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                self.git('reset', '--hard', self.original)
+                self.write(path, 'protected input\n')
+                self.commit()
+                for product in ('aerove', 'aerove-lite'):
+                    with self.subTest(product=product), self.assertRaises(source.ProjectionError):
+                        self.compare(product)
+
+    def test_readme_output_exceptions_reject_executable_symlink_and_submodule_modes(self):
+        for path in README_OUTPUTS:
+            self.write(path, 'original documentation output\n')
+        self.original = self.commit()
+        for path in README_OUTPUTS:
+            for mode in ('100755', '120000', '160000'):
+                with self.subTest(path=path, mode=mode):
+                    self.git('reset', '--hard', self.original)
+                    blob = self.original if mode == '160000' else self.git('rev-parse', self.original + ':' + path)
+                    self.git('update-index', '--add', '--cacheinfo', mode, blob, path)
+                    self.git('commit', '-q', '-m', 'changed documentation entry mode')
+                    for product in ('aerove', 'aerove-lite'):
+                        with self.subTest(product=product), self.assertRaises(source.ProjectionError):
+                            self.compare(product)
 
     def test_other_product_instructions_are_shared_governance_inputs(self):
         self.write('apps/aerove-lite/AGENTS.md', 'changed instructions\n')

@@ -18,6 +18,14 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 ### 来源条目
 
+#### [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk)
+
+**固定版本 / revision：** `f8d157532fbfaeda587e826d4cd5b21a49186f7c`
+
+**用途与采用方式：** README 十二图的离线 Flutter 渲染使用 `Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf`，CI 按固定地址下载并校验 SHA-256；不安装系统字体，不加入 App 依赖或安装包。字体 Git blob 为 `dc15562470b4f842321894787a0d066879ccff8b`，16,437,364 字节；SHA-256 由 `tooling/readme_preview_inputs.json` 固定。
+
+**许可证、署名与证据：** SIL Open Font License 1.1；[固定字体](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf)、[原许可证](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE)，许可证 Git blob `d952d62c065f3f35fb83a173496e90b21525aef3`；原字体与许可证保持原样，公开图片保留渲染来源记录。
+
 #### [chen08209/FlClash](https://github.com/chen08209/FlClash)
 
 **固定版本 / revision：** 历史整合 `v0.9.2-pre.1` / `7220961f7c5e494df831ca196ab53ef08a17e926`；2026-10-25 按用户授权选择性整合 `v0.9.2` / `7fd417fb9a9a277c6a9339a8ac87f907df7c25f7`（以第二父提交保留血缘，合并树不整套采用）；只读参照 `8d4f9744948751f1273fe871e1d05276fac09b0e`
@@ -291,6 +299,20 @@ Lite Flutter Android 黑盒 API 候选 QA93 另只读核对 AndroidX 固定 `c86
 组织名单行适配复用公开 `TextPainter`、`TextScaler`、`GlassText` 和项目既有 `DashboardFitText` 测量方式；连续圆角背景裁剪另只读参考同固定 SDK 的 [`RenderClipPath.paint`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/proxy_box.dart) 与 `PaintingContext.pushClipPath` 的图层复用行为，采用现有 `AppShape.getOuterPath`。未复制框架实现或新增依赖，BSD-3-Clause 与 Flutter Authors 署名保持。
 
 **许可证、署名与证据：** BSD-3-Clause（Flutter）；字体按原 `roboto_license.txt`；`apps/aerove-lite/app/src/main/assets/optics/NOTICE.md`、`FLUTTER_LICENSE`、`apps/aerove/test/fixtures/fonts/SOURCE.json`
+
+滚动布局优化另只读核对同一固定 SDK 的 `LayoutBuilder` 与 `SliverLayoutBuilder`：仪表盘只依赖可用宽度时，使用既有 box 布局入口，避免将滚动偏移误作卡片配置变化；保留原 Column、卡片身份和编辑交互。未复制框架私有实现或新增依赖。
+
+前台参数复用另只读核对同一 SDK 的 `FragmentShader.setFloat` 对 `Float32List` 的写入，以及 `setImageSampler` 的独立原生接口，沿用项目已有差量更新方式；后台字体预览复用现有 `AppStateManager`、`RouteMotionHoldMixin` 和 Flutter 的 `TickerMode`、调度器门禁。未复制引擎算法或新增依赖，操作计数与独立微基准不冒充手机帧率或功耗结论。
+
+同轮玻璃来源几何复用另只读参考同一 SDK 的 `TransformLayer` 懒求逆方式，沿用本项目单次捕获的作用域；不跨帧保留来源矩阵，不改变逐面板的采样、稳定与边缘判定。仪表盘装饰绘制复用现有 painter，仅在所有绘图分支均无输出时提前返回，实际玻璃裁剪、聚焦和形变路径保持。未复制框架私有实现或引入新依赖。
+
+#### [flutter/core-packages：vector_math](https://github.com/flutter/core-packages/tree/a9e1d5880f83790c59a80e874b339779079f2571/packages/vector_math)
+
+**固定版本 / revision：** `vector_math 2.4.3`，tag `vector_math-v2.4.3`，提交 `a9e1d5880f83790c59a80e874b339779079f2571`；沿用现有锁定依赖，不升级版本。
+
+**用途与采用方式：** 只读核对 `lib/src/vector_math_64/matrix4.dart` 的 `Matrix4.inverted`、`tryInvert` 和奇异矩阵错误语义；玻璃遮挡处理中复用现有 API 缓存单次求逆结果，保留失败行为，未移植数值算法。历史实现另对照 [google/vector_math.dart](https://github.com/google/vector_math.dart/tree/cf3b5db7340d317dd3489e5a35434b408020a852)，固定提交 `cf3b5db7340d317dd3489e5a35434b408020a852`；该旧仓库已归档，实际依赖来源以上述 Flutter 包为准。
+
+**许可证、署名与证据：** BSD-3-Clause；保留 Flutter Authors 及历史 Google 作者署名，现有依赖的 `LICENSE` 不变。采用依据为锁定包的 `pubspec.yaml`、`LICENSE` 与上述矩阵源码；没有新增第三方运行时依赖。
 
 #### [fzyzcjy/flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge)
 

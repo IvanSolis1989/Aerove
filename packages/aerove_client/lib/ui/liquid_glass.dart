@@ -1123,6 +1123,24 @@ class LiquidGlassPane {
 
   final VoidCallback onReady;
 
+  @visibleForTesting
+  int get debugCornerCurveComputations =>
+      _layer.layer?._cornerComputations ?? 0;
+
+  @visibleForTesting
+  Map<String, int> get debugUniformWork => {
+    'floatWrites': _layer.layer?._debugFloatWrites ?? 0,
+    'unchangedFloatWrites': _layer.layer?._debugUnchangedFloatWrites ?? 0,
+    'samplerWrites': _layer.layer?._debugSamplerWrites ?? 0,
+    'unchangedSamplerWrites': _layer.layer?._debugUnchangedSamplerWrites ?? 0,
+    'shaderCreations': _layer.layer?._debugShaderCreations ?? 0,
+    'uniformCount': _layer.layer?._debugUniformCount ?? 0,
+    'lookComputations': _layer.layer?._debugLookComputations ?? 0,
+    'rimComputations': _layer.layer?._debugRimComputations ?? 0,
+    'cachedLookValues': _layer.layer?._lookValues.length ?? 0,
+    'cachedProfileValues': _layer.layer?._lookProfile.length ?? 0,
+  };
+
   final _layer = LayerHandle<_LiquidGlassLayer>();
   final _rimLayer = LayerHandle<_LiquidGlassDecorationLayer>();
   Path? _profiled;
@@ -1337,6 +1355,42 @@ class _LiquidGlassLayer extends Layer {
   LiquidGlassRim? rim;
   bool contentBackdrop = false;
   bool _simpleBlur = false;
+  int _cornerComputations = 0;
+  int _debugFloatWrites = 0;
+  int _debugUnchangedFloatWrites = 0;
+  int _debugSamplerWrites = 0;
+  int _debugUnchangedSamplerWrites = 0;
+  int _debugShaderCreations = 0;
+  int _debugUniformCount = 0;
+  int _debugLookComputations = 0;
+  int _debugRimComputations = 0;
+  List<double> _debugWrittenFloats = const [];
+  ui.Image? _debugWrittenSampler;
+  (Size, BorderRadius)? _cornerKey;
+  List<double> _curves = const [];
+  (
+    Size,
+    BorderRadius,
+    LiquidGlassStyle,
+    LiquidGlassGlow,
+    bool,
+    LiquidGlassRim?,
+  )?
+  _lookKey;
+  List<double> _lookValues = const [];
+  List<double> _lookProfile = const [];
+
+  List<double> _cornerCurves() {
+    final key = (rect.size, corners);
+    if (_cornerKey == key) return _curves;
+    assert(() {
+      _cornerComputations++;
+      return true;
+    }());
+    _curves = liquidGlassCornerCurves(rect.size, corners);
+    _cornerKey = key;
+    return _curves;
+  }
 
   void _setSimpleBlur(bool value) {
     if (_simpleBlur == value) return;
@@ -1355,6 +1409,8 @@ class _LiquidGlassLayer extends Layer {
   Rect _capturedRect = Rect.zero;
   ui.Picture? _freezeBody;
   ui.FragmentShader? _captureShader;
+  List<double> _captureUniforms = const [];
+  ui.Image? _captureSampler;
   bool _showingFrozen = false;
   (Rect, BorderRadius, Path?, List<double>, Color)? _plainKey;
   List<Object?>? _coveredKey;
@@ -1610,43 +1666,59 @@ class _LiquidGlassLayer extends Layer {
 
   /// The uniforms from the pane's shape on, after where it and its texture
   /// lie.
-  List<double> _look(LiquidGlassStyle style) => [
-    rect.width,
-    rect.height,
-    style.bevel,
-    style.blur,
-    corners.topLeft.x,
-    corners.topRight.x,
-    corners.bottomRight.x,
-    corners.bottomLeft.x,
-    ...liquidGlassCornerCurves(rect.size, corners),
-    style.refraction,
-    style.saturation,
-    style.brightness,
-    style.tint.r,
-    style.tint.g,
-    style.tint.b,
-    style.tint.a,
-    style.rim,
-    style.rimWidth,
-    style.endShade,
-    glow.center.dx,
-    glow.center.dy,
-    glow.strength,
-    style.contrast,
-    glow.reach,
-    glow.wash,
-    style.hairline,
-    style.dispersion,
-    style.rimBlur,
-    style.rimTail,
-    style.rimFocus,
-    style.rimAdded,
-    style._hairlineSide,
-    outline == null ? 0.0 : 1.0,
-    ...profile,
-    ...rim?._uniforms(rect.size, corners.topLeft.x) ?? _noShine,
-  ];
+  List<double> _look(LiquidGlassStyle style) {
+    final key = (rect.size, corners, style, glow, outline != null, rim);
+    if (_lookKey == key && listEquals(_lookProfile, profile)) {
+      return _lookValues;
+    }
+    assert(() {
+      _debugLookComputations++;
+      if (rim != null) _debugRimComputations++;
+      return true;
+    }());
+    final values = [
+      rect.width,
+      rect.height,
+      style.bevel,
+      style.blur,
+      corners.topLeft.x,
+      corners.topRight.x,
+      corners.bottomRight.x,
+      corners.bottomLeft.x,
+      ..._cornerCurves(),
+      style.refraction,
+      style.saturation,
+      style.brightness,
+      style.tint.r,
+      style.tint.g,
+      style.tint.b,
+      style.tint.a,
+      style.rim,
+      style.rimWidth,
+      style.endShade,
+      glow.center.dx,
+      glow.center.dy,
+      glow.strength,
+      style.contrast,
+      glow.reach,
+      glow.wash,
+      style.hairline,
+      style.dispersion,
+      style.rimBlur,
+      style.rimTail,
+      style.rimFocus,
+      style.rimAdded,
+      style._hairlineSide,
+      outline == null ? 0.0 : 1.0,
+      ...profile,
+      ...rim?._uniforms(rect.size, corners.topLeft.x) ?? _noShine,
+    ];
+    _lookKey = key;
+    _lookProfile = identical(profile, _flatProfile)
+        ? profile
+        : List<double>.of(profile);
+    return _lookValues = values;
+  }
 
   void _addFrost(ui.SceneBuilder builder) {
     final key = (rect, corners, outline, style, rim);
@@ -1717,14 +1789,52 @@ class _LiquidGlassLayer extends Layer {
             listEquals(coverage, coverageKey)) {
       return;
     }
+    if (program != null && _captureShader == null) {
+      _captureUniforms = const [];
+      _captureSampler = null;
+      assert(() {
+        _debugShaderCreations++;
+        _debugWrittenFloats = const [];
+        _debugWrittenSampler = null;
+        return true;
+      }());
+    }
     final shader = program == null
         ? null
         : (_captureShader ??= program.fragmentShader());
     if (shader != null) {
-      shader.setImageSampler(0, atlas, filterQuality: FilterQuality.low);
-      for (final (index, value) in uniforms.indexed) {
-        shader.setFloat(index, value);
+      if (!identical(_captureSampler, atlas)) {
+        shader.setImageSampler(0, atlas, filterQuality: FilterQuality.low);
+        _captureSampler = atlas;
+        assert(() {
+          _debugSamplerWrites++;
+          if (identical(_debugWrittenSampler, atlas)) {
+            _debugUnchangedSamplerWrites++;
+          }
+          _debugWrittenSampler = atlas;
+          return true;
+        }());
       }
+      for (final (index, value) in uniforms.indexed) {
+        if (_captureUniforms.length <= index ||
+            _captureUniforms[index] != value) {
+          shader.setFloat(index, value);
+          assert(() {
+            _debugFloatWrites++;
+            if (_debugWrittenFloats.length > index &&
+                _debugWrittenFloats[index] == value) {
+              _debugUnchangedFloatWrites++;
+            }
+            return true;
+          }());
+        }
+      }
+      _captureUniforms = uniforms;
+      assert(() {
+        _debugUniformCount = uniforms.length;
+        _debugWrittenFloats = uniforms;
+        return true;
+      }());
     }
     void paintLive(Canvas canvas) {
       if (shader == null) {
@@ -1993,6 +2103,16 @@ class _LiquidGlassLayer extends Layer {
     _captureKey = null;
     _captureShader?.dispose();
     _captureShader = null;
+    _captureUniforms = const [];
+    _captureSampler = null;
+    _lookKey = null;
+    _lookValues = const [];
+    _lookProfile = const [];
+    assert(() {
+      _debugWrittenFloats = const [];
+      _debugWrittenSampler = null;
+      return true;
+    }());
   }
 
   void _hold(ui.Picture? captured) {

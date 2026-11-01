@@ -296,49 +296,49 @@ class _MobileDashboard extends ConsumerWidget {
     );
     final top = MediaQuery.paddingOf(context).top + 4;
     final bottom = 16 + context.bottomInset;
-    return CustomScrollView(
-      // A viewport per card lays them all out and holds the scroll end still.
-      scrollCacheExtent: editing
-          ? ScrollCacheExtent.viewport(DashboardWidget.values.length.toDouble())
-          : null,
-      slivers: [
-        SliverLayoutBuilder(
-          builder: (context, constraints) {
-            final side = dashboardMobileSideOf(constraints.crossAxisExtent);
-            final widgets = [
-              for (final widget in saved)
-                if (widget.platforms.contains(platform)) widget,
-            ];
-            if (editing) {
-              return DashboardEditor(
+    final widgets = [
+      for (final widget in saved)
+        if (widget.platforms.contains(platform)) widget,
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final side = dashboardMobileSideOf(constraints.maxWidth);
+        return CustomScrollView(
+          scrollCacheExtent: editing
+              ? ScrollCacheExtent.viewport(
+                  DashboardWidget.values.length.toDouble(),
+                )
+              : null,
+          slivers: [
+            if (editing)
+              DashboardEditor(
                 platform: platform,
                 widgets: widgets,
                 cardKeyOf: cardKeyOf,
                 padding: EdgeInsets.fromLTRB(side, top, side, bottom),
                 gap: gap,
                 onDone: onDone,
-              );
-            }
-            return SliverPadding(
-              padding: EdgeInsets.fromLTRB(side, top, side, bottom),
-              // A lazy list estimates the cards it has not laid out from the
-              // ones it has; cards this uneven move the scroll end as it goes.
-              sliver: SliverToBoxAdapter(
-                child: Column(
-                  spacing: gap,
-                  children: [
-                    for (final group in fuseDashboard(widgets))
-                      group.preview(
-                        context,
-                        cardKey: cardKeyOf(group.identity),
-                      ),
-                  ],
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(side, top, side, bottom),
+                // Eager cards keep scroll extent stable for uneven heights.
+                sliver: SliverToBoxAdapter(
+                  child: Column(
+                    spacing: gap,
+                    children: [
+                      for (final group in fuseDashboard(widgets))
+                        group.preview(
+                          context,
+                          cardKey: cardKeyOf(group.identity),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            );
-          },
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 }
