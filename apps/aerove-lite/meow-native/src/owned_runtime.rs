@@ -26,7 +26,7 @@ pub struct ListenerStatus {
     pub tcp_concurrent: bool, pub find_process_mode: &'static str,
 }
 pub(crate) type RegisterControl = Arc<dyn Fn(Arc<RouteControl>, Tunnel) -> bool + Send + Sync>;
-enum Command { Network(crate::network_api::Apply, CancellationToken, u64, Option<Arc<crate::network_api::ConnectionExit>>, oneshot::Sender<Result<crate::network_api::Receipt, crate::network_api::Failure>>), HostPolicy(String, oneshot::Sender<io::Result<String>>), Park(oneshot::Sender<io::Result<()>>), Resume(Option<OwnedFd>, oneshot::Sender<io::Result<()>>) }
+enum Command { GeoPrepare(crate::geo_reload::Prepare,CancellationToken,oneshot::Sender<io::Result<crate::geo_reload::Status>>), GeoCommit(crate::geo_reload::Commit,CancellationToken,oneshot::Sender<io::Result<crate::geo_reload::Status>>), GeoAbort(crate::geo_reload::Token,oneshot::Sender<io::Result<crate::geo_reload::Status>>), Network(crate::network_api::Apply, CancellationToken, u64, Option<Arc<crate::network_api::ConnectionExit>>, oneshot::Sender<Result<crate::network_api::Receipt, crate::network_api::Failure>>), HostPolicy(String, oneshot::Sender<io::Result<String>>), Park(oneshot::Sender<io::Result<()>>), Resume(Option<OwnedFd>, oneshot::Sender<io::Result<()>>) }
 
 #[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,7 @@ pub struct OwnedRuntime {
     processes: Arc<crate::process_policies::ProcessPolicies>,
     network_slot: Arc<NetworkContextSlot>,
     network_policy: Mutex<Option<Arc<crate::network_policy::NetworkPolicyOwner>>>,
+    geo: Mutex<Option<Arc<crate::geo_reload::Transactions>>>,
     user_controller: Mutex<Option<Arc<crate::user_controller::Owner>>>,
     statistics: Mutex<Option<Arc<crate::statistics_policies::StatisticsPolicies>>>,
     tunnel_capture: Arc<std::sync::OnceLock<std::sync::Weak<TunnelCapture>>>,
@@ -151,7 +152,7 @@ impl OwnedRuntime {
             runtime_mode: if plan.runtime_mode == RuntimeMode::Tun { "tun" } else { "proxy" },
             tun_ready: false, user_listeners_ready: false, listening: false, core_ready: false });
         let (commands, receiver) = mpsc::channel(8);
-        let owner = Arc::new(Self { plane, policies, probes, processes, network_slot, network_policy: Mutex::new(None), user_controller: Mutex::new(None), statistics: Mutex::new(None), tunnel_capture, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
+        let owner = Arc::new(Self { plane, policies, probes, processes, network_slot, network_policy: Mutex::new(None), geo:Mutex::new(None), user_controller: Mutex::new(None), statistics: Mutex::new(None), tunnel_capture, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
             status, commands, failure: Mutex::new(None), startup_diagnostic: AtomicBool::new(false), listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
                 user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
                 only_statistics_proxy: crate::statistics_policies::StatisticsPolicies::from_host(&plan.host_policy_yaml)?, unified_delay: initial_probe.unified_delay, tcp_concurrent: initial_probe.tcp_concurrent, find_process_mode: find_mode }),
@@ -179,12 +180,15 @@ impl OwnedRuntime {
                 worker.startup_diagnostic.store(true, Ordering::Release);
             }
             worker.plane.cancel(); scope.cancel();
+            let geo=worker.geo.lock().clone();
+            let geo_closed=match geo {Some(geo)=>geo.close().await,None=>Ok(())};
+            cleanup_details.insert("geo".into(),cleanup_outcome(&geo_closed));
             let user = worker.user_controller.lock().clone();
             let user_closed = match &user { Some(owner) => owner.stop().await, None => Ok(()) };
             cleanup_details.insert("userController".into(),cleanup_outcome(&user_closed));
             let closed = match core { Some(mut core) => core.close().await, None => Ok(()) };
             cleanup_details.insert("core".into(),cleanup_outcome(&closed));
-            let closed = closed.and(user_closed);
+            let closed = closed.and(user_closed).and(geo_closed);
             let network_policy = worker.network_policy.lock().clone();
             let network_closed = match &network_policy {
                 Some(owner) => match owner.close().await { Ok(()) => Ok(()), Err(_) if owner.cleanup_confirmed() => Ok(()), Err(cause) => Err(io::Error::other(cause)) },
@@ -215,6 +219,7 @@ impl OwnedRuntime {
                 worker.network_slot.retire_after_join();
                 let old_user = worker.user_controller.lock().take();
                 let old_network = worker.network_policy.lock().take();
+                let old_geo=worker.geo.lock().take();drop(old_geo);
                 let old_statistics = worker.statistics.lock().take();
                 drop((old_user,old_network,old_statistics));
             }
@@ -382,25 +387,18 @@ impl OwnedRuntime {
         let resolver_slot = tunnel.resolver_slot();
         let initial_resolver = Arc::clone(&resolver_slot.read());
         let initial_pair = crate::network_context::ResolverPair { main: initial_resolver, proxy: config.dns.proxy_resolver.clone() };
+        let (initial_pair,initial_dns_scope)=crate::geo_reload::rehome_initial_dns(initial_pair,network.captured()).await?;
         crate::network_policy::bind_resolver_observations(&tunnel, &initial_pair)?;
+        tunnel.set_resolver(initial_pair.main.clone());
         let retired_initial = self.network_slot.replace(&network.captured().with_resolver_pair(initial_pair));
         drop(retired_initial);
-        let dns_raw = config.raw.clone(); let dns_proxies = config.proxies.clone();
-        let dns_rules = config.rule_providers.clone(); let dns_dialers = config.dialer_registry.clone();
-        let factory: crate::network_policy::DnsFactory = Arc::new(move |context, prior| {
-            let raw = dns_raw.clone(); let proxies = dns_proxies.clone(); let rules = dns_rules.clone(); let dialers = dns_dialers.clone();
-            let dns_transport = meow_config::owned_load::LoadContext::dns_transport_scope(&context);
-            let loads = OwnedLoadScope::with_context(Arc::new(context));
-            crate::network_policy::DnsBuild { scope: loads, work: Box::pin(async move {
-                let work = Box::pin(meow_config::parse_dns_from_raw(&raw,None,&proxies,Some(&rules),None,Some(&prior),Some(&dialers)));
-                let transport = dns_transport.ok_or_else(|| "dnsTransportOwnerMissing".to_owned())?;
-                let dns = meow_config::owned_load::with_dns_transport_scope(transport,work).await.map_err(|_| "dnsRebuildFailed".to_owned())?;
-                Ok(crate::network_context::ResolverPair { main: dns.resolver, proxy: dns.proxy_resolver })
-            }) }
-        });
+        let dns_inputs=Arc::new(parking_lot::RwLock::new(Arc::new(meow_config::GeoReloadInputs::new(config.raw.clone(),config.proxies.clone(),config.dialer_registry.clone(),config.rule_providers.clone(),None,None))));
+        let factory_inputs=dns_inputs.clone();
+        let factory:crate::network_policy::DnsFactory=Arc::new(move|context,prior|crate::geo_reload::dns_build(factory_inputs.read().clone(),context,prior));
         let network_policy = crate::network_policy::NetworkPolicyOwner::new(self.plane.clone(),tunnel.clone(),self.network_slot.clone(),network.captured(),factory,config.general.ipv6,self.cancel.clone(),0).map_err(error)?;
+        network_policy.adopt_initial_dns_scope(initial_dns_scope).map_err(error)?;
         network_policy.bind_process_policy(self.processes.clone());
-        *self.network_policy.lock() = Some(network_policy);
+        *self.network_policy.lock() = Some(network_policy.clone());
         let only = crate::statistics_policies::StatisticsPolicies::from_host(&plan.host_policy_yaml)?;
         let statistics = crate::statistics_policies::StatisticsPolicies::new(tunnel.statistics().clone(),_generation,only,self.plane.clone(),self.cancel.clone())?;
         *self.statistics.lock() = Some(statistics);
@@ -410,6 +408,8 @@ impl OwnedRuntime {
         let address = listener.local_addr()?;
         let api = Arc::new(CoreApi::assemble_with_plane(&config, tunnel.clone(), mixed_address,
             &plan.private_control.secret, None, crate::network_api::router(Arc::downgrade(self)), self.plane.clone()).map_err(|_| error("apiAssemblyFailed"))?);
+        let geo=crate::geo_reload::Transactions::new(api.clone(),network.clone(),network_policy,&plan,dns_inputs,self.cancel.clone(),config.dns.enabled)?;
+        *self.geo.lock()=Some(geo);
         let user = crate::user_controller::Owner::new(api.clone(),address,Arc::new(network.clone()))?;
         let mut user_failure = user.subscribe_failure();
         *self.user_controller.lock() = Some(user.clone());
@@ -487,8 +487,22 @@ impl OwnedRuntime {
                         return Err(error(cause));
                     }
                 },
+                Some(Command::GeoPrepare(request,cancelled,reply))=>{
+                    let result=match self.geo_transactions(){Ok(geo)=>geo.prepare(request,cancelled).await,Err(cause)=>Err(cause)};let _=reply.send(result);
+                },
+                Some(Command::GeoCommit(request,cancelled,reply))=>{
+                    let result=match self.geo_transactions(){Ok(geo)=>geo.commit(request,cancelled,&self.network_fence).await,Err(cause)=>Err(cause)};let _=reply.send(result);
+                },
+                Some(Command::GeoAbort(token,reply))=>{
+                    let result=match self.geo_transactions(){Ok(geo)=>geo.abort(&token).await,Err(cause)=>Err(cause)};let _=reply.send(result);
+                },
                 Some(Command::HostPolicy(json, reply)) => {
-                    let result = crate::host_policies::execute(self, &json).await;
+                    let result=match crate::geo_reload::parse_renew(&json) {
+                        Ok(Some((request_id,request)))=>match self.geo_transactions(){Ok(geo)=>geo.renew(request,||reply.is_closed()).await.and_then(|value|
+                            serde_json::to_string(&serde_json::json!({"requestId":request_id,"coreEpoch":self.route_stamp().0.to_string(),"operation":"renewGeoBinding","value":value})).map_err(io::Error::other)),Err(cause)=>Err(cause)},
+                        Ok(None)=>crate::host_policies::execute(self,&json).await,
+                        Err(cause)=>Err(cause),
+                    };
                     let _ = reply.send(result);
                 },
                 Some(Command::Park(reply)) => {
@@ -509,6 +523,29 @@ impl OwnedRuntime {
                 None => return Ok(()),
             },
         } }
+    }
+
+    pub(crate) fn geo_transactions(&self)->io::Result<Arc<crate::geo_reload::Transactions>>{self.geo.lock().clone().ok_or_else(||error("geo.runtimeNotReady"))}
+    pub(crate) fn geo_status(&self,token:&crate::geo_reload::Token)->io::Result<crate::geo_reload::Status>{self.geo_transactions()?.status(token)}
+    pub(crate) async fn geo_prepare(&self,request:crate::geo_reload::Prepare)->io::Result<crate::geo_reload::Status>{
+        let geo=self.geo_transactions()?;request.validate()?;
+        let lease=crate::network_api::Lease::new(self.network_fence.clone());let(reply,receipt)=oneshot::channel();
+        // Reserve before mutating the ledger: cancellation while this existing
+        // queue is full cannot leave a preparing token with no owner command.
+        let permit=tokio::select!{biased;_=self.cancel.cancelled()=>return Err(error("geo.cancelled")),permit=self.commands.reserve()=>permit.map_err(|_|error("geo.runtimeExited"))?,};
+        if !geo.admit(&request)?{return geo.status(&request.token());}
+        permit.send(Command::GeoPrepare(request,lease.cancel.clone(),reply));
+        tokio::select!{biased;_=self.cancel.cancelled()=>Err(error("geo.cancelled")),value=receipt=>value.map_err(|_|error("geo.runtimeExited"))?,}
+    }
+    pub(crate) async fn geo_commit(&self,request:crate::geo_reload::Commit)->io::Result<crate::geo_reload::Status>{
+        request.token.validate()?;let lease=crate::network_api::Lease::new(self.network_fence.clone());let(reply,receipt)=oneshot::channel();
+        tokio::select!{biased;_=self.cancel.cancelled()=>return Err(error("geo.cancelled")),sent=self.commands.send(Command::GeoCommit(request,lease.cancel.clone(),reply))=>sent.map_err(|_|error("geo.runtimeExited"))?,}
+        tokio::select!{biased;_=self.cancel.cancelled()=>Err(error("geo.cancelled")),value=receipt=>value.map_err(|_|error("geo.runtimeExited"))?,}
+    }
+    pub(crate) async fn geo_abort(&self,token:crate::geo_reload::Token)->io::Result<crate::geo_reload::Status>{
+        self.geo_transactions()?.request_abort(&token)?;let(reply,receipt)=oneshot::channel();
+        tokio::select!{biased;_=self.cancel.cancelled()=>return Err(error("geo.cancelled")),sent=self.commands.send(Command::GeoAbort(token,reply))=>sent.map_err(|_|error("geo.runtimeExited"))?,}
+        receipt.await.map_err(|_|error("geo.runtimeExited"))?
     }
 
     pub(crate) fn network_snapshot(&self) -> Result<crate::network_api::Snapshot, crate::network_api::Failure> {

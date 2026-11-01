@@ -49,7 +49,16 @@ def verify_resource_jni_source(root):
     jni_abi.verify(root,{**RUNTIME_JNI_DESCRIPTORS,**SCRIPT_JNI_DESCRIPTORS,**RESOURCE_JNI_DESCRIPTORS})
     return dict(RESOURCE_JNI_DESCRIPTORS)
 
+GEO_OWNER_CASES = {target:list(cases) for target,cases in SELECTION_OWNER_CASES.items()}
+GEO_OWNER_CASES.setdefault('lib',[]).extend(['real_geo_prepare_preserves_live_rules_sockets_and_tun_fd_then_commit_reads_new_rules', 'committed_token_is_read_only_after_lost_response_and_source_gc_keeps_effective_reader', 'source_mutation_or_epoch_choice_race_never_publishes_candidate_and_keeps_old_socket', 'missing_jni_binding_bad_assets_and_non_geo_engine_changes_fail_closed_on_live_core', 'actual_seals_reject_write_and_nofollow_hardlink_or_namespace_replacement', 'newer_operation_and_stop_cancel_pending_scopes_without_reactivating_old_transaction', 'dropped_prepare_handler_and_cancelled_jni_renew_join_scopes_before_result', 'running_and_nested_requests_keep_paired_old_route_dns_while_fresh_and_rebound_requests_use_new', 'staged_dns_transport_denies_prepare_then_retire_cancels_and_joins_actual_polled_work', 'real_physical_network_refresh_keeps_raw_ack_id_but_fences_old_live_stamp', 'hostname_doh_dot_prepare_reuses_real_clients_without_bootstrap_then_new_query_uses_new_scope', 'real_user_controller_cannot_prepare_geo_read_raw_witness_or_renew_binding', 'metadata_renew_requires_applied_raw_choice_and_preserves_strict_owner_engine_identity', 'raw_witness_survives_real_fallback_consumption_but_rejects_sql_only_choice', 'raw_witness_explicit_unpin_normalizes_missing_only_for_current_automatic_group', 'raw_witness_provider_graph_and_stop_fence_old_ack_without_changing_raw', 'interface_versions_report_owned_geo_schema_only_on_sealing_platforms', 'actual_rule_check_routes_tracks_match_then_exit_in_one_owner_trace'])
+GEO_OWNER_CASES['lib'].append('fifo_replacement_fails_prepare_and_commit_without_blocking_cancel_or_join')
+
+GEO_EMPTY_CASES = {target:list(cases) for target,cases in GEO_OWNER_CASES.items()}
+GEO_EMPTY_CASES['lib'].extend(['empty_geo_assets_commit_host_auto_off_metadata_with_real_zero_source_receipt', 'empty_geo_assets_reject_hidden_provider_subrule_and_dns_dependencies_before_geo_read', 'empty_geo_assets_cancelled_prepare_joins_empty_scopes_preserving_old_graph'])
+
 def native_test_cases(mode):
+    if mode == 'policy-runtime-geo-empty-v1':return GEO_EMPTY_CASES
+    if mode == "policy-runtime-geo-owned-v1":return GEO_OWNER_CASES
     return SELECTION_OWNER_CASES if mode == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES
 
 

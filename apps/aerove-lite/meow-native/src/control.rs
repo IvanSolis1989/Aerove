@@ -60,6 +60,7 @@ pub struct RouteControl {
     pub plane: Arc<ControlPlane>,
     groups: parking_lot::Mutex<Option<Arc<meow_config::owned_load::OwnedLoadScope>>>,
     startup_graph: parking_lot::Mutex<StartupGraphState>,
+    raw_witness: parking_lot::Mutex<RawWitnessState>,
     // Written only under plane.gate; distinguishes external no-op consumers.
     consume_serial: std::sync::atomic::AtomicU64,
     graph_serial: std::sync::atomic::AtomicU64,
@@ -78,7 +79,7 @@ impl RouteControl {
 
     pub fn with_plane(state: Arc<AppState>, plane: Arc<ControlPlane>) -> Arc<Self> {
         let (groups_events, _) = tokio::sync::broadcast::channel(128);
-        Arc::new(Self { state, plane, groups: parking_lot::Mutex::new(None), startup_graph: parking_lot::Mutex::new(StartupGraphState::default()), consume_serial: std::sync::atomic::AtomicU64::new(0), graph_serial: std::sync::atomic::AtomicU64::new(0),
+        Arc::new(Self { state, plane, groups: parking_lot::Mutex::new(None), startup_graph: parking_lot::Mutex::new(StartupGraphState::default()), raw_witness: parking_lot::Mutex::new(RawWitnessState::default()), consume_serial: std::sync::atomic::AtomicU64::new(0), graph_serial: std::sync::atomic::AtomicU64::new(0),
             observed_members: parking_lot::Mutex::new(BTreeMap::new()),
             groups_changed: tokio::sync::Notify::new(), groups_events })
     }
@@ -86,7 +87,7 @@ impl RouteControl {
     pub fn cancel(&self) {
         self.plane.cancel();
         let retired = self.startup_graph.lock().proof.take();
-        drop(retired);
+        let raw=self.raw_witness.lock().proof.take();drop((retired,raw));
     }
 
     fn check_live(&self, gate: &PlaneState) -> Result<(), ControlError> {
@@ -284,6 +285,9 @@ pub fn router(control: Arc<RouteControl>) -> axum::Router {
         }))
         .route("/aerove/mode", patch(|State(control): State<Arc<RouteControl>>, Json(body): Json<ModeRequest>| async move {
             control.set_mode(body.mode).await.map(Json).map_err(ControlError::response)
+        }))
+        .route("/aerove/selection-witness", get(|State(control): State<Arc<RouteControl>>| async move {
+            control.selection_witness().map(Json).map_err(ControlError::response)
         }))
         .route("/aerove/selection-cache", get(|State(control): State<Arc<RouteControl>>| async move {
             control.startup_selection_snapshot().map(Json).map_err(ControlError::response)
@@ -977,7 +981,9 @@ impl RouteControl {
             }
             let next = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
             let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+            let witness = self.next_raw_witness(&gate, &all, None, Some((group, name)), ticket)?;
             selection.commit_memory(name).map_err(|_| ControlError::InvalidSelection)?;
+            *self.raw_witness.lock() = witness;
             if let Some(delay) = delay {
                 Self::commit_delay_locked(&mut gate, &member, proxy.test_url().unwrap_or(""), delay, &path, &mut retired_delays);
             }
@@ -1339,7 +1345,9 @@ impl RouteControl {
             let next=gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
             let sequence=gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
             let changed=selection.fixed().is_some_and(|value|!value.is_empty());
+            let witness = self.next_raw_witness(&gate, &retained, None, Some((&name, "")), ticket)?;
             selection.unfix_memory().map_err(|_|ControlError::InvalidSelection)?;
+            *self.raw_witness.lock() = witness;
             // Even auto->auto is a new explicit intent, fencing older PUT or
             // group batches without fabricating a route revision.
             gate.selection_serial=ticket;gate.selection_intents.insert(name,ticket);
@@ -1900,7 +1908,9 @@ impl RouteControl {
             let revision = gate.revision.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
             let sequence = gate.groups_sequence.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
             let before = self.selection_readback_locked(&gate, BTreeMap::new(), &graph_token);
+            let witness = self.next_raw_witness(&gate, &retained, Some(&request.requested), None, ticket)?;
             let consumed = crate::selection_cache::apply_memory(&plan)?;
+            *self.raw_witness.lock() = witness;
             for group in &retained {
                 if let Some(selection) = group.selection() { selection.reconcile_health(); }
             }
@@ -2041,6 +2051,44 @@ mod runtime_consume90 {
             expected_graph_token: before.graph_token, requested: BTreeMap::from([("FB".into(),"B".into()),("FB2".into(),"B".into())]) }).unwrap();
         tunnel.route_snapshot().proxies["B"].health().set_alive(false);
         (api,tunnel,scope,events)
+    }
+    #[tokio::test]
+    async fn raw_witness_survives_real_fallback_consumption_but_rejects_sql_only_choice() {
+        let (api,tunnel,scope,events)=fixture().await;
+        let before=api.control.selection_witness().unwrap();assert!(before.complete);assert_eq!(before.raw_requested["FB"],"B");
+        let _=api.control.snapshot().await.unwrap();
+        let after=api.control.selection_witness().unwrap();assert_eq!(after.witness_id,before.witness_id);
+        assert_eq!(after.raw_requested["FB"],"B");assert_eq!(after.groups["FB"].fixed.as_deref(),Some(""));assert_eq!(after.groups["FB"].current,"A");
+        let gate=api.control.plane.gate.lock();
+        api.control.verify_selection_witness_locked(&gate,&after.witness_id,&after.raw_requested).unwrap();
+        let mut sql=after.raw_requested.clone();sql.insert("FB".into(),"C".into());
+        assert!(matches!(api.control.verify_selection_witness_locked(&gate,&after.witness_id,&sql),Err(ControlError::Superseded)));
+        drop(gate);drop(tunnel);finish(api,scope,events).await;
+    }
+    #[tokio::test]
+    async fn raw_witness_explicit_unpin_normalizes_missing_only_for_current_automatic_group() {
+        let (api,tunnel,scope,events)=fixture().await;
+        let before=api.control.selection_witness().unwrap();
+        let response=api.control.unpin("FB".into(),UnpinQuery::default()).await;
+        assert_eq!(response.status(),axum::http::StatusCode::NO_CONTENT);
+        let after=api.control.selection_witness().unwrap();assert!(after.complete);assert_ne!(after.witness_id,before.witness_id);
+        assert_eq!(after.raw_requested["FB"],"");assert!(!after.normalized_raw_requested.contains_key("FB"));
+        let mut sql=after.raw_requested.clone();sql.remove("FB");
+        let gate=api.control.plane.gate.lock();
+        api.control.verify_selection_witness_locked(&gate,&after.witness_id,&sql).unwrap();
+        sql.insert("OUTER".into(),"".into());assert!(api.control.verify_selection_witness_locked(&gate,&after.witness_id,&sql).is_err());
+        assert!(api.control.verify_selection_witness_locked(&gate,&before.witness_id,&before.raw_requested).is_err());
+        drop(gate);drop(tunnel);finish(api,scope,events).await;
+    }
+    #[tokio::test]
+    async fn raw_witness_provider_graph_and_stop_fence_old_ack_without_changing_raw() {
+        let (api,tunnel,scope,events)=fixture().await;
+        let before=api.control.selection_witness().unwrap();
+        {let _gate=api.control.plane.gate.lock();api.control.graph_serial.fetch_add(1,std::sync::atomic::Ordering::Relaxed);}
+        let after=api.control.selection_witness().unwrap();assert!(!after.complete);assert_eq!(before.raw_requested,after.raw_requested);
+        assert!(api.control.verify_selection_witness_locked(&api.control.plane.gate.lock(),&before.witness_id,&before.raw_requested).is_err());
+        api.control.cancel();assert!(api.control.selection_witness().is_err());
+        drop(tunnel);finish(api,scope,events).await;
     }
     async fn finish(api:crate::api::CoreApi, scope:Arc<meow_config::owned_load::OwnedLoadScope>, events:tokio::task::JoinHandle<()>) {
         api.cancel();scope.close().await.unwrap();if let Err(e)=events.await{assert!(e.is_cancelled());}api.join().await;
@@ -2342,4 +2390,91 @@ mod runtime_consume90 {
         finish(api,scope,events).await;
     }
 
+}
+
+
+#[derive(Default)]
+struct RawWitnessState {
+    serial: u64, initial_startup_serial:Option<u64>, acknowledged_intent: u64, requested: BTreeMap<String, String>,
+    proof: Option<RawWitnessProof>,
+}
+struct RawWitnessProof {
+    epoch: u64, graph_serial: u64,
+    proxies: BTreeMap<String, std::sync::Weak<dyn Proxy>>,
+    members: BTreeMap<String, Vec<std::sync::Weak<dyn Proxy>>>,
+    guards: Vec<meow_config::ManagedProbeDependencies>,
+}
+impl RawWitnessProof {
+    fn matches(&self, control: &RouteControl, gate: &PlaneState) -> bool {
+        if gate.closed || self.graph_serial != control.graph_serial.load(std::sync::atomic::Ordering::Relaxed) ||
+            self.guards.iter().any(|guard| !guard.is_current()) { return false; }
+        let route = control.state.tunnel.route_snapshot();
+        self.proxies.len() == route.proxies.len() && self.proxies.iter().all(|(name, proxy)|
+            route.proxies.get(name).is_some_and(|live| std::sync::Weak::ptr_eq(proxy, &Arc::downgrade(live)))) &&
+            self.members.iter().all(|(name, members)| route.proxies.get(name).and_then(|proxy| proxy.member_proxies()).is_some_and(|live|
+                live.len() == members.len() && members.iter().zip(live.iter()).all(|(old, live)| std::sync::Weak::ptr_eq(old, &Arc::downgrade(live)))))
+    }
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SelectionWitness {
+    pub schema_version: u8, pub witness_id: String, pub complete: bool,
+    pub core_epoch: String, pub route_version: String, pub selection_intent: String,
+    pub acknowledged_selection_intent: String, pub acknowledged_core_epoch:Option<String>, pub initial_startup_witness_id:Option<String>, pub graph_version: String,
+    pub raw_requested: BTreeMap<String, String>, pub normalized_raw_requested: BTreeMap<String, String>,
+    pub groups: BTreeMap<String, crate::selection_cache::SelectionReadback>,
+    pub ignored: BTreeMap<String, String>,
+}
+impl RouteControl {
+    // Caller holds plane.gate. Prepare all fallible counters and proof before the
+    // actual selection mutation. Only its successful memory commit installs this.
+    fn next_raw_witness(&self, gate: &PlaneState, graph: &ManagedGraph,
+        restore: Option<&BTreeMap<String,String>>, manual: Option<(&str,&str)>, intent: u64)
+        -> Result<RawWitnessState, ControlError> {
+        let old = self.raw_witness.lock();
+        let serial = old.serial.checked_add(1).ok_or(ControlError::RevisionExhausted)?;
+        let complete = restore.is_some() || old.proof.as_ref().is_some_and(|proof| proof.matches(self, gate));
+        let mut requested = restore.cloned().unwrap_or_else(|| if complete { old.requested.clone() } else { BTreeMap::new() });
+        if let Some((name, member)) = manual { requested.insert(name.to_owned(), member.to_owned()); }
+        let route = self.state.tunnel.route_snapshot();
+        let proof = complete.then(|| RawWitnessProof {
+            epoch: gate.core_epoch, graph_serial: self.graph_serial.load(std::sync::atomic::Ordering::Relaxed),
+            proxies: route.proxies.iter().map(|(name, proxy)| (name.to_string(), Arc::downgrade(proxy))).collect(),
+            members: route.proxies.iter().filter_map(|(name, proxy)| proxy.member_proxies().map(|members|
+                (name.to_string(), members.iter().map(Arc::downgrade).collect()))).collect(),
+            guards: graph.dependencies.iter().cloned().map(|mut proof| { proof.proxies.clear(); proof }).collect(),
+        });
+        Ok(RawWitnessState { serial, initial_startup_serial:if old.serial==0 && restore.is_some(){Some(serial)}else{old.initial_startup_serial}, acknowledged_intent: intent, requested, proof })
+    }
+    // Missing and empty automatic-group history both mean explicit auto/unpin.
+    // Empty selectors and unknown groups retain their distinct raw values.
+    pub(crate) fn normalize_raw(raw: &BTreeMap<String,String>, groups: &BTreeMap<String,crate::selection_cache::SelectionReadback>) -> BTreeMap<String,String> {
+        raw.iter().filter(|(name, member)| !member.is_empty() || !groups.get(*name).is_some_and(|group|
+            group.kind == AdapterType::UrlTest.to_string() || group.kind == AdapterType::Fallback.to_string()))
+            .map(|(name, member)| (name.clone(), member.clone())).collect()
+    }
+    pub(crate) fn selection_witness_locked(&self, gate: &PlaneState) -> Result<SelectionWitness,ControlError> {
+        self.check_live(gate)?; self.check_graph_idle(gate)?;
+        let scope = self.groups.lock().clone().ok_or(ControlError::SelectionMemberNotIntegrated)?;
+        if scope.is_cancelled() { return Err(ControlError::Cancelled); }
+        let graph = self.group_members()?;
+        if !graph.is_current() { return Err(ControlError::Superseded); }
+        let route = self.state.tunnel.route_snapshot();
+        let groups = route.proxies.iter().filter_map(|(name, proxy)| crate::selection_cache::readback(proxy).map(|value| (name.to_string(), value))).collect();
+        let state = self.raw_witness.lock();
+        let complete = state.proof.as_ref().is_some_and(|proof| proof.matches(self, gate));
+        let ignored = state.requested.iter().filter(|(name, _)| !route.proxies.contains_key(*name)).map(|(name, raw)| (name.clone(), raw.clone())).collect();
+        Ok(SelectionWitness { schema_version: 1, witness_id: state.serial.to_string(), complete,
+            core_epoch: gate.core_epoch.to_string(), route_version: gate.revision.to_string(), selection_intent: gate.selection_serial.to_string(),
+            acknowledged_selection_intent: state.acknowledged_intent.to_string(), acknowledged_core_epoch:state.proof.as_ref().map(|proof|proof.epoch.to_string()), initial_startup_witness_id:state.initial_startup_serial.map(|value|value.to_string()), graph_version: self.graph_serial.load(std::sync::atomic::Ordering::Relaxed).to_string(),
+            normalized_raw_requested: Self::normalize_raw(&state.requested,&groups), raw_requested: state.requested.clone(), groups, ignored })
+    }
+    pub(crate) fn selection_witness(&self) -> Result<SelectionWitness,ControlError> {
+        self.selection_witness_locked(&self.plane.gate.lock())
+    }
+    pub(crate) fn verify_selection_witness_locked(&self, gate: &PlaneState, id: &str, raw: &BTreeMap<String,String>) -> Result<(),ControlError> {
+        let witness = self.selection_witness_locked(gate)?;
+        if !witness.complete || witness.witness_id != id || Self::normalize_raw(raw, &witness.groups) != witness.normalized_raw_requested { return Err(ControlError::Superseded); }
+        Ok(())
+    }
 }

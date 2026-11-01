@@ -5,6 +5,35 @@ use std::{collections::BTreeMap, io, net::{IpAddr, SocketAddr}};
 #[serde(rename_all = "lowercase")]
 pub enum RuntimeMode { Tun, Proxy }
 
+/// Trusted Service/start-plan identity. The private HTTP plane can only compare it.
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostBinding {
+    pub service_owner: String,
+    pub session_generation: String,
+    pub intent_epoch: String,
+    pub compiled_sha256: String,
+    pub source_guard: String,
+}
+impl HostBinding {
+    pub fn validate(&self) -> io::Result<()> {
+        for value in [&self.service_owner, &self.session_generation] {
+            if value.parse::<u64>().ok().filter(|n| *n > 0).map(|n| n.to_string()).as_ref() != Some(value) {
+                return Err(invalid("hostBinding.owner"));
+            }
+        }
+        if self.intent_epoch.parse::<u64>().ok().map(|n| n.to_string()).as_ref() != Some(&self.intent_epoch) {
+            return Err(invalid("hostBinding.intentEpoch"));
+        }
+        for value in [&self.compiled_sha256, &self.source_guard] {
+            if value.len() != 64 || !value.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+                return Err(invalid("hostBinding.sha256"));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RuntimePlan {
@@ -24,6 +53,9 @@ pub struct RuntimePlan {
     pub resource_read_root: Option<String>,
     #[serde(default)]
     pub cache_root: Option<String>,
+    #[serde(default)] pub host_binding: Option<HostBinding>,
+    #[serde(default)] pub host_raw_selected_map: Option<BTreeMap<String,String>>,
+    #[serde(default)] pub geo_read_root_authority: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -73,6 +105,12 @@ impl RuntimePlan {
         if json.len() > 4 * 1024 * 1024 + 65536 { return Err(invalid("plan")); }
         let plan: Self = serde_json::from_str(json).map_err(|_| invalid("plan"))?;
         if plan.schema_version != 1 { return Err(invalid("schemaVersion")); }
+        if let Some(binding) = &plan.host_binding {
+            binding.validate()?;
+            if plan.geo_read_root_authority.as_ref().is_none_or(|root| root.is_empty()) || plan.resource_read_root.is_none() {
+                return Err(invalid("geoReadRootAuthority"));
+            }
+        } else if plan.geo_read_root_authority.is_some() { return Err(invalid("hostBinding")); }
         if !plan.private_control.address.ip().is_loopback() || plan.private_control.address.port() == 0 {
             return Err(invalid("privateControl.address"));
         }

@@ -30,6 +30,13 @@ RESOURCE_JNI_DESCRIPTORS = {'Java_dev_aerove_lite_core_JniResourceFetch_nativeCr
 RESOURCE_JNI_SYMBOLS = tuple(RESOURCE_JNI_DESCRIPTORS)
 RESOURCE_HEALTH_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default', 'prepared_validation_forwards_the_owner_token_into_geodata_reading', 'transport_load_forwards_the_fetch_token_into_dns_geodata_reading', 'a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children', 'zstd_geo_expansion_observes_cancellation_between_chunks_not_only_around_the_resource', 'interrupted_reads_are_retried_like_read_to_end_and_other_errors_stay_specific', 'text_rule_entries_stop_at_either_entry_bound_before_they_are_collected', 'yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it', 'streaming_text_admission_checks_the_entry_before_retaining_the_tail', 'streaming_yaml_admission_counts_events_before_the_rest_is_read', 'streaming_rule_admission_keeps_utf8_size_and_cancel_ahead_of_semantic_errors'], 'config_validation': ['zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder', 'official_mrs_text_between_8m_and_64m_stays_previewable', 'official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds', 'text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds']}
 SELECTION_OWNER_CASES = {'resource_fetch': ['materialized_file_provider_is_the_named_download_graph_and_never_reads_old_cache', 'provider_transport_rejects_external_payload_and_unowned_dns_geodata_before_factory', 'named_candidate_graph_real_http_headers_staging_cap_and_no_bootstrap_rule_fetch', 'cancelled_named_fetch_joins_real_socket_and_never_returns_a_staged_success', 'invalid_candidate_dialer_cycle_has_no_network_or_staged_commit', 'prepared_geosite_uses_actual_owned_database_and_rejects_absent_or_external_resource', 'resource_preflight_is_typed_pending_and_standalone_remains_strict', 'resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo'], 'lib': ['provider_policy_fields_defaults_disabled_and_fail_closed', 'providers_keep_distinct_policies_and_only_declared_group_touch_mapping', 'independent_initial_periodic_status_and_stop_read_back', 'lazy_only_real_group_business_touch_and_no_probe_self_touch', 'epoch_and_cancel_fence_actual_pending_health', 'live_network_context_refreshes_each_round_after_hot_network_and_probe_epoch', 'manual_intent_wins_and_member_replacement_retires_old_result', 'newer_automatic_intent_fences_pending_manual_real_response', 'configured_timeout_is_real_and_stop_joins_the_pending_socket', 'provider_health_defaults_match_standard_without_enabling_periodic_meow_default', 'prepared_validation_forwards_the_owner_token_into_geodata_reading', 'transport_load_forwards_the_fetch_token_into_dns_geodata_reading', 'a_concurrent_close_cannot_report_joined_before_the_first_closer_joins_its_children', 'zstd_geo_expansion_observes_cancellation_between_chunks_not_only_around_the_resource', 'interrupted_reads_are_retried_like_read_to_end_and_other_errors_stay_specific', 'text_rule_entries_stop_at_either_entry_bound_before_they_are_collected', 'yaml_event_pass_admits_the_value_bound_and_stops_one_value_past_it', 'streaming_text_admission_checks_the_entry_before_retaining_the_tail', 'streaming_yaml_admission_counts_events_before_the_rest_is_read', 'streaming_rule_admission_keeps_utf8_size_and_cancel_ahead_of_semantic_errors', 'cancellation_while_waiting_for_the_existing_gate_installs_no_raw_pin_and_consumes_nothing', 'unsupported_leaf_batch_is_rejected_before_any_fallback_raw_install_or_consumption', 'passive_reads_never_consume_and_route_first_then_dial_keeps_standard_order_without_reentry', 'two_concurrent_explicit_consumers_only_one_gets_c_and_old_lease_does_not_reselect', 'old_arc_is_denied_after_intent_epoch_provider_publication_and_scope_replacement', 'cancel_closes_the_lease_future_and_old_arc_cannot_start_a_new_operation', 'actual_nested_tcp_and_udp_use_the_owned_member_for_both_consumer_schedules', 'actual_json_query_reports_first_c_with_cleared_fixed_then_next_a', 'idle_unpolled_owned_handle_does_not_block_scope_close_or_allow_old_arc_to_start', 'scope_close_waits_for_running_future_drop_and_error_paths_release_existing_jobs_guard', 'trace_absorbs_only_this_requests_contiguous_owner_commands_and_rejects_external_noop', 'trace_rejects_external_health_intent_epoch_provider_and_stop_without_consuming_again', 'actual_check_routes_accepts_its_own_consumption_and_reports_the_new_real_stamp', 'aborted_or_panicking_running_operation_releases_the_guard_and_never_reports_clean_panic_close', 'one_trace_accepts_multiple_real_pin_transitions_and_keeps_no_transient_override'], 'config_validation': ['zstd_geodata_streaming_matches_the_fixed_core_bounded_decoder', 'official_mrs_text_between_8m_and_64m_stays_previewable', 'official_mrs_compressed_input_between_32m_and_64m_is_admitted_and_the_64m_input_bound_holds', 'text_rule_input_up_to_the_64m_text_budget_is_admitted_and_the_input_bound_holds'], 'general_groups': ['startup_history_memory_commit_reads_real_urltest_and_fallback_fixed_without_probing', 'startup_stale_fallback_and_urltest_restore_together_with_real_raw_consumption', 'startup_cache_epoch_route_and_terminal_cancel_are_checked_before_any_mutation', 'startup_urltest_dead_then_revived_pin_keeps_fixed_while_actual_route_recovers', 'startup_dead_fallback_consumption_is_captured_then_actual_business_read_is_auto', 'startup_cache_real_private_http_is_cas_guarded_and_absent_from_user_controller', 'startup_same_arc_registry_republication_invalidates_the_original_graph_token', 'startup_fallback_first_consumption_then_actual_nested_http_uses_the_standard_business_member']}
+GEO_OWNER_CASES = {target:list(cases) for target,cases in SELECTION_OWNER_CASES.items()}
+GEO_OWNER_CASES['lib'].extend(['real_geo_prepare_preserves_live_rules_sockets_and_tun_fd_then_commit_reads_new_rules', 'committed_token_is_read_only_after_lost_response_and_source_gc_keeps_effective_reader', 'source_mutation_or_epoch_choice_race_never_publishes_candidate_and_keeps_old_socket', 'missing_jni_binding_bad_assets_and_non_geo_engine_changes_fail_closed_on_live_core', 'actual_seals_reject_write_and_nofollow_hardlink_or_namespace_replacement', 'newer_operation_and_stop_cancel_pending_scopes_without_reactivating_old_transaction', 'dropped_prepare_handler_and_cancelled_jni_renew_join_scopes_before_result', 'running_and_nested_requests_keep_paired_old_route_dns_while_fresh_and_rebound_requests_use_new', 'staged_dns_transport_denies_prepare_then_retire_cancels_and_joins_actual_polled_work', 'real_physical_network_refresh_keeps_raw_ack_id_but_fences_old_live_stamp', 'hostname_doh_dot_prepare_reuses_real_clients_without_bootstrap_then_new_query_uses_new_scope', 'real_user_controller_cannot_prepare_geo_read_raw_witness_or_renew_binding', 'metadata_renew_requires_applied_raw_choice_and_preserves_strict_owner_engine_identity', 'raw_witness_survives_real_fallback_consumption_but_rejects_sql_only_choice', 'raw_witness_explicit_unpin_normalizes_missing_only_for_current_automatic_group', 'raw_witness_provider_graph_and_stop_fence_old_ack_without_changing_raw', 'interface_versions_report_owned_geo_schema_only_on_sealing_platforms', 'actual_rule_check_routes_tracks_match_then_exit_in_one_owner_trace'])
+GEO_OWNER_CASES['lib'].append('fifo_replacement_fails_prepare_and_commit_without_blocking_cancel_or_join')
+GEO_EMPTY_CASES = {target:list(cases) for target,cases in GEO_OWNER_CASES.items()}
+GEO_EMPTY_CASES['lib'].extend(['empty_geo_assets_commit_host_auto_off_metadata_with_real_zero_source_receipt',
+    'empty_geo_assets_reject_hidden_provider_subrule_and_dns_dependencies_before_geo_read',
+    'empty_geo_assets_cancelled_prepare_joins_empty_scopes_preserving_old_graph'])
 
 CORE_JNI_SYMBOLS = _ORIGINAL19_CORE_JNI_SYMBOLS + RESOURCE_JNI_SYMBOLS
 
@@ -221,11 +228,19 @@ CORE_PROVIDER_GENERAL_PACKAGES = tuple(sorted(set(CORE_OBSERVABILITY_PACKAGES)|{
 CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLICY_TEST_CASES}))
 
 
+GEO_EMPTY_MODE = "policy-runtime-geo-empty-v1"
+GEO_EMPTY_OVERLAY_SHA256 = "9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f"
+GEO_OWNER_MODE = "policy-runtime-geo-owned-v1"
+GEO_OWNER_OVERLAY_SHA256 = "9c9e799f482814e6b8276ef2749efb483d142f0e537ad418529dcd617c8dd655"
 SELECTION_OWNER_MODE = "policy-runtime-selection-owner-v1"
 SELECTION_OWNER_OVERLAY_SHA256 = "ed52066f30c5067b1a95f78e4dfd2a4bd69ac10f4fc882e76965f88b1198afb4"
 
 def validate_selection_owner_source(policy):
     """The fixed selection overlay and its stronger proof mode must travel together."""
+    if (policy.get("coreTests") == GEO_EMPTY_MODE) != (policy.get("overlaySha256") == GEO_EMPTY_OVERLAY_SHA256):
+        raise ValueError("Empty Geo source requires its exact approved proof mode/overlay")
+    if (policy.get("coreTests") == GEO_OWNER_MODE) != (policy.get("overlaySha256") == GEO_OWNER_OVERLAY_SHA256):
+        raise ValueError("Geo owner source requires its exact approved proof mode/overlay")
     selection = policy.get("coreTests") == SELECTION_OWNER_MODE
     selection_source = policy.get("overlaySha256") == SELECTION_OWNER_OVERLAY_SHA256
     if selection != selection_source:
@@ -250,7 +265,9 @@ def native_identity(root=MEOW_ROOT):
             "policy-runtime-resource-health-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
             "policy-runtime-mrs-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
             "policy-runtime-provider-reader-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
-            "policy-runtime-selection-owner-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-selection-owner-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
+            "policy-runtime-geo-owned-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
+            "policy-runtime-geo-empty-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
@@ -313,7 +330,7 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
         command += ["--", "--test-threads=1", "--nocapture"]
         if receipt.get("command") != command or receipt.get("androidTarget") is not None or receipt.get("representativeTargets") != targets:
             raise ValueError("Meow host receipt did not run the complete approved suite")
-        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") and receipt.get("addedNativeTests") != (SELECTION_OWNER_CASES if policy.get("coreTests") == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES):
+        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1") and receipt.get("addedNativeTests") != (GEO_EMPTY_CASES if policy.get("coreTests") == GEO_EMPTY_MODE else GEO_OWNER_CASES if policy.get("coreTests") == "policy-runtime-geo-owned-v1" else SELECTION_OWNER_CASES if policy.get("coreTests") == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES):
             raise ValueError("Meow host receipt lacks authored resource/health Native test proof")
         if "featureBoundary" in policy:
             boundary_command = ["cargo", "test", "--locked", "--no-default-features", "--lib",
@@ -357,18 +374,18 @@ def _validate_core_test_proof(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
         if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_OBSERVABILITY
         if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_CASES_V2)
-    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
     if mode == "policy-runtime-mrs-reader-v1":cases = CORE_POLICY_TEST_CASES_MRS_READER
     if mode == "policy-runtime-provider-reader-v1":cases = CORE_POLICY_TEST_CASES_PROVIDER_READER
-    if mode == "policy-runtime-selection-owner-v1":cases = CORE_POLICY_TEST_CASES_SELECTION_OWNER
+    if mode in ("policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1") :cases = CORE_POLICY_TEST_CASES_SELECTION_OWNER
     cases = tuple(r if len(r)==6 else r+(False,) for r in cases)
-    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
-    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
+    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1"):packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
     if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
@@ -403,17 +420,17 @@ def _validate_core_test_proof(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if exact:command += ["--exact"]
-        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
+        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
             reject()
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1") and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
                 or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
+    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1"):
         compile_check = state.get("compileCheck")
         if (not isinstance(compile_check, dict)
                 or compile_check.get("command") != CORE_OBSERVABILITY_COMPILE_COMMAND
@@ -422,7 +439,7 @@ def _validate_core_test_proof(state, policy, root):
                 or not is_hash(compile_check.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1"):
         format_check = state.get("formatCheck")
         if (not isinstance(format_check, dict)
                 or format_check.get("command") != CORE_MRS_READER_FORMAT_COMMAND
@@ -431,7 +448,7 @@ def _validate_core_test_proof(state, policy, root):
                 or not is_hash(format_check.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1"):
+    if mode in ("policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1"):
         provider_format = state.get("providerFormatCheck")
         if (not isinstance(provider_format, dict)
                 or provider_format.get("command") != CORE_PROVIDER_READER_FORMAT_COMMAND

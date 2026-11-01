@@ -10,6 +10,10 @@ HASH = re.compile('[0-9a-f]{64}')
 RESOURCE_HEALTH_TARGETS = ('lib', 'anytls_owned_shutdown', 'api_lifecycle', 'config_validation', 'control_plane', 'dns_construction', 'ech_lazy', 'ech_response_binding', 'general_groups', 'group_delay', 'health_round_context', 'host_policy_runtime', 'native_ech_context', 'native_observability', 'native_telemetry', 'node_delay', 'offline_scope', 'owned_runtime', 'owned_spawn', 'packet_fd', 'physical_dns', 'provider_events', 'provider_files', 'provider_groups', 'provider_projection_gate', 'provider_rules', 'proxy_runtime', 'request_policy', 'resource_fetch', 'resource_roots', 'runtime_admission', 'runtime_dialers', 'runtime_general_groups', 'runtime_provider_projection', 'runtime_providers', 'runtime_transports', 'statistics_actual_outcome', 'tcp_dns', 'transport_tasks', 'tun_driver', 'urltest_gate', 'user_request_context')
 
 SELECTION_OWNER_MODE = "policy-runtime-selection-owner-v1"
+GEO_OWNER_MODE = "policy-runtime-geo-owned-v1"
+GEO_EMPTY_MODE = "policy-runtime-geo-empty-v1"
+GEO_EMPTY_OVERLAY_SHA256 = "9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f"
+GEO_OWNER_OVERLAY_SHA256 = "9c9e799f482814e6b8276ef2749efb483d142f0e537ad418529dcd617c8dd655"
 SELECTION_OWNER_OVERLAY_SHA256 = "ed52066f30c5067b1a95f78e4dfd2a4bd69ac10f4fc882e76965f88b1198afb4"
 
 def validate_selection_owner_source(policy):
@@ -18,6 +22,12 @@ def validate_selection_owner_source(policy):
     selection_source = policy.get("overlaySha256") == SELECTION_OWNER_OVERLAY_SHA256
     if selection != selection_source:
         raise ValueError("Selection owner source requires its exact approved proof mode/overlay")
+    if (policy.get("coreTests")==GEO_OWNER_MODE) != (policy.get("overlaySha256")==GEO_OWNER_OVERLAY_SHA256):
+        raise ValueError("Geo owner source requires its exact approved proof mode/overlay")
+
+    if (policy.get("coreTests")==GEO_EMPTY_MODE) != (policy.get("overlaySha256")==GEO_EMPTY_OVERLAY_SHA256):
+        raise ValueError("Empty Geo source requires its exact approved proof mode/overlay")
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()

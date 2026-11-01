@@ -124,6 +124,8 @@ Lite 仪表盘组织单行适配另只读参考同固定提交的 `TextAutoSize.
 
 Lite 局域网反馈另只读核对固定 AndroidX 提交 `a6dd05ae754a1c807f9212fdba3a92c813d88c8b` 的 [`LifecycleEffect.kt`](https://android.googlesource.com/platform/frameworks/support/+/a6dd05ae754a1c807f9212fdba3a92c813d88c8b/lifecycle/lifecycle-runtime-compose/src/commonMain/kotlin/androidx/lifecycle/compose/LifecycleEffect.kt)，SHA256 `037bcfd89499ba68ff3520f5180b8c2b054486f293b02983dfe20fb619422e15`。复用项目已有 `LifecycleEventObserver`、`DisposableEffect`、Compose 剪贴板及通知能力，仅编写本项目设置回执与页面消费接线，未复制上游实现或新增依赖。保留 AOSP 2023 / Apache-2.0 原版权与许可头；参考源码身份不冒充实际发布依赖版本。
 
+Lite Flutter Android 黑盒 API 候选 QA93 另只读核对 AndroidX 固定 `c86a3f34a76126c6f4d97af6771032faa5e97cec` 的 [`UiObject.java`](https://github.com/androidx/androidx/blob/c86a3f34a76126c6f4d97af6771032faa5e97cec/test/uiautomator/uiautomator/src/main/java/androidx/test/uiautomator/UiObject.java)，blob `451f4931bbf8327967ff29567311bbbe130893e7` / SHA-256 `3fd4ace41b8f1bdd5e3a7d491c980004daa331fcced53fc45ff7bcb38bc09a08`。参考其通过 `Bundle` 参数调用 `AccessibilityNodeInfo.ACTION_SET_TEXT` 的公开动作模式；QA93只使用 Android/AndroidX 公共API，没有复制 `UiObject` 实现或增加 UIAutomator 依赖。固定文件头为 Android Open Source Project 2012 / Apache-2.0；此 API 参考不代表设备执行或视觉验收。
+
 #### [AOSP / owned-start 取消与条件服务停止](https://github.com/aosp-mirror/platform_frameworks_base)
 
 **固定版本 / revision：** Android 13 `android-13.0.0_r1`；tag object `a4cd7977df1c42b7c215acc47a34227fff06a7a2`；`CancellationSignal.java` blob `260f7ade8ab713b68d11d45850c59d15c2107b16`，`Service.java` blob `7635138f6cdded8a4fe7f2bbc9597d23b36d139a`。
@@ -987,6 +989,8 @@ Lite API 33 VPN Service stop/revoke 语义另只读参考同一固定 revision�
 
 **许可证、署名与证据：** Apache-2.0，原 AOSP 源文件许可头；[固定 ActivityManager.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/1cdfff555f4a21f71ccc978290e2e212e2f8b168/core/java/android/app/ActivityManager.java)、[官方 API](https://developer.android.com/reference/android/app/ActivityManager.AppTask#getTaskInfo())。；run83 固定来源中的两份 AOSP 源文件许可为 Apache-2.0，证据见 `SOURCES.json`
 
+Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManagerService.java`](https://github.com/aosp-mirror/platform_frameworks_base/blob/0debc9aff4c0cbc28e083a948081d91b0f171319/services/core/java/com/android/server/am/ActivityManagerService.java)，固定 commit `0debc9aff4c0cbc28e083a948081d91b0f171319`，blob `cfbadb46fb54dbb4058209e730766429a910a714` / SHA-256 `9aa17f86f27521dcbaa4ccf11b35680766e1d78b88500f23da78eef58488c619`。只读确认 instrumentation target 与 runner package 签名匹配门槛；该 AOSP 固定源码为 2014 历史机制参考，不能冒称 Android API 33 的实现。未复制实现或增加运行依赖；原文件头为 AOSP 2006–2008 / Apache-2.0。
+
 #### [torvalds/linux](https://github.com/torvalds/linux)
 
 **固定版本 / revision：** [`v6.8`](https://github.com/torvalds/linux/tree/v6.8) / `net/ipv4/tcp.c` blob `c82dc42f57c65df112f79080ff407cd98d11ce68`
@@ -1033,12 +1037,11 @@ Lite API 33 VPN Service stop/revoke 语义另只读参考同一固定 revision�
 
 #### [cloudflare/boring](https://github.com/cloudflare/boring)
 
-**固定版本 / revision：** 检索候选 `v5.2.0` / `6fdd0a54e81a1eecc76e587c685439d3f2ffdd09`
+**固定版本 / revision：** 实际锁定依赖 `boring 5.2.0` / registry checksum `47bf58283ad1560da95ab8dcbb6c71e18a89df30e6011e3582ddf755abe55c4a`；上游源码固定于 release tag `v5.2.0` / commit `6fdd0a54e81a1eecc76e587c685439d3f2ffdd09`
 
-**用途与采用方式：** Android C++ 链接问题的配置检索候选；检索 `BORING_BSSL_RUST_CPPLIB`，目标 main.rs 读取失败，未采用该仓库的新实现
+**用途与采用方式：** 早期 Android C++ 链接配置检索仅检查 `BORING_BSSL_RUST_CPPLIB` 且目标 `main.rs` 无法读取，未采用新实现。另，冻结 Geo92 候选复用固定 Meow Core 已有的 `meow_transport::tls::ResourceSha256`（窄公开别名至 Boring `Sha256`），只调用 `new/update/finish` 做流式 SHA-256，不复制源码、不新增或升级 Cargo 依赖；实际依赖身份由固定 Meow Core `Cargo.lock` 绑定。
 
-**许可证、署名与证据：** 本轮未复制源码或新增依赖；仅保留候选检索和[固定版本来源](https://github.com/cloudflare/boring/tree/6fdd0a54e81a1eecc76e587c685439d3f2ffdd09)，不推测未核实的许可信息
-
+**许可证、署名与证据：** 固定 Meow Core `Cargo.lock` SHA-256 `1a2daa4bca6871fdde99aeed6ec3e20dc2e9a9d357957ba02ae6ae6135bd7c4e` 将 `boring 5.2.0` 绑定 registry checksum `47bf58283ad1560da95ab8dcbb6c71e18a89df30e6011e3582ddf755abe55c4a`；与 crates.io 官方 [5.2.0 metadata](https://crates.io/api/v1/crates/boring/5.2.0) 一致，元数据标示 Apache-2.0。固定仓库来源为 [`boring/src/sha.rs`](https://github.com/cloudflare/boring/blob/6fdd0a54e81a1eecc76e587c685439d3f2ffdd09/boring/src/sha.rs)（blob `dd067185236de253088a268f8638d29d49aece32`，SHA-256 `2b5c9915ac165ce5828b5722b694b6598a0dbc72a69a8e822104e93f9df528d5`）及其 [`Cargo.toml`](https://github.com/cloudflare/boring/blob/6fdd0a54e81a1eecc76e587c685439d3f2ffdd09/boring/Cargo.toml)（blob `a2eac7c932b544c2375daa8c088ecc534a550ff6`，声明 `Apache-2.0`）。
 #### [slackhq/keeper](https://github.com/slackhq/keeper)
 
 **固定版本 / revision：** 只读评估时核定 HEAD `db4a0e7af12cb92e02e1efd613d94e6d5dee037d`
@@ -1149,6 +1152,8 @@ Lite 端口释放失败的证据采集另只读参考固定 `6de0b804ca086a6194a
 
 **许可证、署名与证据：** Apache-2.0；固定来源与许可证据见 run83 `SOURCES.json`
 
+Lite Flutter test-only packaging 候选 94 另核 Android 官方 [AndroidJUnitRunner 文档](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner) 与 [AOSP instrumentation test 文档](https://source.android.com/docs/core/tests/development/instrumentation)：显式 `<instrumentation>` manifest、runner 与 `targetPackage` 关系。候选复用本项目已有 AndroidX test runner 1.6.2 / core 1.6.1 / JUnit 4.13.2，不复制实现或增加测试框架；这是候选构建封装事实，不代表测试APK已构建或 instrumentation 已执行。
+
 #### [AOSP platform/packages/modules/Wifi](https://android.googlesource.com/platform/packages/modules/Wifi)
 
 **固定版本 / revision：** `android13-release` / `0cc694bd8537a85f1dc7fd91852915227b7d673c`；固定 [`WifiShellCommand.java`](https://android.googlesource.com/platform/packages/modules/Wifi/+/0cc694bd8537a85f1dc7fd91852915227b7d673c/service/java/com/android/server/wifi/WifiShellCommand.java#L4-L13) blob `367979f3c07d0b9dd91e06d80f6fe1b95b46d276`
@@ -1229,6 +1234,8 @@ Lite 端口释放失败的证据采集另只读参考固定 `6de0b804ca086a6194a
 另参考 Android tools/base 固定提交 [`44330ad8b855e38930c70ca44f65e781dd95d1ab`](https://android.googlesource.com/platform/tools/base/+/44330ad8b855e38930c70ca44f65e781dd95d1ab) 及其外部 Kotlin 构建脚本回归，定位 KT-89716 对已应用 KTS 的 FIR/UAST 分类问题。Lite 两入口在原有时点直接应用既有共同插件，移除多余脚本中转；未复制上游补丁、升级依赖或关闭 lint，实际 lint 结果仍由新源码 CI 核验。
 
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
+
+同一 Lite packaging 候选 94 另按 AGP 9.4 官方 [`AndroidComponentsExtension`](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/variant/AndroidComponentsExtension) 与 [`ApplicationVariantBuilder`](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/variant/ApplicationVariantBuilder) 公共 API 核对 `beforeVariants` 与 `enableAndroidTest` 生产 test variant 隔离。此处仅记 API 参考；不代表候选 Gradle task graph或 test APK生产已通过。
 
 #### [cli/cli](https://github.com/cli/cli)
 

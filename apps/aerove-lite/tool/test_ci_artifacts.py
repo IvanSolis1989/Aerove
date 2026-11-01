@@ -255,10 +255,38 @@ class HostLockResolutionPlanTests(unittest.TestCase):
         (self.root / 'build-policy.json').write_text(json.dumps(self.policy))
 
     def test_selection_owner_cannot_opt_into_historical_pending_resolution(self):
-        self.policy['coreTests']='policy-runtime-selection-owner-v1'
-        self.write_policy()
-        with self.assertRaises((ValueError,ci.PromotionError)):
-            ci.host_lock_resolution_plan('host',self.root,self.env)
+        for mode in ['policy-runtime-selection-owner-v1','policy-runtime-geo-owned-v1']:
+            self.policy['coreTests']=mode
+            self.write_policy()
+            with self.subTest(mode=mode),self.assertRaises((ValueError,ci.PromotionError)):
+                ci.host_lock_resolution_plan('host',self.root,self.env)
+
+    def test_empty_geo_locked_receipt_uses_independent_native_and_core_guards(self):
+        import copy
+        from test_verify_apk import ApkInspectionTests
+        policy=json.loads((ci.MEOW_ROOT/'build-policy.json').read_text())
+        if policy['coreTests']!='policy-runtime-geo-empty-v1':self.skipTest('historical source identity')
+        policy,state,receipt=ApkInspectionTests()._selection_owner_proof()
+        self.assertEqual(ci.native_identity(),ci.validate_native_receipt(receipt))
+        ci._validate_core_test_proof(state,policy,ci.MEOW_ROOT)
+        for mode in ['policy-runtime-geo-owned-v1','policy-runtime-selection-owner-v1']:
+            bad=copy.deepcopy(state);bad['mode']=mode
+            with self.subTest(core_mode=mode),self.assertRaises(ValueError):ci._validate_core_test_proof(bad,policy,ci.MEOW_ROOT)
+        bad=copy.deepcopy(receipt);bad['addedNativeTests']['lib']=bad['addedNativeTests']['lib'][:-3]
+        with self.assertRaisesRegex(ValueError,'Native test proof'):ci.validate_native_receipt(bad)
+
+    def test_current_geo_source_cannot_enter_historical_pending_resolution(self):
+        import shutil
+        source=ci.MEOW_ROOT;policy=json.loads((source/'build-policy.json').read_text())
+        if policy['coreTests'] not in ('policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1'):self.skipTest('historical source identity')
+        overlay=json.loads((source/policy['overlay']).read_text())
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for name in ['source.json','Cargo.toml','Cargo.lock','core-tests.lock',policy['overlay'],overlay['patch']]:
+                target=root/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source/name,target)
+            (root/'build-policy.json').write_text(json.dumps(dict(policy,resolveLock=True)))
+            with self.assertRaisesRegex(ci.PromotionError,'approved complete Core suite'):
+                ci.host_lock_resolution_plan('host',root,self.env)
 
     def test_pending_plan_does_not_accept_lock_or_run_cargo(self):
         with mock.patch.object(ci.subprocess, 'run') as run:

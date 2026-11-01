@@ -398,29 +398,54 @@
 +            Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR,
 +                Json(serde_json::json!({"message": "DNS query failed"}))).into_response(),
 +        }
-@@ -2295,3 +2315,2 @@
+@@ -1825,5 +1845,8 @@
+-    debug_assert!(
+-        CONFIG_MUTATION.try_lock().is_err(),
+-        "caller must hold the CONFIG_MUTATION lane"
+-    );
+-    tunnel.set_resolver(Arc::clone(&dns.resolver));
++    install_owned_resolver_pair(tunnel,dns_server,dns.resolver.clone(),dns.proxy_resolver.clone(),dns.enabled);
++}
++/// Same resolver publication for the managed rule-only Geo transaction. The
++/// caller holds CONFIG_MUTATION and its existing native owner gate.
++pub fn install_owned_resolver_pair(tunnel:&Tunnel,dns_server:&RwLock<Option<DnsServerHandle>>,
++    resolver:Arc<meow_dns::Resolver>,proxy:Option<Arc<meow_dns::Resolver>>,enabled:bool) {
++    debug_assert!(CONFIG_MUTATION.try_lock().is_err(),"caller must hold CONFIG_MUTATION");
++    tunnel.set_resolver(resolver.clone());
+@@ -1835 +1858 @@
+-    if dns.enabled || VPN_PLATFORM {
++    if enabled || VPN_PLATFORM {
+@@ -1838,2 +1861,2 @@
+-                Arc::clone(&dns.resolver),
+-                dns.proxy_resolver.clone(),
++                resolver.clone(),
++                proxy.clone(),
+@@ -1847 +1870 @@
+-        *h.resolver_slot.write() = Arc::clone(&dns.resolver);
++        *h.resolver_slot.write() = resolver.clone();
+@@ -2295,3 +2318,2 @@
 -async fn get_proxy_groups(State(state): State<Arc<AppState>>) -> Json<Vec<ProxyGroupInfo>> {
 -    let raw = state.raw_config.read();
 -    let groups = raw.proxy_groups.as_deref().unwrap_or(&[]);
 +async fn get_proxy_groups(State(state): State<Arc<AppState>>) -> Result<Json<Vec<ProxyGroupInfo>>, StatusCode> {
 +    let groups = state.raw_config.read().proxy_groups.clone().unwrap_or_default();
-@@ -2305 +2324,3 @@
+@@ -2305 +2327,3 @@
 -            let now = runtime.and_then(|p| p.current());
 +            let now = match runtime {
 +                Some(proxy) => ProxyInfo::query_proxy(proxy, "")?.now, None => None,
 +            };
-@@ -2309 +2330 @@
+@@ -2309 +2333 @@
 -            ProxyGroupInfo {
 +            Ok(ProxyGroupInfo {
-@@ -2317 +2338 @@
+@@ -2317 +2341 @@
 -            }
 +            })
-@@ -2319,2 +2340,2 @@
+@@ -2319,2 +2343,2 @@
 -        .collect();
 -    Json(result)
 +        .collect::<Result<_, StatusCode>>()?;
 +    Ok(Json(result))
-@@ -2558,4 +2579,4 @@
+@@ -2558,4 +2582,4 @@
 -struct DelayParams {
 -    url: Option<String>,
 -    timeout: Option<String>,
@@ -429,17 +454,17 @@
 +    pub url: Option<String>,
 +    pub timeout: Option<String>,
 +    pub expected: Option<String>,
-@@ -2577 +2598 @@
+@@ -2577 +2601 @@
 -fn parse_delay_params(params: &DelayParams) -> Result<Duration, Box<Response>> {
 +pub fn parse_delay_params(params: &DelayParams) -> Result<Duration, Box<Response>> {
-@@ -3765,0 +3787 @@
+@@ -3765,0 +3790 @@
 +    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
-@@ -3774 +3796,3 @@
+@@ -3774 +3799,3 @@
 -        return ws.on_upgrade(move |mut socket| async move {
 +        let scope = connection_scope.map(|axum::Extension(scope)| scope)
 +            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
 +        return scope.on_upgrade(ws, move |mut socket| async move {
-@@ -3776 +3800,8 @@
+@@ -3776 +3803,8 @@
 -                match rx.recv().await {
 +                let message = tokio::select! {
 +                    message = rx.recv() => message,
@@ -449,10 +474,10 @@
 +                    }
 +                };
 +                match message {
-@@ -3820 +3851 @@
+@@ -3820 +3854 @@
 -// One process-wide sampler task reads RSS + limit and serialises the JSON
 +// One runtime-scoped sampler task reads RSS + limit and serialises the JSON
-@@ -3826,5 +3857,2 @@
+@@ -3826,5 +3860,2 @@
 -static MEMORY_FEED: std::sync::Mutex<Option<broadcast::Sender<Arc<str>>>> =
 -    std::sync::Mutex::new(None);
 -
@@ -460,36 +485,36 @@
 -    let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
 +fn subscribe_memory_feed(state: &Arc<AppState>) -> broadcast::Receiver<Arc<str>> {
 +    let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
-@@ -3837 +3865,4 @@
+@@ -3837 +3868,4 @@
 -    tokio::spawn(async move {
 +    drop(guard);
 +    let lifecycle = state.traffic_feed.lifecycle.clone();
 +    let state = Arc::clone(state);
 +    lifecycle.spawn(async move {
-@@ -3838,0 +3870 @@
+@@ -3838,0 +3873 @@
 +        interval.tick().await;
-@@ -3845 +3877 @@
+@@ -3845 +3880 @@
 -                let mut guard = MEMORY_FEED.lock().expect("memory feed lock poisoned");
 +                let mut guard = state.traffic_feed.memory_sender.lock().expect("memory feed lock poisoned");
-@@ -3861 +3893 @@
+@@ -3861 +3896 @@
 -    State(_state): State<Arc<AppState>>,
 +    State(state): State<Arc<AppState>>,
-@@ -3862,0 +3895 @@
+@@ -3862,0 +3898 @@
 +    connection_scope: Option<axum::Extension<crate::lifecycle::ApiLifecycle>>,
-@@ -3864 +3897,3 @@
+@@ -3864 +3900,3 @@
 -    let first: Arc<str> = Arc::from("{\"inuse\":0,\"oslimit\":0}");
 +    let inuse = read_rss_bytes().await;
 +    let oslimit = read_os_memory_limit().await;
 +    let first: Arc<str> = Arc::from(format!("{{\"inuse\":{inuse},\"oslimit\":{oslimit}}}"));
-@@ -3866 +3901,3 @@
+@@ -3866 +3904,3 @@
 -        return ws.on_upgrade(move |mut socket| async move {
 +        let scope = connection_scope.map(|axum::Extension(scope)| scope)
 +            .unwrap_or_else(|| state.traffic_feed.lifecycle.clone());
 +        return scope.on_upgrade(ws, move |mut socket| async move {
-@@ -3874 +3911 @@
+@@ -3874 +3914 @@
 -            let mut feed = subscribe_memory_feed();
 +            let mut feed = subscribe_memory_feed(&state);
-@@ -3892,27 +3929,13 @@
+@@ -3892,27 +3932,13 @@
 -    let feed = subscribe_memory_feed();
 -    let stream = futures::stream::unfold((Some(first), feed), |(first, mut feed)| async move {
 -        if let Some(first) = first {
@@ -530,28 +555,28 @@
 +}
 +
 +#[cfg(not(target_os = "android"))]
-@@ -3974 +3997 @@
+@@ -3974 +4000 @@
 -struct ProviderInfo {
 +pub struct ProviderInfo {
-@@ -4046,0 +4070,4 @@
+@@ -4046,0 +4073,4 @@
 +pub fn provider_snapshot(name: &str, provider: &ProxyProvider) -> ProviderInfo {
 +    provider_to_info(name, provider)
 +}
 +
-@@ -4132 +4159,3 @@
+@@ -4132 +4162,3 @@
 -        Some(proxy) => Json(ProxyInfo::from_proxy(&proxy, &provider_name)).into_response(),
 +        Some(proxy) => match ProxyInfo::query_proxy(&proxy, &provider_name) {
 +            Ok(info) => Json(info).into_response(), Err(status) => status.into_response(),
 +        },
-@@ -4178 +4207 @@
+@@ -4178 +4210 @@
 -struct RuleProviderInfo {
 +pub struct RuleProviderInfo {
-@@ -4219,0 +4249,4 @@
+@@ -4219,0 +4252,4 @@
 +}
 +
 +pub fn rule_provider_snapshot(provider: &Arc<RuleProvider>) -> RuleProviderInfo {
 +    RuleProviderInfo::from_provider(provider)
-@@ -4808,0 +4842,20 @@
+@@ -4808,0 +4845,20 @@
 +    #[tokio::test(start_paused = true)]
 +    async fn observations_existing_single_sampler_coalesces_traffic_and_idles() {
 +        let state=test_state();let feed=Arc::clone(state.tunnel.statistics().observation_feed());let mut observations=feed.activate().unwrap();
@@ -1896,10 +1921,66 @@
 @@ -117 +152 @@
 -        if use_hosts && use_system_hosts {
 +        if use_hosts && use_system_hosts && !crate::owned_load::offline_validation() {
-@@ -229 +264 @@
+@@ -209,0 +245,31 @@
++/// Geo-only no-network construction. The Native owner has separately checked
++/// the entire non-Geo engine; repeat the exact DNS/hosts/ipv6 source equality
++/// here so this capability cannot silently reinterpret changed DNS endpoints.
++pub async fn prepare_owned_geo_dns(raw:&RawConfig,previous:&RawConfig,mmdb_path:Option<&std::path::Path>,
++    geosite:Option<Arc<meow_rules::geosite::GeositeDB>>,rule_providers:&HashMap<String,Arc<RuleProvider>>,
++    prior:&Resolver,prior_proxy:Option<Arc<Resolver>>)->Result<DnsConfig,anyhow::Error>{
++    let scope=crate::owned_load::dns_transport_scope().map_err(anyhow::Error::msg)?;
++    let work=Box::pin(prepare_owned_geo_dns_impl(raw,previous,mmdb_path,geosite,rule_providers,prior,prior_proxy));
++    match scope{Some(scope)=>scope.scope(work).await,None=>work.await}
++}
++async fn prepare_owned_geo_dns_impl(raw:&RawConfig,previous:&RawConfig,mmdb_path:Option<&std::path::Path>,
++    geosite:Option<Arc<meow_rules::geosite::GeositeDB>>,rule_providers:&HashMap<String,Arc<RuleProvider>>,
++    prior:&Resolver,prior_proxy:Option<Arc<Resolver>>)->Result<DnsConfig,anyhow::Error>{
++    if serde_json::to_value((&raw.dns,&raw.hosts,raw.ipv6))? != serde_json::to_value((&previous.dns,&previous.hosts,previous.ipv6))? {
++        anyhow::bail!("owned Geo DNS source changed");
++    }
++    let enabled=raw.dns.as_ref().is_some_and(|dns|dns.enable.unwrap_or(false));
++    let strict=raw.strict.unwrap_or(false);
++    let policy=match raw.dns.as_ref().filter(|_|enabled).and_then(|dns|dns.nameserver_policy.as_ref()).filter(|map|!map.is_empty()){
++        Some(map)=>Some(build_nameserver_policy_with_retained(map,geosite.as_ref(),&[],&HashMap::new(),rule_providers,strict,
++            Some(prior.nameserver_policy().ok_or_else(||anyhow::anyhow!("owned Geo DNS policy source missing"))?)).await?),None=>None,
++    };
++    let filter=match raw.dns.as_ref().filter(|dns|enabled && dns.fallback.as_ref().is_some_and(|fallback|!fallback.is_empty())){
++        Some(dns)=>Some(build_fallback_filter(dns.fallback_filter.as_ref(),mmdb_path,strict)?),None=>None,
++    };
++    let resolver=Arc::new(prior.owned_geo_generation(policy,filter));
++    let proxy_resolver=prior_proxy.map(|resolver|Arc::new(resolver.owned_geo_generation(None,None)));
++    let listen_addr=crate::parse_optional_socket_addr("dns.listen",raw.dns.as_ref().and_then(|dns|dns.listen.as_deref()))?;
++    Ok(DnsConfig{resolver_slot:meow_dns::new_resolver_slot(resolver.clone()),resolver,listen_addr,enabled,proxy_resolver})
++}
++
+@@ -229 +295 @@
 -    let wanted_store_path = persist.then(|| {
 +    let wanted_store_path = (persist && !crate::owned_load::offline_validation()).then(|| {
-@@ -860 +895 @@
+@@ -433,0 +500,17 @@
++) -> Result<NameserverPolicy, anyhow::Error> {
++    build_nameserver_policy_with_retained(map,geosite,bootstrap_clients,proxy_registry,rule_providers,strict,None).await
++}
++
++async fn build_nameserver_policy_with_retained(
++    map: &HashMap<String, crate::raw::RawNspValue>,
++    geosite: Option<&Arc<meow_rules::geosite::GeositeDB>>,
++    bootstrap_clients: &[Arc<DnsClient>],
++    proxy_registry: &HashMap<smol_str::SmolStr, Arc<dyn meow_common::Proxy>>,
++    rule_providers: &HashMap<String, Arc<RuleProvider>>,
++    // `strict` (top-level `strict: true`, issue #533): static defects in a
++    // policy *value* — an unparseable URL, or a `#name` tag referencing an
++    // unknown proxy — become hard errors instead of warn-and-skip.
++    // Resolution-dependent skips (bootstrap lookup failed, no addresses)
++    // stay lenient: those are transient, not config defects.
++    strict: bool,
++    retained:Option<&NameserverPolicy>,
+@@ -558 +641,2 @@
+-            build_policy_resolvers(key, value, bootstrap_clients, proxy_registry, strict).await?;
++            match retained {Some(retained)=>retained.source_entry(key).ok_or_else(||anyhow::anyhow!("owned Geo DNS policy source was not actually constructed: {key}"))?.nameservers,
++                None=>build_policy_resolvers(key, value, bootstrap_clients, proxy_registry, strict).await?};
+@@ -562,0 +647 @@
++        policy.retain_source_entry(key,entry.clone());
+@@ -860 +945 @@
 -    let geoip_reader = if geoip {
 +    let geoip_reader = if geoip && !crate::owned_load::offline_validation() {
 --- a/crates/meow-config/src/ech_dns.rs
@@ -2448,16 +2529,133 @@
 +    crate::owned_load::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
 @@ -605,0 +665 @@
 +    if let Some(scope) = owned_load::OwnedLoadScope::current() { return scope.offline_validation(); }
-@@ -3134,0 +3195,5 @@
+@@ -1231,0 +1292,116 @@
++}
++
++
++/// Capability-only Geo input. It cannot be deserialized from a controller path.
++/// Source authorization/hash is the host owner's job; every effective input must
++/// additionally be an actually sealed FD. Ordinary path readers are unchanged.
++pub struct SealedGeoSources {
++    geoip: Option<Arc<std::fs::File>>, asn: Option<Arc<std::fs::File>>, geosite: Option<Arc<std::fs::File>>,
++}
++impl SealedGeoSources {
++    pub fn new(geoip:Option<Arc<std::fs::File>>,asn:Option<Arc<std::fs::File>>,geosite:Option<Arc<std::fs::File>>)
++        -> Result<Arc<Self>,anyhow::Error> {
++        for file in [&geoip,&asn,&geosite].into_iter().flatten() {
++            #[cfg(any(target_os="linux",target_os="android"))] {
++                use std::os::fd::AsRawFd;
++                let required=libc::F_SEAL_WRITE|libc::F_SEAL_GROW|libc::F_SEAL_SHRINK|libc::F_SEAL_SEAL;
++                let actual=unsafe{libc::fcntl(file.as_raw_fd(),libc::F_GET_SEALS)};
++                if actual<0 || actual&required!=required {return Err(anyhow::anyhow!("geodata: input is not an owned sealed snapshot"));}
++            }
++            #[cfg(not(any(target_os="linux",target_os="android")))] {let _=file;return Err(anyhow::anyhow!("geodata: sealed snapshot unavailable on this host"));}
++        }
++        Ok(Arc::new(Self{geoip,asn,geosite}))
++    }
++    /// Only these held capabilities are translated to an internal reader path;
++    /// no user-provided /proc path is admitted by this function or other readers.
++    pub fn effective_raw(&self,raw:&raw::RawConfig)->Result<raw::RawConfig,anyhow::Error> {
++        let mut effective=raw.clone();let geo=effective.geodata.get_or_insert_with(Default::default);
++        if geo.auto_update {return Err(anyhow::anyhow!("geodata.auto-update: owned Geo reload requires false"));}
++        for (path,file) in [(&mut geo.mmdb_path,&self.geoip),(&mut geo.asn_path,&self.asn),(&mut geo.geosite_path,&self.geosite)] {
++            match file {
++                Some(file)=> {
++                    #[cfg(any(target_os="linux",target_os="android"))] {use std::os::fd::AsRawFd;*path=Some(format!("/proc/self/fd/{}",file.as_raw_fd()));}
++                    #[cfg(not(any(target_os="linux",target_os="android")))] {let _=file;return Err(anyhow::anyhow!("geodata: sealed snapshot unavailable on this host"));}
++                },
++                None if path.is_some()=>return Err(anyhow::anyhow!("geodata: explicit source has no authorized sealed snapshot")),
++                None=>{},
++            }
++        }
++        Ok(effective)
++    }
++}
++/// One immutable DNS build input generation. Held FD capabilities survive all
++/// worker scopes; future network refreshes clone the owner's current generation.
++#[derive(Clone)]
++pub struct GeoReloadInputs {
++    pub raw: raw::RawConfig,
++    proxies: HashMap<SmolStr,Arc<dyn Proxy>>, dialers: meow_proxy::dialer::ProxyRegistry,
++    pub rule_providers: HashMap<String,Arc<rule_provider::RuleProvider>>,
++    payloads: Option<Arc<rule_provider::PrefetchedPayloads>>,
++    pub sources: Option<Arc<SealedGeoSources>>,
++    geo_context:Option<meow_rules::ParserContext>,
++}
++impl GeoReloadInputs {
++    pub fn new(raw:raw::RawConfig,proxies:HashMap<SmolStr,Arc<dyn Proxy>>,dialers:meow_proxy::dialer::ProxyRegistry,
++        rule_providers:HashMap<String,Arc<rule_provider::RuleProvider>>,payloads:Option<Arc<rule_provider::PrefetchedPayloads>>,sources:Option<Arc<SealedGeoSources>>)->Self {
++        Self{raw,proxies,dialers,rule_providers,payloads,sources,geo_context:None}
++    }
++    pub fn with_geo_context(mut self,context:meow_rules::ParserContext)->Self{self.geo_context=Some(context);self}
++    pub async fn prepare_dns(&self,prior:&meow_dns::Resolver,proxy:Option<Arc<meow_dns::Resolver>>,previous:&raw::RawConfig)->Result<DnsConfig,anyhow::Error>{
++        let sources=self.sources.as_ref().ok_or_else(||anyhow::anyhow!("owned Geo sealed sources missing"))?;
++        let effective=sources.effective_raw(&self.raw)?;let geo=geodata::parse_geodata(effective.geodata.as_ref())?;
++        let context=self.geo_context.as_ref().ok_or_else(||anyhow::anyhow!("owned Geo parsed context missing"))?;
++        dns_parser::prepare_owned_geo_dns(&effective,previous,geo.mmdb_path.as_deref(),context.geosite.clone(),&self.rule_providers,prior,proxy).await
++    }
++    pub async fn build_dns(&self,prior:&meow_dns::Resolver)->Result<DnsConfig,anyhow::Error> {
++        let effective=match &self.sources {Some(sources)=>sources.effective_raw(&self.raw)?,None=>self.raw.clone()};
++        parse_dns_from_raw(&effective,None,&self.proxies,Some(&self.rule_providers),self.payloads.as_ref(),Some(prior),Some(&self.dialers)).await
++    }
++}
++
++pub struct PreparedGeoReload {
++    pub rules:Vec<Box<dyn Rule>>,
++    pub rule_providers:HashMap<String,Arc<rule_provider::RuleProvider>>,
++    pub payloads:Arc<rule_provider::PrefetchedPayloads>,
++    pub context:meow_rules::ParserContext,
++}
++/// Reuses the actual rule/sub-rule/provider/DNS builders. Proxies, user
++/// selections, listeners, provider workers and the live route are untouched.
++pub async fn prepare_geo_reload(raw:raw::RawConfig,sources:Arc<SealedGeoSources>,
++    proxies:HashMap<SmolStr,Arc<dyn Proxy>>,dialers:meow_proxy::dialer::ProxyRegistry,
++    cache_dir:Option<PathBuf>) -> Result<PreparedGeoReload,anyhow::Error> {
++    let empty_sources=sources.geoip.is_none() && sources.asn.is_none() && sources.geosite.is_none();
++    let effective=sources.effective_raw(&raw)?;
++    if effective.rule_providers.as_ref().is_some_and(|providers|providers.values().any(|provider|provider.provider_type!="file")) {
++        return Err(anyhow::anyhow!("rule-providers: Geo prepare requires the existing sealed file resources; no network prefetch"));
++    }
++    let worker_raw=effective.clone();let worker_proxies=proxies.clone();let worker_dialers=dialers.clone();let worker_cache=cache_dir.clone();
++    let worker_sources=sources.clone();
++    let (rules,providers,payloads,context)=spawn_blocking_with_current_dispatcher(move|| {
++        let _held_sources=worker_sources;
++        let payloads=Arc::new(match worker_raw.rule_providers.as_ref() {
++            Some(map)=>rule_provider::prefetch_payloads(map,worker_cache.as_deref(),None,&|name|worker_proxies.get(name).cloned()),
++            None=>rule_provider::PrefetchedPayloads::default(),
++        });
++        if empty_sources {
++            // Use the actual prefetched provider/subrule/logic closure, before
++            // parser context or DNS builders can read an ambient Geo database.
++            let needed=rule_geodata_requirements(&collect_geo_scan_lines(&worker_raw,&payloads));
++            let dns_geoip=worker_raw.dns.as_ref().is_some_and(|dns|dns.enable.unwrap_or(false) && dns.fallback.as_ref().is_some_and(|urls|!urls.is_empty()) && dns.fallback_filter.as_ref().and_then(|filter|filter.geoip).unwrap_or(true));
++            if needed.geoip || needed.asn || needed.geosite || dns_policy_uses_geosite(&worker_raw) || dns_geoip {
++                return Err(anyhow::anyhow!("geodata: empty sources have a rule/provider/subrule or DNS Geo dependency"));
++            }
++        }
++        let ctx=build_parser_context_from_raw(&worker_raw,&payloads)?;
++        let mut dropped=DroppedProviders::default();
++        let providers=match worker_raw.rule_providers.as_ref() {
++            Some(map)=>rule_provider::load_providers_prefetched(map,worker_cache.as_deref(),&ctx,None,
++                &|name|worker_proxies.get(name).cloned(),&payloads,Some(&worker_dialers),worker_raw.strict.unwrap_or(false),&mut dropped)?,
++            None=>HashMap::new(),
++        };
++        let map=rule_provider::live_ruleset_map(&providers);
++        let sub=match worker_raw.sub_rules.as_ref(){Some(blocks)=>sub_rules_parser::parse_sub_rules(blocks,&map,&ctx)?,None=>HashMap::new()};
++        let rules=rule_parser::parse_rules_full(worker_raw.rules.as_deref().unwrap_or(&[]),&map,&ctx,&sub,worker_raw.strict.unwrap_or(false))?;
++        Ok::<_,anyhow::Error>((rules,providers,payloads,ctx))
++    }).await.map_err(|cause|anyhow::anyhow!("Geo preparation worker failed: {cause}"))??;
++    Ok(PreparedGeoReload{rules,rule_providers:providers,payloads,context})
+@@ -3134,0 +3311,5 @@
 +    if geoip_trigger.is_some() { offline_validation::require_prepared_geo_file(Some(geoip_path), "$.geodata.mmdb-path")?; }
 +    if lines.iter().any(|line| line_references_asn(line)) { offline_validation::require_prepared_geo_file(Some(asn_path), "$.geodata.asn-path")?; }
 +    if lines.iter().any(|line| line_references_geosite(line)) || dns_policy_uses_geosite(raw) {
 +        offline_validation::require_prepared_geo_file(geosite_explicit, "$.geodata.geosite-path")?;
 +    }
-@@ -3279 +3344 @@
+@@ -3279 +3460 @@
 -fn dns_policy_uses_geosite(raw: &raw::RawConfig) -> bool {
 +pub fn dns_policy_uses_geosite(raw: &raw::RawConfig) -> bool {
-@@ -3353,0 +3419,10 @@
+@@ -3353,0 +3535,10 @@
 +/// Resource preparation reports dependencies; this is not semantic rule admission.
 +pub struct RuleGeodataRequirements { pub geoip: bool, pub asn: bool, pub geosite: bool }
 +pub fn rule_geodata_requirements(lines: &[String]) -> RuleGeodataRequirements {
@@ -2468,7 +2666,7 @@
 +    }
 +}
 +
-@@ -3905,4 +3980,13 @@
+@@ -3905,4 +4096,13 @@
 -    // Pre-resolve any DNS-sourced ECH configs into inline base64 so the
 -    // sync `parse_proxy` path that follows can stay sync. Failures warn
 -    // and leave the map unchanged — except the `enable: true` with no
@@ -2486,7 +2684,7 @@
 +    }
 +    // Pure ECH defects only. DNS mode remains typed metadata until the
 +    // handshake can use the operation's captured user resolver generation.
-@@ -7773,0 +7858,5 @@
+@@ -7773,0 +7974,5 @@
 +
 +#[cfg(test)]
 +mod owned_dns_tests;
@@ -6694,15 +6892,41 @@
 +use meow_common::transport_tasks::{self, TransportScope, Work};
 @@ -14,0 +16 @@
 +use std::future::Future;
-@@ -239,0 +242 @@
+@@ -123,0 +126 @@
++    source_entries:HashMap<String,PolicyEntry>,
+@@ -138,4 +141,8 @@
+-            clients: Vec::new(),
+-        }
+-    }
+-
++            clients: Vec::new(),source_entries:HashMap::new(),
++        }
++    }
++
++    /// Original configured key -> actual already bootstrapped clients. Owned Geo
++    /// rebuilds matchers with these exact transports; never resolves a placeholder.
++    pub fn retain_source_entry(&mut self,key:&str,entry:PolicyEntry){self.source_entries.insert(key.to_owned(),entry);}
++    pub fn source_entry(&self,key:&str)->Option<PolicyEntry>{self.source_entries.get(key).cloned()}
+@@ -239,0 +247 @@
 +    observations: parking_lot::RwLock<Option<Arc<meow_common::observations::ObservationFeed>>>,
-@@ -263,0 +267,5 @@
+@@ -244 +252 @@
+-    hosts: DomainTrie<HostEntry>,
++    hosts: Arc<DomainTrie<HostEntry>>,
+@@ -249,2 +257,2 @@
+-    policy: Option<NameserverPolicy>,
+-    fallback_filter: Option<FallbackFilter>,
++    policy: Option<Arc<NameserverPolicy>>,
++    fallback_filter: Option<Arc<FallbackFilter>>,
+@@ -257 +265 @@
+-    fakeip_skipper: Option<Skipper>,
++    fakeip_skipper: Option<Arc<Skipper>>,
+@@ -263,0 +272,5 @@
 +    /// Captured owner for Core DNS work belonging to this resolver generation.
 +    /// Set by the embedding runtime before publishing this resolver.
 +    transport_scope: Option<TransportScope>,
 +    /// Explicit no-network state: local data remains usable, upstream misses fail without I/O.
 +    unavailable_error: Option<io::ErrorKind>,
-@@ -266,0 +275,54 @@
+@@ -266,0 +280,54 @@
 +    /// Bind every immutable DNS generation to the owning runtime's same live feed.
 +    pub fn set_observation_feed(&self, feed: Arc<meow_common::observations::ObservationFeed>) -> io::Result<()> {
 +        let mut bound = self.observations.write();
@@ -6757,7 +6981,7 @@
 +                "upstream":source.unwrap_or(""),"cached":true,"answers":answers,"rcode":rcode,"error":"","delay":u64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX as u64).min(i64::MAX as u64)})
 +        });
 +    }
-@@ -271,0 +334,32 @@
+@@ -271,0 +339,32 @@
 +    }
 +
 +    /// Mark this immutable resolver generation as explicitly offline. Hosts and
@@ -6790,7 +7014,7 @@
 +        } else {
 +            transport_tasks::spawn(work)
 +        }
-@@ -485,0 +580,50 @@
+@@ -485,0 +585,50 @@
 +/// Run one upstream exchange in this resolver generation's captured task
 +/// owner. The task owner retains and joins the real spawned task at retirement.
 +async fn run_owned_query<T, F>(scope: Option<TransportScope>, future: F) -> Result<T, ClientError>
@@ -6841,14 +7065,14 @@
 +    result
 +}
 +
-@@ -502,0 +647 @@
+@@ -502,0 +652 @@
 +    scope: Option<TransportScope>,
-@@ -509,0 +655,4 @@
+@@ -509,0 +660,4 @@
 +        let result_client = Arc::clone(client);
 +        let query_client = Arc::clone(client);
 +        let host = host.to_owned();
 +        let query_scope = scope.clone();
-@@ -511,2 +660,10 @@
+@@ -511,2 +665,10 @@
 -            let result = client.lookup_set(host, want, ipv6_enabled).await;
 -            (client, result)
 +            let capture=Arc::new(QueryCapture::default());
@@ -6861,7 +7085,7 @@
 +                let values=capture.values.lock();set.observed_v4=values.0.clone();set.observed_v6=values.1.clone();set
 +            });
 +            (result_client, result)
-@@ -691,0 +849,10 @@
+@@ -691,0 +854,10 @@
 +async fn query_one_owned(
 +    client: Arc<DnsClient>,
 +    name: Name,
@@ -6872,18 +7096,18 @@
 +    run_owned_query(scope, async move { client.query_name(&name, record_type).await }).await.map(|message| (message, source))
 +}
 +
-@@ -696 +863,2 @@
+@@ -696 +868,2 @@
 -) -> Option<Message> {
 +    scope: Option<TransportScope>,
 +) -> Option<(Message, String)> {
-@@ -699 +867,5 @@
+@@ -699 +872,5 @@
 -        1 => clients[0].query_name(name, record_type).await.ok(),
 +        1 => {
 +            query_one_owned(Arc::clone(&clients[0]), name.clone(), record_type, scope)
 +                .await
 +                .ok()
 +        }
-@@ -701,2 +873,12 @@
+@@ -701,2 +878,12 @@
 -            let f1 = clients[0].query_name(name, record_type);
 -            let f2 = clients[1].query_name(name, record_type);
 +            let f1 = query_one_owned(
@@ -6898,7 +7122,7 @@
 +                record_type,
 +                scope,
 +            );
-@@ -714 +896,7 @@
+@@ -714 +901,7 @@
 -                    Box::pin(async move { c.query_name(name, record_type).await.map_err(|_| ()) })
 +                    let scope = scope.clone();
 +                    let name = name.clone();
@@ -6907,22 +7131,52 @@
 +                            .await
 +                            .map_err(|_| ())
 +                    })
-@@ -772,0 +961,3 @@
+@@ -763 +956 @@
+-            hosts,
++            hosts:Arc::new(hosts),
+@@ -772,0 +966,3 @@
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
 +            observations: parking_lot::RwLock::new(None),
-@@ -985 +1176 @@
+@@ -810,2 +1006,2 @@
+-            policy,
+-            fallback_filter,
++            policy:policy.map(Arc::new),
++            fallback_filter:fallback_filter.map(Arc::new),
+@@ -985 +1181 @@
 -                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true).await;
 +                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true, TransportScope::current()).await;
-@@ -1043,0 +1235,3 @@
+@@ -1034 +1230 @@
+-            hosts,
++            hosts:Arc::new(hosts),
+@@ -1043,0 +1240,3 @@
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
 +            observations: parking_lot::RwLock::new(None),
-@@ -1186,0 +1381 @@
+@@ -1053,0 +1253,15 @@
++    /// Same DNS sources, immutable hosts/skipper/fake-IP owner, and fresh
++    /// per-generation cache/inflight/matchers. Clients contain only endpoints,
++    /// pools and same-session observation/proxy handles; their task/network
++    /// generation is this NEW resolver's explicitly captured transport scope.
++    pub fn owned_geo_generation(&self,policy:Option<NameserverPolicy>,fallback_filter:Option<FallbackFilter>)->Self {
++        self.clone_owned_generation(policy.map(Arc::new),fallback_filter.map(Arc::new))
++    }
++    pub fn owned_same_sources_generation(&self)->Self{self.clone_owned_generation(self.policy.clone(),self.fallback_filter.clone())}
++    fn clone_owned_generation(&self,policy:Option<Arc<NameserverPolicy>>,fallback_filter:Option<Arc<FallbackFilter>>)->Self {
++        Self{main:self.main.clone(),fallback:self.fallback.clone(),cache:DnsCache::new(4096),mode:self.mode,hosts:self.hosts.clone(),use_hosts:self.use_hosts,
++            inflight:[DashMap::new(),DashMap::new(),DashMap::new()],policy,fallback_filter,fakeip_v4:self.fakeip_v4.clone(),fakeip_v6:self.fakeip_v6.clone(),
++            fakeip_skipper:self.fakeip_skipper.clone(),fakeip_ttl:self.fakeip_ttl,ipv6:self.ipv6,transport_scope:TransportScope::current(),unavailable_error:self.unavailable_error,
++            observations:parking_lot::RwLock::new(self.observations.read().clone())}
++    }
++
+@@ -1055 +1269 @@
+-        self.policy.as_ref()
++        self.policy.as_deref()
+@@ -1186,0 +1401 @@
 +                self.observe_cached(lookup_host, QueryFamilies::IPV4, &cached.v4, cached.source_v4.as_deref(), cached.observed_v4.as_ref());
-@@ -1189,0 +1385 @@
+@@ -1189,0 +1405 @@
 +                self.observe_cached(lookup_host, QueryFamilies::IPV6, &cached.v6, cached.source_v6.as_deref(), cached.observed_v6.as_ref());
-@@ -1197,0 +1394,7 @@
+@@ -1197,0 +1414,7 @@
 +            None
 +        } else if let Some(kind) = self.unavailable_error {
 +            lookup_err = Some(io::Error::new(kind, "DNS unavailable: no captured network"));
@@ -6930,17 +7184,17 @@
 +                self.observe_family(lookup_host, family, None, None, "", "DNS unavailable: no captured network", "", false,
 +                    std::time::Instant::now(), std::time::SystemTime::now(), meow_common::observations::DnsInitiator::current());
 +            } }
-@@ -1464,0 +1668 @@
+@@ -1464,0 +1688 @@
 +        self.observe_cached(host, family, hit, if family == QueryFamilies::IPV4 { cached.source_v4.as_deref() } else { cached.source_v6.as_deref() }, if family==QueryFamilies::IPV4 { cached.observed_v4.as_ref() } else { cached.observed_v6.as_ref() });
-@@ -1494,0 +1699 @@
+@@ -1494,0 +1719 @@
 +            self.observe_cached(host, family, hit, if family == QueryFamilies::IPV4 { cached.source_v4.as_deref() } else { cached.source_v6.as_deref() }, if family==QueryFamilies::IPV4 { cached.observed_v4.as_ref() } else { cached.observed_v6.as_ref() });
-@@ -1668,0 +1874,5 @@
+@@ -1668,0 +1894,5 @@
 +            // This completion belongs to the flight leader. Subscribers return above.
 +            // Capture provenance here; upstream child tasks/retries do not emit events.
 +            let started = std::time::Instant::now();
 +            let time = std::time::SystemTime::now();
 +            let initiator = meow_common::observations::DnsInitiator::current();
-@@ -1669,0 +1880,9 @@
+@@ -1669,0 +1900,9 @@
 +            let error = err.as_ref().map(ToString::to_string).unwrap_or_default();
 +            let failure_rcode = match err.as_ref() { Some(ClientError::Rcode(code)) => format!("{code:?}").to_uppercase(), _ => String::new() };
 +            for family in [QueryFamilies::IPV4, QueryFamilies::IPV6] {
@@ -6950,31 +7204,31 @@
 +                self.observe_family(host, family, answer, observed, set.as_ref().map_or("", |set| set.source.as_str()),
 +                    &error, &failure_rcode, false, started, time, initiator);
 +            }
-@@ -1712 +1931 @@
+@@ -1712 +1951 @@
 -                let (set, err) = query_pool_set(&entry.nameservers, host, want, self.ipv6).await;
 +                let (set, err) = query_pool_set(&entry.nameservers, host, want, self.ipv6, self.transport_scope.clone()).await;
-@@ -1741 +1960 @@
+@@ -1741 +1980 @@
 -            let (set, err) = query_pool_set(&self.main, host, want, self.ipv6).await;
 +            let (set, err) = query_pool_set(&self.main, host, want, self.ipv6, self.transport_scope.clone()).await;
-@@ -1787 +2006 @@
+@@ -1787 +2026 @@
 -            Some(clients) => query_pool_set(clients, host, want, self.ipv6).await,
 +            Some(clients) => query_pool_set(clients, host, want, self.ipv6, self.transport_scope.clone()).await,
-@@ -1811 +2030 @@
+@@ -1811 +2050 @@
 -                    self.cache.merge_family(
 +                    self.cache.merge_family_observed(
-@@ -1817,0 +2037 @@
+@@ -1817,0 +2057 @@
 +                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::None)),
-@@ -1821 +2041 @@
+@@ -1821 +2061 @@
 -                    self.cache.merge_family(
 +                    self.cache.merge_family_observed(
-@@ -1827,0 +2048 @@
+@@ -1827,0 +2068 @@
 +                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::NoData)),
-@@ -1831 +2052 @@
+@@ -1831 +2072 @@
 -                    self.cache.merge_family(
 +                    self.cache.merge_family_observed(
-@@ -1837,0 +2059 @@
+@@ -1837,0 +2079 @@
 +                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::NxDomain)),
-@@ -1864 +2086,25 @@
+@@ -1864 +2106,25 @@
 -    ) -> Option<Message> {
 +    ) -> io::Result<Option<Message>> {
 +        let started = std::time::Instant::now();
@@ -7001,17 +7255,17 @@
 +        if let Some(kind) = self.unavailable_error {
 +            return Err(io::Error::new(kind, "DNS unavailable: no captured network"));
 +        }
-@@ -1867 +2113 @@
+@@ -1867 +2133 @@
 -                return self.try_fallback_generic(query_name, record_type).await;
 +                return Ok(self.try_fallback_generic(query_name, record_type).await);
-@@ -1872,4 +2118,2 @@
+@@ -1872,4 +2138,2 @@
 -                if let Some(l) =
 -                    query_pool_generic(&entry.nameservers, query_name, record_type).await
 -                {
 -                    return Some(l);
 +                if let Some(l) = query_pool_generic(&entry.nameservers, query_name, record_type, self.transport_scope.clone()).await {
 +                    return Ok(Some(l));
-@@ -1879,4 +2123,4 @@
+@@ -1879,4 +2143,4 @@
 -        if let Some(l) = query_pool_generic(&self.main, query_name, record_type).await {
 -            return Some(l);
 -        }
@@ -7020,13 +7274,16 @@
 +            return Ok(Some(l));
 +        }
 +        Ok(self.try_fallback_generic(query_name, record_type).await)
-@@ -1889 +2133 @@
+@@ -1889 +2153 @@
 -    ) -> Option<Message> {
 +    ) -> Option<(Message, String)> {
-@@ -1891 +2135 @@
+@@ -1891 +2155 @@
 -        query_pool_generic(fb, query_name, record_type).await
 +        query_pool_generic(fb, query_name, record_type, self.transport_scope.clone()).await
-@@ -2148,0 +2393,45 @@
+@@ -2053 +2317 @@
+-        self.fakeip_skipper = Some(skipper);
++        self.fakeip_skipper = Some(Arc::new(skipper));
+@@ -2148,0 +2413,45 @@
 +
 +    #[cfg(feature = "encrypted")]
 +    struct SpawnRecursiveEchSource {
@@ -7072,7 +7329,10 @@
 +        assert_eq!(error.to_string(), "echDnsCycle");
 +        assert_eq!(queries.load(Ordering::SeqCst), 1, "cycle must stop before another source query");
 +    }
-@@ -2298,0 +2588,16 @@
+@@ -2245 +2554 @@
+-        resolver.policy = Some(policy);
++        resolver.policy = Some(Arc::new(policy));
+@@ -2298,0 +2608,16 @@
 +    }
 +
 +    #[tokio::test]
@@ -7089,7 +7349,10 @@
 +        let name = Name::from_ascii("remote.test").unwrap();
 +        let error = resolver.forward_generic("remote.test", &name, RecordType::TXT).await.unwrap_err();
 +        assert_eq!(error.kind(), io::ErrorKind::NotConnected);
-@@ -4039,0 +4345,225 @@
+@@ -3686 +4011 @@
+-        resolver.fallback_filter = Some(ff);
++        resolver.fallback_filter = Some(Arc::new(ff));
+@@ -4039,0 +4365,225 @@
 +
 +
 +#[cfg(test)]
@@ -11600,23 +11863,808 @@
 +}
 --- a/crates/meow-transport/src/tls.rs
 +++ b/crates/meow-transport/src/tls.rs
-@@ -53,0 +54,2 @@
-+mod ech_scope;
-+pub use ech_scope::{EchQuery, EchScope, EchSource};
-@@ -62,4 +64,3 @@
+@@ -1,397 +1,404 @@
+-//! TLS client transport layer (`features = ["tls"]`).
+-//!
+-//! [`TlsLayer`] wraps any inner [`Stream`] with a TLS handshake and returns the
+-//! upgraded stream ready for the next layer (WebSocket, gRPC, …) or for the
+-//! proxy protocol codec (Trojan, VMess, …).
+-//!
+-//! # Backend
+-//!
+-//! Every non-REALITY handshake is performed by BoringSSL (`boring` +
+-//! `tokio-boring`, see `tls/boring_backend.rs`): plain TLS, uTLS fingerprint
+-//! shaping (`client-fingerprint`), ECH (with server `retry_configs`
+-//! self-healing), mTLS and ALPN.  There is no rustls backend; `reality`
+-//! configs take the in-tree REALITY record layer (`reality_tls.rs`) instead.
+-//!
+-//! # SNI resolution contract
+-//!
+-//! `meow-config` resolves the effective SNI **before** constructing
+-//! [`TlsConfig`]; the transport layer never sees the dial address.
+-//! Resolution rules (applied in `meow-config`):
+-//!
+-//! | YAML `servername` | `server` field   | `TlsConfig.sni`       |
+-//! |-------------------|------------------|-----------------------|
+-//! | set               | any              | `Some(servername)`    |
+-//! | unset             | hostname         | `Some(hostname)`      |
+-//! | unset             | IP literal       | `Some("1.2.3.4")`*   |
+-//!
+-//! *An IP literal is used for certificate verification (SAN `iPAddress`)
+-//! but is **not** sent in the TLS SNI extension: RFC 6066 §3 prohibits IP
+-//! literals in SNI.  The BoringSSL path disables SNI explicitly
+-//! (`set_use_server_name_indication(false)`) and lets
+-//! `X509_VERIFY_PARAM_set1_ip` do the match.  Test case A9 asserts this.
+-//!
+-//! `sni = None` is never produced for a valid TLS connection; [`TlsLayer::new`]
+-//! returns [`TransportError::Config`] if it receives `None`.
+-//!
+-//! # Connector sharing
+-//!
+-//! The per-process BoringSSL `SSL_CTX` is memoised keyed on the
+-//! [`TlsConfig`] fields that shape it (`fingerprint`, `curves`,
+-//! `alpn`, `skip_cert_verify`).  A subscription with hundreds of TLS
+-//! proxies therefore costs one context per distinct key rather than
+-//! one per proxy.
+-//! Configs carrying `additional_roots` / `client_cert` (or the
+-//! per-construction `random` fingerprint) bypass the cache.
+-
+-use std::io;
+-
+-use async_trait::async_trait;
+-use tracing::warn;
+-
+-use crate::{Result, Stream, Transport, TransportError};
+-
+-pub(crate) mod boring_backend;
+-pub(crate) mod boring_stream;
+-
+-use boring_backend::{BoringInner, LazyBoringInner};
+-
+-// ─── Config structs ───────────────────────────────────────────────────────────
+-
+-/// Source of the ECH config list.
+-///
 -/// DNS-sourced ECH (`ech-opts.enable = true` without `ech-opts.config`) is
 -/// resolved by `meow_config::ech_dns` before this layer is built — the DNS
 -/// HTTPS-record answer lands here as `Config` bytes, so the enum only ever
 -/// carries an inline list.
+-#[derive(Debug, Clone)]
+-pub enum EchOpts {
+-    /// Inline ECH config list bytes, base64-decoded by `meow-config` before
+-    /// this struct is constructed.
+-    ///
+-    /// YAML key: `ech-opts.config`
+-    Config(Vec<u8>),
+-}
+-
+-/// REALITY client authentication parameters for TLS-based outbound proxies.
+-///
+-/// Built by `meow-config` from `reality-opts:`. The public key is the server's
+-/// X25519 public key, and `short_id` is the decoded, zero-padded short id.
+-#[derive(Debug, Clone, PartialEq, Eq)]
+-pub struct RealityConfig {
+-    pub public_key: [u8; 32],
+-    pub short_id: [u8; 8],
+-    pub support_x25519_mlkem768: bool,
+-}
+-
+-/// TLS layer configuration, built by `meow-config` from YAML and passed
+-/// into [`TlsLayer::new`].  This struct never sees YAML directly.
+-///
+-/// Corresponds to the `tls:`, `skip-cert-verify:`, `alpn:`,
+-/// `client-fingerprint:`, and `ech-opts:` keys in a proxy entry.
+-#[derive(Debug, Clone)]
+-pub struct TlsConfig {
+-    /// Whether TLS is enabled.  If `false`, no [`TlsLayer`] should be
+-    /// constructed; this field is a convenience for config-side logic.
+-    pub enabled: bool,
+-
+-    /// Effective SNI, resolved by config before construction (see module doc).
+-    /// Must be `Some` when `enabled = true`.
+-    pub sni: Option<String>,
+-
+-    /// ALPN protocol IDs offered in the ClientHello.
+-    /// Empty slice → no ALPN extension.
+-    pub alpn: Vec<String>,
+-
+-    /// Disable server certificate verification.  Emits a `warn!` once.
+-    pub skip_cert_verify: bool,
+-
+-    /// Minimum negotiated TLS version (`None` = BoringSSL default).
+-    /// ECH forces ≥ TLS 1.3 regardless (RFC 9180 §6).
+-    pub min_version: Option<TlsVersion>,
+-
+-    /// Maximum negotiated TLS version (`None` = BoringSSL default).
+-    /// Used by shadow-tls v1, which only speaks TLS 1.2 on the wire.
+-    pub max_version: Option<TlsVersion>,
+-
+-    /// Hostname the peer certificate is verified against when it differs
+-    /// from the connection SNI (mihomo's `name-cert-verify` / Go
+-    /// `VerifyPeerCertificate` name override).  `None` → verify against
+-    /// `sni`.  Ignored when `skip_cert_verify` is set or on the REALITY
+-    /// path.
+-    pub verify_name: Option<String>,
+-
+-    /// Certificate pinning by SHA-256 hash of a cert in the presented
+-    /// chain (mihomo `fingerprint` / SSL pinning — *not* a uTLS profile;
+-    /// uTLS lives in [`fingerprint`](Self::fingerprint)).
+-    ///
+-    /// When set, the pin **replaces** CA verification (upstream sets
+-    /// `InsecureSkipVerify` and runs the pin check in
+-    /// `VerifyPeerCertificate`): a leaf match accepts the cert outright; a
+-    /// non-leaf match verifies the leaf under the pinned cert as root
+-    /// plus a `check_name` DNS check (`verify_name`, else `sni`).
+-    /// Ignored on the REALITY path.
+-    pub cert_pin: Option<[u8; 32]>,
+-
+-    /// Optional mutual-TLS client certificate (PEM-encoded).
+-    pub client_cert: Option<ClientCert>,
+-
+-    /// `client-fingerprint` YAML value.
+-    ///
+-    /// uTLS fingerprint profile applied to the ClientHello: `chrome`,
+-    /// `firefox`, `safari`, `ios`, `android`, `edge`, `random`, plus
+-    /// version-pinned aliases.  Unknown profiles warn and use BoringSSL
+-    /// defaults.
+-    pub fingerprint: Option<String>,
+-
+-    /// `supported_groups` override (BoringSSL colon-separated names, e.g.
+-    /// `"X25519:P-256:P-384"`).  `None` → BoringSSL's default — which in
+-    /// the BoringSSL vendored by boring-sys ≥5.x includes the
+-    /// `X25519MLKEM768` post-quantum key share (boring-pq.patch).
+-    /// Protocols that must not offer hybrid PQ (shadow-tls v2: upstream
+-    /// strips it because it breaks v2 servers) pin a classic list here.
+-    /// Applied after — and therefore overriding — a resolved
+-    /// [`fingerprint`](Self::fingerprint) profile's own curve list.
+-    pub curves: Option<String>,
+-
+-    /// Extra CA certificates (DER-encoded) added to the root store in
+-    /// addition to `webpki-roots`.  Used in tests with self-signed certs;
+-    /// production deployments leave this empty.
+-    pub additional_roots: Vec<Vec<u8>>,
+-
+-    /// ECH config source.
+-    ///
+-    /// `Some(EchOpts::Config(bytes))` → inline ECH config list.
+-    /// DNS-sourced ECH arrives here already resolved; see [`EchOpts`].
+-    ///
+-    /// Applied per connection by BoringSSL; a server `ech_required`
+-    /// rejection rotates the stored config to the supplied `retry_configs`.
+-    pub ech: Option<EchOpts>,
+-
+-    /// REALITY authentication options. When present, TLS uses the dedicated
+-    /// REALITY TLS 1.3 path because the ClientHello session_id must be computed
+-    /// from this connection's X25519 key share before it is written.
+-    pub reality: Option<RealityConfig>,
+-}
+-
+-impl TlsConfig {
+-    /// Convenience constructor: TLS enabled, SNI set, all other fields default.
+-    pub fn new(sni: impl Into<String>) -> Self {
+-        Self {
+-            enabled: true,
+-            sni: Some(sni.into()),
+-            alpn: Vec::new(),
+-            skip_cert_verify: false,
+-            min_version: None,
+-            max_version: None,
+-            verify_name: None,
+-            cert_pin: None,
+-            client_cert: None,
+-            fingerprint: None,
+-            curves: None,
+-            additional_roots: Vec::new(),
+-            ech: None,
+-            reality: None,
+-        }
+-    }
+-}
+-
+-/// Whether `fp` names a uTLS fingerprint profile the boring backend
+-/// actually shapes (`chrome`, `firefox`, `safari`, `ios`, `android`,
+-/// `edge`, `random`, plus version-pinned aliases).  Unknown names fall
+-/// back to BoringSSL defaults with a warning — callers that must reason
+-/// about the *effective* ClientHello (e.g. shadow-tls v2's ML-KEM pin)
+-/// use this to tell a resolved profile's own group list from the
+-/// default hello.
+-pub fn is_supported_fingerprint(fp: &str) -> bool {
+-    boring_backend::fingerprint_is_known(fp)
+-}
+-
+-/// TLS protocol version bound for [`TlsConfig::min_version`] /
+-/// [`TlsConfig::max_version`].
+-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+-pub enum TlsVersion {
+-    /// TLS 1.2
+-    Tls12,
+-    /// TLS 1.3
+-    Tls13,
+-}
+-
+-/// Optional mutual-TLS client certificate (PEM-encoded key and certificate).
+-#[derive(Debug, Clone)]
+-pub struct ClientCert {
+-    /// PEM-encoded X.509 certificate chain.
+-    pub cert_pem: Vec<u8>,
+-    /// PEM-encoded private key (PKCS#8 or RSA).
+-    pub key_pem: Vec<u8>,
+-}
+-
+-// ─── TLS backend dispatch ─────────────────────────────────────────────────────
+-
+-enum TlsBackend {
+-    #[cfg(feature = "reality")]
+-    Reality(crate::reality_tls::RealityTlsLayer),
+-    Boring(Box<LazyBoringInner>),
+-}
+-
+-// ─── TlsLayer (public facade) ─────────────────────────────────────────────────
+-
+-/// TLS client transport layer.
+-///
+-/// Build once at startup from a [`TlsConfig`]; call [`Transport::connect`] for
+-/// each new connection.  Handshakes run on BoringSSL; `reality` configs take
+-/// the in-tree REALITY path instead.
+-pub struct TlsLayer {
+-    backend: TlsBackend,
+-}
+-
+-impl TlsLayer {
+-    /// Construct a `TlsLayer` from the given configuration.
+-    ///
+-    /// The BoringSSL `SslConnector` is built lazily on the first `connect()`
+-    /// and shared across layers with the same shaping key; everything that
+-    /// can make that build fail is validated here so errors surface at
+-    /// startup.
+-    ///
+-    /// # Errors
+-    ///
+-    /// * [`TransportError::Config`] — `sni` is `None`.
+-    /// * [`TransportError::Config`] — an ALPN id is empty or longer than 255 bytes.
+-    /// * [`TransportError::Config`] — `reality` is set without the `reality` feature.
+-    /// * [`TransportError::Config`] — a DER in `additional_roots` is malformed.
+-    /// * [`TransportError::Config`] — `client_cert` PEM is unparseable.
+-    /// * [`TransportError::Tls`] — client cert + key don't match.
+-    pub fn new(config: &TlsConfig) -> Result<Self> {
+-        #[cfg(not(feature = "reality"))]
+-        if config.reality.is_some() {
+-            return Err(crate::TransportError::Config(
+-                "reality-opts requires the `reality` Cargo feature in this build; \
+-                 recompile with `--features reality`."
+-                    .into(),
+-            ));
+-        }
+-
+-        // `server: "[::1]"` propagated as the default server name
+-        // (issue #701): fold the bracketed literal once at the funnel so
+-        // every backend — boring and REALITY alike — sees the bare form.
+-        // SNI cannot carry brackets (RFC 6066 §3) and boring's
+-        // verification needs the bare literal for the `iPAddress` SAN
+-        // path. `BoringInner` repeats the fold for direct construction.
+-        let mut config = config.clone();
+-        if let Some(sni) = &mut config.sni {
+-            *sni = boring_backend::unbracket_ip_literal(sni).to_owned();
+-        }
+-
+-        #[cfg(feature = "reality")]
+-        if config.reality.is_some() {
+-            return Ok(Self {
+-                backend: TlsBackend::Reality(crate::reality_tls::RealityTlsLayer::new(&config)?),
+-            });
+-        }
+-
+-        // Warn at construction, once per proxy — the backend stays silent so
+-        // a lazily-built (and cached) SSL_CTX doesn't swallow the warning
+-        // for later proxies sharing it.
+-        if config.skip_cert_verify {
+-            warn!(
+-                sni = ?config.sni,
+-                "skip-cert-verify=true: TLS certificate verification is disabled; \
+-                 the connection is NOT authenticated against a trusted CA"
+-            );
+-        }
+-
+-        BoringInner::validate(&config)?;
+-        tracing::debug!(
+-            fingerprint = ?config.fingerprint,
+-            ech = config.ech.is_some(),
+-            sni = ?config.sni,
+-            "TLS: BoringSSL backend (lazy init)"
+-        );
+-        Ok(Self {
+-            backend: TlsBackend::Boring(Box::new(LazyBoringInner::new(config))),
+-        })
+-    }
+-
+-    /// Handshake over a caller-owned stream type, returning the concrete
+-    /// `SslStream<S>` so the inner stream can be recovered afterwards via
+-    /// `SslStream::get_mut` — used by shadow-tls, which discards the TLS
+-    /// session once the cover handshake ends and continues on the raw
+-    /// conn.  `inner` sees BoringSSL's flush pends as ordinary
+-    /// `Pending`s (boring 5.x retries `BIO_CTRL_FLUSH` natively); a shim
+-    /// `S` must still implement poll contracts itself.
+-    ///
+-    /// Handshake failures surface as [`ConnectTypedError::Handshake`],
+-    /// which keeps the source stream recoverable (shadow-tls v3 treats a
+-    /// specific late-handshake failure as the expected outcome — the
+-    /// cover's Finished never verifies against the wire-patched
+-    /// ClientHello transcript).
+-    ///
+-    /// REALITY backends reject this — there is no TLS session to discard.
+-    pub async fn connect_typed<S>(&self, inner: S) -> TypedConnectResult<S>
+-    where
+-        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+-    {
+-        match &self.backend {
+-            #[cfg(feature = "reality")]
+-            TlsBackend::Reality(_) => {
+-                Err(ConnectTypedError::Transport(crate::TransportError::Config(
+-                    "connect_typed is not supported on the REALITY backend".into(),
+-                )))
+-            }
+-            TlsBackend::Boring(lazy) => lazy.connect_typed(inner).await,
+-        }
+-    }
+-}
+-
+-/// Result of [`TlsLayer::connect_typed`].
+-pub type TypedConnectResult<S> =
+-    std::result::Result<tokio_boring::SslStream<S>, ConnectTypedError<S>>;
+-
+-/// Failure of [`TlsLayer::connect_typed`].
+-///
+-/// Split into two classes because callers that wrap the handshake in a
+-/// shim (shadow-tls) can still make use of the stream — and of the
+-/// aborted `Ssl`'s state — after a handshake error, while a setup error
+-/// never touched the wire.
+-pub enum ConnectTypedError<S> {
+-    /// Configuration/setup failed before the TLS handshake ran — nothing
+-    /// was sent, no stream to recover.
+-    Transport(TransportError),
+-    /// The TLS handshake failed mid-flight.  `into_source_stream()`
+-    /// recovers `S`; `ssl()` exposes the aborted session state (e.g.
+-    /// `verify_result`).
+-    Handshake(tokio_boring::HandshakeError<S>),
+-}
+-
+-impl<S> ConnectTypedError<S> {
+-    /// Collapse into a plain [`TransportError`], discarding any
+-    /// recoverable stream — for callers that only want the error.
+-    pub fn into_transport(self) -> TransportError {
+-        match self {
+-            Self::Transport(e) => e,
+-            Self::Handshake(e) => {
+-                // Preserve the inner io error (raw errno) when the
+-                // handshake failed at the socket layer — ENOBUFS/ENOMEM
+-                // must reach DialFailureTracker's local-resource
+-                // classification intact (issue #680).
+-                match e.as_io_error() {
+-                    Some(io_err) => TransportError::Io(match io_err.raw_os_error() {
+-                        Some(errno) => io::Error::from_raw_os_error(errno),
+-                        None => io::Error::new(io_err.kind(), format!("boring TLS handshake: {e}")),
+-                    }),
+-                    None => TransportError::Tls(format!("boring TLS handshake: {e}")),
+-                }
+-            }
+-        }
+-    }
+-}
+-
+-#[async_trait]
+-impl Transport for TlsLayer {
+-    async fn connect(&self, inner: Box<dyn Stream>) -> Result<Box<dyn Stream>> {
+-        match &self.backend {
+-            #[cfg(feature = "reality")]
+-            TlsBackend::Reality(r) => r.connect(inner).await,
+-            TlsBackend::Boring(lazy) => lazy.connect(inner).await,
+-        }
+-    }
+-}
++//! TLS client transport layer (`features = ["tls"]`).
++//!
++//! [`TlsLayer`] wraps any inner [`Stream`] with a TLS handshake and returns the
++//! upgraded stream ready for the next layer (WebSocket, gRPC, …) or for the
++//! proxy protocol codec (Trojan, VMess, …).
++//!
++//! # Backend
++//!
++//! Every non-REALITY handshake is performed by BoringSSL (`boring` +
++//! `tokio-boring`, see `tls/boring_backend.rs`): plain TLS, uTLS fingerprint
++//! shaping (`client-fingerprint`), ECH (with server `retry_configs`
++//! self-healing), mTLS and ALPN.  There is no rustls backend; `reality`
++//! configs take the in-tree REALITY record layer (`reality_tls.rs`) instead.
++//!
++//! # SNI resolution contract
++//!
++//! `meow-config` resolves the effective SNI **before** constructing
++//! [`TlsConfig`]; the transport layer never sees the dial address.
++//! Resolution rules (applied in `meow-config`):
++//!
++//! | YAML `servername` | `server` field   | `TlsConfig.sni`       |
++//! |-------------------|------------------|-----------------------|
++//! | set               | any              | `Some(servername)`    |
++//! | unset             | hostname         | `Some(hostname)`      |
++//! | unset             | IP literal       | `Some("1.2.3.4")`*   |
++//!
++//! *An IP literal is used for certificate verification (SAN `iPAddress`)
++//! but is **not** sent in the TLS SNI extension: RFC 6066 §3 prohibits IP
++//! literals in SNI.  The BoringSSL path disables SNI explicitly
++//! (`set_use_server_name_indication(false)`) and lets
++//! `X509_VERIFY_PARAM_set1_ip` do the match.  Test case A9 asserts this.
++//!
++//! `sni = None` is never produced for a valid TLS connection; [`TlsLayer::new`]
++//! returns [`TransportError::Config`] if it receives `None`.
++//!
++//! # Connector sharing
++//!
++//! The per-process BoringSSL `SSL_CTX` is memoised keyed on the
++//! [`TlsConfig`] fields that shape it (`fingerprint`, `curves`,
++//! `alpn`, `skip_cert_verify`).  A subscription with hundreds of TLS
++//! proxies therefore costs one context per distinct key rather than
++//! one per proxy.
++//! Configs carrying `additional_roots` / `client_cert` (or the
++//! per-construction `random` fingerprint) bypass the cache.
++
++use std::io;
++
++/// Reuse the already linked BoringSSL SHA-256 for owned resource snapshots.
++pub use boring::sha::Sha256 as ResourceSha256;
++
++
++use async_trait::async_trait;
++use tracing::warn;
++
++use crate::{Result, Stream, Transport, TransportError};
++
++pub(crate) mod boring_backend;
++mod ech_scope;
++pub use ech_scope::{EchQuery, EchScope, EchSource};
++pub(crate) mod boring_stream;
++
++use boring_backend::{BoringInner, LazyBoringInner};
++
++// ─── Config structs ───────────────────────────────────────────────────────────
++
++/// Source of the ECH config list.
++///
 +/// Inline bytes are converted at parse time. DNS-sourced ECH keeps only its
 +/// query name until a real handshake uses the operation's captured EchScope.
 +/// No query during construction and no system/public/plain-TLS fallback.
-@@ -72,0 +74,2 @@
++#[derive(Debug, Clone)]
++pub enum EchOpts {
++    /// Inline ECH config list bytes, base64-decoded by `meow-config` before
++    /// this struct is constructed.
++    ///
++    /// YAML key: `ech-opts.config`
++    Config(Vec<u8>),
 +    /// Query HTTPS RR using the resolver generation captured for this handshake.
 +    Dns(String),
-@@ -164 +167 @@
--    /// DNS-sourced ECH arrives here already resolved; see [`EchOpts`].
++}
++
++/// REALITY client authentication parameters for TLS-based outbound proxies.
++///
++/// Built by `meow-config` from `reality-opts:`. The public key is the server's
++/// X25519 public key, and `short_id` is the decoded, zero-padded short id.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct RealityConfig {
++    pub public_key: [u8; 32],
++    pub short_id: [u8; 8],
++    pub support_x25519_mlkem768: bool,
++}
++
++/// TLS layer configuration, built by `meow-config` from YAML and passed
++/// into [`TlsLayer::new`].  This struct never sees YAML directly.
++///
++/// Corresponds to the `tls:`, `skip-cert-verify:`, `alpn:`,
++/// `client-fingerprint:`, and `ech-opts:` keys in a proxy entry.
++#[derive(Debug, Clone)]
++pub struct TlsConfig {
++    /// Whether TLS is enabled.  If `false`, no [`TlsLayer`] should be
++    /// constructed; this field is a convenience for config-side logic.
++    pub enabled: bool,
++
++    /// Effective SNI, resolved by config before construction (see module doc).
++    /// Must be `Some` when `enabled = true`.
++    pub sni: Option<String>,
++
++    /// ALPN protocol IDs offered in the ClientHello.
++    /// Empty slice → no ALPN extension.
++    pub alpn: Vec<String>,
++
++    /// Disable server certificate verification.  Emits a `warn!` once.
++    pub skip_cert_verify: bool,
++
++    /// Minimum negotiated TLS version (`None` = BoringSSL default).
++    /// ECH forces ≥ TLS 1.3 regardless (RFC 9180 §6).
++    pub min_version: Option<TlsVersion>,
++
++    /// Maximum negotiated TLS version (`None` = BoringSSL default).
++    /// Used by shadow-tls v1, which only speaks TLS 1.2 on the wire.
++    pub max_version: Option<TlsVersion>,
++
++    /// Hostname the peer certificate is verified against when it differs
++    /// from the connection SNI (mihomo's `name-cert-verify` / Go
++    /// `VerifyPeerCertificate` name override).  `None` → verify against
++    /// `sni`.  Ignored when `skip_cert_verify` is set or on the REALITY
++    /// path.
++    pub verify_name: Option<String>,
++
++    /// Certificate pinning by SHA-256 hash of a cert in the presented
++    /// chain (mihomo `fingerprint` / SSL pinning — *not* a uTLS profile;
++    /// uTLS lives in [`fingerprint`](Self::fingerprint)).
++    ///
++    /// When set, the pin **replaces** CA verification (upstream sets
++    /// `InsecureSkipVerify` and runs the pin check in
++    /// `VerifyPeerCertificate`): a leaf match accepts the cert outright; a
++    /// non-leaf match verifies the leaf under the pinned cert as root
++    /// plus a `check_name` DNS check (`verify_name`, else `sni`).
++    /// Ignored on the REALITY path.
++    pub cert_pin: Option<[u8; 32]>,
++
++    /// Optional mutual-TLS client certificate (PEM-encoded).
++    pub client_cert: Option<ClientCert>,
++
++    /// `client-fingerprint` YAML value.
++    ///
++    /// uTLS fingerprint profile applied to the ClientHello: `chrome`,
++    /// `firefox`, `safari`, `ios`, `android`, `edge`, `random`, plus
++    /// version-pinned aliases.  Unknown profiles warn and use BoringSSL
++    /// defaults.
++    pub fingerprint: Option<String>,
++
++    /// `supported_groups` override (BoringSSL colon-separated names, e.g.
++    /// `"X25519:P-256:P-384"`).  `None` → BoringSSL's default — which in
++    /// the BoringSSL vendored by boring-sys ≥5.x includes the
++    /// `X25519MLKEM768` post-quantum key share (boring-pq.patch).
++    /// Protocols that must not offer hybrid PQ (shadow-tls v2: upstream
++    /// strips it because it breaks v2 servers) pin a classic list here.
++    /// Applied after — and therefore overriding — a resolved
++    /// [`fingerprint`](Self::fingerprint) profile's own curve list.
++    pub curves: Option<String>,
++
++    /// Extra CA certificates (DER-encoded) added to the root store in
++    /// addition to `webpki-roots`.  Used in tests with self-signed certs;
++    /// production deployments leave this empty.
++    pub additional_roots: Vec<Vec<u8>>,
++
++    /// ECH config source.
++    ///
++    /// `Some(EchOpts::Config(bytes))` → inline ECH config list.
 +    /// `Some(EchOpts::Dns(name))` queries the captured scope at handshake time.
++    ///
++    /// Applied per connection by BoringSSL; a server `ech_required`
++    /// rejection rotates the stored config to the supplied `retry_configs`.
++    pub ech: Option<EchOpts>,
++
++    /// REALITY authentication options. When present, TLS uses the dedicated
++    /// REALITY TLS 1.3 path because the ClientHello session_id must be computed
++    /// from this connection's X25519 key share before it is written.
++    pub reality: Option<RealityConfig>,
++}
++
++impl TlsConfig {
++    /// Convenience constructor: TLS enabled, SNI set, all other fields default.
++    pub fn new(sni: impl Into<String>) -> Self {
++        Self {
++            enabled: true,
++            sni: Some(sni.into()),
++            alpn: Vec::new(),
++            skip_cert_verify: false,
++            min_version: None,
++            max_version: None,
++            verify_name: None,
++            cert_pin: None,
++            client_cert: None,
++            fingerprint: None,
++            curves: None,
++            additional_roots: Vec::new(),
++            ech: None,
++            reality: None,
++        }
++    }
++}
++
++/// Whether `fp` names a uTLS fingerprint profile the boring backend
++/// actually shapes (`chrome`, `firefox`, `safari`, `ios`, `android`,
++/// `edge`, `random`, plus version-pinned aliases).  Unknown names fall
++/// back to BoringSSL defaults with a warning — callers that must reason
++/// about the *effective* ClientHello (e.g. shadow-tls v2's ML-KEM pin)
++/// use this to tell a resolved profile's own group list from the
++/// default hello.
++pub fn is_supported_fingerprint(fp: &str) -> bool {
++    boring_backend::fingerprint_is_known(fp)
++}
++
++/// TLS protocol version bound for [`TlsConfig::min_version`] /
++/// [`TlsConfig::max_version`].
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum TlsVersion {
++    /// TLS 1.2
++    Tls12,
++    /// TLS 1.3
++    Tls13,
++}
++
++/// Optional mutual-TLS client certificate (PEM-encoded key and certificate).
++#[derive(Debug, Clone)]
++pub struct ClientCert {
++    /// PEM-encoded X.509 certificate chain.
++    pub cert_pem: Vec<u8>,
++    /// PEM-encoded private key (PKCS#8 or RSA).
++    pub key_pem: Vec<u8>,
++}
++
++// ─── TLS backend dispatch ─────────────────────────────────────────────────────
++
++enum TlsBackend {
++    #[cfg(feature = "reality")]
++    Reality(crate::reality_tls::RealityTlsLayer),
++    Boring(Box<LazyBoringInner>),
++}
++
++// ─── TlsLayer (public facade) ─────────────────────────────────────────────────
++
++/// TLS client transport layer.
++///
++/// Build once at startup from a [`TlsConfig`]; call [`Transport::connect`] for
++/// each new connection.  Handshakes run on BoringSSL; `reality` configs take
++/// the in-tree REALITY path instead.
++pub struct TlsLayer {
++    backend: TlsBackend,
++}
++
++impl TlsLayer {
++    /// Construct a `TlsLayer` from the given configuration.
++    ///
++    /// The BoringSSL `SslConnector` is built lazily on the first `connect()`
++    /// and shared across layers with the same shaping key; everything that
++    /// can make that build fail is validated here so errors surface at
++    /// startup.
++    ///
++    /// # Errors
++    ///
++    /// * [`TransportError::Config`] — `sni` is `None`.
++    /// * [`TransportError::Config`] — an ALPN id is empty or longer than 255 bytes.
++    /// * [`TransportError::Config`] — `reality` is set without the `reality` feature.
++    /// * [`TransportError::Config`] — a DER in `additional_roots` is malformed.
++    /// * [`TransportError::Config`] — `client_cert` PEM is unparseable.
++    /// * [`TransportError::Tls`] — client cert + key don't match.
++    pub fn new(config: &TlsConfig) -> Result<Self> {
++        #[cfg(not(feature = "reality"))]
++        if config.reality.is_some() {
++            return Err(crate::TransportError::Config(
++                "reality-opts requires the `reality` Cargo feature in this build; \
++                 recompile with `--features reality`."
++                    .into(),
++            ));
++        }
++
++        // `server: "[::1]"` propagated as the default server name
++        // (issue #701): fold the bracketed literal once at the funnel so
++        // every backend — boring and REALITY alike — sees the bare form.
++        // SNI cannot carry brackets (RFC 6066 §3) and boring's
++        // verification needs the bare literal for the `iPAddress` SAN
++        // path. `BoringInner` repeats the fold for direct construction.
++        let mut config = config.clone();
++        if let Some(sni) = &mut config.sni {
++            *sni = boring_backend::unbracket_ip_literal(sni).to_owned();
++        }
++
++        #[cfg(feature = "reality")]
++        if config.reality.is_some() {
++            return Ok(Self {
++                backend: TlsBackend::Reality(crate::reality_tls::RealityTlsLayer::new(&config)?),
++            });
++        }
++
++        // Warn at construction, once per proxy — the backend stays silent so
++        // a lazily-built (and cached) SSL_CTX doesn't swallow the warning
++        // for later proxies sharing it.
++        if config.skip_cert_verify {
++            warn!(
++                sni = ?config.sni,
++                "skip-cert-verify=true: TLS certificate verification is disabled; \
++                 the connection is NOT authenticated against a trusted CA"
++            );
++        }
++
++        BoringInner::validate(&config)?;
++        tracing::debug!(
++            fingerprint = ?config.fingerprint,
++            ech = config.ech.is_some(),
++            sni = ?config.sni,
++            "TLS: BoringSSL backend (lazy init)"
++        );
++        Ok(Self {
++            backend: TlsBackend::Boring(Box::new(LazyBoringInner::new(config))),
++        })
++    }
++
++    /// Handshake over a caller-owned stream type, returning the concrete
++    /// `SslStream<S>` so the inner stream can be recovered afterwards via
++    /// `SslStream::get_mut` — used by shadow-tls, which discards the TLS
++    /// session once the cover handshake ends and continues on the raw
++    /// conn.  `inner` sees BoringSSL's flush pends as ordinary
++    /// `Pending`s (boring 5.x retries `BIO_CTRL_FLUSH` natively); a shim
++    /// `S` must still implement poll contracts itself.
++    ///
++    /// Handshake failures surface as [`ConnectTypedError::Handshake`],
++    /// which keeps the source stream recoverable (shadow-tls v3 treats a
++    /// specific late-handshake failure as the expected outcome — the
++    /// cover's Finished never verifies against the wire-patched
++    /// ClientHello transcript).
++    ///
++    /// REALITY backends reject this — there is no TLS session to discard.
++    pub async fn connect_typed<S>(&self, inner: S) -> TypedConnectResult<S>
++    where
++        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
++    {
++        match &self.backend {
++            #[cfg(feature = "reality")]
++            TlsBackend::Reality(_) => {
++                Err(ConnectTypedError::Transport(crate::TransportError::Config(
++                    "connect_typed is not supported on the REALITY backend".into(),
++                )))
++            }
++            TlsBackend::Boring(lazy) => lazy.connect_typed(inner).await,
++        }
++    }
++}
++
++/// Result of [`TlsLayer::connect_typed`].
++pub type TypedConnectResult<S> =
++    std::result::Result<tokio_boring::SslStream<S>, ConnectTypedError<S>>;
++
++/// Failure of [`TlsLayer::connect_typed`].
++///
++/// Split into two classes because callers that wrap the handshake in a
++/// shim (shadow-tls) can still make use of the stream — and of the
++/// aborted `Ssl`'s state — after a handshake error, while a setup error
++/// never touched the wire.
++pub enum ConnectTypedError<S> {
++    /// Configuration/setup failed before the TLS handshake ran — nothing
++    /// was sent, no stream to recover.
++    Transport(TransportError),
++    /// The TLS handshake failed mid-flight.  `into_source_stream()`
++    /// recovers `S`; `ssl()` exposes the aborted session state (e.g.
++    /// `verify_result`).
++    Handshake(tokio_boring::HandshakeError<S>),
++}
++
++impl<S> ConnectTypedError<S> {
++    /// Collapse into a plain [`TransportError`], discarding any
++    /// recoverable stream — for callers that only want the error.
++    pub fn into_transport(self) -> TransportError {
++        match self {
++            Self::Transport(e) => e,
++            Self::Handshake(e) => {
++                // Preserve the inner io error (raw errno) when the
++                // handshake failed at the socket layer — ENOBUFS/ENOMEM
++                // must reach DialFailureTracker's local-resource
++                // classification intact (issue #680).
++                match e.as_io_error() {
++                    Some(io_err) => TransportError::Io(match io_err.raw_os_error() {
++                        Some(errno) => io::Error::from_raw_os_error(errno),
++                        None => io::Error::new(io_err.kind(), format!("boring TLS handshake: {e}")),
++                    }),
++                    None => TransportError::Tls(format!("boring TLS handshake: {e}")),
++                }
++            }
++        }
++    }
++}
++
++#[async_trait]
++impl Transport for TlsLayer {
++    async fn connect(&self, inner: Box<dyn Stream>) -> Result<Box<dyn Stream>> {
++        match &self.backend {
++            #[cfg(feature = "reality")]
++            TlsBackend::Reality(r) => r.connect(inner).await,
++            TlsBackend::Boring(lazy) => lazy.connect(inner).await,
++        }
++    }
++}
 --- a/crates/meow-transport/src/tls/boring_backend.rs
 +++ b/crates/meow-transport/src/tls/boring_backend.rs
 @@ -461,0 +462,5 @@
@@ -12532,16 +13580,33 @@
 +++ b/crates/meow-tunnel/src/tunnel.rs
 @@ -15,0 +16 @@
 +use std::future::Future;
-@@ -18,0 +20,2 @@
+@@ -18,0 +20,3 @@
 +
 +tokio::task_local! { static RESOLVER_SNAPSHOT: Arc<Resolver>; }
-@@ -228 +231 @@
++tokio::task_local! { static OWNED_ROUTE_SNAPSHOT:(Weak<TunnelInner>,Option<Arc<RouteTable>>); }
+@@ -52,0 +57,4 @@
++
++/// Built off the live owner gate; publication is a short identity CAS.
++pub struct PreparedRulesUpdate { before: Arc<RouteTable>, after: Arc<RouteTable> }
++impl PreparedRulesUpdate { pub fn is_current(&self,tunnel:&Tunnel)->bool {Arc::ptr_eq(&self.before,&tunnel.route_snapshot())} }
+@@ -222 +230,5 @@
+-        Arc::clone(&self.route.read())
++        OWNED_ROUTE_SNAPSHOT.try_with(|(owner,route)| if owner.as_ptr()==self as *const Self{route.clone()}else{None}).ok().flatten()
++            .unwrap_or_else(||Arc::clone(&self.route.read()))
++    }
++    fn owned_route_expired(&self)->bool {
++        OWNED_ROUTE_SNAPSHOT.try_with(|(owner,route)|owner.as_ptr()==self as *const Self && route.is_none()).unwrap_or(false)
+@@ -228 +240 @@
 -        Arc::clone(&self.resolver.read())
 +        RESOLVER_SNAPSHOT.try_with(Arc::clone).unwrap_or_else(|_| Arc::clone(&self.resolver.read()))
-@@ -426 +429 @@
+@@ -419,0 +432 @@
++        if self.owned_route_expired(){return;}
+@@ -426 +439 @@
 -        if let Some(real_ip) = self.resolver().resolve_ip_real(&metadata.host).await {
 +        if let Some(real_ip) = meow_common::observations::DnsInitiator::Rule.scope(self.resolver().resolve_ip_real(&metadata.host)).await {
-@@ -493,5 +496,3 @@
+@@ -449,0 +463 @@
++        if self.owned_route_expired(){return None;}
+@@ -493,5 +507,3 @@
 -                let result = route.compiled_rules.match_rules(
 -                    match_metadata,
 -                    route.rules.as_ref(),
@@ -12550,7 +13615,9 @@
 +                let probe = Self::target_probe(&route, match_metadata);
 +                let result = route.compiled_rules.match_rules(match_metadata, route.rules.as_ref(), &probe);
 +                if probe.failed.load(std::sync::atomic::Ordering::Relaxed) { return None; }
-@@ -523,4 +524,4 @@
+@@ -513,0 +526 @@
++        if self.owned_route_expired(){return None;}
+@@ -523,4 +536,4 @@
 -        match route
 -            .compiled_rules
 -            .match_rules_lazy(metadata, route.rules.as_ref(), &probe)
@@ -12559,10 +13626,10 @@
 +        if probe.failed.load(std::sync::atomic::Ordering::Relaxed) { return None; }
 +        drop(probe);
 +        match outcome {
-@@ -565 +566 @@
+@@ -565 +578 @@
 -                    if let Some(real_ip) = self.resolver().resolve_ip_real(&metadata.host).await {
 +                    if let Some(real_ip) = meow_common::observations::DnsInitiator::Rule.scope(self.resolver().resolve_ip_real(&metadata.host)).await {
-@@ -586,5 +587,3 @@
+@@ -586,5 +599,3 @@
 -                let result = route.compiled_rules.match_rules(
 -                    match_metadata,
 -                    route.rules.as_ref(),
@@ -12571,12 +13638,12 @@
 +                let probe = Self::target_probe(&route, match_metadata);
 +                let result = route.compiled_rules.match_rules(match_metadata, route.rules.as_ref(), &probe);
 +                if probe.failed.load(std::sync::atomic::Ordering::Relaxed) { return None; }
-@@ -603 +602 @@
+@@ -603 +614 @@
 -        RouteTargetProbe { route, metadata }
 +        RouteTargetProbe { route, metadata, failed: std::sync::atomic::AtomicBool::new(false) }
-@@ -752,0 +752 @@
+@@ -752,0 +764 @@
 +    failed: std::sync::atomic::AtomicBool,
-@@ -771,3 +771,4 @@
+@@ -771,3 +783,4 @@
 -            match cur.unwrap_proxy(self.metadata, false) {
 -                Some(next) => cur = next,
 -                None => return false,
@@ -12584,16 +13651,39 @@
 +                Ok(Some(next)) => cur = next,
 +                Ok(None) => return false,
 +                Err(_) => { self.failed.store(true, std::sync::atomic::Ordering::Relaxed); return false; }
-@@ -830,0 +832,2 @@
+@@ -830,0 +844,2 @@
 +        let stats = Arc::new(Statistics::new());
 +        resolver.read().set_observation_feed(Arc::clone(stats.observation_feed())).expect("new tunnel requires a resolver owned by its session");
-@@ -839 +842 @@
+@@ -839 +854 @@
 -                stats: Arc::new(Statistics::new()),
 +                stats,
-@@ -1161,0 +1165,10 @@
+@@ -922,0 +938,16 @@
++    }
++
++    pub fn prepare_rules_update(&self,rules:Vec<Box<dyn Rule>>) -> PreparedRulesUpdate {
++        let before=self.route_snapshot();
++        let after=Arc::new(RouteTable {domain_index:Arc::new(DomainIndex::build(&rules)),compiled_rules:Arc::new(CompiledRuleSet::build(&rules)),
++            rules:Arc::new(rules),proxies:before.proxies.clone(),dialer_registry:before.dialer_registry.clone()});
++        PreparedRulesUpdate{before,after}
++    }
++    /// Does not republish unchanged proxy/dialer identities. The caller retains
++    /// the returned old route until after its owner gate has been released.
++    pub fn commit_rules_update(&self,prepared:PreparedRulesUpdate)->Result<Arc<RouteTable>,PreparedRulesUpdate> {
++        let mut route=self.inner.route.write();
++        if !Arc::ptr_eq(&route,&prepared.before){return Err(prepared);}
++        self.inner.needs_ip_resolution.store(prepared.after.compiled_rules.needs_ip_resolution(),Ordering::Relaxed);
++        self.inner.needs_process_lookup.store(prepared.after.compiled_rules.needs_process_lookup(),Ordering::Relaxed);
++        Ok(std::mem::replace(&mut *route,prepared.after))
+@@ -1161,0 +1193,16 @@
 +    /// Keep all resolver reads in one owned flow on the resolver generation
 +    /// captured with its physical network. Existing flows may finish on their
 +    /// old network while later flows observe a committed generation.
++    /// Actual running Native operation, captured under its existing owner gate.
++    /// None means its previously authorized weak graph retired before first poll;
++    /// business resolution fails closed instead of borrowing a successor graph.
++    pub async fn with_owned_runtime_snapshot<F:Future>(&self,route:Option<Arc<RouteTable>>,resolver:Arc<Resolver>,work:F)->F::Output {
++        OWNED_ROUTE_SNAPSHOT.scope((Arc::downgrade(&self.inner),route),self.with_resolver_snapshot(resolver,work)).await
++    }
 +    pub async fn with_resolver_snapshot<F: Future>(&self, resolver: Arc<Resolver>, work: F) -> F::Output {
 +        let direct = Arc::clone(&self.inner.direct);
 +        RESOLVER_SNAPSHOT.scope(resolver.clone(), async move {
@@ -12601,8 +13691,11 @@
 +        }).await
 +    }
 +
-@@ -1192,0 +1206 @@
+@@ -1192,0 +1240 @@
 +        resolver.set_observation_feed(Arc::clone(self.inner.stats.observation_feed())).expect("resolver publication requires the same observation session");
+@@ -1203 +1251 @@
+-        self.inner.route()
++        Arc::clone(&self.inner.route.read())
 --- a/crates/meow-tunnel/src/udp.rs
 +++ b/crates/meow-tunnel/src/udp.rs
 @@ -1 +1,3 @@

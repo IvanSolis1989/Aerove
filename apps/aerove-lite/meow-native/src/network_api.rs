@@ -162,7 +162,8 @@ impl IntoResponse for Failure {
 
 pub(crate) fn router(owner: Weak<OwnedRuntime>) -> Router {
     Router::new().route("/aerove/network", get(read).post(apply))
-        .layer(DefaultBodyLimit::max(65536)).with_state(owner)
+        .layer(DefaultBodyLimit::max(65536)).with_state(owner.clone())
+        .merge(crate::geo_reload::router(owner))
 }
 async fn read(State(owner): State<Weak<OwnedRuntime>>) -> Result<Json<Snapshot>, Failure> {
     Ok(Json(owner.upgrade().ok_or_else(Failure::exited)?.network_snapshot()?))

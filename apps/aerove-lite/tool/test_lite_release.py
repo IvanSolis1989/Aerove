@@ -782,5 +782,144 @@ class LiteReleaseNotesTests(unittest.TestCase):
                 notes.render("## 待发布\n\n" + STATUS + "\n\n" + ENTRIES, tag, info, run, attempt)
 
 
+class FlutterPackagingPromotionTests(unittest.TestCase):
+    """Exercise the consumer with the real APK parser and synthetic Flutter ELF/ZIP fixtures."""
+    def setUp(self):
+        import test_verify_apk as apk_fixture
+        from types import SimpleNamespace
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.fixture = apk_fixture.ApkInspectionTests()
+        self.verifier = apk_fixture.module
+        self.source, self.tree, self.run, self.attempt, self.number = "a"*40, "b"*40, 123, 2, 90
+        self.arm, self.helper, self.runtime, self.matrix = [self.root / name for name in ("arm", "helper", "runtime", "matrix")]
+        for path in (self.arm, self.helper, self.runtime / "apks", self.matrix): path.mkdir(parents=True)
+        self.helper_source = apk_fixture.HELPER_SOURCE_ROOT
+        self.core_identity = {"meow_source": self.verifier.MEOW_SOURCE}
+        self.product = self.fixture.product()
+        self.signature = "Signer #1 certificate SHA-256 digest: " + self.product["signerSha256"]
+        self.badging = self.fixture.badging()
+        self.info = {}
+        self.results = {}
+        for abi, machine, apk, receipt in (
+                ("arm64-v8a", 183, self.arm / "AEROVE-Lite-android-arm64.apk", self.helper / "build-receipt.json"),
+                ("x86_64", 62, self.runtime / "apks/app-release.apk", self.runtime / "client-helper-build-receipt.json")):
+            staging = self.root / abi; staging.mkdir()
+            self.fixture.make_apk(staging, abi=abi, machine=machine).rename(apk)
+            inputs = {p.relative_to(self.helper_source).as_posix(): release._sha(p)
+                for p in self.helper_source.rglob("*") if p.is_file() and "__pycache__" not in p.parts and p.suffix.lower() != ".pyc"}
+            import zipfile
+            with zipfile.ZipFile(apk) as archive:
+                outputs = [{"abi":abi,"path":f"{abi}/{name}","bytes":len(archive.read(f"lib/{abi}/{name}")),
+                    "sha256":hashlib.sha256(archive.read(f"lib/{abi}/{name}")).hexdigest()} for name in self.verifier.HELPER_LIBRARIES]
+            receipt.write_text(json.dumps({"inputFiles":inputs,"sourceSha256":hashlib.sha256(
+                json.dumps(inputs,sort_keys=True,separators=(",", ":")).encode()).hexdigest(),"outputs":outputs}))
+            result = self.actual_verify(apk, abi, self.helper_source, receipt, {})
+            identity = self.verifier.verify_identity(self.badging, self.signature, self.product, "preview")
+            self.results[abi] = result
+            self.info[abi] = self.verifier.build_info(identity, result, self.source, self.tree,
+                f"https://github.com/{release.REPO}/actions/runs/{self.run}", self.number, self.attempt, apk)
+            self.info[abi]["native_build_receipt"] = {"synthetic": True}
+        (self.runtime / "lite-badging.txt").write_text(self.badging)
+        (self.runtime / "lite-signature.txt").write_text(self.signature)
+        self.badging_path = self.root / "badging.txt"; self.badging_path.write_text(self.badging)
+        self.signature_path = self.root / "signature.txt"; self.signature_path.write_text(self.signature)
+        self.adapter = SimpleNamespace(FLUTTER_LAUNCHER=self.verifier.FLUTTER_LAUNCHER,
+            native_identity=lambda:self.core_identity, verify=self.actual_verify,
+            product_version=lambda _:self.product, verify_identity=self.verifier.verify_identity)
+        self.write_info()
+
+    def actual_verify(self, *args, **kwargs):
+        # Only fixed Rust receipt policy is isolated; ZIP/ELF, helper/script hashes and badging are real readers.
+        with mock.patch.object(self.verifier, "validate_native_receipt", return_value=self.core_identity):
+            return self.verifier.verify(*args, **kwargs)
+
+    def write_info(self):
+        (self.arm / "BUILD_INFO.json").write_text(json.dumps(self.info["arm64-v8a"]))
+        (self.runtime / "BUILD_INFO.json").write_text(json.dumps(self.info["x86_64"]))
+        (self.arm / "SHA256SUMS").write_text("".join(release._sha(self.arm / name) + "  " + name + "\n"
+            for name in ("AEROVE-Lite-android-arm64.apk", "BUILD_INFO.json")))
+
+    def validate(self):
+        spec = mock.Mock()
+        with mock.patch.object(release.importlib.util, "spec_from_file_location", return_value=spec), \
+                mock.patch.object(release.importlib.util, "module_from_spec", return_value=self.adapter), \
+                mock.patch.object(release, "_validate_manifest"), mock.patch.object(release, "_verify_matrix"):
+            return release.validate_artifacts(self.arm, self.helper, self.runtime, self.matrix,
+                self.source, self.tree, self.run, self.attempt, self.number, self.helper_source,
+                self.badging_path, self.signature_path, self.badging_path, self.signature_path)
+
+    def test_current_geo_identity_binds_both_abis_and_rejects_old_source_claims(self):
+        self.core_identity=self.verifier.native_identity()
+        for info in self.info.values():info.update(self.core_identity)
+        self.write_info();self.validate()
+        for abi in self.info:
+            for key in ['meow_policy_sha256','meow_overlay_sha256','meow_patch_sha256','meow_file_manifest_sha256','meow_lock_sha256']:
+                original=self.info[abi][key];self.info[abi][key]='0'*64;self.write_info()
+                with self.subTest(abi=abi,key=key),self.assertRaises(release.PromotionError):self.validate()
+                self.info[abi][key]=original
+        self.write_info()
+
+    def test_both_actual_flutter_packaging_proofs_and_launchers_promote(self):
+        result = self.validate()
+        self.assertEqual(result["tag"], "lite-v0.1.0-beta.1+1")
+        self.assertEqual((result["source"],result["tree"],result["run_id"],result["run_attempt"]),
+            (self.source,self.tree,self.run,self.attempt))
+        self.assertEqual(result["build_info"]["flutter_packaging"],self.results["arm64-v8a"]["flutter_packaging"])
+
+    def test_each_abi_rejects_missing_flutter_or_launcher_evidence(self):
+        for abi in self.info:
+            for key in ("flutter_packaging", "launcher_activity"):
+                value = self.info[abi].pop(key); self.write_info()
+                with self.subTest(abi=abi, missing=key), self.assertRaisesRegex(release.PromotionError, "Flutter packaging/launcher"):
+                    self.validate()
+                self.info[abi][key] = value
+        self.write_info()
+
+    def test_each_abi_rejects_tampered_swapped_and_wrong_typed_packaging(self):
+        for abi in self.info:
+            original = self.info[abi]["flutter_packaging"]
+            for kind in ("hash", "wrong-abi", "schema-bool", "byte-float", "missing-assets", "compose", "swapped"):
+                changed = json.loads(json.dumps(original))
+                if kind == "hash": next(iter(changed["libraries"].values()))["sha256"] = "0"*64
+                elif kind == "wrong-abi": changed["abi"] = "x86_64" if abi == "arm64-v8a" else "arm64-v8a"
+                elif kind == "schema-bool": changed["schema"] = True
+                elif kind == "byte-float":
+                    row = next(iter(changed["assets"].values())); row["bytes"] = float(row["bytes"])
+                elif kind == "missing-assets": changed.pop("assets")
+                elif kind == "compose": changed["client_kind"] = "compose"
+                else: changed = self.info["x86_64" if abi == "arm64-v8a" else "arm64-v8a"]["flutter_packaging"]
+                self.info[abi]["flutter_packaging"] = changed; self.write_info()
+                with self.subTest(abi=abi, tamper=kind), self.assertRaisesRegex(release.PromotionError, "Flutter packaging/launcher"):
+                    self.validate()
+            self.info[abi]["flutter_packaging"] = original
+        self.write_info()
+
+    def test_each_abi_rejects_old_launcher_even_with_valid_packaging(self):
+        for abi in self.info:
+            self.info[abi]["launcher_activity"] = "dev.aerove.lite.MainActivity"; self.write_info()
+            with self.subTest(abi=abi), self.assertRaisesRegex(release.PromotionError, "Flutter packaging/launcher"):
+                self.validate()
+            self.info[abi]["launcher_activity"] = self.verifier.FLUTTER_LAUNCHER
+
+    def test_badging_launcher_and_real_apk_gate_cannot_be_replaced_by_forged_info(self):
+        self.badging_path.write_text(self.badging.replace("FlutterMainActivity", "MainActivity"))
+        with self.assertRaisesRegex(ValueError, "Flutter launchable"): self.validate()
+        self.badging_path.write_text(self.badging)
+        apk = self.arm / "AEROVE-Lite-android-arm64.apk"
+        self.fixture.rewrite(apk,{"lib/arm64-v8a/libapp.so":None})
+        self.info["arm64-v8a"]["apk_sha256"] = release._sha(apk); self.write_info()
+        with self.assertRaisesRegex(ValueError, "Flutter release library is missing"): self.validate()
+
+    def test_original_source_run_attempt_and_tree_still_bind_both_build_infos(self):
+        for abi in self.info:
+            for key, bad in (("source","c"*40),("tree","d"*40),("run_number",91),("run_attempt",3)):
+                value = self.info[abi][key]; self.info[abi][key] = bad; self.write_info()
+                with self.subTest(abi=abi,key=key), self.assertRaises(release.PromotionError): self.validate()
+                self.info[abi][key] = value
+        self.write_info()
+
+
 if __name__ == "__main__":
     unittest.main()

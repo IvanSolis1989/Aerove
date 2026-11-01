@@ -45,7 +45,7 @@ pub struct ProviderLoaded {
     pub kind: ProviderKind, pub name: String, pub revision: String,
     pub phase: &'static str, pub changed: bool,
 }
-#[derive(Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 struct SourceReceipt { revision: u64, changed: bool }
 pub(crate) struct PlaneState {
     pub core_epoch: u64, pub revision: u64, pub closed: bool,
@@ -500,3 +500,89 @@ fn next_core_epoch(previous: u64) -> Result<u64, String> {
         }
     }
 }
+
+
+// An unpublished rule-only permit on this existing plane. It never changes
+// active/live admission and cannot admit proxy factories, probes or listeners.
+pub(crate) struct GeoProviderStage {
+    plane: Weak<ControlPlane>, stamp: (u64,u64,u64,u64),
+    original_live: BTreeMap<ProviderKey,u64>, original_sources: BTreeMap<u64,SourceReceipt>,
+    names: BTreeSet<String>, state: Mutex<GeoProviderStageState>,
+}
+#[derive(Default)]
+struct GeoProviderStageState {
+    phase: u8, // 0 prepared, 1 committed, 2 aborted
+    sources: BTreeMap<ProviderKey,(u64,SourceReceipt)>, busy: BTreeSet<u64>,
+}
+struct GeoStageObserver(Weak<GeoProviderStage>);
+struct GeoStageLease { stage: Arc<GeoProviderStage>, identity: ProviderIdentity }
+impl ControlPlane {
+    pub(crate) fn stage_geo_providers(self:&Arc<Self>) -> Result<Arc<GeoProviderStage>,String> {
+        let gate=self.gate.lock();
+        if gate.closed || self.cancel.is_cancelled() || !gate.active || !gate.group_events_ready() { return Err("geo.providerBusy".into()); }
+        Ok(Arc::new(GeoProviderStage {plane:Arc::downgrade(self),stamp:(gate.core_epoch,gate.revision,gate.selection_serial,gate.sequence),
+            original_live:gate.live.clone(),original_sources:gate.sources.clone(),
+            names:gate.live.keys().filter(|(kind,_)|*kind==ProviderKind::Rule).map(|(_,name)|name.clone()).collect(), state:Mutex::new(GeoProviderStageState::default())}))
+    }
+}
+impl GeoProviderStage {
+    pub(crate) fn observer(self:&Arc<Self>) -> Arc<dyn ProviderObserver> {Arc::new(GeoStageObserver(Arc::downgrade(self)))}
+    fn check(&self,plane:&ControlPlane,gate:&PlaneState)->Result<(),String> {
+        if gate.closed || plane.cancel.is_cancelled() { return Err("cancelled".into()); }
+        if (gate.core_epoch,gate.revision,gate.selection_serial,gate.sequence)!=self.stamp || gate.live!=self.original_live || gate.sources!=self.original_sources {
+            return Err("geo.staleProviderSource".into());
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_commit_locked(&self,gate:&PlaneState)->Result<(),String> {
+        let plane=self.plane.upgrade().ok_or("controlPlaneRetired")?;self.check(&plane,gate)?;
+        let state=self.state.lock();
+        if state.phase!=0 || !state.busy.is_empty() || !gate.group_events_ready() ||
+            state.sources.len()!=self.names.len() || self.names.iter().any(|name| !state.sources.get(&(ProviderKind::Rule,name.clone())).is_some_and(|(_,r)|r.revision>0)) {
+            return Err("geo.providerPreparationIncomplete".into());
+        }
+        Ok(())
+    }
+    // Caller validated every condition under this SAME plane gate, then swaps
+    // rules/DNS and these sources in one non-awaiting owner critical section.
+    pub(crate) fn install_locked(&self,gate:&mut PlaneState) {
+        let mut state=self.state.lock();
+        for (key,(source,receipt)) in &state.sources {
+            if let Some(old)=gate.live.insert(key.clone(),*source) {gate.sources.remove(&old);gate.pending.remove(key);}
+            gate.admitted.insert(key.clone(),*source);gate.sources.insert(*source,receipt.clone());
+        }
+        state.phase=1;
+    }
+    pub(crate) fn abort(&self) {let mut state=self.state.lock();if state.phase==0 {state.phase=2;}}
+}
+impl ProviderObserver for GeoStageObserver {
+    fn validate(&self,kind:ProviderKind,name:&str)->Result<(),String> {
+        let stage=self.0.upgrade().ok_or("geo.stageRetired")?;let plane=stage.plane.upgrade().ok_or("controlPlaneRetired")?;
+        let gate=plane.gate.lock();let state=stage.state.lock();
+        if kind!=ProviderKind::Rule || !stage.names.contains(name) || state.phase==2 {return Err("geo.unpublishedSourceDenied".into());}
+        if state.phase==1 {if gate.closed || plane.cancel.is_cancelled(){return Err("cancelled".into());}Ok(())} else {stage.check(&plane,&gate)}
+    }
+    fn begin(&self,identity:&ProviderIdentity)->Result<Arc<dyn ProviderLease>,String> {
+        let stage=self.0.upgrade().ok_or("geo.stageRetired")?;let plane=stage.plane.upgrade().ok_or("controlPlaneRetired")?;
+        let gate=plane.gate.lock();let mut state=stage.state.lock();
+        if identity.kind!=ProviderKind::Rule || !stage.names.contains(&identity.name) || state.phase==2 {return Err("geo.unpublishedSourceDenied".into());}
+        if state.phase==1 {drop(state);drop(gate);return plane.begin(identity);}
+        stage.check(&plane,&gate)?;
+        let key=(identity.kind,identity.name.clone());
+        if state.sources.get(&key).is_some_and(|(source,_)|*source!=identity.source) || !state.busy.insert(identity.source) {return Err("geo.providerBusy".into());}
+        state.sources.entry(key).or_insert_with(||(identity.source,SourceReceipt::default()));
+        drop(state);drop(gate);Ok(Arc::new(GeoStageLease{stage,identity:identity.clone()}))
+    }
+}
+impl ProviderLease for GeoStageLease {
+    fn commit(&self,changed:bool,install:&mut dyn FnMut())->Result<(),String> {
+        let plane=self.stage.plane.upgrade().ok_or("controlPlaneRetired")?;let gate=plane.gate.lock();self.stage.check(&plane,&gate)?;
+        let mut state=self.stage.state.lock();
+        if state.phase!=0 || !state.busy.contains(&self.identity.source) {return Err("geo.stalePreparation".into());}
+        let (source,receipt)=state.sources.get_mut(&(self.identity.kind,self.identity.name.clone())).ok_or("geo.sourceMissing")?;
+        if *source!=self.identity.source {return Err("geo.stalePreparation".into());}
+        let next=receipt.revision.checked_add(1).ok_or("providerRevisionExhausted")?;
+        install();receipt.revision=next;receipt.changed=changed;Ok(())
+    }
+}
+impl Drop for GeoStageLease {fn drop(&mut self){self.stage.state.lock().busy.remove(&self.identity.source);}}

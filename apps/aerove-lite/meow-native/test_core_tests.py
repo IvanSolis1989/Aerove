@@ -155,7 +155,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
             original=b'actual-upstream-lock';bridge=b'accepted-bridge-lock';resolved=b'actual-cargo-core-lock'
             (up/'Cargo.lock').write_bytes(original);(root/'Cargo.lock').write_bytes(bridge)
             policy=dict(resolveLock=True,coreTests=contract)
-            provider=contract in (core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER)
+            provider=contract in (core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY)
             if provider:policy['targets']=list(build_policy.RESOURCE_HEALTH_TARGETS)
             if mode in ['locked','bad-seed']:
                 (root/'core-tests.lock').write_bytes(resolved if mode=='locked' else b'wrong seed')
@@ -427,7 +427,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
         self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_MRS_READER),core_tests.packages_for_mode(core_tests.MODE_PROVIDER_READER))
         self.assertEqual(['rustfmt','--check','--edition','2021','.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs','.upstream/meow-rs/crates/meow-rules/src/rule_set.rs'],core_tests.MRS_FORMAT_COMMAND)
         self.assertEqual(['rustfmt','--check','--edition','2021']+['.upstream/meow-rs/crates/meow-config/src/'+name for name in ['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs']],core_tests.PROVIDER_READER_FORMAT_COMMAND)
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in ['success','locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','raise','empty-host-admission','extra-host-admission','duplicate-host-admission']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_PROVIDER_READER)
 
@@ -493,7 +493,7 @@ class BuildContractTests(unittest.TestCase):
             return build,root,full,calls,json.loads((root/'build/host-receipt.json').read_text())
 
     def test_each_full_suite_mode_runs_the_jni_source_gate_native_proof_and_all42_targets_before_core_tests(self):
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in core_tests.FULL_NATIVE_SUITE_MODES+(core_tests.MODE_PROVIDER_GENERAL,):
             with self.subTest(mode=mode):
                 build,root,full,calls,receipt=self.drive(mode)
@@ -527,6 +527,12 @@ class BuildContractTests(unittest.TestCase):
                 if mode == core_tests.MODE_SELECTION_OWNER:
                     with patch.object(build_policy,'SELECTION_OWNER_OVERLAY_SHA256',core_tests.digest(metadata)):
                         self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
+                elif mode == core_tests.MODE_GEO_OWNER:
+                    with patch.object(build_policy,'GEO_OWNER_OVERLAY_SHA256',core_tests.digest(metadata)):
+                        self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
+                elif mode == core_tests.MODE_GEO_EMPTY:
+                    with patch.object(build_policy,'GEO_EMPTY_OVERLAY_SHA256',core_tests.digest(metadata)):
+                        self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
                 else:self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
                 for omitted in build_policy.RESOURCE_HEALTH_TARGETS[1:]:
                     (root/'build-policy.json').write_text(json.dumps(dict(base,coreTests=mode,targets=[t for t in base['targets'] if t!=omitted])))
@@ -554,3 +560,97 @@ class BuildContractTests(unittest.TestCase):
                 self.assertEqual(json.loads((root/'build/core-tests/receipt.json').read_bytes()),receipt['coreTests'])
 
 if __name__=='__main__':unittest.main()
+
+
+class GeoOwnerProofTests(unittest.TestCase):
+    def test_geo_mode_keeps_every_old_command_and_separate_source_identity(self):
+        self.assertEqual(core_tests.entries(core_tests.MODE_SELECTION_OWNER),core_tests.entries(core_tests.MODE_GEO_OWNER))
+        self.assertEqual((35,182),(len(core_tests.entries(core_tests.MODE_GEO_OWNER)),sum(row['expectedPass'] for row in core_tests.entries(core_tests.MODE_GEO_OWNER))))
+        policy=dict(coreTests=core_tests.MODE_GEO_OWNER,overlaySha256=build_policy.GEO_OWNER_OVERLAY_SHA256)
+        build_policy.validate_selection_owner_source(policy)
+        for source in [build_policy.SELECTION_OWNER_OVERLAY_SHA256,'0'*64]:
+            with self.subTest(source=source),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                build_policy.validate_selection_owner_source(dict(policy,overlaySha256=source))
+        for old in [core_tests.MODE_SELECTION_OWNER,core_tests.MODE_PROVIDER_READER]:
+            with self.subTest(mode=old),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                build_policy.validate_selection_owner_source(dict(policy,coreTests=old))
+    def test_geo_74_real_pass_line_parser_rejects_missing_duplicate_and_old55_receipt(self):
+        import build
+        cases=build.native_test_cases(core_tests.MODE_GEO_OWNER)
+        self.assertEqual(74,sum(map(len,cases.values())))
+        self.assertEqual(55,sum(map(len,build.native_test_cases(core_tests.MODE_SELECTION_OWNER).values())))
+        self.assertEqual(32,sum(map(len,build.native_test_cases(core_tests.MODE_PROVIDER_READER).values())))
+        for target,old in build.SELECTION_OWNER_CASES.items():self.assertEqual(old,cases[target][:len(old)])
+        lines=['test fixture::'+name+' ... ok' for names in cases.values() for name in names]
+        self.assertEqual(cases,build.added_native_test_proof('\n'.join(lines),core_tests.MODE_GEO_OWNER))
+        fifo='fifo_replacement_fails_prepare_and_commit_without_blocking_cancel_or_join'
+        self.assertEqual(1,sum(name==fifo for names in cases.values() for name in names))
+        self.assertEqual(fifo,cases['lib'][-1])
+        for output in ['\n'.join(line for line in lines if '::'+fifo+' ...' not in line),'\n'.join(lines+['test duplicate::'+fifo+' ... ok']),'\n'.join(lines).replace(fifo+' ... ok',fifo+' ... ignored')]:
+            with self.subTest(fifo_proof=output.count(fifo)),self.assertRaisesRegex(ValueError,'Native test pass'):
+                build.added_native_test_proof(output,core_tests.MODE_GEO_OWNER)
+        for output in ['\n'.join(lines[:-1]),'\n'.join(lines+[lines[-1]]),'\n'.join('test fixture::'+name+' ... ok' for names in build.SELECTION_OWNER_CASES.values() for name in names)]:
+            with self.assertRaisesRegex(ValueError,'Native test pass'):build.added_native_test_proof(output,core_tests.MODE_GEO_OWNER)
+    def test_geo_reuses_strict_core_execution_negative_fixtures(self):
+        fixture=CoreTestAdmissionTests()
+        for outcome in ['locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','empty-host-admission','extra-host-admission','duplicate-host-admission']:
+            with self.subTest(outcome=outcome):fixture.run_fixture(outcome,core_tests.MODE_GEO_OWNER)
+
+
+class GeoEmptyProofTests(unittest.TestCase):
+    def test_empty_mode_keeps35_commands182_cases_and_pairs_its_real_metadata(self):
+        import build
+        specs=core_tests.entries(core_tests.MODE_GEO_EMPTY)
+        self.assertEqual(core_tests.entries(core_tests.MODE_GEO_OWNER),specs)
+        self.assertEqual((35,182),(len(specs),sum(row['expectedPass'] for row in specs)))
+        self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_GEO_OWNER),core_tests.packages_for_mode(core_tests.MODE_GEO_EMPTY))
+        policy=build_policy.load_policy(build.ROOT)
+        self.assertEqual(core_tests.MODE_GEO_EMPTY,policy['coreTests'])
+        self.assertEqual('9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f',policy['overlaySha256'])
+        self.assertEqual(build_policy.GEO_EMPTY_OVERLAY_SHA256,policy['overlaySha256'])
+        self.assertEqual(42,len(policy['targets']))
+        build_policy.validate_selection_owner_source(policy)
+        for metadata in [build_policy.GEO_OWNER_OVERLAY_SHA256,build_policy.SELECTION_OWNER_OVERLAY_SHA256,'0'*64]:
+            with self.subTest(metadata=metadata),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                build_policy.validate_selection_owner_source(dict(policy,overlaySha256=metadata))
+        for mode in [core_tests.MODE_GEO_OWNER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_PROVIDER_READER]:
+            with self.subTest(mode=mode),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                build_policy.validate_selection_owner_source(dict(policy,coreTests=mode))
+        for mode,metadata in [(core_tests.MODE_GEO_OWNER,build_policy.GEO_OWNER_OVERLAY_SHA256),
+                (core_tests.MODE_SELECTION_OWNER,build_policy.SELECTION_OWNER_OVERLAY_SHA256)]:
+            build_policy.validate_selection_owner_source(dict(policy,coreTests=mode,overlaySha256=metadata))
+
+    def test_empty77_pass_parser_keeps74_fifo_and_rejects_missing_duplicate_ignored_and_old_proof(self):
+        import build
+        cases=build.native_test_cases(core_tests.MODE_GEO_EMPTY)
+        old=build.native_test_cases(core_tests.MODE_GEO_OWNER)
+        self.assertEqual((74,77),(sum(map(len,old.values())),sum(map(len,cases.values()))))
+        self.assertEqual(set(old),set(cases))
+        for target,names in old.items():self.assertEqual(names,cases[target][:len(names)])
+        self.assertEqual(['empty_geo_assets_commit_host_auto_off_metadata_with_real_zero_source_receipt',
+            'empty_geo_assets_reject_hidden_provider_subrule_and_dns_dependencies_before_geo_read',
+            'empty_geo_assets_cancelled_prepare_joins_empty_scopes_preserving_old_graph'],cases['lib'][-3:])
+        names=[name for rows in cases.values() for name in rows]
+        self.assertEqual(77,len(set(names)))
+        fifo='fifo_replacement_fails_prepare_and_commit_without_blocking_cancel_or_join'
+        self.assertEqual(1,names.count(fifo));self.assertEqual(fifo,cases['lib'][-4])
+        lines=['test fixture::'+name+' ... ok' for name in names]
+        self.assertEqual(cases,build.added_native_test_proof('\n'.join(lines),core_tests.MODE_GEO_EMPTY))
+        for name in names:
+            line='test fixture::'+name+' ... ok'
+            for defect,output in [('missing','\n'.join(row for row in lines if row!=line)),
+                    ('duplicate','\n'.join(lines+['test duplicate::'+name+' ... ok'])),
+                    ('ignored','\n'.join(lines).replace(name+' ... ok',name+' ... ignored'))]:
+                with self.subTest(name=name,defect=defect),self.assertRaisesRegex(ValueError,'Native test pass'):
+                    build.added_native_test_proof(output,core_tests.MODE_GEO_EMPTY)
+        for mode in [core_tests.MODE_GEO_OWNER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_PROVIDER_READER]:
+            old_output='\n'.join('test fixture::'+name+' ... ok' for rows in build.native_test_cases(mode).values() for name in rows)
+            with self.subTest(old_mode=mode),self.assertRaisesRegex(ValueError,'Native test pass'):
+                build.added_native_test_proof(old_output,core_tests.MODE_GEO_EMPTY)
+
+    def test_empty_mode_reuses_strict_core_execution_and_lock_restoration(self):
+        fixture=CoreTestAdmissionTests()
+        for outcome in ['locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail',
+                'format-fail-provider','format-mutate','format-undeclared','empty-host-admission',
+                'extra-host-admission','duplicate-host-admission']:
+            with self.subTest(outcome=outcome):fixture.run_fixture(outcome,core_tests.MODE_GEO_EMPTY)

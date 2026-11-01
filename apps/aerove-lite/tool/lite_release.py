@@ -492,6 +492,15 @@ def _verify_matrix(root, runtime_root, source, tree, run, attempt, number):
         raise PromotionError("Expected twelve validated dashboard captures")
 
 
+def _verify_flutter_build_info(info, actual, identity, abi, launcher):
+    proof = actual.get("flutter_packaging")
+    if (info.get("launcher_activity") != launcher or identity.get("launcher_activity") != launcher
+            or not isinstance(proof, dict) or type(proof.get("schema")) is not int or proof.get("schema") != 1
+            or proof.get("client_kind") != "flutter-aot" or proof.get("abi") != abi
+            or json.dumps(info.get("flutter_packaging"), sort_keys=True) != json.dumps(proof, sort_keys=True)):
+        raise PromotionError(f"{abi} Flutter packaging/launcher readback differs from Build Info")
+
+
 def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt, number, helper_source,
                        arm_badging, arm_signature, x86_badging, x86_signature):
     arm = Path(arm); helper = Path(helper); runtime = Path(runtime); matrix = Path(matrix)
@@ -526,6 +535,7 @@ def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt,
         Path(x86_signature).read_text(encoding="utf-8"), product, "preview")
     stored_x86_identity = verifier.verify_identity((runtime / "lite-badging.txt").read_text(encoding="utf-8"),
         (runtime / "lite-signature.txt").read_text(encoding="utf-8"), product, "preview")
+    _verify_flutter_build_info(build, arm_result, arm_identity, "arm64-v8a", verifier.FLUTTER_LAUNCHER)
     if (arm_result.get("core_sha256") != build.get("core_sha256")
             or arm_result.get("client_helpers") != build.get("client_helpers")
             or arm_result.get("client_helper_source_sha256") != build.get("client_helper_source_sha256")
@@ -535,6 +545,7 @@ def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt,
     x86_result = verifier.verify(x86apk, "x86_64", helper_source, runtime / "client-helper-build-receipt.json",
         _json(runtime / "BUILD_INFO.json").get("native_build_receipt", {}), workflow_identity)
     x86_info = _json(runtime / "BUILD_INFO.json")
+    _verify_flutter_build_info(x86_info, x86_result, x86_identity, "x86_64", verifier.FLUTTER_LAUNCHER)
     if (x86_info.get("product") != "AEROVE Lite" or x86_info.get("channel") != "preview"
             or x86_info.get("application_id") != "dev.aerove.lite" or x86_info.get("min_sdk") != 33
             or x86_info.get("version") != build.get("version") or x86_info.get("version_code") != build.get("version_code")

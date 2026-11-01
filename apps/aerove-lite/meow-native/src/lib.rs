@@ -36,6 +36,8 @@ pub mod owned_runtime;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 mod network_api;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+mod geo_reload;
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 mod meow_jni;
 mod script_engine;
 mod script_jni;

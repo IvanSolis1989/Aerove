@@ -24,6 +24,11 @@ pub struct Capabilities {
     schema_version: u8, source: SourceIdentity, compiled_features: Vec<&'static str>,
     verified_features: Vec<&'static str>, built_in_protocols: Vec<&'static str>,
     verification: &'static str, wire_verified: bool,
+    interface_versions:std::collections::BTreeMap<&'static str,u8>,
+}
+// Compiled interface schemas, not factory/wire verification results.
+fn interface_versions()->std::collections::BTreeMap<&'static str,u8>{
+    if cfg!(any(target_os="linux",target_os="android")){std::collections::BTreeMap::from([("hostBindingPlan",1),("selectionWitness",1),("geoOwnedReload",1)])}else{std::collections::BTreeMap::new()}
 }
 fn invalid() -> io::Error { io::Error::other("capabilitySourceIdentityInvalid") }
 fn source_identity() -> io::Result<SourceIdentity> {
@@ -83,7 +88,7 @@ async fn build() -> io::Result<Capabilities> {
     let built_in_protocols = vec!["direct","http","socks5"];
     for protocol in &built_in_protocols { verify_feature(protocol).await?; }
     Ok(Capabilities { schema_version:1, source, compiled_features, verified_features, built_in_protocols,
-        verification:"fixedOfflineFactory", wire_verified:false })
+        verification:"fixedOfflineFactory", wire_verified:false,interface_versions:interface_versions() })
 }
 pub async fn inspect() -> io::Result<&'static Capabilities> { VERIFIED.get_or_try_init(build).await }
 pub async fn json() -> io::Result<String> { serde_json::to_string(&inspect().await?).map_err(|_| invalid()) }
@@ -91,6 +96,11 @@ pub async fn json() -> io::Result<String> { serde_json::to_string(&inspect().awa
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn interface_versions_report_owned_geo_schema_only_on_sealing_platforms(){
+        let versions=interface_versions();
+        if cfg!(any(target_os="linux",target_os="android")){assert_eq!(versions,std::collections::BTreeMap::from([("hostBindingPlan",1),("selectionWitness",1),("geoOwnedReload",1)]));}else{assert!(versions.is_empty());}
+    }
     macro_rules! protocol {
         ($test:ident, $name:literal) => {
             #[tokio::test]

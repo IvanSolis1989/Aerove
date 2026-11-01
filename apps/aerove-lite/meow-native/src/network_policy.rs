@@ -73,6 +73,19 @@ impl NetworkPolicyOwner {
     }
     pub fn bind_process_policy(&self, processes: Arc<crate::process_policies::ProcessPolicies>) { *self.processes.write() = Some(processes); }
     pub fn latest_intent(&self) -> u64 { self.latest_intent.load(Ordering::Acquire) }
+    // Geo uses the existing DNS owner lock order: update -> intent -> plane.
+    // Preparation never mutates the live resolver; all post-CAS retirements are
+    // joined through the same owner's existing pending-scope machinery.
+    pub(crate) fn adopt_initial_dns_scope(&self,scope:Arc<meow_config::owned_load::OwnedLoadScope>)->Result<(),&'static str>{let mut current=self.current_scope.lock();if current.is_some(){return Err("initialDnsScopeAlreadySet");}*current=Some(scope);Ok(())}
+    pub(crate) async fn geo_update_guard(&self)->tokio::sync::MutexGuard<'_,()> {self.update_gate.lock().await}
+    pub(crate) fn geo_intent_guard(&self)->parking_lot::MutexGuard<'_,()> {self.intent_gate.lock()}
+    pub(crate) fn install_geo_dns(&self,next:&NetworkContext,scope:Arc<meow_config::owned_load::OwnedLoadScope>)
+        -> (NetworkContext,Option<Arc<meow_config::owned_load::OwnedLoadScope>>) {
+        // Prepared outside plane.gate. Never invoke captured()/owner getters here.
+        (self.network.replace(next),self.current_scope.lock().replace(scope))
+    }
+    pub(crate) async fn retire_geo_dns(&self,scope:Arc<meow_config::owned_load::OwnedLoadScope>)->Result<(),&'static str> {self.retire_scope(scope).await}
+
     pub async fn apply(&self, captured: CapturedPhysicalNetwork) -> Result<NetworkPolicyReceipt, String> {
         if captured.intent == 0 || captured.network_handle == 0 { return Err("invalidPhysicalNetworkCapture".into()); }
         if self.cancel.is_cancelled() { return Err("cancelled".into()); }
