@@ -32,7 +32,7 @@ Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正�
 
 <!-- aerove:releases:start -->
 - **稳定版** · [0.11.0](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0%2B2026102298) · 构建 `2026102298` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0%2B2026102298/Aerove-android-arm64.apk)
-- **公开预览版** · [0.11.1-beta.4](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.4%2B2026102310) · 构建 `2026102310` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.4%2B2026102310/Aerove-android-arm64.apk)
+- **公开预览版** · [0.11.1-beta.5](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.5%2B2026102313) · 构建 `2026102313` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.5%2B2026102313/Aerove-android-arm64.apk)
 <!-- aerove:releases:end -->
 
 预览版与稳定版属于同一标准版产品，安装前请确认版本与数据备份；稳定版入口持续指向稳定发行。
@@ -93,7 +93,7 @@ Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正�
 
 <a href="docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="流光清透 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="流光清透 · 灵动极光 · 深色"></a>
 
-来源: [`fb4a893e639ff5d4c4f3356557d3bf7f285b5eb8`](https://github.com/IvanSolis1989/Aerove/commit/fb4a893e639ff5d4c4f3356557d3bf7f285b5eb8) · [完整渲染记录](docs/assets/screenshots/showcase/render-info.json)
+来源: [`030019025266455108b874d4f51d72e53b3a158e`](https://github.com/IvanSolis1989/Aerove/commit/030019025266455108b874d4f51d72e53b3a158e) · [完整渲染记录](docs/assets/screenshots/showcase/render-info.json)
 <!-- aerove:showcase:end -->
 
 ## 按需深入
