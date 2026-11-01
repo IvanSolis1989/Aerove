@@ -728,13 +728,19 @@ class LiteReleaseNotesTests(unittest.TestCase):
 
     def test_current_changelog_renders_only_implemented_entries(self):
         path = Path(__file__).resolve().parents[3] / notes.CHANGELOG
-        rendered = notes.render(path.read_text(encoding="utf-8"), TAG, INFO, 123, 2)
+        markdown = path.read_text(encoding="utf-8")
+        rendered = notes.render(markdown, TAG, INFO, 123, 2)
         for pending in ("未接受", "未发行", "尚未构建", "待验收", "仍待", "待新候选", "尚待"):
             self.assertNotIn(pending, rendered)
+        for entry in ("配置生成", "desired", "lastApplied", "私有会话", "profile.store-selected", "URLTest"):
+            self.assertIn(entry, rendered)
+        history = notes._sections(markdown)["历史未发行候选记录"]
+        self.assertIn("### 0.1.0-beta.25（安装编号 25）", history)
         for entry in ("融合编辑", "主题名称", "局域网地址", "统计刷新", "曲线延续", "国旗定心",
                       "更新备用源", "专版脚本", "验证接线", "c18c314d94206eb6724d235ca0d590c3e14e9121",
                       "v6.0.21-meow.7"):
-            self.assertIn(entry, rendered)
+            self.assertIn(entry, history)
+            self.assertNotIn(entry, rendered)
         self.assertNotIn("历史未发行候选记录", rendered)
 
     def test_unknown_duplicate_and_malformed_status_or_html_fail_closed(self):

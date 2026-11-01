@@ -7138,17 +7138,17 @@
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
 +            observations: parking_lot::RwLock::new(None),
-@@ -810,2 +1006,2 @@
--            policy,
--            fallback_filter,
-+            policy:policy.map(Arc::new),
-+            fallback_filter:fallback_filter.map(Arc::new),
 @@ -985 +1181 @@
 -                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true).await;
 +                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true, TransportScope::current()).await;
 @@ -1034 +1230 @@
 -            hosts,
 +            hosts:Arc::new(hosts),
+@@ -1037,2 +1233,2 @@
+-            policy,
+-            fallback_filter,
++            policy: policy.map(Arc::new),
++            fallback_filter: fallback_filter.map(Arc::new),
 @@ -1043,0 +1240,3 @@
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
@@ -7283,6 +7283,9 @@
 @@ -2053 +2317 @@
 -        self.fakeip_skipper = Some(skipper);
 +        self.fakeip_skipper = Some(Arc::new(skipper));
+@@ -2086 +2350 @@
+-            .as_ref()
++            .as_deref()
 @@ -2148,0 +2413,45 @@
 +
 +    #[cfg(feature = "encrypted")]
