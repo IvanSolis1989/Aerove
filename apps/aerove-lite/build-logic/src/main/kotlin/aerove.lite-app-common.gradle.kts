@@ -19,6 +19,8 @@ import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.JavaExec
+import org.gradle.api.tasks.testing.Test
 import org.gradle.process.ExecOperations
 import java.util.Properties
 
@@ -359,4 +361,28 @@ dependencies {
     add("androidTestRuntimeOnly", "androidx.tracing:tracing:1.2.0")
     add("androidTestImplementation", "com.google.errorprone:error_prone_annotations:2.38.0")
     add("androidTestImplementation", "org.jetbrains.compose.ui:ui-test-junit4:1.12.0")
+}
+
+tasks.withType<Test>().configureEach {
+    listOf("resource.fixture", "sourceProof89.fixture").forEach { key ->
+        providers.systemProperty(key).orNull?.let { systemProperty(key, it) }
+    }
+}
+
+tasks.register<JavaExec>("prepareResource89NativeFixture") {
+    dependsOn("compileReleaseUnitTestKotlin")
+    mainClass.set("dev.aerove.lite.fixtures.NativeResourceFixture89Kt")
+    classpath(providers.provider { tasks.named<Test>("testReleaseUnitTest").get().classpath })
+    doFirst {
+        val output = file(providers.gradleProperty("resource89.output").get())
+        check(output.mkdirs() || output.isDirectory)
+        checkNotNull(System.getenv("AEROVE_FILTER_HELPER")) { "The real host filter helper is required" }
+        val suffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
+        val java = File(System.getProperty("java.home"), "bin/java$suffix").absolutePath
+        output.resolve("profile-bridge.json").writeText(JsonOutput.toJson(mapOf(
+            "executable" to java,
+            "args" to listOf("-cp", classpath.asPath, "dev.aerove.lite.flutter.ProfileProtocolFixture89Kt"),
+        )))
+        setArgs(listOf(output.resolve("native").absolutePath, output.resolve("native-fixture.json").absolutePath))
+    }
 }

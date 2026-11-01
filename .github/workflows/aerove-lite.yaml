@@ -482,7 +482,7 @@ jobs:
   verify:
     if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)))))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 50
     steps:
     - name: Validate exclusive client-only preflight request
       if: ${{ inputs.client_preflight }}
@@ -506,6 +506,7 @@ jobs:
         PY
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
+        submodules: recursive
         persist-credentials: false
     - name: Source preparation and APK inspector regression tests
       run: |-
@@ -519,7 +520,16 @@ jobs:
     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
       with:
         go-version: 1.27.1
-        cache-dependency-path: apps/aerove-lite/regexp2/go.sum
+        cache-dependency-path: |
+          apps/aerove-lite/regexp2/go.sum
+          apps/aerove/core/go.sum
+    - uses: ./.github/actions/flutter
+      with:
+        flutter-version: 3.47.6
+        cache: true
+    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+      with:
+        toolchain: 1.98.1
     - name: Build the real host filter and age helpers for JVM verification
       timeout-minutes: 10
       run: |-
@@ -553,6 +563,39 @@ jobs:
       with:
         gradle-version: 9.6.0
         cache-read-only: false
+    - name: Resolve the existing Standard fixture entry with production hooks enabled
+      working-directory: apps/aerove
+      run: |-
+        flutter pub get --enforce-lockfile
+        python3 tool/mihomo_source.py prepare
+    - name: Produce fresh resource and source-proof inputs through the real Kotlin and Dart paths
+      timeout-minutes: 25
+      env:
+        AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
+      run: |-
+        set -euo pipefail
+        inputs="$RUNNER_TEMP/lite-client-fixtures"
+        gradle --no-daemon -p apps/aerove-lite -Presource89.output="$inputs" :app:prepareResource89NativeFixture
+        (cd apps/aerove && flutter test --no-pub --concurrency 1 \
+          --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+          --dart-define="RESOURCE89_FIXTURE=$inputs/native-fixture.json" \
+          --dart-define="PROFILE89_BRIDGE=$inputs/profile-bridge.json" \
+          --dart-define="RESOURCE89_OUTPUT=$inputs/resource" test/common/native_lite_resource89_test.dart)
+        (cd apps/aerove && flutter test --no-pub --concurrency 1 \
+          --dart-define="SOURCE_PROOF89_OUTPUT=$inputs/source-proof89.json" test/common/native_lite_source_proof89_test.dart)
+        python3 - <<'PY'
+        import hashlib, json, os
+        from pathlib import Path
+        root = Path(os.environ['RUNNER_TEMP']) / 'lite-client-fixtures'
+        for name in ('resource/ordinary-compiled.yaml', 'source-proof89.json',
+                     'source-proof89.json.resources', 'source-proof89.json.producer.yaml'):
+            assert (root / name).is_file(), name
+        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+                       attempt=os.environ['GITHUB_RUN_ATTEMPT'], files={
+                       p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                       for p in sorted(root.rglob('*')) if p.is_file()})
+        (root / 'FIXTURE-INPUTS.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        PY
     - name: Kotlin data, lifecycle and UI compilation checks
       id: kotlin_checks
       continue-on-error: true
@@ -561,7 +604,10 @@ jobs:
         AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
       run: |-
         export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Daerove.age.fixtures=\"$GITHUB_WORKSPACE/apps/aerove-lite/regexp2/agebridge/testdata\" -Daerove.age.helper=\"$RUNNER_TEMP/lite-client-helper/bin/ageverify\""
-        gradle --no-daemon --continue --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:checkReleaseAarMetadata :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
+        gradle --no-daemon --continue \
+          -Dresource.fixture="$RUNNER_TEMP/lite-client-fixtures/resource" \
+          -DsourceProof89.fixture="$RUNNER_TEMP/lite-client-fixtures/source-proof89.json" \
+          --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:checkReleaseAarMetadata :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
     - name: Inspect Android tasks after verification failure
       if: ${{ always() && steps.kotlin_checks.outcome == 'failure' }}
       timeout-minutes: 3
@@ -594,6 +640,7 @@ jobs:
         path: |
           apps/aerove-lite/app/build/reports/
           apps/aerove-lite/app/build/test-results/
+          ${{ runner.temp }}/lite-client-fixtures/
           apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
         if-no-files-found: warn
   flutter_host_preflight:

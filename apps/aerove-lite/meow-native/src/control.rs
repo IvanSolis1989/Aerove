@@ -2410,8 +2410,8 @@ impl RawWitnessProof {
             self.guards.iter().any(|guard| !guard.is_current()) { return false; }
         let route = control.state.tunnel.route_snapshot();
         self.proxies.len() == route.proxies.len() && self.proxies.iter().all(|(name, proxy)|
-            route.proxies.get(name).is_some_and(|live| std::sync::Weak::ptr_eq(proxy, &Arc::downgrade(live)))) &&
-            self.members.iter().all(|(name, members)| route.proxies.get(name).and_then(|proxy| proxy.member_proxies()).is_some_and(|live|
+            route.proxies.get(name.as_str()).is_some_and(|live| std::sync::Weak::ptr_eq(proxy, &Arc::downgrade(live)))) &&
+            self.members.iter().all(|(name, members)| route.proxies.get(name.as_str()).and_then(|proxy| proxy.member_proxies()).is_some_and(|live|
                 live.len() == members.len() && members.iter().zip(live.iter()).all(|(old, live)| std::sync::Weak::ptr_eq(old, &Arc::downgrade(live)))))
     }
 }
@@ -2463,7 +2463,7 @@ impl RouteControl {
         let groups = route.proxies.iter().filter_map(|(name, proxy)| crate::selection_cache::readback(proxy).map(|value| (name.to_string(), value))).collect();
         let state = self.raw_witness.lock();
         let complete = state.proof.as_ref().is_some_and(|proof| proof.matches(self, gate));
-        let ignored = state.requested.iter().filter(|(name, _)| !route.proxies.contains_key(*name)).map(|(name, raw)| (name.clone(), raw.clone())).collect();
+        let ignored = state.requested.iter().filter(|(name, _)| !route.proxies.contains_key(name.as_str())).map(|(name, raw)| (name.clone(), raw.clone())).collect();
         Ok(SelectionWitness { schema_version: 1, witness_id: state.serial.to_string(), complete,
             core_epoch: gate.core_epoch.to_string(), route_version: gate.revision.to_string(), selection_intent: gate.selection_serial.to_string(),
             acknowledged_selection_intent: state.acknowledged_intent.to_string(), acknowledged_core_epoch:state.proof.as_ref().map(|proof|proof.epoch.to_string()), initial_startup_witness_id:state.initial_startup_serial.map(|value|value.to_string()), graph_version: self.graph_serial.load(std::sync::atomic::Ordering::Relaxed).to_string(),

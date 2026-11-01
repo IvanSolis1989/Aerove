@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/native_lite_migration.dart';
+import 'package:fl_clash/common/task.dart';
+import 'package:yaml/yaml.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -74,6 +76,26 @@ void main() {
           patchClashConfig: newPatchClashConfig('meow-rs'),
         );
         final first = await nativeLiteBusinessSource(db, home, storage, config);
+        final producer = await makeRealProfileTask(
+          MakeRealProfileState(
+            profilesPath: home.path,
+            profileId: 1,
+            rawConfig: {
+              'rules': ['MATCH,DIRECT'],
+            },
+            realPatchConfig: config.patchClashConfig,
+            appendSystemDns: false,
+            proxyGroups: [],
+            rules: [],
+            addedRules: [],
+            defaultUA: 'source-proof89 fixture',
+            safeMode: true,
+          ),
+          coreId: 'meow-rs',
+        );
+        final compiled = jsonDecode(jsonEncode(loadYaml(producer.yaml))) as Map;
+        expect(compiled['aerove-geo-origin'], isA<Map>());
+        expect(compiled['rules'], ['MATCH,DIRECT']);
         final all = <String, Object?>{};
         for (final name in (first['tables'] as Map).keys.cast<String>()) {
           all[name] =
@@ -88,6 +110,15 @@ void main() {
           await File(output).writeAsString(
             jsonEncode({'config': config, 'all': all, 'proof': first}),
           );
+        if (output.isNotEmpty) {
+          await File('$output.full-producer.yaml').writeAsString(producer.yaml);
+          await File('$output.producer.yaml').writeAsString(
+            await encodeYamlTask({
+              'aerove-geo-origin': compiled['aerove-geo-origin'],
+              'rules': compiled['rules'],
+            }),
+          );
+        }
         final themed = jsonDecode(jsonEncode(config)) as Map<String, dynamic>;
         themed['themeProps']['primaryColor'] = 42;
         themed['themeProps']['fontFamily'] = 'fixture-font';

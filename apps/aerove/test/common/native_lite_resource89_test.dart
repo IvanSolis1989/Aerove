@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/constant.dart';
+import 'package:fl_clash/common/path.dart';
 import 'package:fl_clash/common/task.dart';
 import 'package:fl_clash/common/native_lite_mapping.dart';
 import 'package:fl_clash/common/native_lite_migration.dart';
@@ -38,7 +39,9 @@ class _ExactCore extends CoreHandlerInterface {
     Duration? timeout,
   }) async {
     if (method == CoreMethod.getProfileBase ||
-        method == CoreMethod.buildProfile) {
+        method == CoreMethod.buildProfile ||
+        method == CoreMethod.matchFilters) {
+      if (method == CoreMethod.matchFilters) calls++;
       final command =
           jsonDecode(
                 await File(
@@ -46,10 +49,15 @@ class _ExactCore extends CoreHandlerInterface {
                 ).readAsString(),
               )
               as Map;
-      final path = method == CoreMethod.getProfileBase
-          ? arguments as String
-          : (arguments as Map)['path'] as String;
-      final home = p.dirname(p.dirname(path));
+      final home = method == CoreMethod.matchFilters
+          ? await appPath.homeDirPath
+          : p.dirname(
+              p.dirname(
+                method == CoreMethod.getProfileBase
+                    ? arguments as String
+                    : (arguments as Map)['path'] as String,
+              ),
+            );
       final worker = await Process.start(command['executable'] as String, [
         ...(command['args'] as List).cast<String>(),
         home,
@@ -70,19 +78,7 @@ class _ExactCore extends CoreHandlerInterface {
         );
       return result['result'] as T;
     }
-    if (method != CoreMethod.matchFilters)
-      throw StateError('unexpected fixture core method');
-    calls++;
-    final worker = await Process.start(
-      const String.fromEnvironment('EXACT_MATCHER_FIXTURE'),
-      [],
-    );
-    worker.stdin.write(jsonEncode(arguments));
-    await worker.stdin.close();
-    final output = await utf8.decoder.bind(worker.stdout).join();
-    if (await worker.exitCode != 0)
-      throw StateError('actual regexp2 fixture failed');
-    return jsonDecode(output) as T;
+    throw StateError('unexpected fixture core method');
   }
 
   @override

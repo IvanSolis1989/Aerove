@@ -28,6 +28,7 @@ class MeowTunnelBackendTest {
         var parked = false;var tunMode = false
         var port = 49152
         val policy = MeowPolicyFixture()
+        var onMetadataRenew: ((String) -> String)? = null
         override fun start(planJson: String, fd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?): Long {
             starts++; payload=planJson;descriptor=fd;policy.startup(org.json.JSONObject(planJson).getString("hostPolicyYaml"));onStart();return 1
         }
@@ -44,7 +45,9 @@ class MeowTunnelBackendTest {
             return MeowStatus(MeowState.Running, null, "127.0.0.1:$port", if(tunMode) NativeCore.RuntimeMode.Tun else NativeCore.RuntimeMode.Proxy,
                 tunMode && !parked, !parked, !parked, true)
         }
-        override fun hostPolicy(handle: Long, request: String) = policy.command(request)
+        override fun hostPolicy(handle: Long, request: String) =
+            if (JSONObject(request).getString("operation") == "renewGeoBinding") checkNotNull(onMetadataRenew)(request)
+            else policy.command(request)
         override fun listeners(handle: Long) = MeowListenerStatus(!parked,tunMode && !parked,!parked,if(parked) emptyList() else listOf(7890),policy.epoch(),policy.onlyProxy,policy.probe.unifiedDelay,policy.probe.tcpConcurrent,policy.mode)
     }
     private inner class Fixture(parked: Boolean = false, tunMode: Boolean = false, profileId: String = "profile",
@@ -56,7 +59,7 @@ class MeowTunnelBackendTest {
         val bundle = File(temp.root,"resources/bundles/profile/resource-generation").apply{mkdirs()}
         val prepared = PreparedProfile(profileId,yaml,yaml,revision,generation,
             if (profileId.startsWith("flutter:")) null else bundle,null)
-        val config = MeowRuntimeConfigComposer(temp.root,cacheDirectory=File(temp.root,"meow-cache/session").apply{mkdirs()}).compose(prepared,if (startupGated) settings.copy(externalController = settings.externalController.copy(enabled = false)) else settings,if(tunMode && !parked)42 else -1,port,"0123456789abcdef0123456789abcdef",
+        var config = MeowRuntimeConfigComposer(temp.root,cacheDirectory=File(temp.root,"meow-cache/session").apply{mkdirs()}).compose(prepared,if (startupGated) settings.copy(externalController = settings.externalController.copy(enabled = false)) else settings,if(tunMode && !parked)42 else -1,port,"0123456789abcdef0123456789abcdef",
             initiallyParked=parked,physicalNetworkHandle="42")
         var current = true;var released = 0;var verified = 0;var failRelease = false
         var startupGate = startupGated; var startupResume = true
@@ -108,11 +111,74 @@ class MeowTunnelBackendTest {
     }
     private suspend fun CountDownLatch.entered() { assertTrue(withContext(Dispatchers.IO){await(3,TimeUnit.SECONDS)}) }
 
-    private suspend fun parkedCandidate(store: RuntimeHandoffStore, controllerEnabled: Boolean = false, vpnEnabled: Boolean = false): MeowRuntimeSnapshot {
+    private class StartupCacheResponses(private val epoch: () -> String) {
+        private data class Exchange(val method: String?, val authorization: String?, val body: JSONObject?)
+        private val exchanges = mutableListOf<Exchange>()
+        private var phase = 0
+        private var completed = 0
+        var advanceIntentBeforePost = false
+        var witnessReads = 0; private set
+
+        private fun snapshot(intent: String) = JSONObject().put("graph-token", "19").put("selection-intent", intent)
+            .put("requested", JSONObject()).put("groups", JSONObject()).put("startup-consumption", JSONObject())
+            .put("route", JSONObject().put("core-epoch", epoch()).put("route-version", "1").put("picks", JSONObject())).toString()
+
+        @Synchronized fun respond(request: RecordedRequest): MockResponse {
+            val body = if (request.method == "POST") runCatching { JSONObject(request.body.readUtf8()) }.getOrNull() else null
+            exchanges += Exchange(request.method, request.getHeader("Authorization"), body)
+            if (request.getHeader("Authorization") != "Bearer 0123456789abcdef0123456789abcdef")
+                return MockResponse().setResponseCode(401)
+            if (request.method != listOf("GET", "POST", "GET")[phase])
+                return MockResponse().setResponseCode(400).setBody("""{"error":"unexpectedSelectionCacheMethod"}""")
+            if (phase == 1) {
+                val keys = setOf("expectedCoreEpoch", "expectedRouteVersion", "expectedSelectionIntent", "expectedGraphToken", "requested")
+                if (body == null || body.keys().asSequence().toSet() != keys || body.optJSONObject("requested")?.length() != 0)
+                    return MockResponse().setResponseCode(400).setBody("""{"error":"invalidSelectionCacheMessage"}""")
+                val liveIntent = if (advanceIntentBeforePost) "8" else "7"
+                if (body.optString("expectedCoreEpoch") != epoch() || body.optString("expectedRouteVersion") != "1" ||
+                    body.optString("expectedSelectionIntent") != liveIntent || body.optString("expectedGraphToken") != "19")
+                    return MockResponse().setResponseCode(409).setBody("""{"error":"selectionIntentChanged"}""")
+            }
+            val response = snapshot(if (phase == 0) "7" else "8")
+            phase = (phase + 1) % 3
+            if (phase == 0) completed++
+            return MockResponse().setBody(response)
+        }
+
+        @Synchronized fun witness(): MockResponse {
+            check(completed > 0 && phase == 0); witnessReads++
+            return MockResponse().setBody(JSONObject().put("schemaVersion", 1).put("witnessId", "23").put("complete", true)
+                .put("coreEpoch", epoch()).put("routeVersion", "1").put("selectionIntent", "8")
+                .put("acknowledgedSelectionIntent", "8").put("acknowledgedCoreEpoch", epoch()).put("initialStartupWitnessId", "23")
+                .put("graphVersion", "19").put("rawRequested", JSONObject()).put("normalizedRawRequested", JSONObject())
+                .put("groups", JSONObject()).put("ignored", JSONObject()).toString())
+        }
+
+        @Synchronized fun assertCompleteRestores(expected: Int) {
+            assertEquals(expected, completed); assertEquals(0, phase); assertEquals(expected * 3, exchanges.size)
+            exchanges.chunked(3).forEach { batch ->
+                assertEquals(listOf("GET", "POST", "GET"), batch.map { it.method })
+                val body = checkNotNull(batch[1].body)
+                assertEquals("7", body.getString("expectedSelectionIntent"))
+                assertEquals("1", body.getString("expectedRouteVersion"))
+                assertEquals("19", body.getString("expectedGraphToken"))
+                assertEquals(0, body.getJSONObject("requested").length())
+            }
+        }
+
+        @Synchronized fun assertRejectedRestore() {
+            assertEquals(listOf("GET", "POST"), exchanges.map { it.method })
+            assertEquals("7", checkNotNull(exchanges[1].body).getString("expectedSelectionIntent"))
+            assertEquals(0, completed); assertEquals(1, phase)
+        }
+    }
+
+    private suspend fun parkedCandidate(store: RuntimeHandoffStore, controllerEnabled: Boolean = false, vpnEnabled: Boolean = false, sourceProof: JSONObject? = null): MeowRuntimeSnapshot {
         val yaml = "proxies: [{name: direct, type: direct}]\nrules: ['MATCH,direct']"
         val record = JSONObject().put("digest", "fixture").put("yaml-md5", "b".repeat(32)).put("groups", 0).put("proxies", 1).put("rules", 1)
         val setup = JSONObject().put("test-url", "https://example.test/probe").put("skip-cert-verify", false)
             .put("selected-map", JSONObject()).put("applied", record)
+            .apply { sourceProof?.let { put("data-source-proof", it) } }
         val desired = LiteSettings(network = NetworkSettings(vpnEnabled = vpnEnabled), externalController =
             dev.aerove.lite.controllerprefs.ExternalControllerPreferences(controllerEnabled, if (controllerEnabled) "fixture-controller-secret" else ""))
         val settings = MeowRuntimeSnapshotSettings.encode(desired).put("flutterSetup", setup)
@@ -135,11 +201,13 @@ class MeowTunnelBackendTest {
             generation = candidate.handoff.compiledSha256, port = server.port)
         val exit = CountDownLatch(1)
         f.native.onExit = { check(exit.await(10, TimeUnit.SECONDS)) }; f.native.onStop = { exit.countDown() }
+        val cache = StartupCacheResponses { f.native.policy.epoch() }
         server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
             override fun dispatch(request: RecordedRequest) = when (request.requestUrl!!.encodedPath) {
                 "/configs" -> MockResponse().setBody("""{"mode":"rule"}""")
                 "/aerove/route" -> MockResponse().setBody("""{"core-epoch":"${f.native.policy.epoch()}","route-version":"1","picks":{}}""")
                 "/proxies" -> MockResponse().setBody("""{"proxies":{"direct":{"type":"Direct"}}}""")
+                "/aerove/selection-cache" -> cache.respond(request)
                 else -> MockResponse().setResponseCode(404)
             }
         }
@@ -150,6 +218,7 @@ class MeowTunnelBackendTest {
         }, { _, _ -> })
         try {
             val identity = owner.applyStaged(candidate)
+            cache.assertCompleteRestores(1)
             assertFalse("A parked graph enabled the independent native user controller", f.native.policy.enabled)
             assertFalse(submittedSettings!!.externalController.enabled)
             val desired = MeowRuntimeSnapshotSettings.decode(store.readLastApplied()!!.handoff.runtimeSettingsJson)
@@ -177,6 +246,7 @@ class MeowTunnelBackendTest {
             val restoredExit = CountDownLatch(1)
             f.native.onExit = { check(restoredExit.await(10, TimeUnit.SECONDS)) }; f.native.onStop = { restoredExit.countDown() }
             owner.applyStaged(afterStop)
+            cache.assertCompleteRestores(2)
             assertFalse(f.native.policy.enabled); assertTrue(MeowRuntimeSnapshotSettings.decode(store.readLastApplied()!!.handoff.runtimeSettingsJson).externalController.enabled)
             owner.retire(); assertEquals(2, f.released)
         } finally { owner.retire(); server.shutdown() }
@@ -184,14 +254,21 @@ class MeowTunnelBackendTest {
 
     @Test fun graphOwnerLoadsPrivateProxyAndFailedJoinBlocksSuccessorWithoutReleasingLease() = runBlocking<Unit> {
         val store = RuntimeHandoffStore(temp.newFolder("graph"))
-        val candidate = parkedCandidate(store)
+        val sourceRoot = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
+            .first { File(it, "packages/aerove_client/lib/core/method.dart").isFile }
+        val metadataProof = JSONObject(File(sourceRoot,
+            "apps/aerove-lite/app/src/test/resources/source-proof89/projection-fixture.json").readText()).getJSONObject("proof")
+        val candidate = parkedCandidate(store, sourceProof = metadataProof)
         val server = MockWebServer(); server.start()
         var httpEpoch = "1"
+        val cache = StartupCacheResponses { httpEpoch }
         server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
             override fun dispatch(request: RecordedRequest) = when (request.requestUrl!!.encodedPath) {
                 "/configs" -> MockResponse().setBody("""{"mode":"rule"}""")
                 "/aerove/route" -> MockResponse().setBody("""{"core-epoch":"$httpEpoch","route-version":"1","picks":{}}""")
                 "/proxies" -> MockResponse().setBody("""{"proxies":{"direct":{"type":"Direct"}}}""")
+                "/aerove/selection-cache" -> cache.respond(request)
+                "/aerove/selection-witness" -> cache.witness()
                 else -> MockResponse().setResponseCode(404)
             }
         }
@@ -199,12 +276,41 @@ class MeowTunnelBackendTest {
             generation = candidate.handoff.compiledSha256, port = server.port)
         val exit = CountDownLatch(1)
         f.native.onExit = { check(exit.await(10, TimeUnit.SECONDS)) }
-        var ownerToken = 0L
-        val owner = MeowParkedGraphOwner(store, { ++ownerToken }, { it == ownerToken }, { _, _, current ->
-            f.admission = current; f.backend
-        }, { _, _ -> })
+        var ownerToken = 0L; var bindingGeneration = 0L; var metadataVerifications = 0; var renewals = 0
+        val metadataEngineSha = sha256(f.lease.appliedConfiguration.read())
+        f.native.onMetadataRenew = { request ->
+            val envelope = JSONObject(request); val value = envelope.getJSONObject("value")
+            assertEquals(f.native.policy.epoch(), envelope.getString("expectedCoreEpoch"))
+            assertEquals(setOf("expected", "engineSha256", "selectionWitnessId", "rawSelectedMap", "newSourceGuard"), value.keys().asSequence().toSet())
+            val expected = value.getJSONObject("expected")
+            val binding = checkNotNull(f.config.geoHostBinding)
+            assertEquals(binding, MeowGeoHostBinding.decode(expected.getJSONObject("hostBinding")))
+            assertEquals(httpEpoch, expected.getString("coreEpoch")); assertEquals("1", expected.getString("routeVersion"))
+            assertEquals("8", expected.getString("selectionIntent")); assertEquals("23", value.getString("selectionWitnessId"))
+            assertEquals(metadataEngineSha, value.getString("engineSha256"))
+            assertEquals(0, value.getJSONObject("rawSelectedMap").length())
+            assertEquals(meowGeoSourceGuard(metadataProof), value.getString("newSourceGuard")); renewals++
+            val renewed = binding.copy(sourceGuard = value.getString("newSourceGuard"))
+            JSONObject().put("requestId", envelope.getString("requestId")).put("coreEpoch", httpEpoch).put("operation", "renewGeoBinding")
+                .put("value", JSONObject().put("hostBinding", renewed.json()).put("current", MeowGeoStamp(httpEpoch, "1", "8").json())
+                    .put("selectionWitnessId", "23").put("engineSha256", value.getString("engineSha256"))
+                    .put("pendingSourceReadsJoined", true)).toString()
+        }
+        val owner = MeowParkedGraphOwner(store, { ++ownerToken }, { it == ownerToken }, { owner, _, current ->
+            f.admission = current
+            f.config = f.config.withGeoHostBinding(MeowGeoHostBinding(owner, ++bindingGeneration, candidate.intentEpoch,
+                candidate.handoff.compiledSha256, meowGeoSourceGuard(metadataProof)), temp.root, emptyMap())
+            f.backend
+        }, { _, _ -> }, verifyMetadata = { previous, params ->
+            assertEquals(nativeLiteJsonHash(metadataProof), nativeLiteJsonHash(JSONObject(previous.runtimeSettingsJson)
+                .getJSONObject("flutterSetup").getJSONObject("data-source-proof")))
+            assertEquals(nativeLiteJsonHash(metadataProof), nativeLiteJsonHash(params.getJSONObject("data-source-proof")))
+            assertEquals(0, params.getJSONObject("selected-map").length()); metadataVerifications++
+            emptyMap()
+        })
         try {
             var identity = owner.applyStaged(candidate)
+            cache.assertCompleteRestores(1)
             assertTrue(store.isGraphCurrent(identity)); assertTrue(owner.identityIsCurrent(identity))
             assertFalse(store.readCurrent()!!.userRequested); assertFalse(owner.queryGraph()!!.listening)
             assertEquals(-1, f.native.descriptor); assertEquals(0, f.stages)
@@ -214,6 +320,7 @@ class MeowTunnelBackendTest {
             identity = owner.refreshSetup(MeowSetupRuntime(identity.revision, identity.intentEpoch, identity.compiledSha256,
                 identity.proof.coreEpoch, identity.proof.serviceOwner, identity.proof.sessionGeneration, false), metadata.toString())
             assertFalse(owner.identityIsCurrent(first)); assertTrue(store.isGraphCurrent(identity))
+            assertEquals(3, metadataVerifications); assertEquals(1, renewals); assertEquals(2, cache.witnessReads)
             assertEquals("metadata-readback", JSONObject(store.readLastApplied()!!.handoff.setupRecordJson).getString("digest"))
             f.native.onStop = { error("fixture native join unconfirmed") }
             try { owner.retire(); fail("unconfirmed join was accepted") } catch (_: IllegalStateException) { }
@@ -253,7 +360,44 @@ class MeowTunnelBackendTest {
             catch (failure: IllegalStateException) { assertTrue(failure.message.orEmpty().contains("epochs differ")) }
             assertEquals(latest, store.readAppliedIdentity()); assertNull(owner.queryGraph())
             assertEquals(4, f.released)
+            cache.assertCompleteRestores(4)
         } finally { f.native.onStop = { exit.countDown() }; owner.retire(); server.shutdown() }
+    }
+
+    @Test fun parkedGraphRejectsStaleStartupCasWithoutReadbackOrAppliedPublication() = runBlocking<Unit> {
+        val store = RuntimeHandoffStore(temp.newFolder("rejected-startup-cache"))
+        val candidate = parkedCandidate(store)
+        val server = MockWebServer(); server.start()
+        val f = Fixture(true, profileId = candidate.profileId, revision = candidate.revision,
+            generation = candidate.handoff.compiledSha256, port = server.port)
+        val cache = StartupCacheResponses { f.native.policy.epoch() }.apply { advanceIntentBeforePost = true }
+        val exited = CountDownLatch(1)
+        f.native.onExit = { check(exited.await(10, TimeUnit.SECONDS)) }
+        f.native.onStop = { exited.countDown() }
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = when (request.requestUrl!!.encodedPath) {
+                "/configs" -> MockResponse().setBody("""{"mode":"rule"}""")
+                "/aerove/selection-cache" -> cache.respond(request)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        var token = 0L
+        val owner = MeowParkedGraphOwner(store, { ++token }, { it == token }, { _, _, current ->
+            f.admission = current; f.backend
+        }, { _, _ -> })
+        try {
+            try { owner.applyStaged(candidate); fail("Stale startup selection CAS was published") }
+            catch (failure: CoreApiException) { assertEquals(409, failure.statusCode) }
+            cache.assertRejectedRestore()
+            assertNull(owner.queryGraph()); assertNull(store.readAppliedIdentity())
+            val unchanged = checkNotNull(store.readCurrent())
+            assertEquals(candidate.revision, unchanged.revision); assertEquals(candidate.intentEpoch, unchanged.intentEpoch)
+            assertEquals(candidate.handoff.compiledSha256, unchanged.handoff.compiledSha256)
+            assertEquals(candidate.handoff.runtimeSettingsJson, unchanged.handoff.runtimeSettingsJson)
+            assertFalse(unchanged.userRequested)
+            assertEquals(1, f.native.starts); assertEquals(1, f.native.stops); assertEquals(1, f.released)
+            assertEquals(0, f.stages); assertEquals(0, f.commits)
+        } finally { owner.retire(); server.shutdown() }
     }
 
     @Test fun graphRetirementUnblocksLateReadyAndNeverPublishesApplied() = runBlocking<Unit> {

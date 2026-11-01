@@ -1,0 +1,5 @@
+aerove-geo-origin:
+  schema: 1
+  source: {}
+rules:
+  - "MATCH,DIRECT"

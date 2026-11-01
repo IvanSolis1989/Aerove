@@ -58,7 +58,10 @@ class SourceProof89Test {
         "stopTip" to "Stop","startTip" to "Start","localNetworkTip" to "LAN","currentProfileName" to "Fixture","stopText" to "Stop","onlyStatisticsProxy" to true)
     @Test fun liveCommitRefreshesExistingHandoffAndRejectsFailureCancellationAndEpochRaces() = runBlocking<Unit> {
         val root = Files.createTempDirectory("proof89-owner").toFile().canonicalFile
-        File(root,"config.yaml").writeText("rules: ['MATCH,DIRECT']\n")
+        val external = System.getProperty("sourceProof89.fixture")
+        val producer = if (external != null) File("$external.producer.yaml").readText()
+            else checkNotNull(javaClass.getResourceAsStream("/source-proof89/minimal-producer.yaml")).bufferedReader().use { it.readText() }
+        File(root,"config.yaml").writeText(producer)
         var current = proof("rule")
         fun verify(value: JSONObject) { check(nativeLiteJsonHash(value) == nativeLiteJsonHash(current)) { "source changed" } }
         val store = RuntimeHandoffStore(root, validateSource = { verify(JSONObject(it.runtimeSettingsJson).getJSONObject("flutterSetup").getJSONObject("data-source-proof")) })
