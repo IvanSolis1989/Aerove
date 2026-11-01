@@ -16,7 +16,7 @@ Flutter + Mihomo; Android, Windows, macOS and Linux.
 
 <!-- aerove:releases:start -->
 - **Stable** · [0.11.0](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0%2B2026102298) · Build `2026102298` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0%2B2026102298/Aerove-android-arm64.apk)
-- **Public preview** · [0.11.1-beta.4](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.4%2B2026102310) · Build `2026102310` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.4%2B2026102310/Aerove-android-arm64.apk)
+- **Public preview** · [0.11.1-beta.5](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.5%2B2026102313) · Build `2026102313` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.5%2B2026102313/Aerove-android-arm64.apk)
 <!-- aerove:releases:end -->
 
 ## AEROVE Lite
