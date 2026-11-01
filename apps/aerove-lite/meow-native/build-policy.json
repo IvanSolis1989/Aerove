@@ -48,8 +48,8 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f",
+  "overlaySha256": "07e59982a81ef0a5824c1f320f51ca0b626ad1b8d7aec348b22c2b154abb5e7f",
   "featureBoundary": "capabilities-no-default",
-  "coreTests": "policy-runtime-geo-empty-v1",
+  "coreTests": "policy-runtime-selection-stale-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
 }

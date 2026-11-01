@@ -705,6 +705,11 @@ jobs:
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert all(value['testExit'] == 0 and value['logExit'] == 0 for value in results.values()), results
         PY
+    - name: Verify SQL-managed source selection policy through the Standard fixture composition
+      working-directory: apps/aerove
+      run: |-
+        flutter test --no-pub --concurrency 1 test/common/native_lite_binding89_test.dart \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/dart-closure/selection-profile-policy.log"
     - name: Inspect the independent runner task graph without packaging an APK
       working-directory: apps/aerove-lite
       run: |

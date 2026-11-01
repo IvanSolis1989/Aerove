@@ -12,6 +12,8 @@ RESOURCE_HEALTH_TARGETS = ('lib', 'anytls_owned_shutdown', 'api_lifecycle', 'con
 SELECTION_OWNER_MODE = "policy-runtime-selection-owner-v1"
 GEO_OWNER_MODE = "policy-runtime-geo-owned-v1"
 GEO_EMPTY_MODE = "policy-runtime-geo-empty-v1"
+SELECTION_STALE_MODE = "policy-runtime-selection-stale-v1"
+SELECTION_STALE_OVERLAY_SHA256 = "07e59982a81ef0a5824c1f320f51ca0b626ad1b8d7aec348b22c2b154abb5e7f"
 GEO_EMPTY_OVERLAY_SHA256 = "9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f"
 GEO_OWNER_OVERLAY_SHA256 = "9c9e799f482814e6b8276ef2749efb483d142f0e537ad418529dcd617c8dd655"
 SELECTION_OWNER_OVERLAY_SHA256 = "ed52066f30c5067b1a95f78e4dfd2a4bd69ac10f4fc882e76965f88b1198afb4"
@@ -27,6 +29,9 @@ def validate_selection_owner_source(policy):
 
     if (policy.get("coreTests")==GEO_EMPTY_MODE) != (policy.get("overlaySha256")==GEO_EMPTY_OVERLAY_SHA256):
         raise ValueError("Empty Geo source requires its exact approved proof mode/overlay")
+
+    if (policy.get("coreTests")==SELECTION_STALE_MODE) != (policy.get("overlaySha256")==SELECTION_STALE_OVERLAY_SHA256):
+        raise ValueError("Stale selection source requires its exact approved proof mode/overlay")
 
 
 def digest(data):

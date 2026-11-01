@@ -15,6 +15,34 @@ class MeowProfileValidatorTest {
     private fun CompatibilityValidator.managedBlocking(yaml: String) = runBlocking { validateManagedSource(yaml) }
     private fun CompatibilityValidator.preparedBlocking(yaml: String, bundle: File) = runBlocking { validatePrepared(yaml, bundle) }
 
+    @Test fun rawSelectionDeclarationsAreSourceOnlyAndDoNotOpenThePreparedRuntimeGate() = runBlocking<Unit> {
+        var sourceCalls = 0
+        val validator = schema(NativeConfigValidator { yaml ->
+            sourceCalls++
+            assertFalse(ConfigYaml.parse(yaml).containsKey("profile"))
+            null
+        })
+        for (requested in listOf(true, false, null)) {
+            val source = (requested?.let { "profile: {store-selected: $it}\n" } ?: "") + "rules: ['MATCH,DIRECT']\n"
+            validator.validate(source)
+            if (requested != null) {
+                try { validator.validateManagedSource(source); fail("Runtime accepted an unconsumed source profile") }
+                catch (error: ConfigValidationException) { assertEquals("$.profile", error.issues.first().path) }
+            }
+        }
+        assertEquals(3, sourceCalls)
+        val runtime = MeowProfileValidator(NativeConfigValidator { fail("Unconsumed runtime reached Native"); null },
+            NativePreparedConfigValidator { _, _ -> fail("Unconsumed prepared runtime reached Native"); null },
+            temporary.root, { emptySet() })
+        for (requested in listOf(true, false)) {
+            val source = "profile: {store-selected: $requested}\nrules: ['MATCH,DIRECT']\n"
+            try { runtime.validate(source, false, null); fail("Unsealed runtime accepted source profile") }
+            catch (error: ConfigValidationException) { assertEquals("$.profile", error.issues.first().path) }
+            try { runtime.validate(source, true, temporary.root); fail("Prepared runtime accepted source profile") }
+            catch (error: ConfigValidationException) { assertEquals("$.profile", error.issues.first().path) }
+        }
+    }
+
     @Test fun fixedSmartMainOutputUsesMeowSourceSchemaWithoutPrematureOfflineConversion() {
         val source = checkNotNull(javaClass.getResourceAsStream("/smart-config/meow-89abb221.json")).bufferedReader().use { it.readText() }
         var premature = 0

@@ -135,7 +135,7 @@ class CompatibilityValidator private constructor(
     internal suspend fun validatePrepared(yaml: String, bundleDirectory: File) = validate(yaml, true, bundleDirectory)
 
     private suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
-        coreSchema?.let { it.validate(yaml, managed, bundleDirectory); return }
+        coreSchema?.let { it.validate(yaml, managed, bundleDirectory, sourceAdmission = !managed && bundleDirectory == null); return }
         val root = ConfigYaml.parse(yaml)
         val issues = mutableListOf<ConfigIssue>()
         fun issue(path: String, reason: String) { issues += ConfigIssue(path, reason) }

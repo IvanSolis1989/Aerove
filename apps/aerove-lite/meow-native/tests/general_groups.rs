@@ -295,7 +295,7 @@ async fn startup_history_memory_commit_reads_real_urltest_and_fallback_fixed_wit
     assert_eq!(serde_json::to_value(direct.health().delay_history()).unwrap(), history, "startup cache must not invoke Fallback Set/probe");
     let next = api.control.restore_startup_selection(startup_request(&api.control, &receipt.route, &[("UT", "REMOVED"), ("FB", "")])).unwrap();
     assert_eq!(next.requested["UT"], "REMOVED");
-    assert_eq!(next.groups["UT"].fixed.as_deref(), Some(""));
+    assert_eq!(next.groups["UT"].fixed.as_deref(), Some("REMOVED"));
     assert_eq!(next.groups["FB"].fixed.as_deref(), Some(""));
     api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await;
 }
@@ -468,4 +468,27 @@ async fn startup_fallback_first_consumption_then_actual_nested_http_uses_the_sta
         assert!(b.targets.lock().unwrap().is_empty()); assert!(c.targets.lock().unwrap().is_empty(), "setup's C is a consumed Now result, not a cached override of the later business dial");
         api.cancel(); scope.close().await.unwrap(); if let Err(error) = events.await { assert!(error.is_cancelled()); } api.join().await; servers.close().await;
     }
+}
+
+#[tokio::test]
+async fn startup_stale_urltest_raw_fixed_survives_auto_and_unknown_user_put_is_rejected() {
+    let yaml = "strict: true\nproxy-groups: [{name: UT,type: url-test,proxies: [DIRECT,REJECT],url: 'http://127.0.0.1:9',interval: 0}]\nrules: ['MATCH,UT']\n";
+    let (api, tunnel, scope, _) = fixture(yaml).await;
+    let events = api.control.activate_groups(&scope).unwrap();
+    let before = api.control.startup_selection_snapshot().unwrap();
+    let history = serde_json::to_value(tunnel.route_snapshot().proxies["DIRECT"].health().delay_history()).unwrap();
+    let applied = api.control.restore_startup_selection(startup_request(&api.control, &before.route, &[("UT", "REMOVED")])).unwrap();
+    assert_eq!(applied.requested["UT"], "REMOVED");
+    assert_eq!(applied.groups["UT"].fixed.as_deref(), Some("REMOVED"));
+    assert!(matches!(applied.groups["UT"].current.as_str(), "DIRECT" | "REJECT"));
+    assert!(!applied.consumed.contains_key("UT"));
+    assert_eq!(serde_json::to_value(tunnel.route_snapshot().proxies["DIRECT"].health().delay_history()).unwrap(), history);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap(); let address = listener.local_addr().unwrap();
+    let token = CancellationToken::new();
+    let serving = { let api=api.clone();let token=token.clone();tokio::spawn(async move { api.serve_user(listener,token).await.unwrap(); }) };
+    let before = api.control.startup_selection_snapshot().unwrap();
+    assert!(startup_http(address, USER, "PUT", "/proxies/UT", r#"{"name":"REMOVED"}"#).await.starts_with("HTTP/1.1 400"));
+    let after = api.control.startup_selection_snapshot().unwrap();
+    assert_eq!(after.groups["UT"], before.groups["UT"]); assert_eq!(after.selection_intent, before.selection_intent);
+    token.cancel();api.cancel();scope.close().await.unwrap();if let Err(error)=events.await{assert!(error.is_cancelled());}serving.await.unwrap();api.join().await;
 }

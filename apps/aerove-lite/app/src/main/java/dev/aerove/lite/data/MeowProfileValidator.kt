@@ -13,7 +13,7 @@ internal interface ProfileCompatibilitySchema {
     fun resourceInput(yaml: String): MutableMap<String, Any?>
     suspend fun preflightPreparedRule(path: File, behavior: String, format: String): RuleResourcePreflight?
     fun providerDownloadInput(yaml: String): String
-    suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?)
+    suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?, sourceAdmission: Boolean = false)
     fun validateProxyPayload(source: String)
     fun ruleLineIssue(line: String): String?
     fun validateRulePayload(lines: List<String>, path: String) = RuleLineCheck(path, ::ruleLineIssue).run { lines.forEachIndexed(::line); finish() }
@@ -45,7 +45,7 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
 
     override fun providerDownloadInput(yaml: String): String = ConfigYaml.dump(engineView(yaml))
 
-    private fun engineView(yaml: String): MutableMap<String, Any?> {
+    private fun engineView(yaml: String, sourceAdmission: Boolean = false): MutableMap<String, Any?> {
         val root = resourceInput(yaml)
         root.remove("listeners")
         for (key in listOf("unified-delay", "tcp-concurrent", "check-certificate")) root.remove(key)?.let {
@@ -67,12 +67,12 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
             root.remove("$old-download-url")
         }
         if (geo.isNotEmpty()) { geo["auto-update"] = false; root["geodata"] = geo }
-        return MeowCompatibilityValidator.normalize(root, features)
+        return MeowCompatibilityValidator.normalize(root, features, sourceAdmission)
     }
 
-    override suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?) {
+    override suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?, sourceAdmission: Boolean) {
         tunReconciliation?.verify(yaml)
-        val engine = engineView(yaml)
+        val engine = engineView(yaml, sourceAdmission = sourceAdmission && !managed && bundleDirectory == null)
         val problems = mutableListOf<ConfigIssue>()
         fun check(value: Any?, path: String) {
             if (value is String) checkProfileResource(value, path, problems, resourceDirectory, bundleDirectory)

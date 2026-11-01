@@ -1,5 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart' show sha256;
+import 'package:drift/native.dart';
+import 'package:fl_clash/common/constant.dart';
+import 'package:fl_clash/common/string.dart';
+import 'package:fl_clash/common/native_lite_migration.dart';
+import 'package:fl_clash/database/database.dart' as db;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fl_clash/common/javascript.dart';
 import 'package:fl_clash/common/task.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -12,6 +19,22 @@ Future<Map> _compile(
   bool safe = false,
   String core = 'meow-rs',
   PatchClashConfig? patch,
+}) async {
+  final built = await _compileBuilt(
+    source,
+    safe: safe,
+    core: core,
+    patch: patch,
+  );
+  return jsonDecode(jsonEncode(loadYaml(built.yaml))) as Map;
+}
+
+Future<RealProfile> _compileBuilt(
+  Map<String, dynamic> source, {
+  bool safe = false,
+  String core = 'meow-rs',
+  PatchClashConfig? patch,
+  ProfileSelectionBinding? selectionBinding,
 }) async {
   final home = await Directory.systemTemp.createTemp('resource89-task-');
   try {
@@ -38,8 +61,9 @@ Future<Map> _compile(
         safeMode: safe,
       ),
       coreId: core,
+      selectionBinding: selectionBinding,
     );
-    return jsonDecode(jsonEncode(loadYaml(built.yaml))) as Map;
+    return built;
   } finally {
     await home.delete(recursive: true);
   }
@@ -47,6 +71,193 @@ Future<Map> _compile(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'Standard compiles all three source selection states to its existing SQL-managed product policy',
+    () async {
+      final compiledStates = <Map>[];
+      for (final requested in [true, false, null]) {
+        final built = await _compileBuilt({
+          if (requested != null) 'profile': {'store-selected': requested},
+        }, core: 'mihomo');
+        final compiled = jsonDecode(jsonEncode(loadYaml(built.yaml))) as Map;
+        expect(compiled['profile']['store-selected'], false);
+        expect(built.selectionPolicy.sourceStoreSelected, requested);
+        expect(built.selectionPolicy.requestedStoreSelected, requested);
+        expect(built.md5, built.yaml.toMd5());
+        compiledStates.add(compiled);
+      }
+      for (final compiled in compiledStates.skip(1))
+        expect(compiled, compiledStates.first);
+    },
+  );
+
+  test(
+    'Lite source selection states consume the same reopened per-profile SQL raw map and original source proof',
+    () async {
+      final home = await Directory.systemTemp.createTemp(
+        'selection-policy-sql-',
+      );
+      final file = File('${home.path}/database.sqlite');
+      var database = db.Database(NativeDatabase(file));
+      const raw = {
+        'selector': 'REMOVED',
+        'url-test': 'B',
+        'fallback': 'C',
+        'unknown-group': 'untouched',
+      };
+      const other = {'selector': 'OTHER', 'url-test': '', 'fallback': 'A'};
+      try {
+        await database.profiles.put(
+          const Profile(
+            id: 1,
+            autoUpdateDuration: Duration.zero,
+            autoUpdate: false,
+            selectedMap: raw,
+          ).toCompanion(),
+        );
+        await database.profiles.put(
+          const Profile(
+            id: 2,
+            autoUpdateDuration: Duration.zero,
+            autoUpdate: false,
+            selectedMap: other,
+          ).toCompanion(),
+        );
+        await database.close();
+        database = db.Database(NativeDatabase(file));
+        final config = Config.realFromJson(
+          null,
+          coreId: 'meow-rs',
+        ).copyWith(currentProfileId: 1);
+        SharedPreferences.setMockInitialValues({configKey: jsonEncode(config)});
+        final storage = await SharedPreferences.getInstance();
+        await Directory('${home.path}/profiles').create();
+        await File(
+          '${home.path}/profiles/2.yaml',
+        ).writeAsString('rules: ["MATCH,DIRECT"]\n');
+        final sourceHashes = <String>{};
+        final sqlHashes = <String>{};
+        final compiledStates = <Map>[];
+        for (final requested in [true, false, null]) {
+          final source =
+              '${requested == null ? '' : 'profile: {store-selected: $requested}\n'}rules: ["MATCH,DIRECT"]\n';
+          final sourceFile = File('${home.path}/profiles/1.yaml');
+          await sourceFile.writeAsString(source, flush: true);
+          await database.close();
+          database = db.Database(NativeDatabase(file));
+          final rows = await database.profilesDao.query().get();
+          final restored = rows
+              .singleWhere((profile) => profile.id == 1)
+              .selectedMap;
+          expect(restored, raw);
+          expect(
+            rows.singleWhere((profile) => profile.id == 2).selectedMap,
+            other,
+          );
+          final proof = await nativeLiteBusinessSource(
+            database,
+            home,
+            storage,
+            config,
+          );
+          sqlHashes.add(
+            ((proof['tables'] as Map)['profiles'] as Map)['sha256'] as String,
+          );
+          final rawSource =
+              jsonDecode(jsonEncode(loadYaml(source))) as Map<String, dynamic>;
+          final built = await _compileBuilt(
+            rawSource,
+            selectionBinding: ProfileSelectionBinding(1, restored),
+          );
+          final params = built.selectionPolicy.consumeSql(
+            SetupParams(
+              selectedMap: restored,
+              testUrl: 'https://example.test/probe',
+              dataSourceProof: proof,
+            ),
+            profileId: 1,
+          );
+          expect(params.selectedMap, raw);
+          expect(params.toJson().containsKey('selection-policy'), false);
+          expect(built.selectionPolicy.sourceStoreSelected, requested);
+          expect(built.selectionPolicy.requestedStoreSelected, requested);
+          final compiled = jsonDecode(jsonEncode(loadYaml(built.yaml))) as Map;
+          expect(compiled.containsKey('profile'), false);
+          expect(built.md5, built.yaml.toMd5());
+          compiledStates.add(compiled);
+          final receipt = (proof['files'] as List).cast<Map>().singleWhere(
+            (row) => row['path'] == 'profiles/1.yaml',
+          );
+          final hash = sha256
+              .convert(await sourceFile.readAsBytes())
+              .toString();
+          expect(receipt['sha256'], hash);
+          sourceHashes.add(hash);
+          expect(
+            () => built.selectionPolicy.consumeSql(
+              params.copyWith(selectedMap: {'selector': 'newer'}),
+              profileId: 1,
+            ),
+            throwsStateError,
+          );
+          expect(
+            () => built.selectionPolicy.consumeSql(params, profileId: 2),
+            throwsStateError,
+          );
+          expect(
+            () => built.selectionPolicy.consumeSql(
+              params.copyWith(dataSourceProof: null),
+              profileId: 1,
+            ),
+            throwsStateError,
+          );
+        }
+        expect(sourceHashes, hasLength(3));
+        expect(sqlHashes, hasLength(1));
+        for (final compiled in compiledStates.skip(1))
+          expect(compiled, compiledStates.first);
+      } finally {
+        await database.close();
+        await home.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
+    'SQL-bound compilation still rejects unknown source profile fields and non-Boolean declarations',
+    () async {
+      for (final entry in <String, Object?>{
+        'unexpected': true,
+        'store-selected': 'true',
+      }.entries) {
+        await expectLater(
+          _compileBuilt({
+            'profile': {entry.key: entry.value},
+          }, selectionBinding: ProfileSelectionBinding(1, {})),
+          throwsA(
+            isA<FormatException>().having(
+              (error) => error.message,
+              'exact source path',
+              contains('\$.profile.${entry.key}'),
+            ),
+          ),
+        );
+      }
+      await expectLater(
+        _compileBuilt({
+          'profile': {'store-selected': null},
+        }, selectionBinding: ProfileSelectionBinding(1, {})),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'exact source path',
+            contains('\$.profile.store-selected'),
+          ),
+        ),
+      );
+    },
+  );
+
   test(
     'native edit intent preserves fresh source and actual single Node script output',
     () async {

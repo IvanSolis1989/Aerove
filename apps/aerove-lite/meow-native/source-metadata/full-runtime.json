@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "42bf4d4e3ebcee2d5d41bcd8af72a60dab7abc34e8bbc9a24aabdac18b281054",
+  "patchSha256": "81873b3b4755f4eccd59a320ba9565f348f221063d885ce5c8a62dbe08d87eea",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "c9cb24ecb238ae974fa7f735697845d3752577c2e9301f6d5f051c5a3e6cf52c",
+  "adaptedFileManifestSha256": "2445d96f37f659d17975a777003d6902a340122b32fbcb2b4fd36f07dec9a977",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -279,7 +279,7 @@
     },
     "crates/meow-proxy/src/group/urltest.rs": {
       "beforeSha256": "fb146b9a6498ca8cbb97726009da15746dd0e0dfb3c8448bf6d84253e495e3ed",
-      "afterSha256": "b68b946b50857ad57efeef9d3f0ec524df22fa81ce7a4d5a3701b9adf2154041"
+      "afterSha256": "56ec6513decc587e6b3a0ed6642388dae0e62ffebd667aa0476403192c6a0e7f"
     },
     "crates/meow-proxy/src/health.rs": {
       "beforeSha256": "22d4a3f776a840343ac35c9dec188c1ae755b12789cb5d06bd7ff0bb9378191c",
@@ -913,7 +913,7 @@
     "crates/meow-proxy/src/group/selector.rs": "3115a3ab383b753e777650fff17e67bd42c34c6aa339b61617cfafc3da10121f",
     "crates/meow-proxy/src/group/selector_store.rs": "097be322657fa174e7087db5fad179f7cb0a63fb3818838f40dc92ace9175f91",
     "crates/meow-proxy/src/group/test_support.rs": "a692c00efbeaaf8f7ae86ef20a0519f0a2cb3f4d5db49868150746e21b5d93ba",
-    "crates/meow-proxy/src/group/urltest.rs": "b68b946b50857ad57efeef9d3f0ec524df22fa81ce7a4d5a3701b9adf2154041",
+    "crates/meow-proxy/src/group/urltest.rs": "56ec6513decc587e6b3a0ed6642388dae0e62ffebd667aa0476403192c6a0e7f",
     "crates/meow-proxy/src/hysteria2/auth.rs": "06fb967f7680d7b9d06b503c85a9491b21384792728f9174186abea38d6f7f5e",
     "crates/meow-proxy/src/hysteria2/client.rs": "8484c6abee9822c932096cc6ee063b36b152b1833b3e93cefe21e62ba1a80fe4",
     "crates/meow-proxy/src/hysteria2/config.rs": "719b36d1a2e001dc289066812c72118c0a680773f96faa934b7f43aef3899c5c",

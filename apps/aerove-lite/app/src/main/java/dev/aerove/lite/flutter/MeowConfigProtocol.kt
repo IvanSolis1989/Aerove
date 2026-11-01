@@ -53,7 +53,7 @@ class MeowConfigProtocol(homeDir: File,
         try {
             MeowProfileValidator(validator,
                 NativePreparedConfigValidator { _, _ -> error("Prepared validation requires a sealed resource handoff") },
-                home, verifiedNativeFeatures).validate(source, managed = false, bundleDirectory = null)
+                home, verifiedNativeFeatures).validate(source, managed = false, bundleDirectory = null, sourceAdmission = true)
             ""
         } catch (failure: ConfigValidationException) { failure.message ?: "$: Configuration validation failed" }
     }

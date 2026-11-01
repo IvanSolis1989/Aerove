@@ -166,6 +166,7 @@ MODE_PROVIDER_READER='policy-runtime-provider-reader-v1'
 MODE_SELECTION_OWNER='policy-runtime-selection-owner-v1'
 MODE_GEO_OWNER='policy-runtime-geo-owned-v1'
 MODE_GEO_EMPTY='policy-runtime-geo-empty-v1'
+MODE_SELECTION_STALE='policy-runtime-selection-stale-v1'
 CASES=[
     ('meow-common',name) for name in [
         'cli_without_scope_keeps_output_and_real_join_error','observer_does_not_consume_protocol_output_or_panic',
@@ -235,6 +236,8 @@ MRS_FORMAT_COMMAND=['rustfmt','--check','--edition','2021',
 # Selection-owner retains the complete historical reader proof and adds three exact startup cases.
 CASES_SELECTION_OWNER = CASES_PROVIDER_READER + [{'package': 'meow-proxy', 'filter': 'group::fallback::tests::startup_stale_raw_cache_selects_the_real_dead_first_for_nested_tcp_and_udp', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}, {'package': 'meow-proxy', 'filter': 'group::fallback::tests::startup_owner_consumes_dead_middle_once_then_business_reads_and_dials_use_auto', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}, {'package': 'meow-proxy', 'filter': 'group::fallback::tests::startup_compatibility_does_not_change_native_unpinned_auto_or_explicit_unfix', 'expectedPass': 1, 'target': 'lib', 'requiredFeatures': [], 'exact': True}]
 
+CASES_SELECTION_STALE = CASES_SELECTION_OWNER + [dict(package='meow-proxy',filter='group::urltest::tests::startup_stale_raw_fixed_uses_auto_without_flush_then_provider_reappearance_restores_pin',expectedPass=1,target='lib',requiredFeatures=[],exact=True)]
+
 # rustfmt also checks every out-of-line module a listed file declares, so each #[path] child is listed too.
 PROVIDER_READER_FORMAT_COMMAND=['rustfmt','--check','--edition','2021',
     '.upstream/meow-rs/crates/meow-config/src/rule_provider.rs',
@@ -244,10 +247,10 @@ PROVIDER_READER_FORMAT_COMMAND=['rustfmt','--check','--edition','2021',
 COMPILE_COMMAND=['cargo','check','--manifest-path',MANIFEST,'--locked','--package','meow-api',
     '--package','meow-listener','--all-features']
 # Modes whose build must run all 42 Native targets, the resource JNI source gate and the added Native test proof.
-FULL_NATIVE_SUITE_MODES=(MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY)
+FULL_NATIVE_SUITE_MODES=(MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE)
 
 def packages_for_mode(mode):
-    if mode in (MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):return sorted(set(packages_for_mode(MODE_RESOURCE_HEALTH))|{'meow-rules'})
+    if mode in (MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):return sorted(set(packages_for_mode(MODE_RESOURCE_HEALTH))|{'meow-rules'})
     if mode in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH):return sorted(set(PACKAGES)|{'meow-tunnel','meow-api','meow-listener','meow-config'})
     if mode==MODE_OBSERVABILITY:return sorted(set(PACKAGES)|{'meow-tunnel','meow-api','meow-listener'})
     if mode in (MODE,MODE_V2,MODE_TRAFFIC):return PACKAGES
@@ -283,12 +286,12 @@ def validate_policy(policy):
     if 'coreTests' not in policy:
         if 'coreTestLockSha256' in policy:raise ValueError('Core test lock without approved tests')
         return False
-    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):raise ValueError('Unknown Core unit test admission')
+    if policy['coreTests'] not in (MODE,MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):raise ValueError('Unknown Core unit test admission')
     expected=policy.get('coreTestLockSha256')
     if expected is not None and (not isinstance(expected,str) or re.fullmatch('[0-9a-f]{64}',expected) is None):
         raise ValueError('Invalid Core unit lock identity')
     if not policy['resolveLock'] and expected is None:raise ValueError('Locked Core tests require an accepted Core test lock')
-    if policy['coreTests'] in (MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):
+    if policy['coreTests'] in (MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):
         # Same 42-target gate as build_policy applies to the earlier full-suite modes, owned here for this mode.
         from build_policy import RESOURCE_HEALTH_TARGETS
         if not isinstance(policy.get('targets'),list) or tuple(policy['targets'])!=RESOURCE_HEALTH_TARGETS:
@@ -313,10 +316,11 @@ def command(package,name,features):
     return result+[name,'--','--test-threads=1','--nocapture']
 
 def entries(mode):
+    if mode==MODE_SELECTION_STALE:return CASES_SELECTION_STALE
     if mode==MODE:return [dict(package=p,filter=f,expectedPass=COUNTS.get((p,f),1),target='lib',requiredFeatures=[]) for p,f in CASES]
     if mode in (MODE_V2,MODE_TRAFFIC):return CASES_V2
     if mode==MODE_MRS_READER:return CASES_MRS_READER
-    if mode in (MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):return CASES_SELECTION_OWNER
+    if mode in (MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):return CASES_SELECTION_OWNER
     if mode==MODE_PROVIDER_READER:return CASES_PROVIDER_READER
     if mode==MODE_OBSERVABILITY:return CASES_OBSERVABILITY
     if mode in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH):return CASES_PROVIDER_GENERAL
@@ -357,7 +361,7 @@ def execute(root,policy,environment,receipt):
         if source_lock.read_bytes()!=locked:raise ValueError('Core format check changed its lock')
         return result.returncode
     try:
-        if policy['coreTests'] in (MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY) and (not isinstance(receipt.get('addedNativeTests'),dict) or not receipt['addedNativeTests']):
+        if policy['coreTests'] in (MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE) and (not isinstance(receipt.get('addedNativeTests'),dict) or not receipt['addedNativeTests']):
             # build.py must have run its full-suite Native proof (and resource JNI source gate) for this mode first.
             raise ValueError('Provider reader admission requires the full Native suite proof before Core tests')
         bridge_command=['cargo','metadata','--locked','--format-version','1']
@@ -382,7 +386,7 @@ def execute(root,policy,environment,receipt):
         state['features']=matrix
         locked=source_lock.read_bytes();state['resolvedLockSha256']=digest(locked);(directory/'core-tests.lock').write_bytes(locked)
         format_failures=[]
-        if policy['coreTests'] in (MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):
+        if policy['coreTests'] in (MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):
             # Both rustfmt gates run first and are recorded; a failure is raised only after every test and compile
             # command, so one host run uploads the exact diffs together with the authored test results.
             for key,command_args,stem in [('formatCheck',MRS_FORMAT_COMMAND,'mrs-reader-format'),
@@ -391,8 +395,8 @@ def execute(root,policy,environment,receipt):
                 if exit_code:format_failures.append((exit_code,command_args))
         for index,spec in enumerate(entries(policy['coreTests'])):
             package=spec['package'];name=spec['filter'];args=entry_command(spec,matrix[package]);entry=dict(package=package,filter=name,command=args,exit=None,expectedPass=spec['expectedPass']);state['commands'].append(entry)
-            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):entry['target']=spec['target']
-            if policy['coreTests'] in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):entry['exact']=spec['exact']
+            if policy['coreTests'] in (MODE_V2,MODE_TRAFFIC,MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):entry['target']=spec['target']
+            if policy['coreTests'] in (MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):entry['exact']=spec['exact']
             label=re.sub('[^A-Za-z0-9_.-]','_',name if name is not None else spec['target'])
             stem=f'{index:02d}-{package}-{label}'
             result=logged(args,directory/(stem+'.stdout.log'),directory/(stem+'.stderr.log'),entry,index)
@@ -402,7 +406,7 @@ def execute(root,policy,environment,receipt):
             if count!=[str(entry['expectedPass']).encode()]:raise ValueError('Core unit filter did not execute its exact authored test count')
             entry['passed']=entry['expectedPass']
             if source_lock.read_bytes()!=locked:raise ValueError('Locked Core unit command changed its lock')
-        if policy['coreTests'] in (MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY):
+        if policy['coreTests'] in (MODE_OBSERVABILITY,MODE_PROVIDER_GENERAL,MODE_RESOURCE_HEALTH,MODE_MRS_READER,MODE_PROVIDER_READER,MODE_SELECTION_OWNER,MODE_GEO_OWNER,MODE_GEO_EMPTY,MODE_SELECTION_STALE):
             args=list(COMPILE_COMMAND)
             entry=dict(command=args,exit=None);state['compileCheck']=entry
             result=logged(args,directory/'observability-compile.stdout.log',directory/'observability-compile.stderr.log',entry)

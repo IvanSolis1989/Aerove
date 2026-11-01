@@ -155,7 +155,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
             original=b'actual-upstream-lock';bridge=b'accepted-bridge-lock';resolved=b'actual-cargo-core-lock'
             (up/'Cargo.lock').write_bytes(original);(root/'Cargo.lock').write_bytes(bridge)
             policy=dict(resolveLock=True,coreTests=contract)
-            provider=contract in (core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY)
+            provider=contract in (core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE)
             if provider:policy['targets']=list(build_policy.RESOURCE_HEALTH_TARGETS)
             if mode in ['locked','bad-seed']:
                 (root/'core-tests.lock').write_bytes(resolved if mode=='locked' else b'wrong seed')
@@ -427,7 +427,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
         self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_MRS_READER),core_tests.packages_for_mode(core_tests.MODE_PROVIDER_READER))
         self.assertEqual(['rustfmt','--check','--edition','2021','.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs','.upstream/meow-rs/crates/meow-rules/src/rule_set.rs'],core_tests.MRS_FORMAT_COMMAND)
         self.assertEqual(['rustfmt','--check','--edition','2021']+['.upstream/meow-rs/crates/meow-config/src/'+name for name in ['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs']],core_tests.PROVIDER_READER_FORMAT_COMMAND)
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in ['success','locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','raise','empty-host-admission','extra-host-admission','duplicate-host-admission']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_PROVIDER_READER)
 
@@ -493,7 +493,7 @@ class BuildContractTests(unittest.TestCase):
             return build,root,full,calls,json.loads((root/'build/host-receipt.json').read_text())
 
     def test_each_full_suite_mode_runs_the_jni_source_gate_native_proof_and_all42_targets_before_core_tests(self):
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in core_tests.FULL_NATIVE_SUITE_MODES+(core_tests.MODE_PROVIDER_GENERAL,):
             with self.subTest(mode=mode):
                 build,root,full,calls,receipt=self.drive(mode)
@@ -532,6 +532,9 @@ class BuildContractTests(unittest.TestCase):
                         self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
                 elif mode == core_tests.MODE_GEO_EMPTY:
                     with patch.object(build_policy,'GEO_EMPTY_OVERLAY_SHA256',core_tests.digest(metadata)):
+                        self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
+                elif mode == core_tests.MODE_SELECTION_STALE:
+                    with patch.object(build_policy,'SELECTION_STALE_OVERLAY_SHA256',core_tests.digest(metadata)):
                         self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
                 else:self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
                 for omitted in build_policy.RESOURCE_HEALTH_TARGETS[1:]:
@@ -605,6 +608,9 @@ class GeoEmptyProofTests(unittest.TestCase):
         self.assertEqual((35,182),(len(specs),sum(row['expectedPass'] for row in specs)))
         self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_GEO_OWNER),core_tests.packages_for_mode(core_tests.MODE_GEO_EMPTY))
         policy=build_policy.load_policy(build.ROOT)
+        if policy['coreTests']==core_tests.MODE_SELECTION_STALE:
+            self.assertEqual(build_policy.SELECTION_STALE_OVERLAY_SHA256,policy['overlaySha256'])
+            policy=dict(policy,coreTests=core_tests.MODE_GEO_EMPTY,overlaySha256=build_policy.GEO_EMPTY_OVERLAY_SHA256)
         self.assertEqual(core_tests.MODE_GEO_EMPTY,policy['coreTests'])
         self.assertEqual('9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f',policy['overlaySha256'])
         self.assertEqual(build_policy.GEO_EMPTY_OVERLAY_SHA256,policy['overlaySha256'])
@@ -654,3 +660,49 @@ class GeoEmptyProofTests(unittest.TestCase):
                 'format-fail-provider','format-mutate','format-undeclared','empty-host-admission',
                 'extra-host-admission','duplicate-host-admission']:
             with self.subTest(outcome=outcome):fixture.run_fixture(outcome,core_tests.MODE_GEO_EMPTY)
+
+
+class SelectionStaleProofTests(unittest.TestCase):
+    def test_new_mode_keeps_every_old_command_case_and_exact_source_identity(self):
+        import build
+        old=core_tests.entries(core_tests.MODE_GEO_EMPTY);new=core_tests.entries(core_tests.MODE_SELECTION_STALE)
+        self.assertEqual(old,new[:len(old)])
+        self.assertEqual((35,182),(len(old),sum(row['expectedPass'] for row in old)))
+        self.assertEqual((36,183),(len(new),sum(row['expectedPass'] for row in new)))
+        self.assertTrue(new[-1]['exact']);self.assertEqual(1,new[-1]['expectedPass'])
+        policy=build_policy.load_policy(build.ROOT)
+        self.assertEqual(core_tests.MODE_SELECTION_STALE,policy['coreTests'])
+        self.assertEqual(build_policy.SELECTION_STALE_OVERLAY_SHA256,policy['overlaySha256'])
+        for mode in [core_tests.MODE_GEO_EMPTY,core_tests.MODE_GEO_OWNER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_PROVIDER_READER]:
+            with self.subTest(mode=mode),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                build_policy.validate_selection_owner_source(dict(policy,coreTests=mode))
+        for metadata in [build_policy.GEO_EMPTY_OVERLAY_SHA256,build_policy.GEO_OWNER_OVERLAY_SHA256,'0'*64]:
+            with self.subTest(metadata=metadata),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                build_policy.validate_selection_owner_source(dict(policy,overlaySha256=metadata))
+
+    def test_78_required_keeps_77_prefix_and_rejects_old_missing_duplicate_ignored(self):
+        import build
+        old=build.native_test_cases(core_tests.MODE_GEO_EMPTY);new=build.native_test_cases(core_tests.MODE_SELECTION_STALE)
+        self.assertEqual((77,78),(sum(map(len,old.values())),sum(map(len,new.values()))))
+        for target,cases in old.items():self.assertEqual(cases,new[target][:len(cases)])
+        names=[name for cases in new.values() for name in cases]
+        self.assertEqual(78,len(set(names)))
+        lines=['test fixture::'+name+' ... ok' for name in names]
+        self.assertEqual(new,build.added_native_test_proof('\n'.join(lines),core_tests.MODE_SELECTION_STALE))
+        for name in names:
+            for output in ['\n'.join(row for row in lines if row!='test fixture::'+name+' ... ok'),
+                    '\n'.join(lines+['test duplicate::'+name+' ... ok']),
+                    '\n'.join(lines).replace(name+' ... ok',name+' ... ignored')]:
+                with self.subTest(name=name),self.assertRaisesRegex(ValueError,'Native test pass'):
+                    build.added_native_test_proof(output,core_tests.MODE_SELECTION_STALE)
+        for mode in [core_tests.MODE_GEO_EMPTY,core_tests.MODE_GEO_OWNER,core_tests.MODE_SELECTION_OWNER]:
+            output='\n'.join('test fixture::'+name+' ... ok' for cases in build.native_test_cases(mode).values() for name in cases)
+            with self.subTest(mode=mode),self.assertRaisesRegex(ValueError,'Native test pass'):
+                build.added_native_test_proof(output,core_tests.MODE_SELECTION_STALE)
+
+    def test_stale_mode_reuses_actual_producer_lock_format_and_failure_fixtures(self):
+        fixture=CoreTestAdmissionTests()
+        for outcome in ['locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail',
+                'format-fail-provider','format-mutate','format-undeclared','empty-host-admission',
+                'extra-host-admission','duplicate-host-admission']:
+            with self.subTest(outcome=outcome):fixture.run_fixture(outcome,core_tests.MODE_SELECTION_STALE)

@@ -4,6 +4,27 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MeowCompatibilityValidatorTest {
+    @Test fun sourceSelectionPolicyIsValidatedOnlyAtSourceAdmissionAndNeverInRuntime() {
+        for (requested in listOf(true, false, null)) {
+            val source = if (requested == null) mapOf<String, Any?>() else mapOf("profile" to mapOf("store-selected" to requested))
+            val projected = MeowCompatibilityValidator.normalize(source, sourceAdmission = true)
+            assertFalse(projected.containsKey("profile"))
+            assertEquals(requested, (source["profile"] as? Map<*, *>)?.get("store-selected"))
+            if (requested != null) {
+                try { MeowCompatibilityValidator.normalize(source); fail("Unconsumed runtime policy accepted") }
+                catch (error: ConfigValidationException) { assertEquals("$.profile", error.issues.first().path) }
+            }
+        }
+        for ((value, path) in listOf(
+            mapOf("unexpected" to true) to "$.profile.unexpected",
+            mapOf("store-selected" to "true") to "$.profile.store-selected",
+            mapOf("store-selected" to null) to "$.profile.store-selected",
+            null to "$.profile")) {
+            try { MeowCompatibilityValidator.normalize(mapOf("profile" to value), sourceAdmission = true); fail("Invalid source policy accepted") }
+            catch (error: ConfigValidationException) { assertEquals(path, error.issues.first().path) }
+        }
+    }
+
     @Test fun normalizesAliasesWithoutMutatingSource() {
         val yaml = """
             proxies:

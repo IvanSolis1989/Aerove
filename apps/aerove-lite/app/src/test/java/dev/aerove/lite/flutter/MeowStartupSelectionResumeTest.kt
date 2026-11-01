@@ -94,14 +94,14 @@ class MeowStartupSelectionResumeTest {
         MockWebServer().use { server ->
             val requested = mapOf("Fail" to "REMOVED", "Fast" to "REMOVED")
             val before = mapOf("Fail" to group("Fallback", "A"), "Fast" to group("URLTest", "B"))
-            val after = mapOf("Fail" to group("Fallback", "A", "REMOVED"), "Fast" to group("URLTest", "B"))
+            val after = mapOf("Fail" to group("Fallback", "A", "REMOVED"), "Fast" to group("URLTest", "B", "REMOVED"))
             server.enqueue(response(snapshot(before)))
             server.enqueue(response(snapshot(after, "8", "11", requested = requested,
                 consumed = mapOf("Fail" to consumption("A", "REMOVED", "REMOVED")))))
             server.enqueue(response(snapshot(after, "8", "11")))
             val receipt = apply(server, requested)
             assertEquals("REMOVED", receipt.actual["Fail"]!!.fixed)
-            assertEquals("", receipt.actual["Fast"]!!.fixed)
+            assertEquals("REMOVED", receipt.actual["Fast"]!!.fixed)
             assertEquals("A", receipt.startupConsumption["Fail"]!!.selected)
             assertEquals(requested, receipt.requested)
         }
@@ -188,4 +188,16 @@ class MeowStartupSelectionResumeTest {
             }
         }
     }
+    @Test fun staleUrlTestReceiptThatDropsRawFixedIsRejected() = runBlocking {
+        MockWebServer().use { server ->
+            val requested = mapOf("Fast" to "REMOVED")
+            val dropped = mapOf("Fast" to group("URLTest", "A"))
+            server.enqueue(response(snapshot(dropped)))
+            server.enqueue(response(snapshot(dropped, "8", "11", requested = requested)))
+            server.enqueue(response(snapshot(dropped, "8", "11")))
+            try { apply(server, requested); fail("A receipt silently dropped the raw URLTest history") }
+            catch (expected: MeowConfigProtocolException) { assertEquals("selection_error", expected.code) }
+        }
+    }
+
 }

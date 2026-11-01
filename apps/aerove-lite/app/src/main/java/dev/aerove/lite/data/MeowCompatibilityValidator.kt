@@ -2,12 +2,18 @@ package dev.aerove.lite.data
 
 /** Candidate admission boundary for fixed meow-rs 727ddcd0; native strict parsing is still mandatory. */
 internal object MeowCompatibilityValidator {
-    fun normalize(yaml: String, verifiedNativeFeatures: Set<String> = emptySet()): String =
-        ConfigYaml.dump(normalize(ConfigYaml.parse(yaml), verifiedNativeFeatures))
+    fun normalize(yaml: String, verifiedNativeFeatures: Set<String> = emptySet(), sourceAdmission: Boolean = false): String =
+        ConfigYaml.dump(normalize(ConfigYaml.parse(yaml), verifiedNativeFeatures, sourceAdmission))
 
-    fun normalize(source: Map<String, Any?>, verifiedNativeFeatures: Set<String> = emptySet()): MutableMap<String, Any?> {
+    fun normalize(source: Map<String, Any?>, verifiedNativeFeatures: Set<String> = emptySet(), sourceAdmission: Boolean = false): MutableMap<String, Any?> {
         // Reuse the bounded YAML copier: caller-owned maps and aliases are never mutated.
         val root = ConfigYaml.parse(ConfigYaml.dump(source))
+        if (sourceAdmission && root.containsKey("profile")) {
+            val profile = mapping(root["profile"], "$.profile")
+            checkFields(profile, "$.profile", setOf("store-selected"))
+            if (profile.containsKey("store-selected")) bool(profile["store-selected"], "$.profile.store-selected")
+            root.remove("profile")
+        }
         checkFields(root, "$", setOf("strict", "port", "socks-port", "mixed-port", "allow-lan", "bind-address", "mode", "log-level", "ipv6", "external-controller", "secret", "dns", "proxies", "proxy-groups", "rules", "tun", "hosts", "sniffer", "rule-providers", "proxy-providers", "geodata"))
         root["strict"]?.let { if (it != true) fail("$.strict", "Strict parsing must remain enabled") }
         root["strict"] = true

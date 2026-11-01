@@ -830,7 +830,8 @@ class ApkInspectionTests(unittest.TestCase):
             producer.MODE_PROVIDER_READER:module.CORE_POLICY_TEST_CASES_PROVIDER_READER,
             producer.MODE_SELECTION_OWNER:module.CORE_POLICY_TEST_CASES_SELECTION_OWNER,
             **({producer.MODE_GEO_OWNER:module.CORE_POLICY_TEST_CASES_SELECTION_OWNER} if hasattr(producer,"MODE_GEO_OWNER") else {}),
-            **({producer.MODE_GEO_EMPTY:module.CORE_POLICY_TEST_CASES_SELECTION_OWNER} if hasattr(producer,"MODE_GEO_EMPTY") else {})}
+            **({producer.MODE_GEO_EMPTY:module.CORE_POLICY_TEST_CASES_SELECTION_OWNER} if hasattr(producer,"MODE_GEO_EMPTY") else {}),
+            producer.MODE_SELECTION_STALE:module.CORE_POLICY_TEST_CASES_SELECTION_STALE}
         for mode,approved in tables.items():
             normalized=tuple(row if len(row)==6 else row+(False,) for row in approved)
             authored=tuple((row['package'],row['filter'],row['expectedPass'],row['target'],tuple(row['requiredFeatures']),row.get('exact',False)) for row in producer.entries(mode))
@@ -841,8 +842,8 @@ class ApkInspectionTests(unittest.TestCase):
     def _selection_owner_proof(self):
         root=module.MEOW_ROOT
         policy=json.loads((root/'build-policy.json').read_text())
-        self.assertIn(policy['coreTests'],('policy-runtime-selection-owner-v1','policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1'))
-        cases=module.CORE_POLICY_TEST_CASES_SELECTION_OWNER
+        self.assertIn(policy['coreTests'],('policy-runtime-selection-owner-v1','policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1','policy-runtime-selection-stale-v1'))
+        cases=module.CORE_POLICY_TEST_CASES_SELECTION_STALE if policy["coreTests"]==module.SELECTION_STALE_MODE else module.CORE_POLICY_TEST_CASES_SELECTION_OWNER
         packages=tuple(sorted(set(module.CORE_PROVIDER_GENERAL_PACKAGES)|{'meow-rules'}))
         features={p:sorted({f for package,_,_,_,required,_ in cases if package==p for f in required}) for p in packages}
         commands=[]
@@ -876,22 +877,26 @@ class ApkInspectionTests(unittest.TestCase):
             buildPolicySha256=identity['meow_policy_sha256'],lockSha256Before=identity['meow_lock_sha256'],resolvedLockSha256=identity['meow_lock_sha256'],lockSha256After=identity['meow_lock_sha256'],
             source=dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveHashBootstrapped=False,archiveSha256=identity['meow_archive_sha256'],
                 fileManifestSha256=identity['meow_file_manifest_sha256'],overlaySha256=identity['meow_overlay_sha256'],patchSha256=identity['meow_patch_sha256']),
-            coreTests=state,addedNativeTests=module.GEO_EMPTY_CASES if policy["coreTests"]=="policy-runtime-geo-empty-v1" else module.GEO_OWNER_CASES if policy["coreTests"]==module.GEO_OWNER_MODE else module.SELECTION_OWNER_CASES,
+            coreTests=state,addedNativeTests=module.SELECTION_STALE_CASES if policy["coreTests"]==module.SELECTION_STALE_MODE else module.GEO_EMPTY_CASES if policy["coreTests"]=="policy-runtime-geo-empty-v1" else module.GEO_OWNER_CASES if policy["coreTests"]==module.GEO_OWNER_MODE else module.SELECTION_OWNER_CASES,
             featureBoundaryCommand=['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture'],featureBoundaryExit=0)
         return policy,state,receipt
 
     def test_selection_owner_requires_35_core_commands_and_all55_native_passes(self):
         import copy
         policy,state,receipt=self._selection_owner_proof();root=module.MEOW_ROOT
-        self.assertEqual((35,182),(len(state['commands']),sum(c['passed'] for c in state['commands'])))
+        if policy['coreTests']==module.SELECTION_STALE_MODE:
+            self.assertEqual((36,183),(len(state['commands']),sum(c['passed'] for c in state['commands'])))
+            self.assertEqual((35,182),(len(state['commands'][:35]),sum(c['passed'] for c in state['commands'][:35])))
+        else:
+            self.assertEqual((35,182),(len(state['commands']),sum(c['passed'] for c in state['commands'])))
         self.assertEqual(module.CORE_POLICY_TEST_CASES_PROVIDER_READER,module.CORE_POLICY_TEST_CASES_SELECTION_OWNER[:32])
         self.assertEqual(55,sum(map(len,module.SELECTION_OWNER_CASES.values())))
-        self.assertEqual({'policy-runtime-selection-owner-v1':55,'policy-runtime-geo-owned-v1':74,'policy-runtime-geo-empty-v1':77}[policy['coreTests']],sum(map(len,receipt['addedNativeTests'].values())))
+        self.assertEqual({'policy-runtime-selection-owner-v1':55,'policy-runtime-geo-owned-v1':74,'policy-runtime-geo-empty-v1':77,'policy-runtime-selection-stale-v1':78}[policy['coreTests']],sum(map(len,receipt['addedNativeTests'].values())))
         # Historical selection still parses the full unchanged 35/182 table independently of current source admission.
-        historical_state=copy.deepcopy(state);historical_state['mode']='policy-runtime-selection-owner-v1'
+        historical_state=copy.deepcopy(state);historical_state['mode']='policy-runtime-selection-owner-v1';historical_state['commands']=historical_state['commands'][:35]
         module.validate_core_test_receipt(historical_state,dict(policy,coreTests='policy-runtime-selection-owner-v1'),root)
         module.validate_native_receipt(receipt,root=root)
-        for index in range(32,35):
+        for index in range(32,len(state["commands"])):
             bad=copy.deepcopy(receipt);del bad['coreTests']['commands'][index]
             with self.subTest(missing_core=index),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
         for target,cases in receipt["addedNativeTests"].items():
@@ -901,7 +906,7 @@ class ApkInspectionTests(unittest.TestCase):
         for key,value in [('compileCheck',None),('formatCheck',None),('providerFormatCheck',None),('commands',state['commands'][:32]),('mode','policy-runtime-provider-reader-v1')]:
             bad=copy.deepcopy(receipt);bad['coreTests'][key]=value
             with self.subTest(core_gate=key),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
-        for index in range(32,35):
+        for index in range(32,len(state["commands"])):
             for key,value in [('exact',False),('passed',0),('expectedPass',2),('target','other'),('exit',False),('command',state['commands'][index]['command'][:-1])]:
                 bad=copy.deepcopy(receipt);bad['coreTests']['commands'][index][key]=value
                 with self.subTest(core=index,key=key),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
@@ -922,7 +927,7 @@ class ApkInspectionTests(unittest.TestCase):
             overlay=json.loads((module.MEOW_ROOT/policy['overlay']).read_text())
             for name in ['build-policy.json','source.json','Cargo.toml','Cargo.lock','core-tests.lock',policy['overlay'],overlay['patch']]:
                 target=root/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(module.MEOW_ROOT/name,target)
-            for mode in [mode for mode in ['policy-runtime-provider-reader-v1','policy-runtime-mrs-reader-v1','policy-runtime-resource-health-v1','policy-runtime-selection-owner-v1','policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1'] if mode!=policy['coreTests']]:
+            for mode in [mode for mode in ['policy-runtime-provider-reader-v1','policy-runtime-mrs-reader-v1','policy-runtime-resource-health-v1','policy-runtime-selection-owner-v1','policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1','policy-runtime-selection-stale-v1'] if mode!=policy['coreTests']]:
                 (root/'build-policy.json').write_text(json.dumps(dict(policy,coreTests=mode)))
                 for guard in [module.native_identity,producer.load_policy]:
                     message='Unknown Core unit test admission' if guard==producer.load_policy and ((mode==module.GEO_OWNER_MODE and not hasattr(producer,'GEO_OWNER_MODE')) or (mode=='policy-runtime-geo-empty-v1' and not hasattr(producer,'GEO_EMPTY_MODE'))) else 'exact approved proof mode/overlay'
@@ -952,13 +957,13 @@ class ApkInspectionTests(unittest.TestCase):
     def test_geo_rejects_old55_receipt_and_historical_modes_on_new_source(self):
         import copy
         policy,state,receipt=self._selection_owner_proof()
-        if policy['coreTests'] not in (module.GEO_OWNER_MODE,'policy-runtime-geo-empty-v1'):self.skipTest('historical source identity')
+        if policy['coreTests'] not in (module.GEO_OWNER_MODE,'policy-runtime-geo-empty-v1',module.SELECTION_STALE_MODE):self.skipTest('historical source identity')
         root=module.MEOW_ROOT;module.validate_native_receipt(receipt,root=root)
         fifo='fifo_replacement_fails_prepare_and_commit_without_blocking_cancel_or_join'
         missing_fifo=copy.deepcopy(receipt);missing_fifo['addedNativeTests']['lib'].remove(fifo)
         self.assertEqual(sum(map(len,receipt['addedNativeTests'].values()))-1,sum(map(len,missing_fifo['addedNativeTests'].values())))
         with self.assertRaisesRegex(ValueError,'Native test proof'):module.validate_native_receipt(missing_fifo,root=root)
-        self.assertEqual(module.GEO_EMPTY_OVERLAY_SHA256 if policy['coreTests']=='policy-runtime-geo-empty-v1' else module.GEO_OWNER_OVERLAY_SHA256,module.native_identity(root)['meow_overlay_sha256'])
+        self.assertEqual(module.SELECTION_STALE_OVERLAY_SHA256 if policy['coreTests']==module.SELECTION_STALE_MODE else module.GEO_EMPTY_OVERLAY_SHA256 if policy['coreTests']=='policy-runtime-geo-empty-v1' else module.GEO_OWNER_OVERLAY_SHA256,module.native_identity(root)['meow_overlay_sha256'])
         for proof in [module.SELECTION_OWNER_CASES,module.RESOURCE_HEALTH_CASES,{},None]:
             bad=copy.deepcopy(receipt);bad['addedNativeTests']=proof
             with self.subTest(proof_count=sum(map(len,proof.values())) if proof else 0),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
@@ -1299,6 +1304,27 @@ class ApkInspectionTests(unittest.TestCase):
                 self.verify(apk, "arm64-v8a", receipt)
 
 
+    def test_selection_stale_source_requires_78_native_36_core_and_its_own_metadata(self):
+        import copy, sys
+        policy,state,receipt=self._selection_owner_proof();root=module.MEOW_ROOT
+        self.assertEqual(module.SELECTION_STALE_MODE,policy['coreTests'])
+        self.assertEqual(module.SELECTION_STALE_OVERLAY_SHA256,module.native_identity(root)['meow_overlay_sha256'])
+        self.assertEqual(module.GEO_EMPTY_CASES,{target:cases[:len(module.GEO_EMPTY_CASES[target])] for target,cases in module.SELECTION_STALE_CASES.items()})
+        self.assertEqual(module.CORE_POLICY_TEST_CASES_SELECTION_OWNER,module.CORE_POLICY_TEST_CASES_SELECTION_STALE[:35])
+        self.assertEqual((78,42,36,183),(sum(map(len,receipt['addedNativeTests'].values())),len(policy['targets']),len(state['commands']),sum(row['passed'] for row in state['commands'])))
+        module.validate_native_receipt(receipt,root=root)
+        for proof in [module.GEO_EMPTY_CASES,module.GEO_OWNER_CASES,module.SELECTION_OWNER_CASES]:
+            bad=copy.deepcopy(receipt);bad['addedNativeTests']=proof
+            with self.subTest(old_native=sum(map(len,proof.values()))),self.assertRaisesRegex(ValueError,'Native test proof'):module.validate_native_receipt(bad,root=root)
+        for mode in [module.GEO_EMPTY_MODE,module.GEO_OWNER_MODE,module.SELECTION_OWNER_MODE]:
+            bad=copy.deepcopy(receipt);bad['coreTests']['mode']=mode
+            with self.subTest(old_core=mode),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
+        for source in [module.GEO_EMPTY_OVERLAY_SHA256,module.GEO_OWNER_OVERLAY_SHA256,'0'*64]:
+            with self.subTest(source=source),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                module.validate_selection_owner_source(dict(policy,overlaySha256=source))
+        for mode,metadata in [(module.GEO_EMPTY_MODE,module.GEO_EMPTY_OVERLAY_SHA256),(module.GEO_OWNER_MODE,module.GEO_OWNER_OVERLAY_SHA256),(module.SELECTION_OWNER_MODE,module.SELECTION_OWNER_OVERLAY_SHA256)]:
+            module.validate_selection_owner_source(dict(policy,coreTests=mode,overlaySha256=metadata))
+
 
 class BundledScriptApkTests(unittest.TestCase):
     def setUp(self):
@@ -1403,3 +1429,5 @@ class BundledScriptApkTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

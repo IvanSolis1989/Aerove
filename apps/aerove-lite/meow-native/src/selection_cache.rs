@@ -39,7 +39,7 @@ pub(crate) fn prepare(
         let valid = members.iter().any(|member| member == requested);
         let effective = match group.adapter_type() {
             AdapterType::Selector => if valid { requested.clone() } else { members[0].clone() },
-            AdapterType::UrlTest => if valid { requested.clone() } else { String::new() },
+            AdapterType::UrlTest => requested.clone(),
             AdapterType::Fallback => requested.clone(),
             _ => return Err(fail("unsupportedCacheSelectionGroup")),
         };
@@ -56,7 +56,7 @@ pub(crate) fn apply_memory(plan: &[CacheSelection]) -> Result<BTreeMap<String, S
         let selection = intent.group.selection().ok_or_else(|| fail("selectionDisappeared"))?;
         if intent.effective.is_empty() {
             if !selection.can_unfix() { return Err(fail("groupCannotUnfix")); }
-        } else if intent.group.adapter_type() != AdapterType::Fallback && !intent.group.members().is_some_and(|members| members.contains(&intent.effective)) {
+        } else if !matches!(intent.group.adapter_type(), AdapterType::Fallback | AdapterType::UrlTest) && !intent.group.members().is_some_and(|members| members.contains(&intent.effective)) {
             return Err(fail("groupMemberChanged"));
         }
     }

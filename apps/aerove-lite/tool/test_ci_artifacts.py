@@ -278,7 +278,7 @@ class HostLockResolutionPlanTests(unittest.TestCase):
     def test_current_geo_source_cannot_enter_historical_pending_resolution(self):
         import shutil
         source=ci.MEOW_ROOT;policy=json.loads((source/'build-policy.json').read_text())
-        if policy['coreTests'] not in ('policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1'):self.skipTest('historical source identity')
+        if policy['coreTests'] not in ('policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1','policy-runtime-selection-stale-v1'):self.skipTest('historical source identity')
         overlay=json.loads((source/policy['overlay']).read_text())
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
@@ -529,3 +529,17 @@ class HostLockResolutionPlanTests(unittest.TestCase):
         self.assertIs(json.loads(output.call_args.args[0])['acceptedLock'], False)
 
 if __name__=='__main__':unittest.main()
+
+
+class SelectionStaleDelegateTests(unittest.TestCase):
+    def test_new_locked_source_uses_the_same_independent_78_and_36_guards(self):
+        from test_verify_apk import ApkInspectionTests
+        policy,state,receipt=ApkInspectionTests()._selection_owner_proof()
+        self.assertEqual('policy-runtime-selection-stale-v1',policy['coreTests'])
+        self.assertEqual(ci.native_identity(),ci.validate_native_receipt(receipt))
+        ci._validate_core_test_proof(state,policy,ci.MEOW_ROOT)
+        bad=copy.deepcopy(receipt);bad['addedNativeTests']['general_groups'].pop()
+        with self.assertRaisesRegex(ValueError,'Native test proof'):ci.validate_native_receipt(bad)
+        for mode in ['policy-runtime-geo-empty-v1','policy-runtime-geo-owned-v1','policy-runtime-selection-owner-v1']:
+            bad=copy.deepcopy(state);bad['mode']=mode
+            with self.subTest(mode=mode),self.assertRaises(ValueError):ci._validate_core_test_proof(bad,policy,ci.MEOW_ROOT)

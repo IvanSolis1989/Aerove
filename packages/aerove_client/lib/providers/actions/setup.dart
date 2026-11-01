@@ -18,6 +18,7 @@ typedef BuiltProfile = ({
   String md5,
   ConfigCounts counts,
   SetupBase? base,
+  ProfileSelectionPolicy? selectionPolicy,
 });
 
 class _RunRequest {
@@ -898,8 +899,14 @@ class SetupAction extends _$SetupAction {
         ? params.copyWith(selectedMap: Map.of(ref.read(selectedMapProvider)))
         : params;
     try {
+      final admitted = ClientProduct.current.expectedCoreId == 'meow-rs'
+          ? profile.selectionPolicy!.consumeSql(
+              effective,
+              profileId: inputs.$1.profileId,
+            )
+          : effective;
       return await _core.refreshAppliedSetup(
-        effective.copyWith(applied: record),
+        admitted.copyWith(applied: record),
       );
     } catch (e) {
       commonPrint.log(
@@ -1120,7 +1127,13 @@ class SetupAction extends _$SetupAction {
   }) async {
     final profileId = setupState.profileId;
     if (profileId == null) {
-      return (yaml: '', md5: '', counts: configCountsOf(const {}), base: null);
+      return (
+        yaml: '',
+        md5: '',
+        counts: configCountsOf(const {}),
+        base: null,
+        selectionPolicy: null,
+      );
     }
     final defaultUA = globalState.packageInfo.ua;
     final networkSetting = ref.read(
@@ -1239,9 +1252,23 @@ class SetupAction extends _$SetupAction {
         safeMode: ref.read(safeModeProvider),
       ),
       coreId: ClientProduct.current.expectedCoreId,
+      selectionBinding:
+          ClientProduct.current.expectedCoreId == 'meow-rs' &&
+              ref.read(profileProvider(profileId)) != null
+          ? ProfileSelectionBinding(
+              profileId,
+              ref.read(profileProvider(profileId))!.selectedMap,
+            )
+          : null,
     );
     if (profileBase == null) {
-      return (yaml: res.yaml, md5: res.md5, counts: res.counts, base: null);
+      return (
+        yaml: res.yaml,
+        md5: res.md5,
+        counts: res.counts,
+        base: null,
+        selectionPolicy: res.selectionPolicy,
+      );
     }
     final (:base, :path) = profileBase;
     return (
@@ -1253,6 +1280,7 @@ class SetupAction extends _$SetupAction {
         rules: res.counts.rules + base.rules,
       ),
       base: SetupBase(path: path, overlay: res.yaml),
+      selectionPolicy: res.selectionPolicy,
     );
   }
 
@@ -1534,10 +1562,16 @@ class SetupAction extends _$SetupAction {
         );
       }
     }
-    final setupParams = _setupParams.copyWith(
+    var setupParams = _setupParams.copyWith(
       base: realProfile?.base,
       dataSourceProof: dataSourceProof,
     );
+    if (bindSharedSource && realProfile != null) {
+      setupParams = realProfile.selectionPolicy!.consumeSql(
+        setupParams,
+        profileId: profile?.id,
+      );
+    }
     final inputs = switch (setupState) {
       final state? when !profileFailed => (
         state,

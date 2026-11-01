@@ -336,7 +336,75 @@ ClashConfig _buildClashConfig(Map<String, dynamic> configMap) {
 
 typedef ConfigCounts = ({int groups, int proxies, int rules});
 
-typedef RealProfile = ({String yaml, String md5, ConfigCounts counts});
+class ProfileSelectionBinding {
+  ProfileSelectionBinding(this.profileId, Map<String, String> selectedMap)
+    : selectedMap = Map.unmodifiable(selectedMap);
+
+  final int profileId;
+  final Map<String, String> selectedMap;
+}
+
+class ProfileSelectionPolicy {
+  const ProfileSelectionPolicy({
+    required this.sourceStoreSelected,
+    required this.requestedStoreSelected,
+    required this.binding,
+  });
+
+  final bool? sourceStoreSelected;
+  final bool? requestedStoreSelected;
+  final ProfileSelectionBinding? binding;
+
+  SetupParams consumeSql(SetupParams params, {required int? profileId}) {
+    final actual = binding;
+    final proof = params.dataSourceProof;
+    if (actual == null ||
+        actual.profileId != profileId ||
+        proof == null ||
+        proof['schema'] != 2 ||
+        proof['tables'] is! Map ||
+        (proof['tables'] as Map)['profiles'] is! Map) {
+      throw StateError(
+        'Profile selection requires its shared SQL source proof',
+      );
+    }
+    if (!mapEquals(actual.selectedMap, params.selectedMap)) {
+      throw StateError(
+        'Profile SQL selection changed while compiling its policy',
+      );
+    }
+    return params.copyWith(selectedMap: actual.selectedMap);
+  }
+}
+
+bool? _sourceStoreSelected(Map config, {required bool meow}) {
+  if (!config.containsKey('profile')) return null;
+  final profile = config['profile'];
+  if (profile is! Map) {
+    throw const FormatException('\$.profile: expected mapping');
+  }
+  if (meow) {
+    for (final key in profile.keys) {
+      if (key != 'store-selected') {
+        throw FormatException(
+          '\$.profile.$key: no shared SQL selection policy',
+        );
+      }
+    }
+  }
+  if (profile.containsKey('store-selected') &&
+      profile['store-selected'] is! bool) {
+    throw const FormatException('\$.profile.store-selected: expected Boolean');
+  }
+  return profile['store-selected'] as bool?;
+}
+
+typedef RealProfile = ({
+  String yaml,
+  String md5,
+  ConfigCounts counts,
+  ProfileSelectionPolicy selectionPolicy,
+});
 
 /// Counts what the Core was handed, not what the profile file declares.
 ConfigCounts configCountsOf(Map<Object?, Object?> config) {
@@ -425,10 +493,20 @@ String setupInputsDigest(SetupInputsState state, {String coreId = 'mihomo'}) {
 Future<RealProfile> makeRealProfileTask(
   MakeRealProfileState data, {
   String coreId = 'mihomo',
-}) => compute(_makeRealProfileTask, (data: data, coreId: coreId));
+  ProfileSelectionBinding? selectionBinding,
+}) => compute(_makeRealProfileTask, (
+  data: data,
+  coreId: coreId,
+  selectionBinding: selectionBinding,
+));
 
 Future<RealProfile> _makeRealProfileTask(
-  ({MakeRealProfileState data, String coreId}) payload,
+  ({
+    MakeRealProfileState data,
+    String coreId,
+    ProfileSelectionBinding? selectionBinding,
+  })
+  payload,
 ) async {
   final data = payload.data;
   final capabilities = CoreCapabilities.forCore(payload.coreId);
@@ -436,6 +514,33 @@ Future<RealProfile> _makeRealProfileTask(
     final text? => decodeScriptResult(text),
     null => Map.from(data.rawConfig),
   };
+  final sourceStoreSelected = _sourceStoreSelected(
+    data.rawConfig,
+    meow: capabilities.androidHostTun,
+  );
+  final requestedStoreSelected = _sourceStoreSelected(
+    rawConfig,
+    meow: capabilities.androidHostTun,
+  );
+  final selectionBinding = payload.selectionBinding;
+  if (selectionBinding != null &&
+      selectionBinding.profileId != data.profileId) {
+    throw const FormatException(
+      '\$.profile.store-selected: SQL profile identity differs',
+    );
+  }
+  if (capabilities.androidHostTun &&
+      selectionBinding == null &&
+      (sourceStoreSelected == true || requestedStoreSelected == true)) {
+    throw const FormatException(
+      '\$.profile.store-selected: shared SQL selection consumer is required',
+    );
+  }
+  final selectionPolicy = ProfileSelectionPolicy(
+    sourceStoreSelected: sourceStoreSelected,
+    requestedStoreSelected: requestedStoreSelected,
+    binding: selectionBinding,
+  );
   if (capabilities.androidHostTun) {
     _validateMeowSourceDns(data.rawConfig);
     _validateMeowSourceDns(rawConfig);
@@ -665,15 +770,6 @@ Future<RealProfile> _makeRealProfileTask(
     }
   }
   if (capabilities.androidHostTun) {
-    final profile = rawConfig['profile'];
-    if (profile != null &&
-        (profile is! Map ||
-            profile.keys.any((key) => key != 'store-selected') ||
-            profile['store-selected'] != null &&
-                profile['store-selected'] != false))
-      throw const FormatException(
-        '\$.profile: explicit source cache policy has no verified shared selection consumer',
-      );
     rawConfig.remove('profile');
   } else if (rawConfig['profile'] == null) {
     rawConfig['profile'] = {};
@@ -882,7 +978,12 @@ Future<RealProfile> _makeRealProfileTask(
   }
   rawConfig['rules'] = rules;
   final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
-  return (yaml: yaml, md5: yaml.toMd5(), counts: configCountsOf(rawConfig));
+  return (
+    yaml: yaml,
+    md5: yaml.toMd5(),
+    counts: configCountsOf(rawConfig),
+    selectionPolicy: selectionPolicy,
+  );
 }
 
 typedef ShakingStoreArgs = ({

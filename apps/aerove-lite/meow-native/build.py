@@ -56,7 +56,11 @@ GEO_OWNER_CASES['lib'].append('fifo_replacement_fails_prepare_and_commit_without
 GEO_EMPTY_CASES = {target:list(cases) for target,cases in GEO_OWNER_CASES.items()}
 GEO_EMPTY_CASES['lib'].extend(['empty_geo_assets_commit_host_auto_off_metadata_with_real_zero_source_receipt', 'empty_geo_assets_reject_hidden_provider_subrule_and_dns_dependencies_before_geo_read', 'empty_geo_assets_cancelled_prepare_joins_empty_scopes_preserving_old_graph'])
 
+SELECTION_STALE_CASES = {target:list(cases) for target,cases in GEO_EMPTY_CASES.items()}
+SELECTION_STALE_CASES['general_groups'].append('startup_stale_urltest_raw_fixed_survives_auto_and_unknown_user_put_is_rejected')
+
 def native_test_cases(mode):
+    if mode == 'policy-runtime-selection-stale-v1':return SELECTION_STALE_CASES
     if mode == 'policy-runtime-geo-empty-v1':return GEO_EMPTY_CASES
     if mode == "policy-runtime-geo-owned-v1":return GEO_OWNER_CASES
     return SELECTION_OWNER_CASES if mode == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES

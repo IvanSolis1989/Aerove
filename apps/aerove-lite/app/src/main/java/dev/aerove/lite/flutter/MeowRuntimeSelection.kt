@@ -101,7 +101,7 @@ class MeowRuntimeSelection private constructor(
             val group = actual.groups[name] ?: throw MeowConfigProtocolException("selection_error", "Startup group disappeared")
             val expected = when (original.type) {
                 "Selector", "select" -> raw.takeIf { it in original.members } ?: original.members.first()
-                "URLTest", "url-test" -> raw.takeIf { it in original.members } ?: ""
+                "URLTest", "url-test" -> raw
                 "Fallback", "fallback" -> {
                     val consumed = applied.consumed[name]
                     if (consumed == null) {

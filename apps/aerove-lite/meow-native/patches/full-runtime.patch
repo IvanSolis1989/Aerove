@@ -8590,7 +8590,7 @@
 @@ -441,0 +462,2 @@
 +
 +    fn last_user_use(&self) -> Option<std::time::Instant> { self.usage.last_user_use() }
-@@ -461,0 +484,28 @@
+@@ -461,0 +484,35 @@
 +    async fn prepare(&self, name: &str) -> Result<Option<(Arc<dyn Proxy>, u16)>> {
 +        if self.contains_name(name) { Ok(None) } else { Err(MeowError::Proxy("proxy not exist".into())) }
 +    }
@@ -8601,6 +8601,13 @@
 +    }
 +    fn commit_memory(&self, name: &str) -> Result<()> {
 +        if !self.contains_name(name) { return Err(MeowError::Proxy("proxy not exist".into())); }
++        *self.fixed.write() = Some(SmolStr::from(name));
++        if let Some(store) = &self.store { store.set_memory(&self.name, name); }
++        Ok(())
++    }
++    fn restore_startup_cache_memory(&self, name: &str) -> Result<()> {
++        // Startup history is raw, unlike explicit member-validated selection.
++        if name.is_empty() { return self.unfix_memory(); }
 +        *self.fixed.write() = Some(SmolStr::from(name));
 +        if let Some(store) = &self.store { store.set_memory(&self.name, name); }
 +        Ok(())
@@ -8619,7 +8626,7 @@
 +        // temporarily bypassed, not erased, and resumes when healthy again.
 +        let _ = self.refresh_fastest();
 +    }
-@@ -484,0 +535,12 @@
+@@ -484,0 +542,12 @@
 +    #[tokio::test]
 +    async fn diagnostic_urltest_real_selection_scan_does_not_publish_incumbent() {
 +        let a=MockProxy::new("A");let b=MockProxy::new("B");a.set_delay(20);b.set_delay(5);
@@ -8632,7 +8639,7 @@
 +        assert_eq!(group.pick_for_dial().unwrap().name(),"B");assert_eq!(group.fastest.read().as_deref(),Some("B"));
 +    }
 +
-@@ -547,0 +610,25 @@
+@@ -547,0 +617,25 @@
 +    fn managed_unmeasured_fallback_is_not_a_tolerance_incumbent() {
 +        struct Owner;
 +        impl meow_common::adapter::HealthObserver for Owner {
@@ -8658,6 +8665,32 @@
 +    }
 +
 +    #[test]
+@@ -777,0 +872,25 @@
++    #[tokio::test]
++    async fn startup_stale_raw_fixed_uses_auto_without_flush_then_provider_reappearance_restores_pin() {
++        let home = tempfile::tempdir().unwrap(); let path = home.path().join("selection.json");
++        let store = crate::SelectorStore::open(path.clone());
++        let a = MockProxy::new("A"); a.set_delay(1);
++        let slot: ProviderSlot = Arc::new(RwLock::new(Vec::new()));
++        let group = UrlTestGroup::new_with_providers("UT", vec![a.clone()], 0, vec![slot.clone()])
++            .with_runtime_options("http://127.0.0.1:9".into(), String::new(), Some(store.clone()));
++        let history = serde_json::to_value(a.health().delay_history()).unwrap();
++        group.restore_startup_cache_memory("REMOVED").unwrap(); group.reconcile_health();
++        assert_eq!(group.fixed().as_deref(), Some("REMOVED")); assert_eq!(group.current().as_deref(), Some("A"));
++        assert_eq!(store.get("UT").as_deref(), Some("REMOVED")); assert!(!path.exists(), "startup memory restore must not flush");
++        assert!(group.prepare("REMOVED").await.is_err()); assert!(group.commit_memory("REMOVED").is_err());
++        assert!(group.set("REMOVED").await.is_err(), "explicit unknown member selection must remain strict");
++        assert_eq!(serde_json::to_value(a.health().delay_history()).unwrap(), history);
++        let returned = MockProxy::new("REMOVED"); returned.set_delay(1000);
++        slot.write().push(returned);
++        group.reconcile_health();
++        assert_eq!(group.fixed().as_deref(), Some("REMOVED")); assert_eq!(group.current().as_deref(), Some("REMOVED"));
++        assert!(!path.exists(), "provider reappearance must not flush startup history");
++        group.restore_startup_cache_memory("").unwrap();
++        assert_eq!(group.fixed().as_deref(), Some("")); assert_eq!(group.current().as_deref(), Some("A"));
++        assert_eq!(store.get("UT").as_deref(), Some("")); assert!(!path.exists());
++    }
++
 --- a/crates/meow-proxy/src/health.rs
 +++ b/crates/meow-proxy/src/health.rs
 @@ -37,0 +38,14 @@
