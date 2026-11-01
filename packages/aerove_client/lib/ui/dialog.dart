@@ -410,6 +410,9 @@ class CommonDialog extends StatelessWidget {
   final List<Widget>? actions;
   final EdgeInsets? padding;
 
+  /// Lets tall interactive content share its viewport with the actions.
+  final bool scrollActions;
+
   /// Sets the fields in [child] as an iOS alert does: as wide as its buttons.
   final bool hasFields;
 
@@ -423,6 +426,7 @@ class CommonDialog extends StatelessWidget {
     this.actions,
     this.child,
     this.padding,
+    this.scrollActions = false,
     this.hasFields = false,
     this.destructive = false,
   });
@@ -434,6 +438,33 @@ class CommonDialog extends StatelessWidget {
     final glass = LiquidGlassScope.of(context);
     final colorScheme = context.colorScheme;
     final fill = glass ? glassFillOf(colorScheme) : null;
+    final contentPadding =
+        padding ??
+        EdgeInsets.fromLTRB(contentInset, hasFields ? 16 : 6, contentInset, 20);
+    const actionsPadding = EdgeInsets.fromLTRB(
+      _actionInset,
+      0,
+      _actionInset,
+      _actionInset,
+    );
+    final contentWidth = padding == null
+        ? _alertWidth - contentInset * 2
+        : _contentMaxWidth;
+    final buttons = actions.isEmpty
+        ? null
+        : AlertActions(actions: actions, fill: fill, destructive: destructive);
+    final content = hasFields
+        ? FilledInputTheme(
+            fillColor: fill,
+            borderRadius: AppRadius.all(_actionHeight / 2),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: _textInset - _actionInset - _fieldInputGap,
+              vertical: 12,
+            ),
+            child: child ?? const SizedBox.shrink(),
+          )
+        : child;
+    final sharedScroll = scrollActions && buttons != null;
     final dialog = AlertDialog(
       backgroundColor: glass ? Colors.transparent : null,
       titleTextStyle: hasFields
@@ -447,49 +478,27 @@ class CommonDialog extends StatelessWidget {
             ),
           ),
       title: _buildTitle(),
-      actions: actions.isEmpty
-          ? null
-          : [
-              AlertActions(
-                actions: actions,
-                fill: fill,
-                destructive: destructive,
-              ),
-            ],
-      actionsPadding: const EdgeInsets.fromLTRB(
-        _actionInset,
-        0,
-        _actionInset,
-        _actionInset,
-      ),
+      actions: sharedScroll || buttons == null ? null : [buttons],
+      actionsPadding: actionsPadding,
       titlePadding: const EdgeInsets.fromLTRB(_textInset, 21, _textInset, 0),
-      contentPadding:
-          padding ??
-          EdgeInsets.fromLTRB(
-            contentInset,
-            hasFields ? 16 : 6,
-            contentInset,
-            20,
-          ),
+      contentPadding: sharedScroll ? EdgeInsets.zero : contentPadding,
       content: Container(
         constraints: BoxConstraints(
-          maxWidth: padding == null
-              ? _alertWidth - contentInset * 2
-              : _contentMaxWidth,
+          maxWidth:
+              contentWidth + (sharedScroll ? contentPadding.horizontal : 0),
         ),
         width: double.infinity,
         child: SingleChildScrollView(
-          child: hasFields
-              ? FilledInputTheme(
-                  fillColor: fill,
-                  borderRadius: AppRadius.all(_actionHeight / 2),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: _textInset - _actionInset - _fieldInputGap,
-                    vertical: 12,
-                  ),
-                  child: child ?? const SizedBox.shrink(),
+          child: sharedScroll
+              ? Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(padding: contentPadding, child: content),
+                    Padding(padding: actionsPadding, child: buttons),
+                  ],
                 )
-              : child,
+              : content,
         ),
       ),
     );

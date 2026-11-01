@@ -240,6 +240,7 @@ REGRESSION_SOFTWARE_PATHS = ['test/application_theme_test.dart',
  'test/lint/']
 
 CURRENT_IMPELLER_PATHS = [
+    'test/views/aurora_settings_test.dart',
     'test/widgets/glass_geometry_cache_test.dart',
     'test/widgets/glass_capture_work_test.dart',
     'test/widgets/glass_uniform_work_test.dart',

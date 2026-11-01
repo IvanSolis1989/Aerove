@@ -185,6 +185,7 @@ class _AuroraPaletteDialogState extends State<_AuroraPaletteDialog> {
     final strings = context.appLocalizations;
     return CommonDialog(
       title: strings.auroraColors,
+      scrollActions: true,
       actions: [
         if (widget.index != null && widget.colors.length > 1)
           TextButton(

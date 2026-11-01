@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -13,14 +14,20 @@ import 'package:fl_clash/views/aurora_settings.dart';
 import 'package:fl_clash/widgets/aurora.dart';
 import 'package:fl_clash/widgets/palette.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
+import '../helpers/system_test_font.dart';
 
 void main() {
   late ProviderContainer container;
+
+  setUpAll(() async {
+    await (FontLoader('AuroraDialogRoboto')..addFont(loadSdkTestFont())).load();
+  });
 
   setUp(() {
     container = ProviderContainer();
@@ -36,22 +43,30 @@ void main() {
   Future<void> pumpSettings(
     WidgetTester tester, {
     Brightness brightness = Brightness.light,
+    Size size = const Size(430, 900),
+    ThemeData? theme,
+    GlobalKey? captureKey,
   }) async {
-    tester.view.physicalSize = const Size(430, 900);
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
+    container.read(viewSizeProvider.notifier).value = size;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    final app = TestApp(
+      theme: theme,
+      child: Theme(
+        data: theme ?? ThemeData(brightness: brightness),
+        child: const Scaffold(
+          body: SingleChildScrollView(child: AuroraSettings()),
+        ),
+      ),
+    );
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: TestApp(
-          child: Theme(
-            data: ThemeData(brightness: brightness),
-            child: const Scaffold(
-              body: SingleChildScrollView(child: AuroraSettings()),
-            ),
-          ),
-        ),
+        child: captureKey == null
+            ? app
+            : RepaintBoundary(key: captureKey, child: app),
       ),
     );
     await tester.pumpAndSettle();
@@ -333,6 +348,230 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
   });
+
+  for (final (size, scale) in [
+    (const Size(428, 628), 1.0),
+    (const Size(390, 480), 1.6),
+  ]) {
+    testWidgets('short palette keeps whole pads and actions reachable '
+        '${size.height} scale $scale', (tester) async {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      container
+          .read(themeSettingProvider.notifier)
+          .update(
+            (state) => state.copyWith(
+              auroraEnabled: true,
+              auroraColors: [0xFF9AAFC5, 0xFFC4BDD3, 0xFFA9DAC6],
+            ),
+          );
+      final scene = GlobalKey();
+      await pumpSettings(
+        tester,
+        size: size,
+        theme: ThemeData(fontFamily: 'AuroraDialogRoboto'),
+        captureKey: scene,
+      );
+      final checks = <Map<String, Object?>>[];
+      final spectrumScrolls = <Map<String, Object?>>[];
+      final output = Platform.environment['XCLASH_SCREENSHOT_DIR'];
+      final label = '${size.height.toInt()}-$scale';
+      Future<void> capture(String name) async {
+        if (output == null) return;
+        await tester.runAsync(() async {
+          final boundary =
+              scene.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary;
+          final image = await boundary.toImage(pixelRatio: 1);
+          try {
+            final directory = Directory('$output/aurora-picker/$label');
+            await directory.create(recursive: true);
+            for (final (suffix, format) in [
+              ('png', ui.ImageByteFormat.png),
+              ('rgba', ui.ImageByteFormat.rawRgba),
+            ]) {
+              final bytes = (await image.toByteData(format: format))!;
+              await File('${directory.path}/$name.$suffix').writeAsBytes(
+                bytes.buffer.asUint8List(
+                  bytes.offsetInBytes,
+                  bytes.lengthInBytes,
+                ),
+              );
+            }
+          } finally {
+            image.dispose();
+          }
+        });
+      }
+
+      final pad = find.descendant(
+        of: find.byType(Palette),
+        matching: find.byType(AspectRatio),
+      );
+      void recordPad(String name) {
+        final rect = tester.getRect(pad);
+        final scroll = find
+            .ancestor(of: pad, matching: find.byType(SingleChildScrollView))
+            .first;
+        final viewport = tester.getRect(scroll);
+        final render = tester.renderObject<RenderBox>(pad);
+        final corners = [
+          rect.topLeft + const Offset(6, 6),
+          rect.bottomRight - const Offset(6, 6),
+        ];
+        final hit = corners.every(
+          (point) => tester
+              .hitTestOnBinding(point)
+              .path
+              .any((entry) => identical(entry.target, render)),
+        );
+        checks.add({
+          'state': name,
+          'pad': [rect.left, rect.top, rect.right, rect.bottom],
+          'viewport': [
+            viewport.left,
+            viewport.top,
+            viewport.right,
+            viewport.bottom,
+          ],
+          'full': corners.every(viewport.contains) && hit,
+          'cornerHits': hit,
+        });
+        expect(rect.width / rect.height, closeTo(1.2, 0.001));
+      }
+
+      for (final action in ['Cancel', 'Confirm', 'Delete']) {
+        final before = readTheme();
+        final edit = find.byTooltip('Edit wallpaper color 1');
+        await tester.ensureVisible(edit);
+        await tester.tap(edit);
+        await tester.pumpAndSettle();
+        expect(find.byType(CommonDialog), findsOneWidget);
+        if (scale == 1) {
+          recordPad('$action-grid-open');
+          await capture('$action-grid-open');
+        }
+        final preview = find.descendant(
+          of: find.byType(CommonDialog),
+          matching: find.byType(SeededAuroraWallpaper),
+        );
+        final position = Scrollable.of(tester.element(pad)).position;
+        final oldOffset = position.pixels;
+        await tester.drag(preview, const Offset(0, -180));
+        await tester.pumpAndSettle();
+        expect(position.pixels, greaterThan(oldOffset));
+        recordPad('$action-grid');
+        await capture('$action-grid');
+        final gridCenter = tester.getRect(pad).center;
+        if (tester
+            .hitTestOnBinding(gridCenter)
+            .path
+            .any(
+              (entry) => identical(entry.target, tester.renderObject(pad)),
+            )) {
+          await tester.tapAt(gridCenter);
+          await tester.pump();
+        }
+        await tester.ensureVisible(find.text('Spectrum'));
+        await tester.tap(find.text('Spectrum'));
+        await tester.pumpAndSettle();
+        final spectrumViewport = tester.getRect(
+          find
+              .ancestor(of: pad, matching: find.byType(SingleChildScrollView))
+              .first,
+        );
+        final spectrumBefore = tester.getRect(pad);
+        final overflow = spectrumBefore.bottom - spectrumViewport.bottom;
+        spectrumScrolls.add({
+          'action': action,
+          'padBefore': [spectrumBefore.top, spectrumBefore.bottom],
+          'viewport': [spectrumViewport.top, spectrumViewport.bottom],
+          'overflow': overflow,
+        });
+        if (overflow > 0) {
+          final gesture = await tester.startGesture(
+            tester.getCenter(find.text('Spectrum')),
+          );
+          await gesture.moveBy(const Offset(0, -24));
+          await tester.pump();
+          final current = tester.getRect(pad);
+          final correction = current.bottom > spectrumViewport.bottom
+              ? spectrumViewport.bottom - current.bottom
+              : current.top < spectrumViewport.top
+              ? spectrumViewport.top - current.top
+              : 0.0;
+          if (correction != 0) {
+            await gesture.moveBy(Offset(0, correction));
+            await tester.pump();
+          }
+          await gesture.cancel();
+          await tester.pumpAndSettle();
+        }
+        recordPad('$action-spectrum');
+        await capture('$action-spectrum');
+        await tester.ensureVisible(find.text('Sliders'));
+        await tester.tap(find.text('Sliders'));
+        await tester.pumpAndSettle();
+        final slider = find.byType(Slider).first;
+        await tester.ensureVisible(slider);
+        expect(slider.hitTestable(), findsOneWidget);
+        final track = tester.getRect(slider);
+        await tester.tapAt(track.center + Offset(track.width * 0.2, 0));
+        await tester.pumpAndSettle();
+        final selected = tester
+            .widget<Palette>(find.byType(Palette))
+            .controller
+            .value
+            .toARGB32();
+        expect(readTheme(), before);
+        await capture('$action-sliders');
+        for (final label in ['Cancel', 'Confirm', 'Delete']) {
+          final button = find.widgetWithText(TextButton, label);
+          await tester.ensureVisible(button);
+          await tester.pumpAndSettle();
+          expect(button.hitTestable(), findsOneWidget, reason: label);
+        }
+        final button = find.widgetWithText(TextButton, action);
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        await tester.pumpAndSettle();
+        expect(find.byType(Palette), findsNothing);
+        final expected = switch (action) {
+          'Cancel' => before,
+          'Confirm' => before.copyWith(
+            auroraColors: [selected, ...before.auroraColors.skip(1)],
+          ),
+          _ => before.copyWith(
+            auroraColors: before.auroraColors.skip(1).toList(),
+          ),
+        };
+        expect(readTheme(), expected);
+        expect(readTheme().auroraSeed, before.auroraSeed);
+      }
+      if (output != null) {
+        await tester.runAsync(
+          () => File('$output/aurora-picker/$label/work.json').writeAsString(
+            jsonEncode({
+              'size': [size.width, size.height],
+              'textScale': scale,
+              'checks': checks,
+              'spectrumScrolls': spectrumScrolls,
+            }),
+          ),
+        );
+      }
+      expect(tester.takeException(), isNull);
+      expect(
+        checks.where((check) => check['full'] != true),
+        isEmpty,
+        reason:
+            'A picker pad must fit wholly inside the scrolled viewport and '
+            'hit-test at both corners; exposing only its center is insufficient',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+  }
 
   testWidgets('palette previews edits and cancel keeps the saved settings', (
     tester,
