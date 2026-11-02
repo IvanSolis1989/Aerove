@@ -217,15 +217,36 @@ class FixedSelectionTest(unittest.TestCase):
         driver=Path(os.environ.get("AEROVE_UI_CANDIDATE_FOR_TEST", str(Path(__file__).resolve().parents[1]/"app/src/androidTest/java/dev/aerove/lite/FlutterProductionUiTest.kt")))
         info=dict(source="1"*40,tree="2"*40,apk_sha256=v.sha(app),signer_sha256="a"*64)
         signature="Signer #1 certificate SHA-256 digest: "+info["signer_sha256"]+"\n"
+        modern_signature = ("Verifies\nVerified using v2 scheme (APK Signature Scheme v2): true\n"
+                            "Number of signers: 1\nV2 Signer: certificate SHA-256 digest: " + info["signer_sha256"] + "\n")
         manifest='<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.aerove.lite.platform.test"><instrumentation android:name="dev.aerove.lite.platformqa.AcceptanceCheckpointRunner" android:targetPackage="dev.aerove.lite"/><application android:testOnly="true"/></manifest>'
+        # Shape from the fixed core:1.6.1 AAR manifest: LAUNCHER category, deliberately no action.
+        helpers = "".join('<activity android:name="androidx.test.core.app.InstrumentationActivityInvoker$' + name +
+                          '" android:exported="true"><intent-filter android:priority="-100">'
+                          '<category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>'
+                          for name in ("BootstrapActivity", "EmptyActivity", "EmptyFloatingActivity"))
+        helper_manifest = manifest.replace('<application android:testOnly="true"/>',
+                                           '<application android:testOnly="true">' + helpers + '</application>')
         graph=":app:assembleRelease SKIPPED\n:platform-qa:assembleRelease SKIPPED\n"
         mapping="dev.aerove.lite.LiteApplication -> a.a:\n"
         defined="C d 2 2 200 dev.aerove.lite.platformqa.AcceptanceCheckpointRunner\nC d 2 2 200 dev.aerove.lite.FlutterProductionUiTest\n"
-        result=seal.seal(info,app,test,signature,manifest,graph,mapping,defined,driver)
-        self.assertEqual(result["productionBuildCount"],1)
-        self.assertFalse(result["copiedProductionClasses"])
+        for signed, xml in ((signature, manifest), (modern_signature, manifest), (modern_signature, helper_manifest)):
+            result=seal.seal(info,app,test,signed,xml,graph,mapping,defined,driver)
+            self.assertEqual(result["productionBuildCount"],1)
+            self.assertFalse(result["copiedProductionClasses"])
+            self.assertFalse(result["androidExecuted"])
         for changed in (
             dict(signature=signature.replace("a"*64,"b"*64)),
+            dict(signature=modern_signature.replace("a"*64,"b"*64)),
+            dict(signature=modern_signature+signature),
+            dict(signature=modern_signature.replace("Number of signers: 1", "Number of signers: 2")),
+            dict(signature=modern_signature+"Unknown Signer: certificate SHA-256 digest: "+"a"*64+"\n"),
+            dict(signature="Unknown Signer: certificate SHA-256 digest: "+"a"*64+"\n"),
+            dict(signature=""),
+            dict(manifest=helper_manifest.replace('<category android:name="android.intent.category.LAUNCHER"/>',
+                '<action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>', 1)),
+            dict(manifest=helper_manifest.replace('</application>',
+                '<activity-alias android:name="Alias" android:targetActivity="androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity"/></application>')),
             dict(graph=graph+":app:assembleRelease SKIPPED\n"),
             dict(defined=defined+"C d 2 2 200 a.a\n"),
             dict(manifest=manifest.replace("<application android:testOnly=\"true\"/>","<application android:testOnly=\"true\"><activity android:name=\"SecondApp\"/></application>")),

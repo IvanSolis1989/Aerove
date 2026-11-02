@@ -1198,6 +1198,8 @@ Lite Flutter test-only packaging 候选 94 另核 Android 官方 [AndroidJUnitRu
 
 Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.10.0：官方 Google Maven [core 1.6.1 POM](https://dl.google.com/dl/android/maven2/androidx/test/core/1.6.1/core-1.6.1.pom)（SHA256 `44d102e5879664a4a4e1006881f2e6d886af99db362d20cb9a659d997b32464b`）引入 lifecycle-common 2.3.1；[lifecycle-common 2.10.0 module](https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-common/2.10.0/lifecycle-common-2.10.0.module)（SHA256 `5d1247b1edfbdc9ddedcbe525c9d2629567b1c538cb7a9c620cd044a124b5c73`）的 JVM runtime 指向 lifecycle-common-jvm 2.10.0。只声明该已确认冲突模块的 runtimeOnly 版本，避免旧 Lifecycling 内部类调用新 App 已不存在的方法，不强制全图或放宽 ABI 检查。两者沿用 AndroidX / Apache-2.0；另只读核对[官方传统测试库说明](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/test-setup#projects-using-deprecated-classes)，未据此新增 SDK 可选库或认定运行兼容通过。
 
+同一官方 [core 1.6.1 AAR](https://dl.google.com/dl/android/maven2/androidx/test/core/1.6.1/core-1.6.1.aar)（SHA256 `7a7af31c21785ddb7c4319c838847e6d4d9b5bb531f3a951481ec3b98780bf51`）的 manifest 声明三个 `InstrumentationActivityInvoker` 辅助 Activity，均无 intent action。平台测试包封存仅允许这三个非启动界面，继续拒绝未知 Activity、MAIN action 和 Activity alias；未复制上游实现或增加依赖。
+
 #### [Google Error Prone](https://github.com/google/error-prone)
 
 **固定版本 / revision：** release tag `v2.38.0` / `com.google.errorprone:error_prone_annotations:2.38.0`，沿用本项目既有测试依赖版本。

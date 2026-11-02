@@ -25,8 +25,12 @@ def classes(text):
 
 def seal(info, app, test, signature, manifest, graph, mapping, defined, driver):
     require(sha(app) == info["apk_sha256"], "Target app changed after its inspected one-time build")
-    require(re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.M) == [info["signer_sha256"]],
-            "Platform runner signer differs from original production signer")
+    signers = re.findall(r"^(?:Signer #\d+|V2 Signer:) certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.M)
+    certificate_lines = [line for line in signature.splitlines() if "certificate SHA-256 digest:" in line]
+    signer_counts = [line for line in signature.splitlines() if line.startswith("Number of signers:")]
+    require(len(certificate_lines) == 1 and signers == [info["signer_sha256"]] and
+            (not signer_counts or signer_counts == ["Number of signers: 1"]),
+            "Platform runner signer differs from original production signer or is ambiguous")
     root = ET.fromstring(manifest); a = "{http://schemas.android.com/apk/res/android}"
     instrumentation = root.findall("instrumentation")
     require(root.get("package") == "dev.aerove.lite.platform.test" and len(instrumentation) == 1 and
@@ -34,8 +38,18 @@ def seal(info, app, test, signature, manifest, graph, mapping, defined, driver):
             instrumentation[0].get(a + "name") == "dev.aerove.lite.platformqa.AcceptanceCheckpointRunner",
             "Platform APK must contain one runner for the existing production app")
     application = root.find("application")
+    activities = application.findall("activity") if application is not None else []
+    # These non-launcher helpers are declared by the pinned androidx.test:core:1.6.1 manifest.
+    activity_helpers = {
+        "androidx.test.core.app.InstrumentationActivityInvoker$BootstrapActivity",
+        "androidx.test.core.app.InstrumentationActivityInvoker$EmptyActivity",
+        "androidx.test.core.app.InstrumentationActivityInvoker$EmptyFloatingActivity",
+    }
     require(application is not None and application.get(a + "testOnly") == "true" and
-            not application.findall("activity") and not application.findall("activity-alias"), "Test-only runner cannot be a second application launcher")
+            not application.findall("activity-alias") and
+            len({activity.get(a + "name") for activity in activities}) == len(activities) and
+            all(activity.get(a + "name") in activity_helpers and not activity.findall("intent-filter/action")
+                for activity in activities), "Test-only runner cannot be a second application launcher")
     tasks = re.findall(r"^(:[^ ]+) SKIPPED$", graph, re.M)
     require(tasks.count(":app:assembleRelease") == 1 and tasks.count(":platform-qa:assembleRelease") == 1 and
             len(tasks) == len(set(tasks)), "One Gradle graph must assemble the app once and its target test module once")
