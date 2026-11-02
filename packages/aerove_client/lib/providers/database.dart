@@ -345,6 +345,78 @@ class Profiles extends _$Profiles {
     );
   }
 
+  Future<void> publishUpdate(
+    Profile updated, {
+    required bool Function() isCurrent,
+    required void Function() publishFile,
+    required void Function() rollbackFile,
+  }) {
+    return _writes.track(
+      () => _serial(() async {
+        checkUpdateCurrent(isCurrent);
+        final previous = state.getProfile(updated.id);
+        if (previous == null) throw const UpdateCancelledException();
+        final next = labeled(
+          previous.copyWith(
+            label: previous.label.takeFirstValid([updated.label]),
+            subscriptionInfo: updated.subscriptionInfo,
+            lastUpdateDate: updated.lastUpdateDate,
+          ),
+        );
+        final names = {previous.realLabel: next.realLabel};
+        try {
+          await database.transaction(() async {
+            checkUpdateCurrent(isCurrent);
+            if (previous.realLabel != next.realLabel) {
+              await database.proxyGroupsDao.renameUse(
+                await database.profilesDao.customIds().get(),
+                oldName: previous.realLabel,
+                newName: next.realLabel,
+              );
+              for (final user in state) {
+                if (user.type != ProfileType.custom) continue;
+                await database.profiles.put(
+                  user
+                      .copyWith(
+                        overrides: user.overrides.renamedProxyProviders(names),
+                      )
+                      .toCompanion(),
+                );
+              }
+            }
+            await database.profiles.put(next.toCompanion());
+            checkUpdateCurrent(isCurrent);
+            publishFile();
+          });
+        } catch (_) {
+          rollbackFile();
+          rethrow;
+        }
+        if (!ref.mounted) return;
+        state = [
+          for (final item in state)
+            if (item.id == updated.id &&
+                item.url == previous.url &&
+                item.ageSecretKey == previous.ageSecretKey &&
+                item.type == previous.type &&
+                item.lastUpdateDate == previous.lastUpdateDate)
+              item.copyWith(
+                label: item.label.takeFirstValid([next.label]),
+                subscriptionInfo: updated.subscriptionInfo,
+                lastUpdateDate: updated.lastUpdateDate,
+              )
+            else if (item.type == ProfileType.custom &&
+                previous.realLabel != next.realLabel)
+              item.copyWith(
+                overrides: item.overrides.renamedProxyProviders(names),
+              )
+            else
+              item,
+        ];
+      }),
+    );
+  }
+
   /// Applies the changes [body] returns to the state too, so a put landing
   /// before the rows read back writes them rather than the profile as it was.
   Future<void> rewriteCustom(

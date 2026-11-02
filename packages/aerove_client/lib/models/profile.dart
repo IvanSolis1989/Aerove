@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
@@ -189,26 +190,51 @@ extension ProfileExtension on Profile {
     return _getFile();
   }
 
-  Future<Profile> update({
+  Future<PreparedProfileUpdate> prepareUpdate({
     required ValidateConfig validate,
     bool Function()? isCurrent,
+    CancelToken? cancelToken,
   }) async {
     checkUpdateCurrent(isCurrent);
-    final response = await request.getFileResponseForUrl(url);
+    final response = await request.getFileResponseForUrl(
+      url,
+      cancelToken: cancelToken,
+    );
     checkUpdateCurrent(isCurrent);
     final disposition = response.headers.value('content-disposition');
     final userinfo = response.headers.value('subscription-userinfo');
-    return copyWith(
+    final updated = copyWith(
       label: label.takeFirstValid([
         getFileNameForDisposition(disposition),
         defaultLabel,
       ]),
       subscriptionInfo: SubscriptionInfo.formHString(userinfo),
-    ).saveFile(
+    );
+    final prepared = await updated.prepareFile(
       decompressUnlabeled(response.data ?? Uint8List(0)),
       validate: validate,
       isCurrent: isCurrent,
     );
+    return PreparedProfileUpdate(
+      updated.copyWith(lastUpdateDate: DateTime.now()),
+      prepared,
+    );
+  }
+
+  Future<Profile> update({
+    required ValidateConfig validate,
+    bool Function()? isCurrent,
+  }) async {
+    final prepared = await prepareUpdate(
+      validate: validate,
+      isCurrent: isCurrent,
+    );
+    try {
+      prepared.file.publish(isCurrent: isCurrent);
+      return prepared.profile;
+    } finally {
+      await prepared.file.dispose();
+    }
   }
 
   Future<Profile> saveFile(
@@ -216,25 +242,91 @@ extension ProfileExtension on Profile {
     required ValidateConfig validate,
     bool Function()? isCurrent,
   }) async {
+    final prepared = await prepareFile(
+      bytes,
+      validate: validate,
+      isCurrent: isCurrent,
+    );
+    try {
+      prepared.publish(isCurrent: isCurrent);
+      return copyWith(lastUpdateDate: DateTime.now());
+    } finally {
+      await prepared.dispose();
+    }
+  }
+
+  Future<PreparedProfileFile> prepareFile(
+    Uint8List bytes, {
+    required ValidateConfig validate,
+    bool Function()? isCurrent,
+  }) async {
     checkUpdateCurrent(isCurrent);
-    final path = await appPath.tempFilePath;
-    final tempFile = File(path);
+    final tempFile = File(await appPath.tempFilePath);
+    PreparedProfileFile? prepared;
     try {
       checkUpdateCurrent(isCurrent);
       await tempFile.safeWriteAsBytes(bytes);
       checkUpdateCurrent(isCurrent);
-      final message = await validate(path, ageSecretKey);
+      final message = await validate(tempFile.path, ageSecretKey);
       checkUpdateCurrent(isCurrent);
-      if (message.isNotEmpty) {
-        throw MessageException(message);
+      if (message.isNotEmpty) throw MessageException(message);
+      final target = File(await appPath.getProfilePath(id.toString()));
+      checkUpdateCurrent(isCurrent);
+      await target.parent.create(recursive: true);
+      final stage = File('${target.path}.${snowflake.id}.update');
+      final backup = File('${stage.path}.previous');
+      prepared = PreparedProfileFile(target, stage, backup);
+      await tempFile.copy(stage.path);
+      checkUpdateCurrent(isCurrent);
+      if (await target.exists()) {
+        await target.copy(backup.path);
+        prepared.hadPrevious = true;
       }
-      final mFile = await _getFile(true, isCurrent);
       checkUpdateCurrent(isCurrent);
-      await tempFile.copy(mFile.path);
-      checkUpdateCurrent(isCurrent);
-      return copyWith(lastUpdateDate: DateTime.now());
+      return prepared;
+    } catch (_) {
+      await prepared?.dispose();
+      rethrow;
     } finally {
       await tempFile.safeDelete();
     }
+  }
+}
+
+class PreparedProfileUpdate {
+  const PreparedProfileUpdate(this.profile, this.file);
+
+  final Profile profile;
+  final PreparedProfileFile file;
+}
+
+class PreparedProfileFile {
+  PreparedProfileFile(this.target, this.stage, this.backup);
+
+  final File target;
+  final File stage;
+  final File backup;
+  bool hadPrevious = false;
+  bool _published = false;
+
+  void publish({bool Function()? isCurrent}) {
+    checkUpdateCurrent(isCurrent);
+    stage.renameSync(target.path);
+    _published = true;
+  }
+
+  void rollback() {
+    if (!_published) return;
+    if (hadPrevious) {
+      backup.renameSync(target.path);
+    } else {
+      target.deleteSync();
+    }
+    _published = false;
+  }
+
+  Future<void> dispose() async {
+    await stage.safeDelete();
+    await backup.safeDelete();
   }
 }

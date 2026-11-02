@@ -26,6 +26,14 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **许可证、署名与证据：** SIL Open Font License 1.1；[固定字体](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf)、[原许可证](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE)，许可证 Git blob `d952d62c065f3f35fb83a173496e90b21525aef3`；原字体与许可证保持原样，公开图片保留渲染来源记录。
 
+#### [cfug/dio](https://github.com/cfug/dio)
+
+**固定版本 / revision：** 现有锁定依赖 `5.11.1`，官方 tag `dio_v5.11.1`；不推测未记录的提交 SHA。
+
+**用途与采用方式：** 共享订阅更新取消复用 `CancelToken` 与 `IOHttpClientAdapter`，只读参照官方取消、请求中止和响应流释放路径。调用方取消 Future 的完成不等于底层请求已经结束；本项目在现有下载入口持有该请求专用 adapter，并等待 fetch 与响应流清理。未复制上游实现、未新增依赖；普通请求继续复用原路径。
+
+**许可证、署名与证据：** MIT，保留现有依赖许可与版权；[固定取消实现](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/cancel_token.dart)、[固定 IO adapter](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/adapters/io_adapter.dart)、[固定请求分发](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/dio_mixin.dart)、[原许可证](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/LICENSE)。本项目 socket、文件及 SQL 取消验证不代替 Android 实际验收。
+
 #### [chen08209/FlClash](https://github.com/chen08209/FlClash)
 
 **固定版本 / revision：** 历史整合 `v0.9.2-pre.1` / `7220961f7c5e494df831ca196ab53ef08a17e926`；2026-10-25 按用户授权选择性整合 `v0.9.2` / `7fd417fb9a9a277c6a9339a8ac87f907df7c25f7`（以第二父提交保留血缘，合并树不整套采用）；只读参照 `8d4f9744948751f1273fe871e1d05276fac09b0e`

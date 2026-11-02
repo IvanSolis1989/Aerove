@@ -47,7 +47,14 @@ class Request {
     );
   }
 
-  Future<Response<T>> _download<T>(String url, ResponseType responseType) {
+  Future<Response<T>> _download<T>(
+    String url,
+    ResponseType responseType, {
+    CancelToken? cancellation,
+  }) {
+    if (cancellation != null) {
+      return _downloadJoined<T>(url, responseType, cancellation);
+    }
     final target = downloadTarget(url);
     final cancelToken = CancelToken();
     return _clashDio
@@ -68,9 +75,63 @@ class Request {
         );
   }
 
-  Future<Response<Uint8List>> getFileResponseForUrl(String url) async {
+  Future<Response<T>> _downloadJoined<T>(
+    String url,
+    ResponseType responseType,
+    CancelToken cancellation,
+  ) async {
+    final target = downloadTarget(url);
+    final adapter = _JoinedDownloadAdapter(
+      createHttpClient: () {
+        final client = HttpClient();
+        client.findProxy = (uri) {
+          client.userAgent = globalState.ua;
+          final read = _read;
+          return read == null
+              ? 'DIRECT'
+              : FlClashHttpOverrides.findProxyForReader(read, uri);
+        };
+        return client;
+      },
+    );
+    final download = Dio()..httpClientAdapter = adapter;
+    var timedOut = false;
+    final timer = Timer(downloadTimeoutDuration, () {
+      timedOut = true;
+      if (!cancellation.isCancelled) cancellation.cancel();
+    });
+    unawaited(cancellation.whenCancel.then((_) => adapter.close(force: true)));
     try {
-      return await _download<Uint8List>(url, ResponseType.bytes);
+      return await download.getUri<T>(
+        target.uri,
+        options: Options(responseType: responseType, headers: target.headers),
+        cancelToken: cancellation,
+      );
+    } catch (_) {
+      if (timedOut) {
+        throw DioException.receiveTimeout(
+          timeout: downloadTimeoutDuration,
+          requestOptions: RequestOptions(path: url),
+        );
+      }
+      rethrow;
+    } finally {
+      timer.cancel();
+      download.close(force: true);
+      await adapter.join();
+    }
+  }
+
+  Future<Response<Uint8List>> getFileResponseForUrl(
+    String url, {
+    CancelToken? cancelToken,
+  }) async {
+    try {
+      return await _download<Uint8List>(
+        url,
+        ResponseType.bytes,
+        cancellation: cancelToken,
+      );
     } catch (e) {
       commonPrint.log(
         'getFileResponseForUrl error ${compactError(e)}',
@@ -170,6 +231,69 @@ class Request {
     coversInstalledRelease: coversInstalledRelease,
     cancelToken: cancelToken,
   );
+}
+
+class _JoinedDownloadAdapter extends IOHttpClientAdapter {
+  _JoinedDownloadAdapter({required super.createHttpClient});
+
+  final _fetches = <Future<void>>[];
+  final _bodies = <_JoinedDownloadBody>[];
+
+  @override
+  Future<ResponseBody> fetch(
+    RequestOptions options,
+    Stream<Uint8List>? requestStream,
+    Future<void>? cancelFuture,
+  ) async {
+    final done = Completer<void>();
+    _fetches.add(done.future);
+    try {
+      final response = await super.fetch(options, requestStream, cancelFuture);
+      final body = _JoinedDownloadBody(response.stream);
+      _bodies.add(body);
+      response.stream = body.stream;
+      return response;
+    } finally {
+      done.complete();
+    }
+  }
+
+  Future<void> join() async {
+    await Future.wait(_fetches);
+    await Future.wait(_bodies.map((body) => body.close()));
+  }
+}
+
+class _JoinedDownloadBody {
+  _JoinedDownloadBody(this._source) {
+    _controller = StreamController<Uint8List>(
+      onListen: () {
+        if (_closing != null) {
+          unawaited(_controller.close());
+          return;
+        }
+        _subscription = _source.listen(
+          _controller.add,
+          onError: _controller.addError,
+          onDone: () => unawaited(_controller.close()),
+        );
+      },
+      onPause: () => _subscription?.pause(),
+      onResume: () => _subscription?.resume(),
+      onCancel: close,
+    );
+  }
+
+  final Stream<Uint8List> _source;
+  late final StreamController<Uint8List> _controller;
+  StreamSubscription<Uint8List>? _subscription;
+  Future<void>? _closing;
+
+  Stream<Uint8List> get stream => _controller.stream;
+
+  Future<void> close() => _closing ??=
+      (_subscription ?? _source.listen((_) {}, onError: (Object _) {}))
+          .cancel();
 }
 
 final request = Request();
