@@ -73,6 +73,10 @@ current = None
 if current_path:
     from emulator_current import validate_renderer_proof
     current = validate_renderer_proof(current_path)
+    if not any(current.get(key) for key in ("runtimeTarget", "diagnosticOriginal84", "originalAppIdentity")):
+        info = json.loads((Path(current["runtimeDirectory"]) / "BUILD_INFO.json").read_text())
+        if info.get("flutter_packaging", {}).get("client_kind") == "flutter-aot":
+            raise SystemExit("Legacy Compose instrumentation cannot accept the current Flutter APK; use flutter-platform/flutter-full")
 original = current["originalAppIdentity"] if current and (current.get("diagnosticOriginal84") is True or current.get("diagnosticOriginalRuntime") is True) else None
 if (os.environ.get("AEROVE_ORIGINAL84_PROOF") or os.environ.get("AEROVE_ORIGINAL_RUNTIME_PROOF")) and original is None:
     raise SystemExit("Original84 diagnostic requires its verified renderer proof")

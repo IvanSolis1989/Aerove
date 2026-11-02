@@ -9,6 +9,8 @@ import zipfile
 from unittest.mock import patch
 import emulator_current as current
 
+SCRIPT_ASSETS = Path(__file__).resolve().parents[1] / "app/src/main/assets/scripts"
+
 
 class CurrentOwnerTests(unittest.TestCase):
     def setUp(self):
@@ -23,7 +25,7 @@ class CurrentOwnerTests(unittest.TestCase):
             data = ('fixture-' + name).encode()
             if name == 'app-release.apk':
                 archive = io.BytesIO()
-                assets = Path(__file__).resolve().parents[1] / 'app/src/main/assets/scripts'
+                assets = SCRIPT_ASSETS
                 with zipfile.ZipFile(archive, 'w') as bundle:
                     for asset in assets.iterdir():
                         if asset.is_file():
@@ -35,6 +37,9 @@ class CurrentOwnerTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
             rows.append(dict(path='apks/' + name, bytes=len(data), sha256=current.sha(original)))
+        info = self.runtime / 'BUILD_INFO.json'
+        info.write_text(json.dumps({'flutter_packaging': {'client_kind': 'legacy-host-contract-fixture'}}))
+        rows.append(dict(path='BUILD_INFO.json', bytes=info.stat().st_size, sha256=current.sha(info)))
         value = dict(self.expected, abi='x86_64', prebuiltApks=True, apkInspectorOutcome='success', files=rows)
         (self.runtime / 'source-manifest.json').write_text(json.dumps(value))
         (self.runtime / 'SHA256SUMS').write_text('fixture')
@@ -112,6 +117,17 @@ class CurrentOwnerTests(unittest.TestCase):
         self.assertEqual('new-run', result['appBuildRun'])
         self.assertEqual(2, result['runAttempt'])
         self.assertEqual(current.RENDERER_LABEL, result['rendererBackend'])
+
+    def test_legacy_shell_refuses_current_flutter_target_before_selection(self):
+        self.flutter_runtime()
+        proof = self.root / 'flutter-proof.json'
+        proof.write_text(json.dumps(self.proof()))
+        shell = Path(__file__).with_name('emulator_acceptance.sh').read_text()
+        program = shell.split("<<'PY'\n", 1)[1].split('\nPY\n', 1)[0]
+        with patch.dict(os.environ, AEROVE_CURRENT_RENDERER_PROOF=str(proof)):
+            os.environ.pop('AEROVE_QA79_PROOF', None)
+            with self.assertRaisesRegex(SystemExit, 'Legacy Compose'):
+                exec(compile(program, 'reject-current-Flutter-legacy-selection', 'exec'), {})
 
     def flutter_runtime(self):
         from verify_apk import FLUTTER_ASSET_PREFIX, FLUTTER_RELEASE_ASSETS
@@ -245,6 +261,8 @@ class CurrentCancellationTests(unittest.TestCase):
         import emulator_qa79 as owners
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
+            # Lifecycle fixtures are explicitly non-Android; real current Flutter legacy phases are rejected.
+            (root / 'BUILD_INFO.json').write_text(json.dumps({'flutter_packaging': {'client_kind': 'lifecycle-fixture-not-Android'}}))
             children = {}
             spawn_commands = []
             waits = {}

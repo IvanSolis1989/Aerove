@@ -193,7 +193,9 @@ jobs:
       id: emulator_app
       if: inputs.abi == 'x86_64'
       working-directory: apps/aerove-lite
-      run: gradle --no-daemon -p android --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:assembleRelease -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA"
+      run: |
+        gradle --no-daemon -p android --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:assembleRelease :platform-qa:assembleRelease --dry-run -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" > "$RUNNER_TEMP/lite-platform-one-build-graph.txt"
+        gradle --no-daemon -p android --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
     - name: Check the signed APK and record its exact provenance
       id: apk_inspection
       run: |
@@ -274,6 +276,33 @@ jobs:
                        productionApkUnchanged=True, androidExecuted=False)
         (directory / 'lite-flutter-runner-build.json').write_text(json.dumps(receipt, indent=2) + '\n')
         PY
+    - name: Fetch actual same-run cancellation Green prerequisite
+      if: inputs.abi == 'x86_64'
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: AEROVE-Lite-profile-cancel-green-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-profile-cancel-green
+    - name: Seal the same-target platform runner without another App build
+      if: ${{ !cancelled() && inputs.abi == 'x86_64' && steps.emulator_runner.outcome == 'success' }}
+      working-directory: apps/aerove-lite
+      run: |
+        python3 tool/seal_platform_runner.py \
+          --info "$RUNNER_TEMP/lite-artifact-x86_64/BUILD_INFO.json" \
+          --app build/app/outputs/apk/release/app-release.apk \
+          --test build/flutter-host/platform-qa/outputs/apk/release/platform-qa-release.apk \
+          --mapping build/app/outputs/mapping/release/mapping.txt \
+          --profile-cancel-implementation "$RUNNER_TEMP/lite-profile-cancel-green/implementation.json" \
+          --profile-cancel-green "$RUNNER_TEMP/lite-profile-cancel-green/green.json" \
+          --profile-cancel-evidence "$RUNNER_TEMP/lite-profile-cancel-green/evidence" \
+          --abi-rules build/app/intermediates/androidTestAppKeepRules/release/rules.pro \
+          --abi-report build/app/intermediates/androidTestAppKeepRules/release/inputs.json \
+          --test-mapping build/flutter-host/platform-qa/outputs/mapping/release/mapping.txt \
+          --test-configuration build/flutter-host/platform-qa/outputs/mapping/release/configuration.txt \
+          --graph "$RUNNER_TEMP/lite-platform-one-build-graph.txt" \
+          --driver app/src/androidTest/java/dev/aerove/lite/FlutterProductionUiTest.kt \
+          --apksigner "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" \
+          --apkanalyzer "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" \
+          --output "$RUNNER_TEMP/lite-platform-seal"
     - name: Preserve the built x86 runtime contract
       if: ${{ !cancelled() && inputs.abi == 'x86_64' && steps.emulator_runner.outcome == 'success' }}
       working-directory: apps/aerove-lite
@@ -289,6 +318,19 @@ jobs:
         cp "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-x86_64/build-receipt.json" "$diagnostic_root/client-helper-build-receipt.json"
         cp "$RUNNER_TEMP/lite-signature.txt" "$RUNNER_TEMP/lite-badging.txt" "$diagnostic_root/"
         cp android-qa/build/outputs/apk/release/android-qa-release.apk "$diagnostic_root/apks/app-release-androidTest.apk"
+        cp build/flutter-host/platform-qa/outputs/apk/release/platform-qa-release.apk "$diagnostic_root/apks/"
+        cp -R "$RUNNER_TEMP/lite-platform-seal/." "$diagnostic_root/"
+        cp "$RUNNER_TEMP/lite-platform-one-build-graph.txt" "$RUNNER_TEMP/lite-platform-one-build.log" "$diagnostic_root/"
+        if gradle --no-daemon -p android :platform-qa:dependencies --configuration releaseRuntimeClasspath \
+          -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          > "$diagnostic_root/dependencies/platform-releaseRuntimeClasspath.stdout.txt" \
+          2> "$diagnostic_root/dependencies/platform-releaseRuntimeClasspath.stderr.txt"; then
+          platform_query_exit=0
+        else
+          platform_query_exit=$?
+        fi
+        printf '%s\n' "$platform_query_exit" > "$diagnostic_root/dependencies/platform-releaseRuntimeClasspath.exit.txt"
+        test "$platform_query_exit" = 0
         cp "$RUNNER_TEMP/lite-flutter-runner-build.json" "$RUNNER_TEMP/lite-flutter-runner-task-graph.txt" \
           "$RUNNER_TEMP/lite-flutter-runner-signature.txt" "$RUNNER_TEMP/lite-flutter-runner-badging.txt" \
           "$RUNNER_TEMP/lite-flutter-runner-manifest.txt" "$diagnostic_root/"
@@ -356,6 +398,7 @@ jobs:
           apps/aerove-lite/build/app/outputs/androidTest-results/
           apps/aerove-lite/android-qa/build/reports/
           ${{ runner.temp }}/lite-flutter-runner-*
+          ${{ runner.temp }}/lite-platform-*
           ${{ runner.temp }}/lite-production-before-runner.sha256
           ${{ runner.temp }}/lite-package-diagnostics/
         if-no-files-found: warn

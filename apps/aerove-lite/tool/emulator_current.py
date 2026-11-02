@@ -108,7 +108,7 @@ def original_sample_phase_selector(phase, sample, runtime):
 
 
 def guard_flutter_phase(phase, sample=None, runtime=None):
-    if phase != 'flutter-ui':
+    if phase not in ('flutter-ui', 'flutter-platform', 'flutter-full'):
         return
     if (sample is not None or any(os.environ.get(name) for name in (
             'AEROVE_ORIGINAL84_PROOF', 'AEROVE_ORIGINAL_RUNTIME_PROOF',
@@ -145,22 +145,27 @@ def flutter_ui_inputs(directory, runtime):
 
 
 def phase_acceptance_command(phase, directory, flutter_inputs=None):
-    if phase != 'flutter-ui':
+    if phase not in ('flutter-ui', 'flutter-platform', 'flutter-full'):
         return ['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', phase]
     if flutter_inputs is None:
         raise ValueError('flutter-ui requires validated original APK and BUILD_INFO inputs')
     sdk = Path(os.environ.get('ANDROID_SDK_ROOT', os.environ['ANDROID_HOME']))
-    return [sys.executable, 'apps/aerove-lite/tool/flutter_android_qa.py',
+    command = [sys.executable, 'apps/aerove-lite/tool/' + ('flutter_android_qa.py' if phase == 'flutter-ui' else 'android_acceptance.py'),
             '--apk', str(flutter_inputs['apk']), '--test-apk', str(flutter_inputs['test_apk']),
             '--build-info', str(flutter_inputs['build_info']),
             '--adb', str(sdk / 'platform-tools/adb'),
             '--apksigner', str(sdk / 'build-tools/37.0.0/apksigner'),
             '--serial', 'emulator-5554', '--output', str(Path(directory) / 'production-ui')]
+    if phase != 'flutter-ui':
+        if 'platform_apk' not in flutter_inputs:
+            raise ValueError('Current platform/full suite requires a sealed same-target platform runner')
+        command += ['--platform-apk', str(flutter_inputs['platform_apk']), '--phase', phase]
+    return command
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample', 'flutter-ui'])
+    parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample', 'flutter-ui', 'flutter-platform', 'flutter-full'])
     parser.add_argument('--runtime-directory', type=Path, required=True)
     parser.add_argument('--sample')
     args = parser.parse_args()
@@ -173,7 +178,15 @@ def main():
     guard_flutter_phase(args.phase, args.sample)
     current = verify_current_runtime(args.runtime_directory)
     sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
-    flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase == 'flutter-ui' else None
+    flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase in ('flutter-ui', 'flutter-platform', 'flutter-full') else None
+    if args.phase in ('matrix', 'remaining') and not current.get('runtimeTarget'):
+        info = json.loads((args.runtime_directory / 'BUILD_INFO.json').read_text())
+        if info.get('flutter_packaging', {}).get('client_kind') == 'flutter-aot':
+            raise ValueError('Current Flutter target cannot execute legacy Compose matrix/remaining; use flutter-platform/flutter-full')
+    if args.phase in ('flutter-platform', 'flutter-full'):
+        from android_acceptance_verify import platform_binding
+        info = json.loads(flutter_inputs['build_info'].read_text())
+        flutter_inputs['platform_apk'] = platform_binding(args.runtime_directory, info).resolve()
     directory = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics' / args.phase
     directory.mkdir(parents=True, exist_ok=True)
     emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']

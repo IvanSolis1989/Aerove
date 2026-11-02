@@ -97,9 +97,11 @@ if (flutterHost) {
 }
 
 androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
-    val androidTest = variant.deviceTests[DeviceTestBuilder.ANDROID_TEST_TYPE] ?: return@onVariants
+    val androidTest = variant.deviceTests[DeviceTestBuilder.ANDROID_TEST_TYPE]
+    val platformTests = if (flutterHost) rootProject.findProject(":platform-qa") else null
+    if (androidTest == null && platformTests == null) return@onVariants
     val infer = tasks.register<GenerateAndroidTestAppKeepRules>(
-        "generate${variant.name.replaceFirstChar { it.uppercase() }}AndroidTestAppKeepRules",
+        "generate${variant.name.replaceFirstChar { it.uppercase() }}${if (androidTest == null) "PlatformTest" else "AndroidTest"}AppKeepRules",
     ) {
         generator.set(productRoot.resolve("tool/generate_android_test_keep_rules.py"))
         traceHelper.set(productRoot.resolve("tool/AndroidTestAppAbiTrace.java"))
@@ -115,7 +117,8 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
         })
         // Platform definitions precede compile-only stubs, matching AGP's ordered library lookup.
         libraries.from(androidComponents.sdkComponents.bootClasspath,
-            variant.compileClasspath, androidTest.compileClasspath)
+            variant.compileClasspath)
+        if (androidTest != null) libraries.from(androidTest.compileClasspath)
         rules.set(layout.buildDirectory.file("intermediates/androidTestAppKeepRules/${variant.name}/rules.pro"))
         report.set(layout.buildDirectory.file("intermediates/androidTestAppKeepRules/${variant.name}/inputs.json"))
     }
@@ -124,14 +127,36 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
         ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::appJars,
         GenerateAndroidTestAppKeepRules::appDirectories,
     )
-    androidTest.artifacts.forScope(ScopedArtifacts.Scope.PROJECT).use(infer).toGet(
-        ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testJars,
-        GenerateAndroidTestAppKeepRules::testDirectories,
-    )
-    androidTest.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(infer).toGet(
-        ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testRuntimeJars,
-        GenerateAndroidTestAppKeepRules::testRuntimeDirectories,
-    )
+    if (androidTest != null) {
+        androidTest.artifacts.forScope(ScopedArtifacts.Scope.PROJECT).use(infer).toGet(
+            ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testJars,
+            GenerateAndroidTestAppKeepRules::testDirectories,
+        )
+        androidTest.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(infer).toGet(
+            ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testRuntimeJars,
+            GenerateAndroidTestAppKeepRules::testRuntimeDirectories,
+        )
+    } else {
+        // AGP compiles tests against pre-R8 classes, then applies the same App mapping in Test R8.
+        val platformProject = checkNotNull(platformTests)
+        platformProject.plugins.withId("com.android.test") {
+            val testComponents = platformProject.extensions.getByType<
+                com.android.build.api.variant.TestAndroidComponentsExtension>()
+            testComponents.onVariants(testComponents.selector().withBuildType("release")) { testVariant ->
+                infer.configure {
+                    libraries.from(testComponents.sdkComponents.bootClasspath, testVariant.compileClasspath)
+                }
+                testVariant.artifacts.forScope(ScopedArtifacts.Scope.PROJECT).use(infer).toGet(
+                    ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testJars,
+                    GenerateAndroidTestAppKeepRules::testDirectories,
+                )
+                testVariant.artifacts.forScope(ScopedArtifacts.Scope.ALL).use(infer).toGet(
+                    ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testRuntimeJars,
+                    GenerateAndroidTestAppKeepRules::testRuntimeDirectories,
+                )
+            }
+        }
+    }
     variant.proguardFiles.add(infer.flatMap { it.rules })
 }
 

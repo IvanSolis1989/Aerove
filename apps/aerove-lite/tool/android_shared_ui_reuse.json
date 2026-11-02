@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "scope": "exact-four-canonical-files-only",
+  "standardSource": "89c5bf5f2bc4ca08c719446045d25ad9cffb3cbd",
+  "standardRun": 41292831836,
+  "standardApkSha256": "f8e59440df0d987de6284eb77467fbe8026b77c1b2498241d71ae3b57b27646b",
+  "standardCertificateSha256": "0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60",
+  "standardVersion": "0.11.1-beta.6",
+  "standardUserPhoneAccepted": true,
+  "agentDeviceTestPerformed": false,
+  "liteAndroidAccepted": false,
+  "officialJobCount": 26,
+  "officialSuccessfulJobs": 24,
+  "intentionalSkippedJobs": [
+    "release",
+    "recheck"
+  ],
+  "files": {
+    "packages/aerove_client/lib/ui/dialog.dart": "473835de2d7214c868f823097a2cc31b6cd8e8698df7d0ab911806b429a77962",
+    "packages/aerove_client/lib/views/aurora_settings.dart": "b93bdfaab345ba031fc651e636ab17898f9e2234c0c06c9b6ade468d0c0400db",
+    "packages/aerove_client/lib/ui/liquid_glass.dart": "8027cb5cd6c8d8e488a51c12e6146e6500872654fa74134d0bf61cbf891c3854",
+    "packages/aerove_client/lib/views/dashboard/widgets/service_status.dart": "22107f2bed0dc3a881a57033d556233c8043c10a41cb8c20f60a50e9c130e0a1"
+  },
+  "evidenceSha256": {
+    "sharedReadback": "ed52ec97d3059e43ca48e878d055f1bf19314d15fa018c28bbeb233bc6c6ee9f",
+    "originalApkReadback": "8df77a1434c18ceb0f17c9ad0360042474c1821ba27f0062d796cf0c6097a496",
+    "originalCiJobs": "5cf18e570f1a87490f053adb81cd9b13548a08cd78fde4af9fe3ae782a6de5d3",
+    "userAcceptance": "c0442db05d42b7238b6b254290974db029e372c15a704d4dc13065269c93536b"
+  }
+}

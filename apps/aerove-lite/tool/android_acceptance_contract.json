@@ -1,0 +1,86 @@
+{
+  "schema": 1,
+  "platformSelectors": [
+    "dev.aerove.lite.RuleFileNativeTest#corruptedAndMismatchedFilesThrowInsteadOfReportingAnEmptySuccess",
+    "dev.aerove.lite.RuleFileNativeTest#emptyLocalFilesRemainEmptyClassicalSets",
+    "dev.aerove.lite.RuleFileNativeTest#textIsInspectedAndDumpedThroughRealJniWithoutChangingTheSource",
+    "dev.aerove.lite.RuleFileNativeTest#yamlRulesAliasAndBareAddressesHaveCanonicalPayloads",
+    "dev.aerove.lite.backgroundpolicy.VpnUserStateDeviceTest#confirmedResetClearsOnlyOwnedKeysAndRequiresTheMaintenanceGate",
+    "dev.aerove.lite.data.LiteYamlRuntimeTest#duplicateKeysAndRecursiveAliasesRemainRejected",
+    "dev.aerove.lite.data.LiteYamlRuntimeTest#mapsAndMergedAliasesRoundtripInTheShrunkAndroidApplication",
+    "dev.aerove.lite.editor.EditorDocumentAndroidTest#allPinnedGrammarsAndFullSchemaLoadWithoutStartingTheCore",
+    "dev.aerove.lite.editor.EditorDocumentAndroidTest#fileInputStrictlyDecodesUtf8AndRejectsOversizedDocuments",
+    "dev.aerove.lite.editor.EditorDocumentAndroidTest#largeBulkEditKeepsHistoryAndBothSourceBuffersSurviveRoundTrip",
+    "dev.aerove.lite.editor.EditorDocumentAndroidTest#nativeTypingSearchReplaceAndUndoRedoOperateOnTheRealDocument",
+    "dev.aerove.lite.editor.EditorDocumentAndroidTest#previewHasSelectionAndSearchWhileEveryMutationRemainsBlocked",
+    "dev.aerove.lite.images.GroupIconRenderingTest#actualPngDecoderDrawsTheDownloadedPixels",
+    "dev.aerove.lite.images.GroupIconRenderingTest#actualSvgRendererDrawsGradientAndClipGeometry",
+    "dev.aerove.lite.images.GroupIconRenderingTest#animatedRasterKeepsIndependentNativeDrawableAndStops",
+    "dev.aerove.lite.images.GroupIconRenderingTest#inlinePngAndSvgUseRealDecoderWithoutOpeningHttp",
+    "dev.aerove.lite.localization.ApplicationLocaleAndroidTest#manifestDeclaresExactlyTheSevenRealStandardLocales",
+    "dev.aerove.lite.localization.ApplicationLocaleAndroidTest#nativeChoiceUpdatesApplicationNotificationsAndDefaultNumberAndDateFormatting",
+    "dev.aerove.lite.overrides.SmartConfigMeowScriptAndroidTest#realJniNamedHttpProxyAndCancellationKeepWritersOwned",
+    "dev.aerove.lite.overrides.SmartConfigMeowScriptAndroidTest#realQuickJsPreservesInputAndScriptFailuresCannotCommitPartialOverrides",
+    "dev.aerove.lite.overrides.SmartConfigMeowScriptAndroidTest#realQuickJsRepositoryComposerAndAllPinnedRulePayloadsReachNativeValidation",
+    "dev.aerove.lite.platformqa.NativeParserPlatformTest#nativeParserRejectsUnknownConfiguration",
+    "dev.aerove.lite.regexp2.IsolatedClientHelperTest#cancelledRequestCanRebindOnlyAfterConfirmedExit",
+    "dev.aerove.lite.regexp2.IsolatedClientHelperTest#exactSemanticsNulAndSharedMemoryRoundTrip",
+    "dev.aerove.lite.scan.AlbumQrDecoderTest#readsQrFromRealPngAndClosesItsResources",
+    "dev.aerove.lite.scan.AlbumQrDecoderTest#rejectsInvalidAndOversizedFiles",
+    "dev.aerove.lite.scan.ScanSessionTest#deniedPermissionStaysRecoverableAndAlbumCancellationDoesNotStartCamera",
+    "dev.aerove.lite.scan.ScanSessionTest#inactiveRouteNeverStartsCameraAndCloseIsIdempotent"
+  ],
+  "platformCount": 28,
+  "uiSelectors": [
+    "dev.aerove.lite.FlutterProductionUiTest#consentNavigationTheme12",
+    "dev.aerove.lite.FlutterProductionUiTest#persistedConsentAfterProcessRestart",
+    "dev.aerove.lite.FlutterProductionUiTest#profileImportApplyVpnNetworkAndBackgroundResume",
+    "dev.aerove.lite.FlutterProductionUiTest#cancelVpnAuthorizationThenRecover",
+    "dev.aerove.lite.FlutterProductionUiTest#prepareImportedRunningSessionForProcessRestart",
+    "dev.aerove.lite.FlutterProductionUiTest#persistedImportedProfileAfterProcessRestart",
+    "dev.aerove.lite.FlutterProductionUiTest#profileUpdateCancelBatchAndRetry"
+  ],
+  "normalUiSelectors": [
+    "dev.aerove.lite.FlutterProductionUiTest#consentNavigationTheme12",
+    "dev.aerove.lite.FlutterProductionUiTest#persistedConsentAfterProcessRestart",
+    "dev.aerove.lite.FlutterProductionUiTest#profileImportApplyVpnNetworkAndBackgroundResume",
+    "dev.aerove.lite.FlutterProductionUiTest#cancelVpnAuthorizationThenRecover",
+    "dev.aerove.lite.FlutterProductionUiTest#persistedImportedProfileAfterProcessRestart",
+    "dev.aerove.lite.FlutterProductionUiTest#profileUpdateCancelBatchAndRetry"
+  ],
+  "expectedTerminationSelector": "dev.aerove.lite.FlutterProductionUiTest#prepareImportedRunningSessionForProcessRestart",
+  "uiSourceSha256": "e1c31ac1a3222d808fc8036f8173000bc7c821180105409a82a02d915e995fcc",
+  "stages": [
+    "imported-selected",
+    "vpn-active",
+    "background-active",
+    "resumed-active",
+    "vpn-stopped",
+    "vpn-permission-cancelled",
+    "functional-running-for-host-restart",
+    "restart-observed"
+  ],
+  "visualApproved": false,
+  "fullAcceptance": false,
+  "coveragePolicy": "framework assertions are mapped, not copied; client behavior and optical requirements retain independent evidence gates",
+  "legacySelectorMap": {
+    "dev.aerove.lite.NativeSmokeTest#nativeParserRejectsUnknownConfiguration": "dev.aerove.lite.platformqa.NativeParserPlatformTest#nativeParserRejectsUnknownConfiguration"
+  },
+  "activeNetworkRequestFields": [
+    "expectedMixedPort",
+    "expectedBypassPrivateRoute",
+    "fixtureRouteTarget",
+    "networkSettingsUiEvidence"
+  ],
+  "profileCancelStages": [
+    "profile-cancel-baseline",
+    "profile-single-pending",
+    "profile-single-cancelled",
+    "profile-single-retried",
+    "profile-batch-pending",
+    "profile-batch-cancelled",
+    "profile-batch-retried"
+  ],
+  "uiCandidatePhysicalSha256": "c82b44a4b82c6f9f16e8404a1d586d8b0d282753fd266884a90d3d50cbe871ba",
+  "uiSourceEncoding": "UTF-8; exact canonical LF, only CRLF-to-LF conversion"
+}

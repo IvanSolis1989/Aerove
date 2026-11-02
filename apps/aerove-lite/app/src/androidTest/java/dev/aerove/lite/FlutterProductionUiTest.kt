@@ -97,6 +97,557 @@ class FlutterProductionUiTest {
         stage = "restart-consent-observed"
     }
 
+    @Test
+    fun profileImportApplyVpnNetworkAndBackgroundResume() = scenario {
+        functionalReceipt("host-consented-empty-profiles")
+        launch(); requireLabel("Dashboard")
+        checkNoVpn()
+        functionalNetworkSettings(allowChanges = true)
+        val label = profileLabel()
+        navigate("Profiles")
+        check(findLabel(label) == null) { "Functional fixture must not reuse an existing profile" }
+        openProfileForm()
+        fillProfile(label + "-cancelled")
+        capture("import-form-before-cancel")
+        backFromImportForm()
+        navigate("Profiles")
+        check(findLabel(label + "-cancelled") == null) { "Cancelled form created a profile" }
+        openProfileForm(); fillProfile(label)
+        stage = "actual-profile-import"
+        click("Submit")
+        awaitCondition("completed production download and closed import form", 60_000) {
+            findLabel("Import from link") == null && findLabel(label)?.isEditable == false
+        }
+        requireLabel(label)
+        click(label)
+        awaitCondition("production selected imported profile") { findLabel(label)?.let(::selected) == true }
+        capture("profile-imported-selected")
+        checkpoint("imported-selected", false)
+        navigate("Dashboard")
+        choose("Direct")
+        startRealVpn()
+        checkpoint("vpn-active", true)
+        assertProxyFixture("vpn-active")
+        val network = ownedVpn().single().networkHandle
+        stage = "real-background"
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME))
+        awaitCondition("app left foreground") { ui.rootInActiveWindow?.packageName?.toString() != PACKAGE }
+        assertProxyFixture("background-active")
+        checkpoint("background-active", true)
+        stage = "real-foreground-return"
+        launch(); navigate("Dashboard"); requireLabel("Stop")
+        check(ownedVpn().single().networkHandle == network) { "Activity resume replaced the actual VPN" }
+        assertProxyFixture("resumed-active")
+        checkpoint("resumed-active", true)
+        capture("vpn-foreground-return")
+        stopRealVpn()
+        checkpoint("vpn-stopped", false)
+        receipt.put("profileLabel", label)
+        stage = "functional-stopped"
+    }
+
+    @Test
+    fun cancelVpnAuthorizationThenRecover() = scenario {
+        functionalReceipt("host-consented-selected-profile-vpn-permission-revoked")
+        launch(); requireLabel("Dashboard")
+        checkNoVpn()
+        functionalNetworkSettings(allowChanges = true)
+        require(android.net.VpnService.prepare(context) != null) {
+            "Host must revoke VPN authorization before the cancellation branch"
+        }
+        navigate("Profiles"); requireLabel(profileLabel()); navigate("Dashboard")
+        choose("Direct")
+        stage = "vpn-permission-cancel"
+        click("Start")
+        permissionButton("Cancel")
+        requireLabel("Start")
+        checkNoVpn()
+        check(android.net.VpnService.prepare(context) != null)
+        checkpoint("vpn-permission-cancelled", false)
+        capture("permission-cancelled")
+        startRealVpn()
+        checkpoint("vpn-active", true)
+        assertProxyFixture("after-permission-recovery")
+        capture("permission-recovered")
+        stopRealVpn()
+        checkpoint("vpn-stopped", false)
+        stage = "permission-cancel-recovered-stopped"
+    }
+
+    @Test
+    fun prepareImportedRunningSessionForProcessRestart() = scenario {
+        functionalReceipt("host-consented-selected-profile-owned-process-restart")
+        require(requiredArg("hostRestartBoundary") == "true") { "Host must own an asynchronous termination boundary" }
+        launch(); requireLabel("Dashboard"); checkNoVpn()
+        functionalNetworkSettings(allowChanges = true)
+        navigate("Profiles"); requireLabel(profileLabel())
+        check(selected(requireLabel(profileLabel())))
+        navigate("Dashboard"); choose("Direct")
+        startRealVpn(); assertProxyFixture("before-owned-process-restart")
+        checkpoint("vpn-active", true)
+        checkpoint("functional-running-for-host-restart", true)
+        capture("owned-running-session-before-host-restart")
+        receipt.put("profileLabel", profileLabel())
+        stage = "functional-running-for-host-restart"
+        receipt.put("stage", stage).put("status", "awaiting-host-process-termination")
+            .put("scenarioPassed", false).put("expectedTermination", true)
+            .put("preparedElapsedRealtimeMs", SystemClock.elapsedRealtime())
+        val prepared = File(root, "receipt.partial")
+        prepared.writeText(receipt.toString(2) + "\n")
+        check(prepared.renameTo(File(root, "receipt.json")))
+        awaitCondition("host-owned process termination; returning normally is forbidden", 45_000) { false }
+    }
+
+    /** The host must really end the prior process; this method cannot kill its own runner. */
+    @Test
+    fun persistedImportedProfileAfterProcessRestart() = scenario {
+        functionalReceipt("host-ended-prior-functional-process")
+        val previousToken = requiredArg("previousQaToken")
+        require(previousToken.matches(Regex("[a-zA-Z0-9_-]{1,80}")) && previousToken != token)
+        val previousFile = File(requireNotNull(context.getExternalFilesDir(null)),
+            "flutter-production-qa/$previousToken/receipt.json")
+        val previous = JSONObject(previousFile.readText())
+        if (previous.optBoolean("expectedTermination")) {
+            check(previous.getString("stage") == "functional-running-for-host-restart" &&
+                previous.getString("status") == "awaiting-host-process-termination" &&
+                !previous.getBoolean("scenarioPassed"))
+            check(digest(previousFile.readBytes()) == requiredArg("previousBoundarySha256")) {
+                "Host must bind the exact prepared receipt it used before killing the process"
+            }
+        } else {
+            check(previous.getBoolean("scenarioPassed") && previous.getString("stage") == "functional-stopped")
+        }
+        for (field in listOf("apkSha256", "source", "tree")) {
+            check(previous.getString(field) == requiredArg(field)) { "Restart evidence identity mismatch: $field" }
+        }
+        check(previous.getInt("pid") != android.os.Process.myPid()) { "Host reused the previous process" }
+        check(previous.getString("profileLabel") == profileLabel())
+        launch(); requireLabel("Dashboard")
+        check(findLabel("Agree") == null && findLabel("Restate the statement") == null)
+        navigate("Profiles"); requireLabel(profileLabel())
+        check(selected(requireLabel(profileLabel()))) { "Imported profile selection did not persist" }
+        navigate("Dashboard")
+        functionalNetworkSettings(allowChanges = false)
+        val expected = requiredArg("restartExpectedState")
+        require(expected in setOf("running", "stopped")) { "Host must bind the real lifecycle policy" }
+        if (expected == "running") {
+            requireLabel("Stop")
+            awaitCondition("owned VPN after process recovery") { ownedVpn().size == 1 }
+        } else {
+            requireLabel("Start"); checkNoVpn()
+        }
+        checkpoint("restart-observed", expected == "running")
+        capture("persisted-import-after-process-restart")
+        if (expected == "stopped") startRealVpn()
+        checkpoint("vpn-active", true)
+        assertProxyFixture("restarted-real-network")
+        stopRealVpn(); checkpoint("vpn-stopped", false)
+        stage = "profile-process-recovery-stopped"
+    }
+
+    private fun functionalReceipt(fixture: String) {
+        receipt.put("fixture", fixture).put("nativeMeowAccepted", false)
+            .put("fullAcceptance", false).put("tunSeparateUidAccepted", false)
+            .put("networkRequests", org.json.JSONArray()).put("nativeAttestations", org.json.JSONArray())
+    }
+
+    private fun requiredArg(name: String): String =
+        requireNotNull(arguments.getString(name)?.takeIf { it.isNotBlank() }) { "Host-owned $name is required" }
+
+    private fun profileLabel(): String = requiredArg("profileLabel").also {
+        require(it.matches(Regex("[a-zA-Z0-9_-]{1,50}")))
+    }
+
+    private fun controlledUrl(name: String): android.net.Uri = android.net.Uri.parse(requiredArg(name)).also {
+        require(it.scheme == "http" && it.host == "10.0.2.2" && it.port in 1..65535 &&
+            it.userInfo == null && it.fragment == null && it.pathSegments.none { part -> part == ".." }) {
+            "$name must name the isolated existing emulator fixture"
+        }
+    }
+
+    private fun mixedProxyPort(): Int = requiredArg("mixedProxyPort").toInt().also {
+        require(it in 1024..49151) { "Match the production Port form range" }
+    }
+
+    private fun rowControl(label: String, editable: Boolean): AccessibilityNodeInfo {
+        val title = reveal(label)
+        val area = bounds(title)
+        val controls = nodes().filter { node ->
+            val box = bounds(node)
+            node.isVisibleToUser && node.packageName?.toString() == PACKAGE &&
+                (if (editable) node.isEditable && !node.isPassword else node.isCheckable) &&
+                (matches(node, label) || box.right > area.right) &&
+                kotlin.math.abs(box.centerY() - area.centerY()) <= maxOf(box.height(), area.height()) / 2
+        }
+        check(controls.size == 1) { "No unambiguous accessibility control in production row $label" }
+        return controls.single()
+    }
+
+    private fun functionalNetworkSettings(allowChanges: Boolean) {
+        stage = "actual-functional-network-settings"
+        if (allowChanges) checkNoVpn()
+        val port = mixedProxyPort().toString()
+        navigate("Tools"); click("General", scroll = true); click("Port", scroll = true)
+        var mixed = rowControl("Mixed port", editable = true)
+        if (allowChanges) {
+            check(mixed.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, port)
+            })) { "Production mixed port field rejected ACTION_SET_TEXT" }
+            awaitCondition("mixed port field committed") { rowControl("Mixed port", true).text?.toString() == port }
+            action("set-mixed-port", mixed, port)
+            click("Save")
+            awaitCondition("production port form saved") { findLabel("Mixed port") == null }
+            click("Port", scroll = true)
+            mixed = rowControl("Mixed port", editable = true)
+        }
+        check(mixed.text?.toString() == port) { "Saved production mixed port does not equal host allocated port" }
+        val proofs = JSONArray().put(capture("network-mixed-port-readback"))
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        awaitCondition("port readback form closed") { findLabel("Mixed port") == null }
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        navigate("Tools"); click("Advanced configuration", scroll = true); click("Network", scroll = true)
+        val privateLabel = "Bypass private addresses"
+        val bypass = rowControl(privateLabel, editable = false)
+        if (allowChanges && bypass.isChecked) {
+            performClick(bypass); action("disable-private-route-bypass", bypass, privateLabel)
+        }
+        awaitCondition("private address bypass disabled in production UI") { !rowControl(privateLabel, false).isChecked }
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        awaitCondition("network settings route closed") { findLabel(privateLabel) == null }
+        click("Network", scroll = true)
+        check(!rowControl(privateLabel, false).isChecked) { "Private bypass setting did not survive route reopening" }
+        proofs.put(capture("network-private-bypass-readback"))
+        receipt.put("networkSettingsUiEvidence", proofs).put("uiReadbackMixedPort", mixedProxyPort())
+            .put("uiReadbackBypassPrivateRoute", false)
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        awaitCondition("network readback route closed") { findLabel(privateLabel) == null }
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        navigate("Dashboard")
+    }
+
+    private fun openProfileForm() {
+        stage = "profile-import-form"
+        click("Add profile", scroll = true); click("Link", scroll = true)
+        requireLabel("Import from link")
+    }
+
+    private fun fillProfile(label: String) {
+        controlledUrl("profileUrl")
+        fun set(hint: String, value: String) {
+            var candidates = emptyList<AccessibilityNodeInfo>()
+            awaitCondition("unambiguous production editable field $hint") {
+                candidates = nodes().filter { it.isVisibleToUser && it.isEditable && !it.isPassword &&
+                    (it.hintText?.toString() == hint || matches(it, hint)) }
+                candidates.size == 1
+            }
+            val field = candidates.single()
+            check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+            }))
+            awaitNode("committed field $hint") { it.isEditable && it.text?.toString() == value }
+            action("set-text", field, hint)
+        }
+        set("Optional", label)
+        set("Required", requiredArg("profileUrl"))
+    }
+
+    private fun backFromImportForm() {
+        var attempts = 0
+        while (findLabel("Import from link") != null && attempts++ < 4) {
+            check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            awaitCondition("keyboard or route responds", 600, required = false) { findLabel("Import from link") == null }
+        }
+        check(findLabel("Import from link") == null) { "Production form did not cancel" }
+        if (findLabel("Link") != null) {
+            check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            awaitCondition("add-profile route closed") { findLabel("Link") == null }
+        }
+    }
+
+    private fun ownedVpn(): List<android.net.Network> {
+        val manager = requireNotNull(context.getSystemService(android.net.ConnectivityManager::class.java))
+        return manager.allNetworks.filter { network ->
+            manager.getNetworkCapabilities(network)?.let {
+                it.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) && it.ownerUid == context.applicationInfo.uid
+            } == true
+        }
+    }
+
+    private fun checkNoVpn() {
+        val manager = requireNotNull(context.getSystemService(android.net.ConnectivityManager::class.java))
+        check(manager.allNetworks.none { network -> manager.getNetworkCapabilities(network)
+            ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true }) {
+            "Refusing to replace an existing VPN; host must isolate its fixture"
+        }
+    }
+
+    private fun permissionButton(label: String) {
+        val button = awaitNode("real Android VPN permission $label") {
+            it.packageName?.toString() == "com.android.vpndialogs" && matches(it, label)
+        }
+        performClick(button); action("vpn-permission", button, label)
+    }
+
+    private fun startRealVpn() {
+        stage = "actual-start-vpn"
+        val permission = android.net.VpnService.prepare(context) != null
+        click("Start")
+        if (permission) permissionButton("OK")
+        requireLabel("Stop")
+        awaitCondition("real app-owned Android VPN", 60_000) { ownedVpn().size == 1 }
+        capture("actual-vpn-started-${frames.length()}")
+    }
+
+    private fun stopRealVpn() {
+        stage = "actual-stop-vpn"
+        click("Stop"); requireLabel("Start")
+        awaitCondition("real owned VPN released", 30_000) { ownedVpn().isEmpty() }
+        capture("actual-vpn-stopped-${frames.length()}")
+    }
+
+    private fun assertProxyFixture(label: String) {
+        val fixture = controlledUrl("fixtureUrl")
+        require(fixture.path.isNullOrEmpty() || fixture.path == "/")
+        val port = mixedProxyPort()
+        check(receipt.getInt("uiReadbackMixedPort") == port) { "No real saved UI port readback" }
+        val requestToken = java.util.UUID.randomUUID().toString()
+        val target = "${fixture.toString().trimEnd('/')}/$requestToken"
+        val body = java.net.Socket().use { socket ->
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 5_000)
+            socket.soTimeout = 10_000
+            socket.getOutputStream().write(("GET $target HTTP/1.0\r\nHost: ${fixture.authority}\r\n" +
+                "Connection: close\r\n\r\n").toByteArray(Charsets.US_ASCII))
+            socket.getOutputStream().flush()
+            val bytes = socket.getInputStream().readNBytes(65_537)
+            check(bytes.size <= 65_536) { "Controlled proxy reply exceeded bounded fixture size" }
+            bytes.toString(Charsets.UTF_8)
+        }
+        check(body.lineSequence().first().split(' ').getOrNull(1) == "200") { "Actual proxy request failed" }
+        check(body.substringAfter("\r\n\r\n").contains("AEROVE_LITE_FIXTURE:$requestToken")) {
+            "The actual listener returned no unique controlled fixture echo"
+        }
+        receipt.getJSONArray("networkRequests").put(JSONObject().put("stage", label)
+            .put("requestToken", requestToken).put("responseSha256", digest(body.toByteArray())))
+    }
+
+    private fun checkpoint(name: String, expectedVpn: Boolean) {
+        require(name.matches(Regex("[a-z-]{1,60}")))
+        val folder = File(root, "checkpoints").also { check(it.isDirectory || it.mkdirs()) }
+        val value = JSONObject().put("schema", 1).put("qaToken", token)
+            .put("stage", name).put("pid", android.os.Process.myPid())
+            .put("nonce", java.util.UUID.randomUUID().toString()).put("expectedVpn", expectedVpn)
+            .put("networkHandles", JSONArray(ownedVpn().map { it.networkHandle.toString() }))
+            .put("apkSha256", requiredArg("apkSha256")).put("source", requiredArg("source"))
+            .put("tree", requiredArg("tree")).put("elapsedRealtimeMs", SystemClock.elapsedRealtime())
+            .put("expectedMixedPort", mixedProxyPort()).put("expectedBypassPrivateRoute", false)
+            .put("fixtureRouteTarget", "10.0.2.2")
+            .put("networkSettingsUiEvidence", receipt.getJSONArray("networkSettingsUiEvidence"))
+        arguments.getString("previousQaToken")?.let { value.put("previousQaToken", it) }
+        arguments.getString("restartExpectedState")?.let { value.put("restartExpectedState", it) }
+        arguments.getString("hostRestartBoundary")?.let { value.put("hostRestartBoundary", it) }
+        val request = File(folder, "$name.json")
+        check(!request.exists()) { "Checkpoint must not overwrite an earlier event" }
+        val temporary = File(folder, "$name.partial")
+        temporary.writeText(value.toString(2) + "\n")
+        check(temporary.renameTo(request)) { "Atomic checkpoint publication failed" }
+        receipt.put("nativeEvidencePending", true)
+        val ackFile = File(root, "native-acks/$name.json")
+        awaitCondition("independent native platform attestation $name", 45_000) { ackFile.isFile }
+        val ack = JSONObject(ackFile.readText())
+        check(ack.getInt("schema") == 1)
+        for (field in listOf("qaToken", "stage", "nonce", "source", "tree", "apkSha256")) {
+            check(ack.getString(field) == value.getString(field)) { "Native ACK identity mismatch: $field" }
+        }
+        check(ack.getInt("pid") == android.os.Process.myPid()) { "Native observer ran in a different target process" }
+        check(ack.getString("requestSha256") == digest(request.readBytes())) { "Native ACK is not bound to this request" }
+        check(ack.getString("status") == "attested") { "Real native attestation failed: ${ack.optString("error")}" }
+        val relative = ack.getString("evidencePath")
+        check(relative.startsWith("native-state/") && !File(relative).isAbsolute)
+        val evidence = File(root, relative).canonicalFile
+        check(evidence.toPath().startsWith(root.canonicalFile.toPath()) && evidence.isFile)
+        check(digest(evidence.readBytes()) == ack.getString("evidenceSha256")) { "Native evidence readback hash mismatch" }
+        receipt.getJSONArray("nativeAttestations").put(JSONObject().put("stage", name)
+            .put("request", "checkpoints/$name.json").put("requestSha256", digest(request.readBytes()))
+            .put("ack", "native-acks/$name.json").put("ackSha256", digest(ackFile.readBytes()))
+            .put("evidencePath", relative).put("evidenceSha256", digest(evidence.readBytes())))
+        receipt.put("nativeEvidencePending", false)
+    }
+
+
+    @Test
+    fun profileUpdateCancelBatchAndRetry() = scenario {
+        functionalReceipt("host-consented-isolated-profile-cancel-fixture")
+        require(requiredArg("profileCancelPrerequisiteGreen") == "true") {
+            "Root must first validate the exact profile-cancel revision2 production source"
+        }
+        for (key in listOf("profileCancelImplementationManifestSha256", "profileCancelGreenEvidenceSha256")) {
+            require(requiredArg(key).matches(Regex("[0-9a-f]{64}"))) { "Host must bind real prerequisite evidence: $key" }
+        }
+        launch(); requireLabel("Dashboard"); checkNoVpn()
+        val profiles = JSONArray()
+        for (key in listOf("A", "B")) {
+            val label = requiredArg("cancelProfile${key}Label")
+            require(label.matches(Regex("[a-zA-Z0-9_-]{1,50}")))
+            val url = controlledUrl("cancelProfile${key}Url").toString()
+            profiles.put(JSONObject().put("key", key).put("label", label).put("url", url))
+        }
+        check(profiles.getJSONObject(0).getString("label") != profiles.getJSONObject(1).getString("label"))
+        check(profiles.getJSONObject(0).getString("url") != profiles.getJSONObject(1).getString("url"))
+        navigate("Profiles")
+        for (i in 0 until profiles.length()) {
+            val profile = profiles.getJSONObject(i)
+            val label = profile.getString("label")
+            check(findLabel(label) == null) { "Cancellation fixture profile must be newly imported through UI" }
+            openProfileForm()
+            cancelSetImportField("Optional", label)
+            cancelSetImportField("Required", profile.getString("url"))
+            click("Submit")
+            awaitCondition("real cancellation fixture import completed", 60_000) {
+                findLabel("Import from link") == null && findLabel(label)?.isEditable == false
+            }
+            requireLabel(label)
+        }
+        val labelA = profiles.getJSONObject(0).getString("label")
+        capture("profile-cancel-imported-baseline")
+        profileCancelCheckpoint("profile-cancel-baseline", profiles)
+
+        stage = "single-profile-update-pending"
+        cancelLongPressProfile(labelA)
+        val singleStarted = SystemClock.elapsedRealtime()
+        val singleDeadline = singleStarted + 18_000
+        click("Sync")
+        profileCancelCheckpoint("profile-single-pending", profiles, singleStarted, singleDeadline)
+        val toolbarCancel = requireLabel("Cancel").let(::bounds)
+        cancelLongPressProfile(labelA)
+        val rowCancel = awaitNode("updating profile context-menu Cancel, distinct from toolbar") {
+            it.packageName?.toString() == PACKAGE && matches(it, "Cancel") && bounds(it) != toolbarCancel
+        }
+        check(SystemClock.elapsedRealtime() < singleDeadline) { "Single Cancel missed the pre-timeout window" }
+        performClick(rowCancel); action("profile-context-cancel", rowCancel, labelA)
+        cancelAwaitIdle(singleDeadline)
+        profileCancelCheckpoint("profile-single-cancelled", profiles, singleStarted, singleDeadline)
+        check(SystemClock.elapsedRealtime() < singleDeadline) { "Actual abort/join was not proven before 20s timeout" }
+        capture("profile-single-cancelled")
+
+        stage = "single-profile-update-retry"
+        cancelLongPressProfile(labelA); click("Sync")
+        awaitCondition("single real update retry completed", 60_000) {
+            findLabel("Update") != null && findLabel("Cancel") == null
+        }
+        profileCancelCheckpoint("profile-single-retried", profiles)
+        capture("profile-single-retried")
+
+        stage = "batch-profile-update-pending"
+        val batchStarted = SystemClock.elapsedRealtime()
+        val batchDeadline = batchStarted + 18_000
+        click("Update")
+        profileCancelCheckpoint("profile-batch-pending", profiles, batchStarted, batchDeadline)
+        check(SystemClock.elapsedRealtime() < batchDeadline) { "Batch Cancel missed the pre-timeout window" }
+        click("Cancel")
+        cancelAwaitIdle(batchDeadline)
+        profileCancelCheckpoint("profile-batch-cancelled", profiles, batchStarted, batchDeadline)
+        check(SystemClock.elapsedRealtime() < batchDeadline) { "Batch abort/join was not proven before 20s timeout" }
+        capture("profile-batch-cancelled-retained-completed-item")
+
+        stage = "batch-profile-update-retry"
+        click("Update")
+        awaitCondition("both real batch retries completed", 60_000) {
+            findLabel("Update") != null && findLabel("Cancel") == null
+        }
+        profileCancelCheckpoint("profile-batch-retried", profiles)
+        capture("profile-batch-retried")
+        receipt.put("profileUpdateCancelAccepted", false)
+            .put("profileCancelFixtures", profiles)
+        stage = "profile-update-cancel-candidate-stopped"
+    }
+
+    private fun cancelSetImportField(hint: String, value: String) {
+        val field = awaitNode("unique real import $hint field") { node ->
+            node.isEditable && !node.isPassword &&
+                (node.hintText?.toString() == hint || matches(node, hint))
+        }
+        check(nodes().count { it.isVisibleToUser && it.isEditable && !it.isPassword &&
+            (it.hintText?.toString() == hint || matches(it, hint)) } == 1)
+        check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
+        }))
+        awaitNode("committed real import $hint") { it.isEditable && it.text?.toString() == value }
+        action("set-text", field, hint)
+    }
+
+    private fun cancelLongPressProfile(label: String) {
+        var current: AccessibilityNodeInfo? = reveal(label)
+        repeat(6) {
+            val target = current
+            if (target != null && target.isEnabled && target.isLongClickable &&
+                target.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
+                action("profile-long-click", target, label)
+                return
+            }
+            current = target?.parent
+        }
+        error("Production profile exposes no actionable long-click; no coordinate fallback")
+    }
+
+    private fun cancelAwaitIdle(deadline: Long) {
+        val remaining = deadline - SystemClock.elapsedRealtime()
+        check(remaining > 0) { "Cancellation exceeded the pre-timeout budget" }
+        awaitCondition("real updating keys released after cleanup", remaining) {
+            findLabel("Update") != null && findLabel("Cancel") == null
+        }
+    }
+
+    private fun profileCancelCheckpoint(name: String, profiles: JSONArray,
+        started: Long? = null, deadline: Long? = null) {
+        require(name.matches(Regex("[a-z-]{1,60}")))
+        stage = name
+        val hierarchy = File(root, "$name-hierarchy.json")
+        hierarchy.writeText(tree().toString(2) + "\n")
+        val payload = JSONObject().put("profiles", profiles)
+            .put("implementationManifestSha256", requiredArg("profileCancelImplementationManifestSha256"))
+            .put("greenEvidenceSha256", requiredArg("profileCancelGreenEvidenceSha256"))
+            .put("uiHierarchy", hierarchy.name).put("uiHierarchySha256", digest(hierarchy.readBytes()))
+            .put("toolbarUpdateVisible", findLabel("Update") != null)
+            .put("toolbarCancelVisible", findLabel("Cancel") != null)
+        if (started != null) payload.put("updateStartedElapsedRealtimeMs", started)
+        if (deadline != null) payload.put("cancelDeadlineElapsedRealtimeMs", deadline)
+        val value = JSONObject().put("schema", 1).put("qaToken", token).put("stage", name)
+            .put("checkpointKind", "profile-update-cancel").put("profileCancel", payload)
+            .put("pid", android.os.Process.myPid()).put("nonce", java.util.UUID.randomUUID().toString())
+            .put("expectedVpn", false).put("apkSha256", requiredArg("apkSha256"))
+            .put("source", requiredArg("source")).put("tree", requiredArg("tree"))
+            .put("elapsedRealtimeMs", SystemClock.elapsedRealtime())
+        val folder = File(root, "checkpoints").also { check(it.isDirectory || it.mkdirs()) }
+        val request = File(folder, "$name.json")
+        check(!request.exists())
+        val temporary = File(folder, "$name.partial")
+        temporary.writeText(value.toString(2) + "\n"); check(temporary.renameTo(request))
+        val ackFile = File(root, "native-acks/$name.json")
+        val wait = if (deadline == null) 45_000L else minOf(6_000L, deadline - SystemClock.elapsedRealtime())
+        check(wait > 0) { "No pre-timeout attestation budget remains" }
+        receipt.put("nativeEvidencePending", true)
+        awaitCondition("real profile/file/SQL/server cancellation attestation $name", wait) { ackFile.isFile }
+        val ack = JSONObject(ackFile.readText())
+        check(ack.getInt("schema") == 1)
+        for (field in listOf("qaToken", "stage", "nonce", "source", "tree", "apkSha256")) {
+            check(ack.getString(field) == value.getString(field)) { "Profile native ACK identity mismatch: $field" }
+        }
+        check(ack.getInt("pid") == android.os.Process.myPid())
+        check(ack.getString("requestSha256") == digest(request.readBytes()))
+        check(ack.getString("status") == "attested") { "Actual profile cancellation proof failed: ${ack.optString("error")}" }
+        val relative = ack.getString("evidencePath")
+        check(relative.startsWith("native-state/") && !File(relative).isAbsolute)
+        val evidence = File(root, relative).canonicalFile
+        check(evidence.toPath().startsWith(root.canonicalFile.toPath()) && evidence.isFile)
+        check(digest(evidence.readBytes()) == ack.getString("evidenceSha256"))
+        receipt.getJSONArray("nativeAttestations").put(JSONObject().put("stage", name)
+            .put("request", "checkpoints/$name.json").put("requestSha256", digest(request.readBytes()))
+            .put("ack", "native-acks/$name.json").put("ackSha256", digest(ackFile.readBytes()))
+            .put("evidencePath", relative).put("evidenceSha256", digest(evidence.readBytes())))
+        receipt.put("nativeEvidencePending", false)
+    }
+
+
     private fun scenario(block: () -> Unit) {
         check(context.packageName == PACKAGE)
         check(root.mkdirs()) { "Evidence directory must be new: $root" }
