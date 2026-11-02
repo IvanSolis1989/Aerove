@@ -68,7 +68,7 @@ class Acceptance(Producer):
 
     def ui(self, method, info, extra=None):
         token = "qa-" + uuid4().hex
-        log = self.adb_command(method, *self.base_args(method, token, info, extra), timeout=600).decode(errors="strict")
+        log = self.normal_instrument(method, *self.base_args(method, token, info, extra)).decode(errors="strict")
         directory = self.pull(method, token)
         records = parse_log(self.args.output / (method + ".out"))
         require(len(records) == 1 and records[0]["className"] + "#" + records[0]["testName"] == CLASS + "#" + method and

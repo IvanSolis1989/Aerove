@@ -172,6 +172,65 @@ class ContractTest(unittest.TestCase):
                     producer.installed_hash('app', qa.PACKAGE, expected)
                 self.assertEqual(commands.call_count, 1)
 
+    def test_normal_instrument_default_and_opt_in_preserve_original_command_and_stdout(self):
+        args = SimpleNamespace(adb=Path('adb'), serial='emulator-5554', output=self.root)
+        producer = qa.Producer(args)
+        original = ['shell', 'am', 'instrument', '-w', '-r', '-e', 'class', qa.CLASS + '#method', qa.RUNNER]
+        junit = b'INSTRUMENTATION_CODE: -1\nOK (1 test)\n'
+        for flag in ('0', 'true'):
+            with self.subTest(flag=flag), patch.dict('os.environ', AEROVE_CLEAR_FRAME_TRACE=flag), \
+                    patch.object(producer, 'adb_command', return_value=junit) as adb, \
+                    patch.object(producer, 'command') as command:
+                self.assertEqual(producer.normal_instrument('method', *original), junit)
+                adb.assert_called_once_with('method', *original, timeout=600)
+                command.assert_not_called()
+        with patch.dict('os.environ', AEROVE_CLEAR_FRAME_TRACE='1', AEROVE_REQUIRE_FRAME_TRACE='1'), \
+                patch.object(producer, 'command', return_value=junit) as command, \
+                patch.object(producer, 'adb_command') as adb:
+            self.assertEqual(producer.normal_instrument('method', *original), junit)
+            adb.assert_not_called()
+            label, wrapped = command.call_args.args
+            self.assertEqual(label, 'method')
+            self.assertEqual(Path(wrapped[1]).name, 'clear_frame_trace.py')
+            self.assertEqual(wrapped[wrapped.index('--') + 1:], producer.adb + original)
+            self.assertEqual(wrapped[wrapped.index('--command-timeout') + 1], '600')
+            self.assertEqual(wrapped[wrapped.index('--serial') + 1], 'emulator-5554')
+            self.assertEqual(Path(wrapped[wrapped.index('--output') + 1]).parent, self.root)
+            self.assertIn('--require-trace', wrapped)
+            self.assertEqual(command.call_args.kwargs, dict(timeout=780, termination_timeout=60))
+        with patch.dict('os.environ', AEROVE_CLEAR_FRAME_TRACE='1', AEROVE_REQUIRE_FRAME_TRACE='0'), \
+                patch.object(producer, 'command', side_effect=RuntimeError('collector exited 78')) as command:
+            with self.assertRaisesRegex(RuntimeError, 'exited 78'):
+                producer.normal_instrument('method', *original)
+            self.assertNotIn('--require-trace', command.call_args.args[1])
+
+    def test_flutter_instrument_keeps_junit_rejection_and_pull_after_collector_failure(self):
+        producer = qa.Producer(SimpleNamespace(adb=Path('adb'), serial='emulator-5554', output=self.root))
+        for outcome in (b'FAILURES!!!\n', RuntimeError('collector exited 78')):
+            options = dict(side_effect=outcome) if isinstance(outcome, Exception) else dict(return_value=outcome)
+            with self.subTest(outcome=str(outcome)), patch.object(producer, 'normal_instrument', **options) as invoke, \
+                    patch.object(producer, 'adb_command', return_value=b'') as adb:
+                with self.assertRaises(RuntimeError):
+                    producer.instrument('consentNavigationTheme12', 'token', self.info)
+                self.assertEqual(invoke.call_args.args[-1], qa.RUNNER)
+                self.assertIn(self.info['apk_sha256'], invoke.call_args.args)
+                self.assertIn(self.info['source'], invoke.call_args.args)
+                self.assertEqual(adb.call_args.args[0], 'consentNavigationTheme12-pull')
+                self.assertTrue(adb.call_args.kwargs['cancelling'])
+
+    def test_collector_cancellation_gets_bounded_cleanup_time_without_changing_default(self):
+        from unittest.mock import Mock, call
+        producer = qa.Producer(SimpleNamespace(adb=Path('adb'), serial='emulator-5554', output=self.root))
+        child = SimpleNamespace(wait=Mock(side_effect=[InterruptedError('cancelled'), 0]),
+                                terminate=Mock(), kill=Mock())
+        with patch.object(qa.subprocess, 'Popen', return_value=child):
+            with self.assertRaises(InterruptedError):
+                producer.command('collector', ['python', 'collector'], timeout=780, termination_timeout=60)
+        self.assertEqual(child.wait.call_args_list, [call(timeout=780), call(timeout=60)])
+        child.terminate.assert_called_once()
+        child.kill.assert_not_called()
+        self.assertIsNone(producer.child)
+
     def test_only_instrumentation_install_allows_test_only_apk(self):
         info_path = self.root / 'BUILD_INFO.json'
         self.info['signer_sha256'] = 'c' * 64

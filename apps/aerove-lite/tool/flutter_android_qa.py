@@ -143,7 +143,7 @@ class Producer:
         self.cancelled = True
         raise InterruptedError(f'Cancelled by signal {signum} at {self.receipt["stage"]}')
 
-    def command(self, label, command, timeout=30, check=True, cancelling=False):
+    def command(self, label, command, timeout=30, check=True, cancelling=False, termination_timeout=5):
         if self.cancelled and not cancelling:
             raise InterruptedError('QA cancellation observed')
         row = dict(label=label, command=[str(c) for c in command], timeoutSeconds=timeout)
@@ -158,7 +158,7 @@ class Producer:
             except BaseException:
                 child.terminate()
                 try:
-                    child.wait(timeout=5)
+                    child.wait(timeout=termination_timeout)
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait(timeout=5)
@@ -173,6 +173,20 @@ class Producer:
 
     def adb_command(self, label, *command, **options):
         return self.command(label, self.adb + list(command), **options)
+
+    def normal_instrument(self, label, *arguments):
+        """Observe normal invocations only; the host-terminated boundary owns its direct child."""
+        if os.environ.get('AEROVE_CLEAR_FRAME_TRACE') != '1':
+            return self.adb_command(label, *arguments, timeout=600)
+        trace_directory = self.args.output / (label + '-frame-trace-' + str(len(self.receipt['commands'])))
+        command = [sys.executable, str(Path(__file__).with_name('clear_frame_trace.py')),
+                   '--serial', self.args.serial, '--output', str(trace_directory),
+                   '--command-timeout', '600']
+        if os.environ.get('AEROVE_REQUIRE_FRAME_TRACE') == '1':
+            command.append('--require-trace')
+        command += ['--', *self.adb, *arguments]
+        # Collector start/finish are bounded separately from the unchanged 600s instrument.
+        return self.command(label, command, timeout=780, termination_timeout=60)
 
     def installed_hash(self, label, package, expected):
         output = self.adb_command(label + '-path', 'shell', 'pm', 'path', package).decode().strip()
@@ -193,7 +207,7 @@ class Producer:
                 '-e', 'runAttempt', str(info['run_attempt']), RUNNER]
         failure = None
         try:
-            output = self.adb_command(method, *args, timeout=600).decode(errors='replace')
+            output = self.normal_instrument(method, *args).decode(errors='replace')
             if not re.search(r'OK \(1 test\)', output) or any(x in output for x in ('FAILURES!!!', 'INSTRUMENTATION_FAILED', 'shortMsg=')):
                 raise RuntimeError('Instrumentation did not finish exactly one successful test')
         except BaseException as error:

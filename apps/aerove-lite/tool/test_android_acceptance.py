@@ -209,6 +209,43 @@ class FixedSelectionTest(unittest.TestCase):
             self.assertEqual(any(call.args[0].startswith("install-") for call in commands.call_args_list), reaches_install)
             self.assertFalse(v.load(self.root / "android-acceptance.json")["fullAcceptance"])
 
+    def test_normal_platform_ui_uses_shared_instrument_entry_and_keeps_exact_junit_gate(self):
+        producer = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root, phase="flutter-full"))
+        info = dict(apk_sha256="a"*64, source="1"*40, tree="2"*40, workflow="original-run",
+                    run_attempt=1, meow_overlay_sha256="b"*64, meow_file_manifest_sha256="c"*64)
+        method = "profileImportApplyVpnNetworkAndBackgroundResume"
+        with patch.object(producer, "normal_instrument", return_value=b"OK (1 test)\n") as invoke, \
+                patch.object(producer, "pull", return_value=self.root), \
+                patch("android_acceptance.parse_log", return_value=[]), \
+                patch("android_acceptance.ui_capture") as capture:
+            with self.assertRaisesRegex(ValueError, "precisely its one selected method"):
+                producer.ui(method, info, dict(profileUrl="controlled-original-fixture"))
+            original = invoke.call_args.args
+            self.assertEqual(original[0], method)
+            self.assertEqual(original[1:4], ("shell", "am", "instrument"))
+            self.assertEqual(original[-1], "dev.aerove.lite.platform.test/dev.aerove.lite.platformqa.AcceptanceCheckpointRunner")
+            for value in (info["apk_sha256"], info["source"], info["tree"], "controlled-original-fixture"):
+                self.assertIn(value, original)
+            capture.assert_not_called()
+
+    def test_running_restart_boundary_remains_direct_child_even_when_trace_opted_in(self):
+        from unittest.mock import Mock
+        producer = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root, phase="flutter-full"))
+        info = dict(apk_sha256="a"*64, source="1"*40, tree="2"*40, workflow="original-run",
+                    run_attempt=1, meow_overlay_sha256="b"*64, meow_file_manifest_sha256="c"*64)
+        child = Mock(returncode=1)
+        child.poll.return_value = 1
+        with patch.dict("os.environ", AEROVE_CLEAR_FRAME_TRACE="1"), \
+                patch.object(producer, "normal_instrument") as normal, \
+                patch("android_acceptance.subprocess.Popen", return_value=child) as spawn:
+            with self.assertRaisesRegex(ValueError, "Preparer ended before"):
+                producer.running_boundary(info, {})
+            normal.assert_not_called()
+            self.assertEqual(spawn.call_args.args[0][:6], producer.adb + ["shell", "am", "instrument"])
+            self.assertIn("hostRestartBoundary", spawn.call_args.args[0])
+            self.assertFalse(any("clear_frame_trace.py" in str(arg) for arg in spawn.call_args.args[0]))
+        self.assertIsNone(producer.child)
+
     def test_failed_owner_preflight_never_contacts_a_device(self):
         producer=Acceptance(Namespace(adb=Path("adb"),serial="physical-device",output=self.root,phase="flutter-platform"))
         with patch.dict("sys.modules",{"emulator_current":None}),patch.object(producer,"adb_command") as adb:
