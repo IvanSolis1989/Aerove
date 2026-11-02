@@ -28,6 +28,10 @@ class Acceptance(Producer):
         self.receipt.update(producer="android_acceptance.py", phase=args.phase,
                             fullAcceptance=False, nativeMeowAccepted=False, tunSeparateUidAccepted=False,
                             canonicalSharedEvidenceVerified=False, opticalDisplacementVerified=False)
+        if args.phase == "flutter-ui":
+            self.receipt.update(diagnosticOnly=True, representativeOnly=True, accepted=False,
+                aggregateAcceptance=False, promotionAccepted=False, functionalAcceptance=False,
+                unresolvedCoverage=["representative UI only; native/platform/full acceptance not executed"])
         self.fixture = None
         self.fixture_streams = []
         self.serial_number = 0
@@ -68,7 +72,15 @@ class Acceptance(Producer):
 
     def ui(self, method, info, extra=None):
         token = "qa-" + uuid4().hex
-        log = self.normal_instrument(method, *self.base_args(method, token, info, extra)).decode(errors="strict")
+        try:
+            log = self.normal_instrument(method, *self.base_args(method, token, info, extra)).decode(errors="strict")
+        except BaseException:
+            try:
+                self.adb_command(self.unique(method + "-failed-pull"), "pull", self.remote(token),
+                                 str(self.args.output / method), timeout=90, check=False, cancelling=True)
+            except BaseException as error:
+                self.receipt.setdefault("diagnosticErrors", []).append(f"{method} failed capture pull: {error!r}")
+            raise
         directory = self.pull(method, token)
         records = parse_log(self.args.output / (method + ".out"))
         require(len(records) == 1 and records[0]["className"] + "#" + records[0]["testName"] == CLASS + "#" + method and
@@ -203,6 +215,17 @@ class Acceptance(Producer):
                 require(time.monotonic() < deadline, "Fixture never became ready")
                 time.sleep(0.1)
 
+    def consent_restart(self, info):
+        rows = []
+        first, receipt, _ = self.ui("consentNavigationTheme12", info); rows.append(first)
+        log = self.adb_command("first-logcat", "logcat", "-d", "-v", "threadtime").decode(errors="replace")
+        self.receipt["appRenderer"] = renderer(log, receipt["pid"]); self.check_process_log(log, receipt["pid"])
+        self.adb_command("consent-process-stop", "shell", "am", "force-stop", PACKAGE)
+        second, receipt, _ = self.ui("persistedConsentAfterProcessRestart", info); rows.append(second)
+        require(first["pid"] != second["pid"], "Consent recovery reused original process")
+        self.receipt["restartRenderer"] = second["renderer"]
+        return rows
+
     def run(self):
         result = 1
         for name in (signal.SIGINT, signal.SIGTERM):
@@ -243,7 +266,8 @@ class Acceptance(Producer):
                                  "--no-streaming", str(path), timeout=120)
                 self.installed_hash(package, package, sha(path))
             self.adb_command("locale-en", "shell", "cmd", "locale", "set-app-locales", PACKAGE, "--user", "0", "--locales", "en-US")
-            self.fixture_start()
+            if self.args.phase != "flutter-ui":
+                self.fixture_start()
             contract = load(CONTRACT)
             if self.args.phase == "flutter-platform":
                 require(bool(os.environ.get("SMART_CONFIG_MEOW_FIXTURE_DIR")), "Pinned Smart fixture must be prepared before platform suite")
@@ -251,14 +275,10 @@ class Acceptance(Producer):
                                  ",".join(contract["platformSelectors"]), "-e", "isolatedBackgroundPolicy", "true",
                                  "-e", "smartConfigFixtureUrl", "http://10.0.2.2:18080/smart-config-meow/", RUNNER, timeout=900)
                 self.receipt["platform"] = platform_log(self.args.output / "platform-tests.out")
+            elif self.args.phase == "flutter-ui":
+                self.receipt.update(uiInvocations=self.consent_restart(info), matrixImages=12)
             else:
-                rows = []
-                first, receipt, _ = self.ui("consentNavigationTheme12", info); rows.append(first)
-                log = self.adb_command("first-logcat", "logcat", "-d", "-v", "threadtime").decode(errors="replace")
-                self.receipt["appRenderer"] = renderer(log, receipt["pid"]); self.check_process_log(log, receipt["pid"])
-                self.adb_command("consent-process-stop", "shell", "am", "force-stop", PACKAGE)
-                second, receipt, _ = self.ui("persistedConsentAfterProcessRestart", info); rows.append(second)
-                require(first["pid"] != second["pid"], "Consent recovery reused original process")
+                rows = self.consent_restart(info)
                 profile = str(uuid4())
                 extra = dict(fixtureUrl="http://10.0.2.2:18080", profileUrl=f"http://10.0.2.2:18080/flutter-profile/{profile}.yaml?mixedPort=18081",
                              profileLabel="FlutterAcceptance-" + profile[:8], mixedProxyPort="18081")
@@ -382,7 +402,7 @@ class Acceptance(Producer):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--phase", choices=("flutter-platform", "flutter-full"), required=True)
+    parser.add_argument("--phase", choices=("flutter-ui", "flutter-platform", "flutter-full"), required=True)
     for name in ("apk", "test-apk", "platform-apk", "build-info", "adb", "apksigner", "output"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--serial", required=True)

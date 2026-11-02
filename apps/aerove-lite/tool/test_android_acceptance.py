@@ -246,6 +246,88 @@ class FixedSelectionTest(unittest.TestCase):
             self.assertFalse(any("clear_frame_trace.py" in str(arg) for arg in spawn.call_args.args[0]))
         self.assertIsNone(producer.child)
 
+    def test_representative_platform_runner_executes_only_two_ui_methods_without_fixture_or_acceptance(self):
+        from types import SimpleNamespace
+        import android_acceptance as acceptance
+        platform = self.root / "platform.apk"; platform.write_bytes(b"host-only sealed-platform fixture")
+        app = self.root / "app.apk"; app.write_bytes(b"host-only app fixture")
+        driver = self.root / "independent-driver.apk"; driver.write_bytes(b"archive evidence, never installed")
+        info = dict(apk_sha256=v.sha(app), signer_sha256="a"*64)
+        info_path = self.root / "BUILD_INFO.json"; info_path.write_text(json.dumps(info))
+        (self.root / "platform-runner-build.json").write_text(json.dumps(dict(sharedUiReuse={})))
+        proof_path = self.root / "owner.json"; proof_path.write_text("{}")
+        proof = dict(deviceSerial="emulator-5554", runtimeDirectory=str(self.root), runtimeManifestSha256="b"*64)
+        args = Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root, phase="flutter-ui",
+                         apk=app, test_apk=driver, platform_apk=platform, build_info=info_path, apksigner=Path("apksigner"))
+        producer = Acceptance(args)
+        calls = []
+        def ui(method, _info):
+            calls.append(method)
+            pid = 101 if len(calls) == 1 else 202
+            return dict(method=method, pid=pid, renderer=dict(backend="impeller")), dict(pid=pid), []
+        owner = SimpleNamespace(validate_renderer_proof=lambda _: proof)
+        with patch.dict("sys.modules", {"emulator_current": owner}), \
+                patch.dict(os.environ, AEROVE_CURRENT_RENDERER_PROOF=str(proof_path), ANDROID_SERIAL="emulator-5554"), \
+                patch("android_acceptance.validate_binding", return_value={}) as archive_binding, \
+                patch("android_acceptance.platform_binding", return_value=platform) as mapped_binding, \
+                patch("android_acceptance.renderer", return_value=dict(backend="impeller")), \
+                patch.object(producer, "command", return_value=("Signer #1 certificate SHA-256 digest: " + "a"*64).encode()), \
+                patch.object(producer, "adb_command", return_value=b"") as adb, \
+                patch.object(producer, "installed_hash") as installed, \
+                patch.object(producer, "check_process_log"), patch.object(producer, "ui", side_effect=ui), \
+                patch.object(producer, "fixture_start") as fixture, patch.object(producer, "running_boundary") as boundary:
+            self.assertEqual(producer.run(), 0)
+            archive_binding.assert_called_once_with(app, driver, info, proof)
+            mapped_binding.assert_called_once_with(str(self.root), info)
+            fixture.assert_not_called(); boundary.assert_not_called()
+        self.assertEqual(calls, ["consentNavigationTheme12", "persistedConsentAfterProcessRestart"])
+        installs = [c.args for c in adb.call_args_list if c.args[0].startswith("install-")]
+        self.assertEqual([row[-1] for row in installs], [str(app), str(platform)])
+        self.assertTrue(any(c.args[0] == "consent-process-stop" for c in adb.call_args_list))
+        self.assertEqual([c.args[-1] for c in installed.call_args_list], [v.sha(app), v.sha(platform), info["apk_sha256"]])
+        receipt = v.load(self.root / "android-acceptance.json")
+        self.assertEqual(receipt["producer"], "android_acceptance.py")
+        self.assertEqual(receipt["phase"], "flutter-ui")
+        self.assertTrue(receipt["executionPassed"]); self.assertTrue(receipt["representativeOnly"])
+        for key in ("fullAcceptance", "nativeMeowAccepted", "tunSeparateUidAccepted", "canonicalSharedEvidenceVerified",
+                    "visualApproved", "performanceAccepted", "releaseAccepted", "promotionAccepted", "aggregateAcceptance"):
+            self.assertIs(receipt[key], False)
+        with self.assertRaisesRegex(ValueError, "Exactly platform and Flutter"):
+            v.aggregate(self.root, "source", "run", 1)
+
+    def test_representative_consent_restart_still_rejects_same_process(self):
+        producer = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root, phase="flutter-ui"))
+        row = dict(pid=123, renderer={})
+        with patch.object(producer, "ui", return_value=(row, dict(pid=123), [])), \
+                patch.object(producer, "adb_command", return_value=b""), \
+                patch("android_acceptance.renderer", return_value={}), patch.object(producer, "check_process_log"):
+            with self.assertRaisesRegex(ValueError, "reused original process"):
+                producer.consent_restart({})
+
+    def test_failed_ui_instrument_preserves_evidence_under_cancellation_and_original_exception(self):
+        from subprocess import TimeoutExpired
+        for cancelled, original in ((False, RuntimeError("instrument exited 1")),
+                                    (False, TimeoutExpired(["adb", "instrument"], 600)),
+                                    (True, InterruptedError("instrument cancelled"))):
+            producer = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root, phase="flutter-ui"))
+            producer.cancelled = cancelled
+            info = dict(apk_sha256="a"*64, source="1"*40, tree="2"*40, workflow="original-run",
+                        run_attempt=1, meow_overlay_sha256="b"*64, meow_file_manifest_sha256="c"*64)
+            method = "consentNavigationTheme12"
+            with self.subTest(cancelled=cancelled), \
+                    patch.object(producer, "normal_instrument", side_effect=original) as invoke, \
+                    patch.object(producer, "adb_command", side_effect=OSError("failed capture pull")) as pull, \
+                    patch.object(producer, "pull") as successful_pull:
+                with self.assertRaises(type(original)) as caught:
+                    producer.ui(method, info)
+                self.assertIs(caught.exception, original)
+                successful_pull.assert_not_called()
+                pull.assert_called_once()
+                token = invoke.call_args.args[invoke.call_args.args.index("qaToken") + 1]
+                self.assertEqual(pull.call_args.args[1:], ("pull", producer.remote(token), str(self.root / method)))
+                self.assertEqual(pull.call_args.kwargs, dict(timeout=90, check=False, cancelling=True))
+                self.assertIn("failed capture pull", producer.receipt["diagnosticErrors"][0])
+
     def test_failed_owner_preflight_never_contacts_a_device(self):
         producer=Acceptance(Namespace(adb=Path("adb"),serial="physical-device",output=self.root,phase="flutter-platform"))
         with patch.dict("sys.modules",{"emulator_current":None}),patch.object(producer,"adb_command") as adb:
@@ -330,7 +412,7 @@ class CurrentRouteAndFixtureTest(unittest.TestCase):
     def test_new_phases_use_current_platform_producer_and_require_sealed_runner(self):
         inputs = dict(apk=Path("app.apk"), test_apk=Path("preview.apk"), build_info=Path("info.json"), platform_apk=Path("platform.apk"))
         with patch.dict(os.environ, ANDROID_HOME="sdk"):
-            for phase in ("flutter-platform", "flutter-full"):
+            for phase in ("flutter-ui", "flutter-platform", "flutter-full"):
                 command = emulator_current.phase_acceptance_command(phase, Path("out"), inputs)
                 self.assertIn("apps/aerove-lite/tool/android_acceptance.py", command)
                 self.assertEqual(command[-2:], ["--phase", phase])

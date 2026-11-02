@@ -158,16 +158,20 @@ class CurrentOwnerTests(unittest.TestCase):
 
     def test_flutter_phase_uses_exact_verified_transport_inputs_and_command(self):
         self.flutter_runtime()
-        inputs = current.flutter_ui_inputs(self.runtime, current.verify_current_runtime(self.runtime))
+        with patch('android_acceptance_verify.platform_binding', return_value=self.root / 'sealed-platform.apk') as binding:
+            inputs = current.flutter_ui_inputs(self.runtime, current.verify_current_runtime(self.runtime))
+        binding.assert_called_once()
+        self.assertEqual(inputs['platform_apk'], (self.root / 'sealed-platform.apk').resolve())
         with patch.dict(os.environ, ANDROID_HOME='/sdk-home', ANDROID_SDK_ROOT='/sdk-pinned'):
             command = current.phase_acceptance_command('flutter-ui', self.root / 'flutter-ui', inputs)
-        self.assertEqual(command, [current.sys.executable, 'apps/aerove-lite/tool/flutter_android_qa.py',
+        self.assertEqual(command, [current.sys.executable, 'apps/aerove-lite/tool/android_acceptance.py',
             '--apk', str((self.apks / 'release/app-release.apk').resolve()),
             '--test-apk', str((self.apks / 'androidTest/release/app-release-androidTest.apk').resolve()),
             '--build-info', str((self.runtime / 'BUILD_INFO.json').resolve()),
             '--adb', str(Path('/sdk-pinned/platform-tools/adb')),
             '--apksigner', str(Path('/sdk-pinned/build-tools/37.0.0/apksigner')),
-            '--serial', 'emulator-5554', '--output', str(self.root / 'flutter-ui/production-ui')])
+            '--serial', 'emulator-5554', '--output', str(self.root / 'flutter-ui/production-ui'),
+            '--platform-apk', str((self.root / 'sealed-platform.apk').resolve()), '--phase', 'flutter-ui'])
         for phase in ('matrix', 'remaining', 'original-sample'):
             self.assertEqual(['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', phase],
                              current.phase_acceptance_command(phase, self.root))
@@ -384,7 +388,7 @@ class CurrentCancellationTests(unittest.TestCase):
                         patch.object(current.sys, 'platform', 'linux'), \
                         patch.object(current.sys, 'argv', ['owner', phase, '--runtime-directory', str(root)]), \
                         patch.object(current, 'verify_current_runtime', return_value=dict(identity={'source': 'fixture'})), \
-                        patch.object(current, 'flutter_ui_inputs', return_value=dict(apk='owned-app.apk', test_apk='owned-test.apk', build_info='owned-BUILD_INFO.json')), \
+                        patch.object(current, 'flutter_ui_inputs', return_value=dict(apk='owned-app.apk', test_apk='owned-test.apk', platform_apk='owned-platform.apk', build_info='owned-BUILD_INFO.json')), \
                         patch.object(current, 'crash_inventory', return_value={}), \
                         patch.object(current, 'preserve_owned_crash', return_value={'status': 'fixture; not Android'}), \
                         patch.object(current.subprocess, 'Popen', side_effect=spawn), \
@@ -423,7 +427,9 @@ class CurrentCancellationTests(unittest.TestCase):
                 self.assertEqual(1, sum('-gpu' in command for command in spawn_commands))
                 self.assertEqual(2, len(spawn_commands))
                 if phase == 'flutter-ui':
-                    self.assertIn('apps/aerove-lite/tool/flutter_android_qa.py', spawn_commands[1])
+                    self.assertIn('apps/aerove-lite/tool/android_acceptance.py', spawn_commands[1])
+                    self.assertIn('owned-platform.apk', spawn_commands[1])
+                    self.assertEqual(spawn_commands[1][-2:], ['--phase', 'flutter-ui'])
                     self.assertNotIn('emulator_acceptance.sh', ' '.join(spawn_commands[1]))
                     self.assertIs(receipt['representativeOnly'], True)
                     self.assertIs(receipt['functionalAcceptance'], False)

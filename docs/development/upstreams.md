@@ -1305,7 +1305,9 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 
 **用途与采用方式：** 只读核对系统安装目录的 `~~` 前缀和随机路径。Lite Android 验收工具接纳实际 `pm path` 输出中的 `~` 字符，继续要求单一 `/data/app/…/base.apk`，并读取已安装 APK 比较封存哈希；未复制实现、引入依赖或更改应用包。
 
-**许可证与署名：** Apache-2.0，保留上游文件的 AOSP 版权与许可头；仅作路径协议参考。
+同一 API33 固定来源的 [`LoadedApk.makePaths`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/app/LoadedApk.java#L470-L475) 另用于核对 instrumentation APK 在目标 APK 前的类加载路径顺序，解释原独立 driver 的同名协程类遮蔽；验收复用已封存且经 App R8 mapping 关联的 same-target 平台 runner，不复制或修改系统实现。
+
+**许可证与署名：** Apache-2.0，保留上游文件的 AOSP 版权与许可头；仅作路径和类加载协议参考。
 
 #### [AOSP libcore](https://android.googlesource.com/platform/libcore/)
 
