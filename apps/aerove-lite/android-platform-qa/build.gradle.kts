@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.tasks.compile.JavaCompile
 
 plugins {
     id("com.android.test")
@@ -22,9 +23,10 @@ val selectedTests = listOf(
     "dev/aerove/lite/FlutterProductionUiTest.kt",
 )
 // Only existing test sources enter this runner; target production classes stay in :app.
+val platformSources = layout.buildDirectory.dir("generated/platformSources").get().asFile
 val preparePlatformSources = tasks.register<Sync>("preparePlatformSources") {
     from(productRoot.resolve("app/src/androidTest/java")) { selectedTests.forEach { include(it) } }
-    into(layout.buildDirectory.dir("generated/platformSources"))
+    into(platformSources)
     doFirst { selectedTests.forEach { check(productRoot.resolve("app/src/androidTest/java/$it").isFile) } }
 }
 
@@ -42,7 +44,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/platformSources"))
+    sourceSets.getByName("main").java.srcDir(platformSources)
     signingConfigs {
         create("liteRelease") {
             if (releaseKeystore.isPresent) storeFile = file(releaseKeystore.get())
@@ -63,7 +65,7 @@ android {
 
 kotlin {
     compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-    sourceSets.getByName("main").kotlin.srcDir(layout.buildDirectory.dir("generated/platformSources"))
+    sourceSets.getByName("main").kotlin.srcDir(platformSources)
 }
 androidComponents.beforeVariants { it.enable = it.buildType == "release" }
 
@@ -72,6 +74,9 @@ val appKotlin = project(":app").tasks.named<KotlinCompile>("compileReleaseKotlin
 tasks.withType<KotlinCompile>().configureEach {
     dependsOn(preparePlatformSources, appKotlin)
     friendPaths.from(appKotlin.flatMap { it.destinationDirectory })
+}
+tasks.withType<JavaCompile>().configureEach {
+    dependsOn(preparePlatformSources)
 }
 tasks.matching { it.name == "validateSigningRelease" }.configureEach {
     doFirst {
