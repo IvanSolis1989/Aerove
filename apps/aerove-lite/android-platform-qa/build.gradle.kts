@@ -55,7 +55,7 @@ android {
         }
     }
     buildTypes {
-        release {
+        create("release") {
             signingConfig = signingConfigs.getByName("liteRelease")
             isDebuggable = false
             isMinifyEnabled = true

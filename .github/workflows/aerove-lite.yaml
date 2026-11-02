@@ -676,7 +676,7 @@ jobs:
     - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
       with:
         toolchain: 1.98.1
-        targets: aarch64-linux-android
+        targets: x86_64-linux-android
     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
       with:
         go-version: 1.27.1
@@ -709,6 +709,14 @@ jobs:
     - name: Prepare the pinned Standard source required by the existing test hooks and assets
       working-directory: apps/aerove
       run: python3 tool/mihomo_source.py prepare
+    - name: Compile the Flutter host and actual platform acceptance runner
+      working-directory: apps/aerove-lite
+      run: |-
+        mkdir -p "$RUNNER_TEMP/lite-flutter-host"
+        gradle --no-daemon --continue -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          :app:compileReleaseKotlin :app:compileReleaseUnitTestKotlin \
+          :platform-qa:compileReleaseKotlin :platform-qa:compileReleaseJavaWithJavac \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/compile.log"
     - name: Verify DNS and Geo fixtures in eight independent Flutter processes
       timeout-minutes: 30
       working-directory: apps/aerove
@@ -788,14 +796,6 @@ jobs:
         if any(task.count(':') != 1 or re.search(r'flutter|meow|helper|r8|minify', task, re.I) for task in tasks):
             raise SystemExit('Independent runner task graph entered a production or minification task')
         PY
-    - name: Compile the Flutter host and actual platform acceptance runner
-      working-directory: apps/aerove-lite
-      run: |-
-        mkdir -p "$RUNNER_TEMP/lite-flutter-host"
-        gradle --no-daemon --continue -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          :app:compileReleaseKotlin :app:compileReleaseUnitTestKotlin \
-          :platform-qa:compileReleaseKotlin :platform-qa:compileReleaseJavaWithJavac \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/compile.log"
     - name: Retain compile scope without claiming an application or acceptance
       if: always()
       run: |-
