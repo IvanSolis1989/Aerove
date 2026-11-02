@@ -145,29 +145,33 @@ class ShardSelectionTests(unittest.TestCase):
                 shards.load_version_contract(contract_path)
         contract_path.unlink(missing_ok=True)
 
-    def test_both_package_abis_run_resolution_gate_before_apk_tasks(self):
+    def test_flutter_package_abis_keep_the_actual_app_and_independent_runner_graphs(self):
         repository = Path(__file__).resolve().parents[3]
         workflow = (repository / ".github/workflows/aerove-lite-build.yaml").read_text(encoding="utf-8")
-        commands = [line.strip() for line in workflow.splitlines()
-                    if "--init-script tool/compose_ui_graphs.gradle" in line
-                    and ":app:reportComposeUiResolution" in line]
-        self.assertEqual(2, len(commands))
+        commands = [line.strip().removeprefix("run: ") for line in workflow.splitlines()
+                    if "gradle --no-daemon " in line and ":app:assembleRelease" in line]
+        self.assertEqual(3, len(commands))
         arm = next(command for command in commands if "-PliteAbi=arm64-v8a" in command)
-        x86 = next(command for command in commands if "-PliteAbi=x86_64" in command)
-        for command in (arm, x86):
-            self.assertLess(command.index(":app:reportComposeUiResolution"), command.index(":app:assembleRelease"))
-        self.assertNotIn(":app:assembleReleaseAndroidTest", arm)
-        self.assertLess(x86.index(":app:assembleRelease"), x86.index(":app:assembleReleaseAndroidTest"))
-        graph_task = (repository / "apps/aerove-lite/tool/compose_ui_graphs.gradle").read_text(encoding="utf-8")
-        self.assertIn("releaseAndroidTestRuntimeClasspath", graph_task)
-        self.assertIn("app.rootProject.file('tool/instrumentation-version-contract.json')", graph_task)
-        self.assertIn("mustRunAfter(reportTask)", graph_task)
-        compile_ordering = graph_task.split("app.tasks.matching { it.name in ['compileReleaseKotlin'", 1)[1].split("\n    }", 1)[0]
-        self.assertIn("mustRunAfter(reportTask)", compile_ordering)
-        for compile_task in ("compileReleaseKotlin", "compileReleaseJavaWithJavac",
-                             "compileReleaseAndroidTestKotlin", "compileReleaseAndroidTestJavaWithJavac"):
-            with self.subTest(compile_task=compile_task):
-                self.assertIn(compile_task, graph_task)
+        x86 = [command for command in commands if "-PliteAbi=x86_64" in command]
+        self.assertEqual(2, len(x86))
+        self.assertEqual(1, sum("--dry-run" in command for command in x86))
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn("-p android ", command)
+                self.assertIn('-PsourceSha="$GITHUB_SHA"', command)
+                self.assertNotIn("compose_ui_graphs.gradle", command)
+                self.assertNotIn(":app:reportComposeUiResolution", command)
+                self.assertNotIn(":app:assembleReleaseAndroidTest", command)
+        self.assertIn("-Ptarget-platform=android-arm64", arm)
+        self.assertNotIn(":platform-qa:assembleRelease", arm)
+        for command in x86:
+            self.assertIn("-Ptarget-platform=android-x64", command)
+            self.assertLess(command.index(":app:assembleRelease"), command.index(":platform-qa:assembleRelease"))
+        self.assertIn(":platform-qa:dependencies --configuration releaseRuntimeClasspath", workflow)
+        self.assertIn("for configuration in releaseRuntimeClasspath; do", workflow)
+        self.assertIn(':app:dependencies --configuration "$configuration"', workflow)
+        self.assertIn("lite-platform-one-build-graph.txt", workflow)
+        self.assertIn("lite-platform-one-build.log", workflow)
 
     def test_parse_rejects_partial_duplicate_failure_unknown_and_excluded_class(self):
         good = self.log(self.descriptions)
@@ -377,14 +381,19 @@ class ShardSelectionTests(unittest.TestCase):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 shards.shard_for(self.descriptions[0], count)
 
-    def test_full_workflow_uses_explicit_sixteen_without_changing_historical_diagnostics(self):
+    def test_full_workflow_uses_flutter_phases_without_changing_historical_diagnostics(self):
         repository = Path(__file__).resolve().parents[3]
         workflow = (repository / ".github/workflows/aerove-lite.yaml").read_text()
         acceptance = workflow.split("  acceptance:\n", 1)[1].split("  accepted:\n", 1)[0]
         self.assertNotIn("max-parallel:", acceptance)
-        self.assertEqual(16, acceptance.count("shard_count: 16\n"))
-        self.assertIn("-of-${{ matrix.shard_count }}-attempt-", acceptance)
-        self.assertIn("--shard-count 16", workflow.split("  accepted:\n", 1)[1])
+        self.assertEqual(1, acceptance.count("- phase: flutter-platform\n"))
+        self.assertEqual(1, acceptance.count("- phase: flutter-full\n"))
+        self.assertNotIn("shard_count:", acceptance)
+        self.assertIn("emulator_current.py ${{ matrix.phase }} --runtime-directory", acceptance)
+        self.assertIn("AEROVE-Lite-current-acceptance-${{ matrix.phase }}-attempt-", acceptance)
+        accepted = workflow.split("  accepted:\n", 1)[1]
+        self.assertIn("android_acceptance_verify.py", accepted)
+        self.assertIn("--execution-only --output", accepted)
         self.assertIn("shard_index: [0, 1, 2, 3, 4, 5, 6, 7]", workflow)
         self.assertIn("AEROVE-Lite-original141-shard-*-of-8-attempt-", workflow)
         shell = (repository / "apps/aerove-lite/tool/emulator_acceptance.sh").read_text()
