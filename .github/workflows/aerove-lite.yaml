@@ -1179,6 +1179,14 @@ jobs:
           fi
           exit "$sdkmanager_rc"
         done
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics/flutter-ui"
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
+        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/flutter-ui/avd-config.ini"
         emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip'
         emulator_archive_sha256='b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1'
         emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16428233.XXXXXX")"
@@ -1197,16 +1205,8 @@ jobs:
           mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
         fi
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
-        mkdir -p "$RUNNER_TEMP/lite-diagnostics/flutter-ui"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
         grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
-        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger --name-match=kvm
-        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
-        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
-        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/flutter-ui/avd-config.ini"
     - name: Inspect the same production APK through its real Flutter launcher
       run: python3 apps/aerove-lite/tool/emulator_current.py flutter-ui --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
     - name: Preserve representative Flutter UI evidence without asserting full acceptance
@@ -1318,6 +1318,14 @@ jobs:
           fi
           exit "$sdkmanager_rc"
         done
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
+        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
         emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip'
         emulator_archive_sha256='b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1'
         emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16428233.XXXXXX")"
@@ -1336,16 +1344,8 @@ jobs:
           mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
         fi
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
-        mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
         grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
-        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger --name-match=kvm
-        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
-        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
-        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
     - name: Real API 33 ${{ matrix.phase }} verification
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
