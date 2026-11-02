@@ -32,7 +32,7 @@ Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正�
 
 <!-- aerove:releases:start -->
 - **稳定版** · [0.11.0](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.0%2B2026102298) · 构建 `2026102298` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.0%2B2026102298/Aerove-android-arm64.apk)
-- **公开预览版** · [0.11.1-beta.6](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.6%2B2026102316) · 构建 `2026102316` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.6%2B2026102316/Aerove-android-arm64.apk)
+- **公开预览版** · [0.11.1-beta.7](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.11.1-beta.7%2B2026102319) · 构建 `2026102319` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.11.1-beta.7%2B2026102319/Aerove-android-arm64.apk)
 <!-- aerove:releases:end -->
 
 预览版与稳定版属于同一标准版产品，安装前请确认版本与数据备份；稳定版入口持续指向稳定发行。
