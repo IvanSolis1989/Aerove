@@ -1289,6 +1289,8 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 
 同源 `ComponentImpl.kt` / `ComponentUtils.kt`、`ProvidedClasspath.kt` 与 `ProguardConfigurableTask.kt` 另用于独立平台 Test R8 的真实依赖闭包：通过目标 release variant 的公开 `compileClasspath` FileCollection 提供 compileOnly 类型，保留 pre-R8 producer 依赖，替代手写且已漏 Camera 类型的清单；不把目标 Kotlin/Javac 业务类或这些依赖打进 runner，不宣称文件依赖自动按 Maven 坐标对齐 runtime。已确认的 Lifecycle runtime 仍单独对齐。原生封包另按 [JniLibsPackaging.keepDebugSymbols](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/dsl/JniLibsPackaging#keepDebugSymbols()) 将已绑定收据的 Meow 核心纳入现有保留列表，防止 AGP 再次 strip 改变字节；不放宽 native 哈希、ELF、JNI 或对齐验收。
 
+独立 driver 的取包另核对同源 `ApplicationVariantImpl`、`ProjectInfo`、`VariantPathHelper` 与 `BuiltArtifactsImpl`：根 module 默认 APK 名来自 archivesName，不是目录名。流程消费 AGP `output-metadata.json` 的唯一 release 输出，再沿原签名、包身份和 App 前后哈希校验；后续封存复用同一路径，避免猜测或改写构建身份。
+
 另参考 Android tools/base 固定提交 [`44330ad8b855e38930c70ca44f65e781dd95d1ab`](https://android.googlesource.com/platform/tools/base/+/44330ad8b855e38930c70ca44f65e781dd95d1ab) 及其外部 Kotlin 构建脚本回归，定位 KT-89716 对已应用 KTS 的 FIR/UAST 分类问题。Lite 两入口在原有时点直接应用既有共同插件，移除多余脚本中转；未复制上游补丁、升级依赖或关闭 lint，实际 lint 结果仍由新源码 CI 核验。
 
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)

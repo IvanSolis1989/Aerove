@@ -238,7 +238,25 @@ jobs:
         PY
         gradle --no-daemon -p android-qa assembleRelease
         sha256sum --check "$RUNNER_TEMP/lite-production-before-runner.sha256"
-        runner_apk=android-qa/build/outputs/apk/release/android-qa-release.apk
+        runner_apk=$(python3 - <<'PY'
+        import json
+        from pathlib import Path
+        directory = Path('android-qa/build/outputs/apk/release')
+        metadata = json.loads((directory / 'output-metadata.json').read_text())
+        outputs = metadata['elements']
+        if metadata['variantName'] != 'release' or len(outputs) != 1 or outputs[0]['filters']:
+            raise SystemExit('Expected one unfiltered release driver APK from AGP metadata')
+        name = outputs[0]['outputFile']
+        if Path(name).name != name or not name.endswith('.apk') or any(c in name for c in '\r\n'):
+            raise SystemExit('Driver APK metadata must name one file in its output directory')
+        apk = directory / name
+        if apk.is_symlink() or not apk.is_file():
+            raise SystemExit('AGP driver APK output is missing or non-regular')
+        print(apk.resolve())
+        PY
+        )
+        export AEROVE_LITE_DRIVER_APK="$runner_apk"
+        printf 'AEROVE_LITE_DRIVER_APK=%s\n' "$runner_apk" >> "$GITHUB_ENV"
         "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$runner_apk" \
           | tee "$RUNNER_TEMP/lite-flutter-runner-signature.txt"
         "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging "$runner_apk" \
@@ -251,7 +269,7 @@ jobs:
         directory = Path(os.environ['RUNNER_TEMP'])
         info = json.loads((directory / 'lite-artifact-x86_64/BUILD_INFO.json').read_text())
         app = Path('build/app/outputs/apk/release/app-release.apk')
-        runner = Path('android-qa/build/outputs/apk/release/android-qa-release.apk')
+        runner = Path(os.environ['AEROVE_LITE_DRIVER_APK'])
         digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
         if app.is_symlink() or digest(app) != info['apk_sha256']:
             raise SystemExit('Building the runner changed the sealed production APK')
@@ -317,7 +335,7 @@ jobs:
         fi
         cp "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-x86_64/build-receipt.json" "$diagnostic_root/client-helper-build-receipt.json"
         cp "$RUNNER_TEMP/lite-signature.txt" "$RUNNER_TEMP/lite-badging.txt" "$diagnostic_root/"
-        cp android-qa/build/outputs/apk/release/android-qa-release.apk "$diagnostic_root/apks/app-release-androidTest.apk"
+        cp "$AEROVE_LITE_DRIVER_APK" "$diagnostic_root/apks/app-release-androidTest.apk"
         cp build/flutter-host/platform-qa/outputs/apk/release/platform-qa-release.apk "$diagnostic_root/apks/"
         cp -R "$RUNNER_TEMP/lite-platform-seal/." "$diagnostic_root/"
         cp "$RUNNER_TEMP/lite-platform-one-build-graph.txt" "$RUNNER_TEMP/lite-platform-one-build.log" "$diagnostic_root/"
@@ -389,8 +407,18 @@ jobs:
         mkdir -p "$RUNNER_TEMP/lite-package-diagnostics"
         git status --short > "$RUNNER_TEMP/lite-package-diagnostics/git-status.txt"
         git diff --binary > "$RUNNER_TEMP/lite-package-diagnostics/generated.patch"
-        if [[ '${{ job.status }}' != success && -f apps/aerove-lite/build/app/outputs/apk/release/app-release.apk ]]; then
-          cp apps/aerove-lite/build/app/outputs/apk/release/app-release.apk "$RUNNER_TEMP/lite-package-diagnostics/unverified-app-release.apk"
+        if [[ '${{ job.status }}' != success ]]; then
+          if [[ -d "$RUNNER_TEMP/lite-artifact-${{ inputs.abi }}" ]]; then
+            cp -R "$RUNNER_TEMP/lite-artifact-${{ inputs.abi }}" "$RUNNER_TEMP/lite-package-diagnostics/staged-app"
+          elif [[ -f apps/aerove-lite/build/app/outputs/apk/release/app-release.apk ]]; then
+            cp apps/aerove-lite/build/app/outputs/apk/release/app-release.apk "$RUNNER_TEMP/lite-package-diagnostics/unverified-app-release.apk"
+          fi
+          if [[ -d apps/aerove-lite/android-qa/build/outputs/apk/release ]]; then
+            cp -R apps/aerove-lite/android-qa/build/outputs/apk/release "$RUNNER_TEMP/lite-package-diagnostics/flutter-driver-release"
+          fi
+          if [[ -d apps/aerove-lite/build/flutter-host/platform-qa/outputs/apk/release ]]; then
+            cp -R apps/aerove-lite/build/flutter-host/platform-qa/outputs/apk/release "$RUNNER_TEMP/lite-package-diagnostics/platform-release"
+          fi
         fi
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: ${{ always() }}
