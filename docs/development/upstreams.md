@@ -1275,6 +1275,8 @@ Lite Flutter test-only packaging 候选 94 另核 Android 官方 [AndroidJUnitRu
 
 共享 Flutter Lite 的独立平台验收 runner 另只读核对同一 `9.4.1` source artifact 的 `TestApplicationTaskManager.kt`、`CheckTestedAppObfuscation.java`、`ProguardConfigurableTask.kt`、`R8Task.kt`、`PublishingSpecs.kt`、`BundleAllClasses.kt` 及 `TestVariantFactory.java`。独立测试启用官方 Test R8 并消费目标 App mapping，复用既有 typed TraceReferences 生成最小 App ABI keep；独立插件默认仅创建 debug，验收模块显式创建 release；Kotlin friend 关联目标实际发布的 compile Jar，保留生产 internal 可见性。不复制上游实现，不关闭生产混淆。源码接线与真实 Gradle/R8、Android 验收分别记录。
 
+同源 `TaskManager.kt`、`LinkApplicationAndroidResourcesTask.kt`、`ArtifactsImpl.kt` 与 `InternalArtifactType.kt` 另用于核对资源类来源：AGP 将 `COMPILE_AND_RUNTIME_R_CLASS_JAR` 加入 PROJECT scoped classes，其中包含依赖的 R 类。ABI 推断通过该精确 provider 将测试资源 jar 归入依赖输入，保留项目代码重叠错误及测试自有资源引用；不按类名豁免冲突，也不修改生成文件。
+
 另参考 Android tools/base 固定提交 [`44330ad8b855e38930c70ca44f65e781dd95d1ab`](https://android.googlesource.com/platform/tools/base/+/44330ad8b855e38930c70ca44f65e781dd95d1ab) 及其外部 Kotlin 构建脚本回归，定位 KT-89716 对已应用 KTS 的 FIR/UAST 分类问题。Lite 两入口在原有时点直接应用既有共同插件，移除多余脚本中转；未复制上游补丁、升级依赖或关闭 lint，实际 lint 结果仍由新源码 CI 核验。
 
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)

@@ -1,6 +1,8 @@
 import com.android.build.api.artifact.ScopedArtifact
+import com.android.build.api.artifact.impl.ArtifactsImpl
 import com.android.build.api.variant.DeviceTestBuilder
 import com.android.build.api.variant.ScopedArtifacts
+import com.android.build.gradle.internal.scope.InternalArtifactType
 import groovy.json.JsonOutput
 import java.io.File
 import javax.inject.Inject
@@ -49,6 +51,7 @@ abstract class GenerateAndroidTestAppKeepRules @Inject constructor(
     @get:Classpath abstract val testDirectories: ListProperty<Directory>
     @get:Classpath abstract val testRuntimeJars: ListProperty<RegularFile>
     @get:Classpath abstract val testRuntimeDirectories: ListProperty<Directory>
+    @get:Classpath abstract val testResourceJar: RegularFileProperty
     @get:Classpath abstract val libraries: ConfigurableFileCollection
     @get:Classpath abstract val r8Classpath: ConfigurableFileCollection
     @get:Input abstract val pythonCommand: Property<String>
@@ -64,6 +67,7 @@ abstract class GenerateAndroidTestAppKeepRules @Inject constructor(
     @TaskAction
     fun generate() {
         val manifest = temporaryDir.resolve("inputs.json")
+        val resourceJar = testResourceJar.get().asFile
         manifest.writeText(JsonOutput.toJson(mapOf(
             "java" to javaCommand.get(),
             "r8Classpath" to r8Classpath.files.map { it.absolutePath },
@@ -71,9 +75,10 @@ abstract class GenerateAndroidTestAppKeepRules @Inject constructor(
             "javaCompiler" to listOf(File(File(javaCommand.get()).parentFile,
                 if (System.getProperty("os.name").startsWith("Windows")) "javac.exe" else "javac").absolutePath),
             "productNamespaces" to listOf(productNamespace.get()),
-            "sources" to (testJars.get().map { it.asFile.absolutePath } +
+            // AGP's PROJECT scope also contains dependency resource classes in this generated jar.
+            "sources" to (testJars.get().map { it.asFile }.filter { it != resourceJar }.map { it.absolutePath } +
                 testDirectories.get().map { it.asFile.absolutePath }),
-            "sourceDependencies" to (testRuntimeJars.get().map { it.asFile.absolutePath } +
+            "sourceDependencies" to (listOf(resourceJar.absolutePath) + testRuntimeJars.get().map { it.asFile.absolutePath } +
                 testRuntimeDirectories.get().map { it.asFile.absolutePath }),
             "targets" to (appJars.get().map { it.asFile.absolutePath } +
                 appDirectories.get().map { it.asFile.absolutePath }),
@@ -128,6 +133,9 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
         GenerateAndroidTestAppKeepRules::appDirectories,
     )
     if (androidTest != null) {
+        infer.configure {
+            testResourceJar.set((androidTest.artifacts as ArtifactsImpl).get(InternalArtifactType.COMPILE_AND_RUNTIME_R_CLASS_JAR))
+        }
         androidTest.artifacts.forScope(ScopedArtifacts.Scope.PROJECT).use(infer).toGet(
             ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testJars,
             GenerateAndroidTestAppKeepRules::testDirectories,
@@ -145,6 +153,7 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
             testComponents.onVariants(testComponents.selector().withBuildType("release")) { testVariant ->
                 infer.configure {
                     libraries.from(testComponents.sdkComponents.bootClasspath, testVariant.compileClasspath)
+                    testResourceJar.set((testVariant.artifacts as ArtifactsImpl).get(InternalArtifactType.COMPILE_AND_RUNTIME_R_CLASS_JAR))
                 }
                 testVariant.artifacts.forScope(ScopedArtifacts.Scope.PROJECT).use(infer).toGet(
                     ScopedArtifact.CLASSES, GenerateAndroidTestAppKeepRules::testJars,

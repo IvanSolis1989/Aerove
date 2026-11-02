@@ -395,6 +395,7 @@ jobs:
         name: AEROVE-Lite-package-diagnostics-${{ inputs.abi }}-attempt-${{ github.run_attempt }}
         path: |-
           apps/aerove-lite/build/app/reports/
+          apps/aerove-lite/build/app/intermediates/androidTestAppKeepRules/
           apps/aerove-lite/build/app/outputs/androidTest-results/
           apps/aerove-lite/android-qa/build/reports/
           ${{ runner.temp }}/lite-flutter-runner-*

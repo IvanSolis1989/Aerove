@@ -90,6 +90,63 @@ class AndroidTestKeepRulesTest(unittest.TestCase):
                 generate(manifest,root/'rules.pro',root/'report.json')
             self.assertFalse((root/'rules.pro').exists());self.assertFalse((root/'report.json').exists())
 
+    def test_generated_resource_dependency_keeps_test_only_R_and_app_owned_shared_R(self):
+        # Gradle classifies the exact AGP resource artifact as a dependency, not PROJECT source.
+        # These opaque class images test input normalization only, never actual JVM/R8 validity.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            magic = b"\xca\xfe\xba\xbe"
+            project = {"test/Entry.class": magic + b"project"}
+            resources = {"androidx/tracing/R.class": magic + b"test-generated-shared",
+                         "test/R.class": magic + b"test-generated-own",
+                         "testonly/dependency/R$id.class": magic + b"test-only-dependency"}
+            target = {"app/Api.class": magic + b"app",
+                      "androidx/tracing/R.class": magic + b"app-generated-shared"}
+            for name, classes in (("project", project), ("resources", resources), ("target", target),
+                                  ("library", {"java/lang/Object.class": magic + b"boot"})):
+                write_archive(root / (name + ".jar"), classes)
+            (root / "r8.jar").write_bytes(b"tool-fixture")
+            manifest = dict(java="java", r8Classpath=[str(root / "r8.jar")],
+                            sources=[str(root / "project.jar")],
+                            sourceDependencies=[str(root / "resources.jar")],
+                            targets=[str(root / "target.jar")], libraries=[str(root / "library.jar")])
+
+            def inspect_normalized_inputs(command, **kwargs):
+                if "AndroidTestAppAbiTrace" not in command:
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                with zipfile.ZipFile(command[command.index("--source") + 1]) as archive:
+                    self.assertEqual(set(archive.namelist()), set(project) | (set(resources) - set(target)))
+                    self.assertEqual(archive.read("test/R.class"), resources["test/R.class"])
+                    self.assertEqual(archive.read("testonly/dependency/R$id.class"), resources["testonly/dependency/R$id.class"])
+                with zipfile.ZipFile(command[command.index("--target") + 1]) as archive:
+                    self.assertEqual(archive.read("androidx/tracing/R.class"), target["androidx/tracing/R.class"])
+                work = Path(command[command.index("--source") + 1]).parent
+                self.assertEqual((work / "project-descriptors.txt").read_text(), "Ltest/Entry;\n")
+                self.assertEqual(set((work / "dependency-descriptors.txt").read_text().splitlines()),
+                                 {"Ltest/R;", "Ltestonly/dependency/R$id;"})
+                raise RuntimeError("normalized resource roles inspected; no R8 executed")
+
+            with patch("generate_android_test_keep_rules.subprocess.run", side_effect=inspect_normalized_inputs):
+                with self.assertRaisesRegex(RuntimeError, "normalized resource roles inspected"):
+                    generate(manifest, root / "rules.pro", root / "report.json")
+            self.assertFalse((root / "rules.pro").exists())
+            self.assertFalse((root / "report.json").exists())
+
+    def test_R_name_is_not_an_exemption_for_actual_project_target_overlap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image = {"androidx/tracing/R.class": b"\xca\xfe\xba\xbeidentical"}
+            write_archive(root / "project.jar", image)
+            write_archive(root / "target.jar", image)
+            manifest = dict(java="unused", r8Classpath=[], sources=[str(root / "project.jar")],
+                            targets=[str(root / "target.jar")], libraries=[])
+            with patch("generate_android_test_keep_rules.subprocess.run") as tool:
+                with self.assertRaisesRegex(ValueError, "Test/app project class overlap: androidx/tracing/R.class"):
+                    generate(manifest, root / "rules.pro", root / "report.json")
+            tool.assert_not_called()
+            self.assertFalse((root / "rules.pro").exists())
+            self.assertFalse((root / "report.json").exists())
+
     def test_one_library_archive_cannot_hide_conflicting_duplicate_entries(self):
         with tempfile.TemporaryDirectory() as temporary:
             archive=Path(temporary)/'invalid.jar'
