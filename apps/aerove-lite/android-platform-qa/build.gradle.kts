@@ -91,6 +91,8 @@ dependencies {
     implementation("androidx.test:core:1.6.1")
     implementation("androidx.test.ext:junit:1.2.1")
     implementation("junit:junit:4.13.2")
+    // The runner runtime must match the target's existing Lifecycle 2.10 ABI.
+    runtimeOnly("androidx.lifecycle:lifecycle-common:2.10.0")
     // Existing target coordinates, variant-aware compile-only; no target production classes are packaged.
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     compileOnly("com.squareup.okhttp3:okhttp:4.12.0")
