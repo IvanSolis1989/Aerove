@@ -84,7 +84,7 @@ void main() {
     );
   }
   test(
-    'incomplete resource consumer and missing or conflicting old facts refuse authority preparation',
+    'tampered export records and missing or conflicting old facts refuse source validation',
     () async {
       const fixture = String.fromEnvironment('NATIVE_LITE_FIXTURE');
       final descriptor = jsonDecode(await File(fixture).readAsString()) as Map;
@@ -93,18 +93,24 @@ void main() {
         descriptor['sha256'] as String,
       );
       final marker = 'runtime/resources/bundles/fixture/manifest.json';
+      // This post-open mutation is not a valid exported record. Check the
+      // source-integrity boundary before mapping or authority preparation.
       source.records[marker] = {};
-      await expectLater(
-        mapNativeLite(source, NativeLiteIds({}, () => 123)),
-        throwsA(
-          isA<NativeLiteMigrationException>().having(
-            (error) => error.field,
-            'old path',
-            marker,
+      try {
+        await expectLater(
+          source.verify(),
+          throwsA(
+            isA<NativeLiteMigrationException>().having(
+              (error) => error.field,
+              'old path',
+              marker,
+            ),
           ),
-        ),
-      );
-      source.records.remove(marker);
+        );
+      } finally {
+        source.records.remove(marker);
+      }
+      await source.verify();
       final settings = await source.json('settings/settings.json');
       expect(
         () => nativeLiteConfig(null, null),
