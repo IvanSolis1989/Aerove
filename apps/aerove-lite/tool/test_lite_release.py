@@ -52,9 +52,10 @@ class LitePromotionGateTests(unittest.TestCase):
             target = Path(temp) / "asset.bin"
             seen = {}
 
-            def run(command, stdout, check):
+            def run(command, stdout, check, stderr=None):
                 seen["command"] = command
                 seen["stdout_is_file"] = stdout.name == str(target)
+                self.assertEqual(stderr, release.subprocess.PIPE)
                 stdout.write(b"streamed bytes")
                 return mock.Mock(returncode=0)
 
@@ -65,6 +66,23 @@ class LitePromotionGateTests(unittest.TestCase):
             self.assertNotIn("--output", seen["command"])
             self.assertIn("-H", seen["command"])
             self.assertEqual(target.read_bytes(), b"streamed bytes")
+
+    def test_gh_binary_redacts_redirect_errors_and_removes_partial_payload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "partial.bin"
+
+            def fail(command, stdout, check, stderr=None):
+                self.assertEqual(stderr, release.subprocess.PIPE)
+                stdout.write(b"incomplete")
+                raise release.subprocess.CalledProcessError(1, command,
+                    stderr=b'Get "https://example.invalid/artifact?sig=synthetic": connection closed')
+
+            with mock.patch.object(release.subprocess, "run", side_effect=fail):
+                with self.assertRaisesRegex(release.PromotionError, "connection closed") as raised:
+                    release._gh_binary("repos/example/actions/artifacts/1/zip", target)
+            self.assertNotIn("sig=synthetic", str(raised.exception))
+            self.assertNotIn("https://", str(raised.exception))
+            self.assertFalse(target.exists())
 
     def test_release_readback_uses_real_fields_and_never_requires_make_latest(self):
         tag, source, body = "lite-v0.1.0-beta.7+7", "a" * 40, "notes"
@@ -207,6 +225,7 @@ class LitePromotionGateTests(unittest.TestCase):
 
             with mock.patch.object(release, "_has_release", return_value=True), \
                     mock.patch.object(release, "accepted_build", return_value=selected), \
+                    mock.patch.object(release, "_source_acceptance_plan", return_value=dict(kind="shards", shard_count=16)), \
                     mock.patch.object(release, "_current_main_inputs"), \
                     mock.patch.object(release, "_gh_json", side_effect=gh_json), \
                     mock.patch.object(release, "_tag_commit", return_value=source), \
@@ -460,6 +479,76 @@ class LitePromotionGateTests(unittest.TestCase):
                 (root / "AGGREGATE.json").write_text(json.dumps({**pending, "fullAcceptance": True}))
                 with self.assertRaisesRegex(release.PromotionError, "differs from replayed"):
                     release._verify_android_bundle(root, runtime, "a" * 40, "b" * 40, 123, 2, 90)
+
+    def test_final_canonical_reference_reuses_only_pinned_original_ci_archive(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = Path(temporary) / "original.zip"
+            with zipfile.ZipFile(archive, "w") as package:
+                package.writestr("evidence/green.json", b'{"exitCode":0}')
+            raw = archive.read_bytes()
+            artifact = dict(id=456, digest="sha256:"+hashlib.sha256(raw).hexdigest(), size_in_bytes=len(raw),
+                            workflow_run=dict(id=789, head_sha="c"*40))
+            item = dict(area="canonical", path="evidence/green.json", artifact=artifact)
+            def download(route, target):
+                self.assertEqual(route, f"repos/{release.REPO}/actions/artifacts/456/zip")
+                Path(target).write_bytes(raw)
+            with mock.patch.object(release, "_gh_json", return_value=dict(artifact, expired=False)), \
+                    mock.patch.object(release, "_gh_binary", side_effect=download):
+                self.assertEqual(release._canonical_reference(item), hashlib.sha256(b'{"exitCode":0}').hexdigest())
+            for key,value in (("expired",True),("digest","sha256:"+"d"*64),
+                              ("workflow_run",dict(id=790,head_sha="c"*40))):
+                with self.subTest(changed=key), mock.patch.object(release, "_gh_json", return_value=dict(artifact, expired=False, **{key:value}) if key != "expired" else dict(artifact, expired=True)):
+                    with self.assertRaisesRegex(release.PromotionError, "identity changed"):
+                        release._canonical_reference(item)
+
+    def test_final_review_is_empty_by_default_and_cannot_waive_machine_failures(self):
+        self.assertEqual(release.FINAL_ACCEPTANCE_REVIEWS, ())
+        with self.assertRaisesRegex(release.PromotionError, "no unique"):
+            release._reviewed_final_acceptance({}, ["Lite real optical displacement"], lambda *args: None)
+        with mock.patch.object(release, "FINAL_ACCEPTANCE_REVIEWS", ({"binding": {}},)):
+            for gap in ("independent-UID TUN", "new uncovered behavior"):
+                with self.subTest(gap=gap), self.assertRaisesRegex(release.PromotionError, "cannot waive"):
+                    release._reviewed_final_acceptance({}, [gap], lambda *args: None)
+
+    def test_audited_final_record_binds_raw_bytes_measurements_phone_and_user_separately(self):
+        # Synthetic identity transport test; these are not real Android/optical results.
+        binding = dict(armApkSha256="a"*64, run=123, attempt=2)
+        reference = dict(area="matrix", path="raw.png", sha256="b"*64)
+        row = dict(binding=binding,
+            canonical=dict(scopes=["single/batch cancel and recovery"], sourceComparison="fixed shared inputs matched",
+                           findings="reviewed original execution", references=[reference]),
+            optical=dict(method="fixed ROI multi-anchor registration", findings="reviewed displacement against zero-shift explanations",
+                         measurements=[dict(roi="original image ROI (10,20,30,40)", values=dict(dxPx=1.2, errorPx=0.2), references=[reference])]),
+            physical=dict(apkSha256="a"*64, device="synthetic test device", reportQuote="synthetic specific phone report",
+                observations={key:"synthetic observed action" for key in ("apExclusion","leave","reconnect","resume","permission","notification")}),
+            user=dict(phoneAcceptanceQuote="synthetic exact APK accepted", twelveFrameAcceptanceQuote="synthetic exact images accepted",
+                      releaseAuthorization="synthetic release authorized"))
+        gaps = ["Lite real optical displacement", "user twelve-frame visual approval"]
+        with mock.patch.object(release, "FINAL_ACCEPTANCE_REVIEWS", (row,)):
+            result = release._reviewed_final_acceptance(binding, gaps, lambda area,path: "b"*64)
+            self.assertEqual(result["automaticGaps"], sorted(gaps))
+            self.assertEqual(result["review"], row)
+            with self.assertRaisesRegex(release.PromotionError, "differs from original"):
+                release._reviewed_final_acceptance(binding, gaps, lambda area,path: "c"*64)
+            with self.assertRaisesRegex(release.PromotionError, "no unique"):
+                release._reviewed_final_acceptance(dict(binding, attempt=3), gaps, lambda *args: "b"*64)
+            original = row["physical"]["apkSha256"]
+            row["physical"]["apkSha256"] = "c"*64
+            with self.assertRaisesRegex(release.PromotionError, "exact-ARM"):
+                release._reviewed_final_acceptance(binding, gaps, lambda *args: "b"*64)
+            row["physical"]["apkSha256"] = original
+            for key in ("phoneAcceptanceQuote", "twelveFrameAcceptanceQuote", "releaseAuthorization"):
+                old = row["user"].pop(key)
+                with self.subTest(missing=key), self.assertRaisesRegex(release.PromotionError, "user decision"):
+                    release._reviewed_final_acceptance(binding, gaps, lambda *args: "b"*64)
+                row["user"][key] = old
+            row["optical"]["measurements"][0]["values"]["dxPx"] = float("nan")
+            with self.assertRaisesRegex(release.PromotionError, "finite measurements"):
+                release._reviewed_final_acceptance(binding, gaps, lambda *args: "b"*64)
+        with mock.patch.object(release, "FINAL_ACCEPTANCE_REVIEWS", (row,row)):
+            with self.assertRaisesRegex(release.PromotionError, "no unique"):
+                release._reviewed_final_acceptance(binding, gaps, lambda *args: "b"*64)
 
     def test_required_build_steps_must_all_pass(self):
         job = {"status": "completed", "conclusion": "success", "steps": [

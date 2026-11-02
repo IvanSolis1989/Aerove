@@ -70,8 +70,12 @@ def _gh_binary(route, destination, headers=()):
         command.extend(("-H", header))
     try:
         with destination.open("wb") as output:
-            subprocess.run(command, stdout=output, check=True)
-    except (OSError, subprocess.CalledProcessError):
+            subprocess.run(command, stdout=output, stderr=subprocess.PIPE, check=True)
+    except subprocess.CalledProcessError as error:
+        destination.unlink(missing_ok=True)
+        detail = re.sub(r'https?://[^\s"\x27]+', '<URL redacted>', (error.stderr or b'').decode(errors='replace'))
+        raise PromotionError(f"gh binary fetch failed (exit {error.returncode}): {detail.strip()}") from None
+    except OSError:
         destination.unlink(missing_ok=True)
         raise
 
@@ -336,7 +340,8 @@ def promotion_receipt(root, source, release_run, release_attempt, build_run, val
         build_run=build_run, build_attempt=selected["run_attempt"], build_number=selected["run_number"],
         release_source=source, release_tree=selected["projection"]["release_tree"],
         release_run=release_run, release_attempt=release_attempt, compiled=False,
-        artifacts=selected["artifacts"], projection=selected["projection"], files=files)
+        artifacts=selected["artifacts"], projection=selected["projection"], files=files,
+        **({"final_acceptance": validation["final_acceptance"]} if "final_acceptance" in validation else {}))
 
 
 def select_acceptance(source, current_run, outputs, root=None, build_run=None):
@@ -582,7 +587,93 @@ def _verify_matrix(root, runtime_root, source, tree, run, attempt, number):
         raise PromotionError("Expected twelve validated dashboard captures")
 
 
-def _verify_android_bundle(directory, runtime, source, tree, run, attempt, number):
+# Filled only after the root reviewer has completed actual technical review and
+# the user's exact-package phone/12-image acceptance. No CLI approval input.
+FINAL_ACCEPTANCE_REVIEWS = ()
+FINAL_TECHNICAL_GAPS = {
+    "physical Wi-Fi exclusion park/resume",
+    "shared client cancellation/recovery coverage mapping requires execution-bound canonical proof",
+    "canonical shared Flutter evidence binding",
+    "Lite real optical displacement",
+}
+
+
+def _canonical_reference(item):
+    """Read a pinned existing CI archive; never start a prerequisite producer."""
+    expected = item.get("artifact", {})
+    if (type(expected.get("id")) is not int or expected["id"] <= 0
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", expected.get("digest", ""))
+            or type(expected.get("size_in_bytes")) is not int or expected["size_in_bytes"] <= 0
+            or not expected.get("workflow_run", {}).get("id")
+            or not re.fullmatch(r"[0-9a-f]{40}", expected.get("workflow_run", {}).get("head_sha", ""))):
+        raise PromotionError("Canonical evidence requires an actual immutable original CI archive")
+    actual = _gh_json(f"repos/{REPO}/actions/artifacts/{expected['id']}")
+    if actual.get("expired") is not False or any(actual.get(key) != expected[key] for key in ("id", "digest", "size_in_bytes", "workflow_run")):
+        raise PromotionError("Canonical original CI artifact identity changed")
+    with tempfile.TemporaryDirectory() as temporary:
+        archive = Path(temporary) / "canonical.zip"
+        _gh_binary(f"repos/{REPO}/actions/artifacts/{expected['id']}/zip", archive)
+        if archive.stat().st_size != expected["size_in_bytes"] or "sha256:" + _sha(archive) != expected["digest"]:
+            raise PromotionError("Canonical original archive size/digest changed")
+        with zipfile.ZipFile(archive) as package:
+            if package.namelist().count(item["path"]) != 1:
+                raise PromotionError("Canonical raw evidence path missing or duplicated")
+            return hashlib.sha256(package.read(item["path"])).hexdigest()
+
+def _reviewed_final_acceptance(binding, gaps, lookup):
+    """Check an audited publisher record, not recompute human/optical observations."""
+    matches = [row for row in FINAL_ACCEPTANCE_REVIEWS if row.get("binding") == binding]
+    if len(matches) != 1:
+        raise PromotionError("Original Android execution is not complete release acceptance: no unique exact-package final review")
+    row = matches[0]
+    if (set(gaps) - FINAL_TECHNICAL_GAPS - {"user twelve-frame visual approval"}
+            or not gaps or len(gaps) != len(set(gaps))):
+        raise PromotionError("Final review cannot waive unknown or independent-UID execution gaps")
+    def text(value):
+        return isinstance(value, str) and bool(value.strip())
+    def references(items):
+        if not isinstance(items, list) or not items:
+            raise PromotionError("Final technical review lacks original evidence references")
+        for item in items:
+            name = item.get("path", "")
+            parts = PurePosixPath(name).parts
+            if (item.get("area") not in {"arm", "x86", "matrix", "canonical"} or not parts or
+                    name != PurePosixPath(name).as_posix() or name.startswith("/") or "\\" in name or ":" in name or any(p in {".", ".."} for p in parts)
+                    or not re.fullmatch(r"[0-9a-f]{64}", item.get("sha256", ""))
+                    or (_canonical_reference(item) if item["area"] == "canonical" else lookup(item["area"], name)) != item["sha256"]):
+                raise PromotionError("Final review evidence differs from original artifact bytes")
+    canonical = row.get("canonical", {})
+    if (not isinstance(canonical.get("scopes"), list) or not canonical["scopes"]
+            or not all(text(scope) for scope in canonical["scopes"])
+            or not text(canonical.get("sourceComparison")) or not text(canonical.get("findings"))):
+        raise PromotionError("Missing scoped canonical source/evidence review")
+    references(canonical.get("references"))
+    optical = row.get("optical", {})
+    if (not text(optical.get("method")) or not text(optical.get("findings"))
+            or not isinstance(optical.get("measurements"), list) or not optical["measurements"]):
+        raise PromotionError("Missing actual optical method/ROI/numerical review")
+    import math
+    for measurement in optical["measurements"]:
+        values = measurement.get("values", {})
+        if (not text(measurement.get("roi")) or not isinstance(values, dict) or not values
+                or not all(text(k) and type(v) in (int, float) and math.isfinite(v) for k,v in values.items())):
+            raise PromotionError("Optical review needs actual finite measurements and fixed ROI")
+        references(measurement.get("references"))
+    physical = row.get("physical", {})
+    required = {"apExclusion", "leave", "reconnect", "resume", "permission", "notification"}
+    observations = physical.get("observations", {})
+    if (physical.get("apkSha256") != binding["armApkSha256"] or not text(physical.get("device"))
+            or not text(physical.get("reportQuote")) or set(observations) != required
+            or not all(text(value) for value in observations.values())):
+        raise PromotionError("Missing exact-ARM physical observation/report; CI does not infer phone events")
+    user = row.get("user", {})
+    if not all(text(user.get(key)) for key in ("phoneAcceptanceQuote", "twelveFrameAcceptanceQuote", "releaseAuthorization")):
+        raise PromotionError("Missing exact-package phone/12-image user decision and release authority")
+    return dict(binding=binding, automaticGaps=sorted(gaps), review=row,
+                fullAcceptance=True, visualApproved=True, releaseAccepted=True,
+                basis="source-controlled technical review and actual user decision; automatic receipt unchanged")
+
+def _verify_android_bundle(directory, runtime, source, tree, run, attempt, number, arm=None):
     """Replay Android raw evidence; successful execution never supplies release approval."""
     from android_acceptance_verify import aggregate, platform_binding
     root = Path(directory)
@@ -599,11 +690,26 @@ def _verify_android_bundle(directory, runtime, source, tree, run, attempt, numbe
                 or receipt.get("apkSha256") != apk or receipt.get("platformApkSha256") != platform
                 or receipt.get("runtimeManifestSha256") != manifest):
             raise PromotionError("Android evidence is not bound to the selected original APK/runtime/tree")
-    if (result.get("fullAcceptance") is not True or result.get("visualApproved") is not True
-            or result.get("releaseAccepted") is not True):
-        raise PromotionError("Original Android execution is not complete release acceptance: " +
-            repr(result.get("unresolvedCoverage", [])) +
-            "; execution-bound device/optical/client evidence and user approval remain required")
+    if arm is None:
+        raise PromotionError("Original Android execution is not complete release acceptance: exact ARM final review required")
+    paths = [p for p in root.rglob("android-acceptance.json") if _json(p).get("phase") == "flutter-full"]
+    if len(paths) != 1:
+        raise PromotionError("No unique original Flutter image set")
+    capture_root = paths[0].parent / "consentNavigationTheme12"
+    capture = _json(capture_root / "receipt.json")  # aggregate already replays validate_capture
+    frames = [dict(path=(capture_root / f["file"]).relative_to(root).as_posix(), sha256=f["sha256"],
+                   configuration={k:f["configuration"][k] for k in ("material", "backdrop", "brightness")})
+              for f in capture["frames"] if f.get("configuration", {}).get("matrix") is True]
+    binding = dict(source=source, tree=tree, run=run, attempt=attempt, number=number,
+        armApkSha256=_sha(Path(arm) / "AEROVE-Lite-android-arm64.apk"), x86ApkSha256=apk,
+        aggregateSha256=_sha(root / "AGGREGATE.json"), frames=frames)
+    areas = dict(arm=Path(arm), x86=Path(runtime), matrix=root)
+    def lookup(area, name):
+        path = areas[area] / name
+        if path.resolve() != path.absolute() or not path.is_file():
+            raise PromotionError("Missing or linked final review evidence")
+        return _sha(path)
+    return _reviewed_final_acceptance(binding, result["unresolvedCoverage"], lookup)
 
 
 def _verify_flutter_build_info(info, actual, identity, abi, launcher):
@@ -631,8 +737,9 @@ def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt,
         raise PromotionError("ARM64 Build Info does not match the exact accepted source/run/attempt")
     tag = f"lite-v{build['version']}+{build['version_code']}"
     _validate_manifest(runtime, source, tree, run, attempt, number)
+    final = None
     if acceptance_plan is not None and acceptance_plan["kind"] == "flutter":
-        _verify_android_bundle(matrix, runtime, source, tree, run, attempt, number)
+        final = _verify_android_bundle(matrix, runtime, source, tree, run, attempt, number, arm)
     else:
         _verify_matrix(matrix, runtime, source, tree, run, attempt, number)
     helper_receipts = list(helper.rglob("build-receipt.json"))
@@ -681,9 +788,12 @@ def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt,
             or arm_identity.get("version_code") != build.get("version_code")
             or arm_identity.get("signer_sha256") != build.get("signer_sha256")):
         raise PromotionError("x86 APK native/helper provenance does not match the runtime contract")
-    return {"tag": tag, "apk_sha256": _sha(arm / "AEROVE-Lite-android-arm64.apk"), "build_info": build,
+    result = {"tag": tag, "apk_sha256": _sha(arm / "AEROVE-Lite-android-arm64.apk"), "build_info": build,
             "run_id": run, "run_number": number, "run_attempt": attempt, "source": source, "tree": tree,
             "x86_apk_sha256": _sha(x86apk), "matrix_captures": 12}
+    if final is not None:
+        result["final_acceptance"] = final
+    return result
 
 
 def _release_asset_bytes(release_id, asset, destination):
@@ -760,6 +870,22 @@ def publish(directory, validated, notes, source, run, attempt, number, receipt=N
                 or promotion.get("release_run") != release_run or promotion.get("release_attempt") != release_attempt
                 or current["run_attempt"] != release_attempt):
             raise PromotionError("Promotion receipt differs from original API build/release/projection")
+    if _source_acceptance_plan(root, build_source)["kind"] == "flutter":
+        final = promotion.get("final_acceptance", {})
+        binding = final.get("binding", {})
+        files = promotion["files"]
+        def original_hash(area, name):
+            return files.get(area, {}).get(name, {}).get("sha256")
+        if (binding.get("source") != build_source or binding.get("tree") != promotion["build_tree"]
+                or binding.get("run") != run or binding.get("attempt") != attempt or binding.get("number") != number
+                or binding.get("armApkSha256") != original_hash("arm", "AEROVE-Lite-android-arm64.apk")
+                or binding.get("x86ApkSha256") != original_hash("x86", "apks/app-release.apk")
+                or binding.get("aggregateSha256") != original_hash("matrix", "AGGREGATE.json")
+                or len(binding.get("frames", [])) != 12
+                or any(original_hash("matrix", f["path"]) != f["sha256"] for f in binding["frames"])
+                or validation.get("final_acceptance") != final
+                or _reviewed_final_acceptance(binding, final.get("automaticGaps", []), original_hash) != final):
+            raise PromotionError("Final acceptance differs from the reviewed original artifact promotion")
     tag = validation.get("tag", "")
     if not re.fullmatch(r"lite-v[^+\s/]+\+[1-9][0-9]*", tag):
         raise PromotionError("Invalid Lite release tag")
