@@ -996,7 +996,7 @@ final class CustomProfileDataProvider
   }
 }
 
-String _$customProfileDataHash() => r'5afb69a05a4dec6ca66bd8dd68a0ef2788ffa8bb';
+String _$customProfileDataHash() => r'64fe76d2c3bf493db72a88828c49c5b12f0106a9';
 
 /// Null until every source loads, so no check reads a loading one as empty.
 

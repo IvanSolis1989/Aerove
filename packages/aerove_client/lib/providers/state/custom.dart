@@ -128,12 +128,6 @@ CustomProfileData? customProfileData(Ref ref, int profileId) {
     ruleTargets: {
       ...RuleTarget.baseTargets,
       ...groups.map((item) => item.name),
-      ...availableCustomProxiesForProfile(
-        ref.read(profilesProvider),
-        allProxies!,
-        profileId,
-        includeLibrary: false,
-      ).map((proxy) => proxy.name),
     },
     proxies: {for (final proxy in appProxies) proxy.name},
     dialers: {
