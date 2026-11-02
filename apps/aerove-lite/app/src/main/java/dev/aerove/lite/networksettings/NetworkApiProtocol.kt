@@ -3,6 +3,30 @@ package dev.aerove.lite.networksettings
 import java.io.IOException
 import org.json.JSONObject
 
+data class NetworkApplyFailure(
+    val requestId: String,
+    val expectedCoreEpoch: String,
+    val mixedPort: Int,
+    val statusCode: Int,
+    val responseBody: String,
+    val networkRequestId: Long? = null,
+    val serviceOwner: Long? = null,
+    val sessionGeneration: Long? = null,
+) {
+    val operation: String get() = "aerove/network"
+    val method: String get() = "POST"
+}
+
+private val listenerBindFailureBody = Regex("""[ \t\r\n]*\{[ \t\r\n]*"error"[ \t\r\n]*:[ \t\r\n]*"userListenerBindFailed"[ \t\r\n]*\}[ \t\r\n]*""")
+
+internal fun decodeNetworkApplyFailure(status: Int, source: String, requestId: String,
+    expectedEpoch: ULong, mixedPort: Int): dev.aerove.lite.data.CoreApiException {
+    // JSONObject does not require full input; retain only this fixed wire response.
+    val diagnostic = if (status == 503 && listenerBindFailureBody.matches(source))
+        NetworkApplyFailure(requestId, expectedEpoch.toString(), mixedPort, status, source) else null
+    return dev.aerove.lite.data.CoreApiException(status, "aerove", diagnostic)
+}
+
 internal fun networkApplyBody(requestId: String, epoch: ULong, plan: NetworkRuntimePlan): JSONObject =
     JSONObject().put("requestId", requestId).put("expectedCoreEpoch", epoch.toString())
         .put("network", JSONObject(plan.userConfigFields()))

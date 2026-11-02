@@ -1279,6 +1279,14 @@ Lite Flutter test-only packaging 候选 94 另核 Android 官方 [AndroidJUnitRu
 
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
 
+#### [AOSP libcore](https://android.googlesource.com/platform/libcore/)
+
+**固定来源：** Android 13/API 33 的 `android-13.0.0_r1`，提交 `7267082c39a25fb5afbc4eeb5752c1b276d29344`；[JSONObject.java](https://android.googlesource.com/platform/libcore/+/7267082c39a25fb5afbc4eeb5752c1b276d29344/json/src/main/java/org/json/JSONObject.java) SHA256 `4d3ce46839c56c6b4ec650aa983ed40fbda9fdf07895372f6c27bcc8cf0cca85`。
+
+**用途与采用方式：** 只读核对构造函数读取首个 JSON 值而不校验输入耗尽的边界；未复制实现或替换系统 JSON 库。Lite 对固定 Native 端口绑定错误线协议做完整匹配后才保留原响应，避免尾随内容、重复字段或非标准语法进入诊断；Rust 协议保持不变。
+
+**许可证与署名：** Apache-2.0，原文件保留 AOSP 2010 版权及许可头；仅作实现参考，未引入运行依赖。
+
 同一 Lite packaging 候选 94 另按 AGP 9.4 官方 [`AndroidComponentsExtension`](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/variant/AndroidComponentsExtension) 与 [`ApplicationVariantBuilder`](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/variant/ApplicationVariantBuilder) 公共 API 核对 `beforeVariants` 与 `enableAndroidTest` 生产 test variant 隔离。此处仅记 API 参考；不代表候选 Gradle task graph或 test APK生产已通过。
 
 #### [cli/cli](https://github.com/cli/cli)

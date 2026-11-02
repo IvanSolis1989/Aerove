@@ -65,6 +65,7 @@ data class VpnSnapshot(
     val sessionGeneration: Long = 0L,
     val networkRequest: dev.aerove.lite.networksettings.NetworkRuntimeRequest? = null,
     val serviceOwner: Long = 0L,
+    val networkApplyFailure: dev.aerove.lite.networksettings.NetworkApplyFailure? = null,
 )
 
 interface TunnelSession {
@@ -101,7 +102,8 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     private val onSessionReady: (VpnSnapshot) -> Unit = {},
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
-    private data class Request(val generation: Long, val plan: VpnPlan?, val internalReconnect: Boolean = false, val startedAtNanos: Long = 0, val failureReason: String? = null)
+    private data class Request(val generation: Long, val plan: VpnPlan?, val internalReconnect: Boolean = false, val startedAtNanos: Long = 0,
+        val failureReason: String? = null, val networkApplyFailure: dev.aerove.lite.networksettings.NetworkApplyFailure? = null)
     private val generation = AtomicLong()
     private val requests = MutableStateFlow(Request(0, null))
     private val mutableState = MutableStateFlow(VpnSnapshot())
@@ -130,7 +132,8 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                     throw IllegalStateException("Previous core termination was not confirmed", it)
                 }
                 if (request.plan == null) {
-                    publish(request, VpnSnapshot(error = request.failureReason, sessionGeneration = request.generation))
+                    publish(request, VpnSnapshot(error = request.failureReason, sessionGeneration = request.generation,
+                        networkApplyFailure = request.networkApplyFailure))
                     return@collectLatest
                 }
                 publish(request, VpnSnapshot(VpnPhase.Starting, runningSinceNanos = request.startedAtNanos,
@@ -236,15 +239,27 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     }
 
     /** Compensation failure may stop only the captured endpoint and its current session generation. */
-    suspend fun stopIfCurrent(endpoint: CoreEndpoint, reason: String): Boolean {
+    suspend fun stopIfCurrent(endpoint: CoreEndpoint, reason: String,
+        networkFailure: dev.aerove.lite.networksettings.NetworkApplyFailure? = null): Boolean {
         val captured = synchronized(this) {
             val owned = activeSession
             if (closed || owned == null || owned.session.endpoint !== endpoint ||
                 owned.generation != generation.get() || mutableState.value.phase != VpnPhase.Running) null
             else {
+                val current = mutableState.value
+                val request = current.networkRequest
+                val diagnostic = networkFailure?.takeIf {
+                    it.copy(serviceOwner = null, sessionGeneration = null) == current.networkApplyFailure &&
+                        request != null && it.networkRequestId == request.id &&
+                        request.outcome == dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Failed &&
+                        it.mixedPort == request.network.ports.mixed &&
+                        it.sessionGeneration == owned.generation && (it.serviceOwner ?: 0L) > 0L &&
+                        current.networkError != null && reason == "Live update failed: ${current.networkError}"
+                }
                 val next = generation.incrementAndGet()
-                mutableState.value = VpnSnapshot(VpnPhase.Stopping, error = reason, sessionGeneration = next)
-                requests.value = Request(next, null, failureReason = reason)
+                mutableState.value = VpnSnapshot(VpnPhase.Stopping, error = reason, sessionGeneration = next,
+                    networkApplyFailure = diagnostic)
+                requests.value = Request(next, null, failureReason = reason, networkApplyFailure = diagnostic)
                 owned
             }
         } ?: return false
@@ -406,9 +421,14 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     fun recordNetworkStatus(status: NetworkRuntimeStatus) {
         val current = mutableState.value
         if (!closed && current.phase == VpnPhase.Running && current.endpoint === status.endpoint) {
+            val request = status.request
             mutableState.value = current.copy(appliedNetwork = status.appliedNetwork.snapshot(),
                 appliedIpv6 = status.appliedIpv6 ?: current.appliedIpv6,
-                networkApplying = status.applying, networkError = status.error, networkRequest = status.request)
+                networkApplying = status.applying, networkError = status.error, networkRequest = request,
+                networkApplyFailure = status.networkApplyFailure?.takeIf {
+                    request != null && request.outcome == dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Failed &&
+                        it.networkRequestId == request.id && it.mixedPort == request.network.ports.mixed
+                })
         }
     }
 

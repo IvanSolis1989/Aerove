@@ -198,7 +198,10 @@ class CoreApiClient(
             val requestId = UUID.randomUUID().toString()
             val receipt = try {
                 request(listOf("aerove", "network"), "POST", networkApplyBody(requestId, before, plan),
-                    budgetMillis = 10_000, maxBytes = 4096)
+                    budgetMillis = 10_000, maxBytes = 4096, failure = { status, source ->
+                        dev.aerove.lite.networksettings.decodeNetworkApplyFailure(status, source, requestId,
+                            before, settings.ports.mixed)
+                    })
             } catch (failure: CoreApiException) {
                 currentCoroutineContext().ensureActive()
                 if (failure.statusCode == 409 && attempt == 0) return@repeat

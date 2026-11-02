@@ -18,6 +18,37 @@ class NetworkRuntimeCoordinatorTest {
     private val initial = NetworkSettings()
     private fun changed(port: Int) = initial.copy(ports = UserProxyPorts(port))
 
+    @Test fun nativeFailureIsBoundToActualActorWorkAndCachedFailureDoesNotInventANewPost() = runTest {
+        val wire = decodeNetworkApplyFailure(503, """{"error":"userListenerBindFailed"}""",
+            java.util.UUID.randomUUID().toString(), 11uL, 7900)
+        var calls = 0
+        val states = mutableListOf<NetworkRuntimeStatus>()
+        val coordinator = NetworkRuntimeCoordinator(backgroundScope, { _, _, _ ->
+            if (++calls == 1) throw wire
+        }, states::add)
+        coordinator.bind(CoreEndpoint(30000, "secret"), initial, false)
+        coordinator.settings(changed(7900), false); runCurrent()
+        val failed = states.last()
+        val request = checkNotNull(failed.request)
+        val diagnostic = checkNotNull(failed.networkApplyFailure)
+        assertEquals(wire.message, failed.error)
+        assertEquals(NetworkRuntimeOutcome.Failed, request.outcome)
+        assertEquals(request.id, checkNotNull(diagnostic.networkRequestId))
+        assertEquals(checkNotNull(wire.networkApplyFailure).requestId, diagnostic.requestId)
+        assertNull(diagnostic.serviceOwner)
+        coordinator.settings(changed(7900), false); runCurrent()
+        assertEquals(1, calls)
+        assertTrue(states.last().request!!.id > request.id)
+        assertEquals(wire.message, states.last().error)
+        assertNull(states.last().networkApplyFailure)
+        coordinator.retry(); runCurrent()
+        assertEquals(2, calls)
+        assertEquals(NetworkRuntimeOutcome.Applied, states.last().request!!.outcome)
+        assertNull(states.last().networkApplyFailure)
+        assertNull(states.last().error)
+        coordinator.close()
+    }
+
     @Test fun startupBaselineAndVpnOnlySettingsNeverApplyAgain() = runTest {
         var calls = 0
         val coordinator = NetworkRuntimeCoordinator(backgroundScope, { _, _, _ -> calls++ })

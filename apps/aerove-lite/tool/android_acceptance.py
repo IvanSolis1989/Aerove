@@ -280,6 +280,10 @@ class Acceptance(Producer):
                     cancel_args["cancelProfile"+key+"Url"]="http://10.0.2.2:18080/profile-cancel/"+pair+"/"+key+".yaml"
                 self._record_ui(rows,"profileUpdateCancelBatchAndRetry",info,cancel_args)
                 self.receipt["profileUpdateCancelVerified"]=True
+                self.adb_command("runtime-notification-permission", "shell", "pm", "grant", PACKAGE, "android.permission.POST_NOTIFICATIONS")
+                self._record_ui(rows, "listenerRebindFailureRecoveryAndNotificationLifecycle", info,
+                    dict(extra, rebindMixedPort="18082", occupiedMixedPort="18083"))
+                self.ordinary_owner(rows, info, extra)
                 final_log = self.adb_command("functional-final-process-log", "logcat", "-d", "-v", "threadtime", timeout=45).decode(errors="replace")
                 for pid in {row["pid"] for row in rows}:
                     self.check_process_log(final_log, pid)
@@ -292,8 +296,7 @@ class Acceptance(Producer):
                 self.receipt.update(uiInvocations=rows, normalUiSelectors=contract["normalUiSelectors"],
                     expectedTerminationSelector=contract["expectedTerminationSelector"], expectedTerminationVerified=True,
                     nativeOwnerAttestationsVerified=True, tunSeparateUidAccepted=separate, matrixImages=12,
-                    unresolvedCoverage=["Lite listener editing/rebind and notification lifecycle device flow",
-                                        "physical Wi-Fi exclusion park/resume and other-UID ownership attribution",
+                    unresolvedCoverage=["physical Wi-Fi exclusion park/resume",
                                         "shared client cancellation/recovery coverage mapping requires execution-bound canonical proof"])
             self.installed_hash("final-app", PACKAGE, info["apk_sha256"])
             self.receipt.update(status="executed-pending-complete-acceptance", executionPassed=True)
@@ -340,6 +343,36 @@ class Acceptance(Producer):
             for name, handler in self.previous_signals.items():
                 signal.signal(name, handler)
         return 1 if self.cancelled or self.receipt.get("cleanupErrors") else result
+
+    def ordinary_owner(self, rows, info, extra):
+        from build_process_owner_fixture import PACKAGE as OWNER_PACKAGE, build
+        from process_owner_device_setup import EchoScope
+        from runtime_device_verify import OWNER_METHOD, verify_host_owner
+        deadline = time.time() + 120
+        def build_command(command, limit):
+            return self.command(self.unique("owner-fixture-build"), command,
+                                timeout=max(0.01, limit - time.time())).decode()
+        apk, build_receipt = build(self.args.output / "ordinary-owner-build", deadline, build_command)
+        require(build_receipt["files"] == load(CONTRACT)["ownerFixtureSources"], "Ordinary fixture source is not the original current-source dependency")
+        require(b"package:" not in self.adb_command("preexisting-ordinary-owner", "shell", "pm", "path", OWNER_PACKAGE, check=False),
+                "Dedicated emulator required; never replace an existing independent fixture")
+        self.installed.append(OWNER_PACKAGE)
+        self.adb_command("install-ordinary-owner", "install", "-t", "--no-streaming", str(apk), timeout=120)
+        installed = self.installed_hash("ordinary-owner", OWNER_PACKAGE, sha(apk))
+        echoes = []
+        echo = EchoScope(echoes)
+        try:
+            tcp_port, udp_port = echo.start()
+            _, _, natives = self._record_ui(rows, OWNER_METHOD, info,
+                dict(extra, ownerTcpPort=tcp_port, ownerUdpPort=udp_port))
+        finally:
+            echo.close()  # A returned receipt requires actual thread/socket join, never a caller flag.
+        host = dict(source=info["source"], tree=info["tree"], workflow=info["workflow"], runAttempt=str(info["run_attempt"]),
+                    installedPackage=OWNER_PACKAGE, apkSha256=sha(apk), installedApkSha256=installed["sha256"],
+                    build=build_receipt, echo=list(echoes), echoJoined=True)
+        save(self.args.output / "ordinary-owner-host.json", host)
+        verify_host_owner(self.args.output, natives, info)
+
 
     def _record_ui(self, rows, method, info, extra):
         row, receipt, natives = self.ui(method, info, extra); rows.append(row)

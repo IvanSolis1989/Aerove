@@ -80,6 +80,7 @@ class FlutterProductionUiTest {
             }
         }
         check((0 until frames.length()).count { frames.getJSONObject(it).optJSONObject("configuration")?.optBoolean("matrix") == true } == 12)
+        captureDockOpticalCandidates()
         stage = "theme12-captured-pending-visual-review"
     }
 
@@ -430,7 +431,7 @@ class FlutterProductionUiTest {
             .put("requestToken", requestToken).put("responseSha256", digest(body.toByteArray())))
     }
 
-    private fun checkpoint(name: String, expectedVpn: Boolean) {
+    private fun checkpoint(name: String, expectedVpn: Boolean, runtimeDevice: JSONObject? = null) {
         require(name.matches(Regex("[a-z-]{1,60}")))
         val folder = File(root, "checkpoints").also { check(it.isDirectory || it.mkdirs()) }
         val value = JSONObject().put("schema", 1).put("qaToken", token)
@@ -442,6 +443,7 @@ class FlutterProductionUiTest {
             .put("expectedMixedPort", mixedProxyPort()).put("expectedBypassPrivateRoute", false)
             .put("fixtureRouteTarget", "10.0.2.2")
             .put("networkSettingsUiEvidence", receipt.getJSONArray("networkSettingsUiEvidence"))
+        if (runtimeDevice != null) value.put("checkpointKind", "runtime-device").put("runtimeDevice", runtimeDevice)
         arguments.getString("previousQaToken")?.let { value.put("previousQaToken", it) }
         arguments.getString("restartExpectedState")?.let { value.put("restartExpectedState", it) }
         arguments.getString("hostRestartBoundary")?.let { value.put("hostRestartBoundary", it) }
@@ -452,7 +454,7 @@ class FlutterProductionUiTest {
         check(temporary.renameTo(request)) { "Atomic checkpoint publication failed" }
         receipt.put("nativeEvidencePending", true)
         val ackFile = File(root, "native-acks/$name.json")
-        awaitCondition("independent native platform attestation $name", 45_000) { ackFile.isFile }
+        awaitCondition("independent native platform attestation $name", if (runtimeDevice != null) 60_000 else 45_000) { ackFile.isFile }
         val ack = JSONObject(ackFile.readText())
         check(ack.getInt("schema") == 1)
         for (field in listOf("qaToken", "stage", "nonce", "source", "tree", "apkSha256")) {
@@ -648,6 +650,120 @@ class FlutterProductionUiTest {
     }
 
 
+    @Test
+    fun listenerRebindFailureRecoveryAndNotificationLifecycle() = scenario {
+        functionalReceipt("host-owned-runtime-device-fixture")
+        launch(); requireLabel("Dashboard"); checkNoVpn()
+        deviceNetworkToggle("VPN", true)
+        functionalNetworkSettings(allowChanges = true)
+        navigate("Profiles"); click(profileLabel()); navigate("Dashboard")
+        startRealVpn()
+        checkpoint("listener-baseline", true, JSONObject().put("port", mixedProxyPort()))
+        val rebound = requiredArg("rebindMixedPort").toInt()
+        val occupied = requiredArg("occupiedMixedPort").toInt()
+        require(setOf(mixedProxyPort(), rebound, occupied).size == 3)
+        require(listOf(rebound, occupied).all { it in 1024..49151 })
+        deviceEditMixedPort(rebound)
+        checkpoint("listener-rebound", true, JSONObject().put("port", rebound).put("releasedPort", mixedProxyPort()))
+        java.net.ServerSocket().use { blocker ->
+            blocker.reuseAddress = false
+            blocker.bind(java.net.InetSocketAddress("127.0.0.1", occupied))
+            deviceEditMixedPort(occupied)
+            awaitCondition("failed bind releases actual VPN and visible running state", 45_000) {
+                ownedVpn().isEmpty() && findLabel("Start") != null
+            }
+            checkpoint("listener-bind-failed", false, JSONObject().put("port", occupied).put("releasedPort", rebound))
+        }
+        deviceEditMixedPort(rebound)
+        navigate("Dashboard"); startRealVpn()
+        checkpoint("listener-retry", true, JSONObject().put("port", rebound))
+        stopRealVpn()
+        checkpoint("listener-stopped", false, JSONObject().put("releasedPort", rebound))
+        deviceNetworkToggle("VPN", false)
+        deviceGeneralToggle("Stop button in notification", true)
+        navigate("Dashboard"); click("Start"); requireLabel("Stop")
+        checkpoint("proxy-notification", false, JSONObject().put("port", rebound).put("stopAction", true))
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME))
+        launch(); requireLabel("Dashboard"); requireLabel("Stop")
+        deviceGeneralToggle("Stop button in notification", false)
+        checkpoint("proxy-stop-hidden", false, JSONObject().put("port", rebound).put("stopAction", false))
+        deviceGeneralToggle("Stop button in notification", true)
+        checkpoint("proxy-stop-restored", false, JSONObject().put("port", rebound).put("stopAction", true))
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS))
+        val notificationStop = awaitNode("real SystemUI notification Stop action") {
+            it.packageName?.toString() == "com.android.systemui" && matches(it, "Stop")
+        }
+        performClick(notificationStop); action("notification-stop", notificationStop, "Stop")
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        launch(); requireLabel("Dashboard"); requireLabel("Start")
+        checkpoint("proxy-notification-stopped", false, JSONObject().put("releasedPort", rebound))
+        // Later real preference publications must not resurrect a stopped notification.
+        deviceGeneralToggle("Stop button in notification", false)
+        deviceGeneralToggle("Stop button in notification", true)
+        checkpoint("proxy-notification-still-stopped", false, JSONObject().put("releasedPort", rebound))
+        deviceNetworkToggle("VPN", true)
+        deviceEditMixedPort(mixedProxyPort())
+        capture("runtime-device-complete")
+        stage = "runtime-device-stopped"
+    }
+
+    @Test
+    fun independentApplicationTcpUdpNativeAttribution() = scenario {
+        functionalReceipt("host-owned-separate-application-sockets")
+        launch(); requireLabel("Dashboard"); checkNoVpn()
+        functionalNetworkSettings(allowChanges = true)
+        deviceGeneralToggle("Find process", true)
+        navigate("Profiles"); click(profileLabel()); navigate("Dashboard")
+        startRealVpn()
+        checkpoint("owner-tcp-udp", true, JSONObject().put("port", mixedProxyPort())
+            .put("fixturePackage", "dev.aerove.fixture.socketowner")
+            .put("tcpPort", requiredArg("ownerTcpPort").toInt()).put("udpPort", requiredArg("ownerUdpPort").toInt()))
+        stopRealVpn()
+        checkpoint("owner-stopped", false, JSONObject().put("releasedPort", mixedProxyPort()))
+        capture("ordinary-app-owner-complete")
+        stage = "ordinary-app-owner-stopped"
+    }
+
+    private fun deviceEditMixedPort(port: Int) {
+        navigate("Tools"); click("General", scroll = true); click("Port", scroll = true)
+        val field = rowControl("Mixed port", editable = true)
+        check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
+            putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, port.toString())
+        }))
+        awaitCondition("runtime mixed-port edit accepted") { rowControl("Mixed port", true).text?.toString() == port.toString() }
+        action("runtime-edit-mixed-port", field, port.toString()); click("Save")
+        awaitCondition("runtime port form saved") { findLabel("Mixed port") == null }
+        click("Port", scroll = true)
+        check(rowControl("Mixed port", true).text?.toString() == port.toString())
+        capture("runtime-port-readback-${frames.length()}")
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        awaitCondition("runtime port readback closed") { findLabel("Mixed port") == null }
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        navigate("Dashboard")
+    }
+
+    private fun deviceGeneralToggle(label: String, enabled: Boolean) {
+        navigate("Tools"); click("General", scroll = true)
+        val control = rowControl(label, editable = false)
+        if (control.isChecked != enabled) { performClick(control); action("runtime-toggle", control, "$label=$enabled") }
+        awaitCondition("saved production $label toggle") { rowControl(label, false).isChecked == enabled }
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        navigate("Dashboard")
+    }
+
+    private fun deviceNetworkToggle(label: String, enabled: Boolean) {
+        checkNoVpn()
+        navigate("Tools"); click("Advanced configuration", scroll = true); click("Network", scroll = true)
+        val control = rowControl(label, editable = false)
+        if (control.isChecked != enabled) { performClick(control); action("runtime-network-toggle", control, "$label=$enabled") }
+        awaitCondition("saved production network $label toggle") { rowControl(label, false).isChecked == enabled }
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        awaitCondition("network route closed") { findLabel(label) == null }
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        navigate("Dashboard")
+    }
+
+
     private fun scenario(block: () -> Unit) {
         check(context.packageName == PACKAGE)
         check(root.mkdirs()) { "Evidence directory must be new: $root" }
@@ -719,6 +835,225 @@ class FlutterProductionUiTest {
         }
         receipt.put("statementCopied", true).put("statementSha256", digest(STATEMENT.toByteArray()))
         capture("selected-statement-copied")
+    }
+
+    /** Raw same-window candidates only; registration, signal and optical acceptance remain external. */
+    private fun captureDockOpticalCandidates() {
+        stage = "optical-candidate-settings"
+        val settingsPackage = "com.android.settings"
+        val (title, switch) = opticalAnimationControl()
+        val wasChecked = switch.isChecked
+        receipt.put("opticalRemoveAnimationsInitiallyChecked", wasChecked)
+        var collectionFailure: Throwable? = null
+        receipt.put("opticalSystemSettingsEvidence", JSONArray())
+        try {
+            if (!wasChecked) { performClick(title); action("settings-toggle", title, "Remove animations on") }
+            awaitCondition("Remove animations checked readback") { opticalAnimationSwitch(title).isChecked }
+            val systemProof = capture("optical-remove-animations", JSONObject().put("phase", "enabled-for-optical")
+                .put("removeAnimations", true).put("initialActualChecked", wasChecked), settingsPackage)
+            // Read only: the actual switch above is the authority; no shell/settings mutation.
+            receipt.put("opticalAnimatorDurationScaleDuringCollection", android.provider.Settings.Global.getString(
+                context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE))
+            launch(); navigate("Tools"); click("Theme", scroll = true); requireLabel("Theme mode")
+            choose("Light"); choose("Living Aurora"); choose("Clear shimmer")
+            val themeProof = capture("optical-theme-settings", JSONObject().put("material", "Clear shimmer")
+                .put("backdrop", "Living Aurora").put("brightness", "Light"))
+            check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+            requireLabel("Theme"); navigate("Tools")
+            stage = "optical-dock-candidates"
+            val density = context.resources.displayMetrics.density
+            opticalDrag(-80 * density)
+            opticalDrag(android.view.ViewConfiguration.get(context).scaledTouchSlop + 13 * density)
+            val expanded = opticalDockBounds()
+            val anchor = nodes().filter { it.isVisibleToUser && it.packageName?.toString() == PACKAGE &&
+                !it.text.isNullOrBlank() && it.text!!.length >= 6 && bounds(it).centerY() in
+                    (context.resources.displayMetrics.heightPixels / 4)..(context.resources.displayMetrics.heightPixels / 2) }
+                .maxByOrNull { it.text!!.length } ?: error("Tools has no visible stable text anchor")
+            val anchorText = anchor.text.toString()
+            check(nodes().count { it.isVisibleToUser && it.packageName?.toString() == PACKAGE && matches(it, anchorText) } == 1)
+            val targetY = bounds(anchor).top
+            fun configuration(role: String) = JSONObject().put("opticalCandidate", true).put("role", role)
+                .put("matrix", false).put("opticalAccepted", false).put("geometryAccepted", false)
+                .put("strictSameMaterialNoLens", false).put("systemSettingsEvidence", systemProof)
+                .put("settingsEvidence", themeProof).put("anchor", anchorText).put("targetAnchorTopPx", targetY)
+                .put("observedAnchorBoundsPx", rect(bounds(requireLabel(anchorText))))
+                .put("observedDockBoundsPx", rect(opticalDockBounds()))
+            capture("optical-P1-expanded-clear", configuration("P1-expanded-clear"))
+            opticalDrag(-40 * density)
+            val compact = opticalDockBounds()
+            check(compact.width() < expanded.width() && compact.height() < expanded.height()) {
+                "Actual Tools scroll did not expose dock side strips; no source image can be claimed"
+            }
+            val sourceRestored = opticalRestoreAnchor(anchorText, targetY, compact)
+            check(opticalDockBounds() == compact) { "Short reverse gestures expanded the dock; source ROI is covered" }
+            capture("optical-S1-exposed-text", configuration("S1-exposed-page-content").put("offsetRestored", sourceRestored))
+            capture("optical-S2-exposed-text", configuration("S2-repeat-exposed-page-content").put("offsetRestored", sourceRestored))
+            opticalDrag(40 * density)
+            check(opticalDockBounds() == expanded) { "Actual reverse scroll did not restore expanded dock geometry" }
+            val paneRestored = opticalRestoreAnchor(anchorText, targetY, expanded)
+            check(opticalDockBounds() == expanded) { "Short restoring gestures collapsed P2; no expanded pane can be claimed" }
+            capture("optical-P2-expanded-clear", configuration("P2-expanded-clear").put("offsetRestored", paneRestored))
+            receipt.put("opticalCandidateCollection", JSONObject().put("frames", 4)
+                .put("sourceOffsetRestored", sourceRestored).put("paneOffsetRestored", paneRestored)
+                .put("expandedDockBoundsPx", rect(expanded)).put("compactDockBoundsPx", rect(compact))
+                .put("registrationPending", true).put("signalPending", true).put("opticalAccepted", false)
+                .put("removeAnimationsCheckedDuringCollection", true))
+        } catch (failure: Throwable) {
+            collectionFailure = failure
+            receipt.put("opticalCollectionError", failure.stackTraceToString())
+            // Preserve the actual failing window before cleanup returns to a different activity.
+            runCatching { capture("optical-collection-failure", JSONObject().put("phase", "collection-failed"),
+                requireNotNull(ui.rootInActiveWindow?.packageName?.toString())) }
+                .onFailure { receipt.put("opticalCollectionFailureCaptureError", it.stackTraceToString()) }
+            throw failure
+        } finally {
+            // Cancellation remains a failure, but its existing interrupt must not skip restoration.
+            val interrupted = Thread.interrupted()
+            var cleanupFailure: Throwable? = null
+            var restoredChecked: Boolean? = null
+            try {
+                stage = "optical-restore-system-animations"
+                val (restoreTitle, restoreSwitch) = opticalAnimationControl()
+                if (restoreSwitch.isChecked != wasChecked) {
+                    performClick(restoreTitle)
+                    action("settings-restore", restoreTitle, "Remove animations=$wasChecked (actual initial state)")
+                }
+                awaitCondition("Remove animations original state readback") {
+                    opticalAnimationSwitch(restoreTitle).isChecked == wasChecked
+                }
+                restoredChecked = opticalAnimationSwitch(restoreTitle).isChecked
+                check(restoredChecked == wasChecked) { "Remove animations changed after original-state readback" }
+                val proof = capture("optical-remove-animations-restored", JSONObject()
+                    .put("phase", "restored").put("removeAnimations", restoredChecked)
+                    .put("initialActualChecked", wasChecked), settingsPackage)
+                receipt.put("opticalAnimationRestoration", JSONObject().put("initialActualChecked", wasChecked)
+                    .put("actualChecked", restoredChecked).put("restored", true).put("settingsEvidence", proof)
+                    .put("animatorDurationScaleReadback", android.provider.Settings.Global.getString(
+                        context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE)))
+            } catch (failure: Throwable) {
+                cleanupFailure = failure
+                receipt.put("opticalAnimationRestoreError", failure.stackTraceToString())
+                runCatching { capture("optical-animation-restore-failure", JSONObject().put("phase", "restore-failed"),
+                    requireNotNull(ui.rootInActiveWindow?.packageName?.toString())) }
+                    .onFailure { receipt.put("opticalAnimationRestoreCaptureError", it.stackTraceToString()) }
+            } finally {
+                try {
+                    stage = "optical-return-to-app-after-animation-restore"
+                    launch(); requireLabel("Dashboard")
+                    val policy = when (restoredChecked) {
+                        true -> "remove-animations-enabled-as-original"
+                        false -> "remove-animations-disabled-as-original"
+                        null -> "unknown-restoration-failed"
+                    }
+                    capture("optical-app-after-animation-restore", JSONObject().put("animationPolicy", policy)
+                        .put("removeAnimationsActualChecked", restoredChecked ?: JSONObject.NULL))
+                    receipt.put("opticalReturnedToApp", true).put("opticalFinalAnimationPolicy", policy)
+                } catch (failure: Throwable) {
+                    receipt.put("opticalAppReturnError", failure.stackTraceToString())
+                    if (cleanupFailure == null) cleanupFailure = failure else cleanupFailure!!.addSuppressed(failure)
+                } finally {
+                    if (interrupted) Thread.currentThread().interrupt()
+                }
+            }
+            cleanupFailure?.let { failure ->
+                if (collectionFailure != null) collectionFailure!!.addSuppressed(failure) else throw failure
+            }
+        }
+    }
+
+    private fun opticalAnimationControl(): Pair<AccessibilityNodeInfo, AccessibilityNodeInfo> {
+        context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+        awaitNode("Android accessibility Settings") { it.packageName?.toString() == "com.android.settings" }
+        // Reopen the same real route for both collection and restoration, without writing Settings directly.
+        val colorMotion = opticalSettingsLabel("Color and motion")
+        val before = tree().toString()
+        performClick(colorMotion); action("settings-open", colorMotion, "Color and motion")
+        awaitCondition("Color and motion opened") { tree().toString() != before }
+        val title = opticalSettingsLabel("Remove animations")
+        return title to opticalAnimationSwitch(title)
+    }
+
+    private fun opticalAnimationSwitch(title: AccessibilityNodeInfo): AccessibilityNodeInfo =
+        nodes().filter { it.isVisibleToUser && it.isCheckable &&
+            it.packageName?.toString() == "com.android.settings" && bounds(it).contains(bounds(title).centerX(), bounds(title).centerY()) }
+            .singleOrNull() ?: nodes().filter { it.isVisibleToUser && it.isCheckable &&
+                it.packageName?.toString() == "com.android.settings" &&
+                kotlin.math.abs(bounds(it).centerY() - bounds(title).centerY()) < bounds(title).height() }
+                .singleOrNull() ?: error("Remove animations has no unambiguous real switch")
+
+    private fun opticalSettingsLabel(label: String): AccessibilityNodeInfo {
+        repeat(12) {
+            nodes().firstOrNull { it.isVisibleToUser && it.packageName?.toString() == "com.android.settings" && matches(it, label) }
+                ?.let { return it }
+            val scroll = nodes().filter { it.isVisibleToUser && it.isScrollable && it.packageName?.toString() == "com.android.settings" }
+                .maxByOrNull { bounds(it).width() * bounds(it).height() } ?: error("Settings route does not expose $label")
+            val before = tree().toString()
+            check(scroll.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) { "Settings route cannot reveal $label" }
+            action("settings-scroll", scroll, "reveal=$label")
+            awaitCondition("Settings scroll settles", 1800, required = false) {
+                tree().toString() != before
+            }
+        }
+        error("Settings route does not expose $label within bounded scroll")
+    }
+
+    private fun opticalDockBounds(): Rect {
+        val result = Rect()
+        for (label in listOf("Dashboard", "Profiles", "Tools")) result.union(bounds(requireLabel(label, dock = true)))
+        return result
+    }
+
+    private fun opticalRestoreAnchor(label: String, targetY: Int, dock: Rect): Boolean {
+        val density = context.resources.displayMetrics.density
+        val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+        repeat(32) {
+            val before = bounds(requireLabel(label)).top
+            val remaining = targetY - before
+            if (remaining == 0) return true
+            // Each new touch ends at rest. Observe actual content travel, never infer it from finger travel.
+            val step = minOf(kotlin.math.abs(remaining).toFloat(), 6 * density)
+            opticalDrag((slop + step) * if (remaining > 0) 1 else -1)
+            val moved = bounds(requireLabel(label)).top - before
+            actions.put(JSONObject().put("stage", stage).put("kind", "optical-offset-readback")
+                .put("anchor", label).put("beforeTopPx", before).put("afterTopPx", before + moved)
+                .put("targetTopPx", targetY).put("elapsedRealtimeMs", SystemClock.elapsedRealtime()))
+            if (moved == 0 || kotlin.math.abs(moved) >= 12 * density || opticalDockBounds() != dock) return false
+        }
+        return bounds(requireLabel(label)).top == targetY
+    }
+
+    private fun opticalDrag(deltaY: Float) {
+        val scroll = nodes().filter { it.isVisibleToUser && it.isScrollable && it.packageName?.toString() == PACKAGE }
+            .maxByOrNull { bounds(it).width() * bounds(it).height() } ?: error("No real Tools scroll surface")
+        val box = bounds(scroll)
+        val x = box.exactCenterX()
+        val y = box.exactCenterY()
+        check(y + deltaY > box.top && y + deltaY < box.bottom) { "Gesture leaves observed scroll surface" }
+        action("optical-touch-drag", scroll, "x=$x startY=$y deltaY=$deltaY durationMs=800")
+        val down = SystemClock.uptimeMillis()
+        fun inject(kind: Int, at: Float) {
+            val event = android.view.MotionEvent.obtain(down, SystemClock.uptimeMillis(), kind, x, at, 0)
+            try {
+                event.source = android.view.InputDevice.SOURCE_TOUCHSCREEN
+                check(ui.injectInputEvent(event, true)) { "Real touch injection failed" }
+            } finally { event.recycle() }
+        }
+        inject(android.view.MotionEvent.ACTION_DOWN, y)
+        for (step in 1..12) {
+            SystemClock.sleep(50)
+            inject(android.view.MotionEvent.ACTION_MOVE, y + deltaY * step / 12)
+        }
+        SystemClock.sleep(200) // Stationary release prevents an artificial fling after the measured drag.
+        inject(android.view.MotionEvent.ACTION_UP, y + deltaY)
+        var previous = ""
+        var stable = 0
+        awaitCondition("post-gesture real geometry settled") {
+            val current = tree().toString()
+            stable = if (current == previous) stable + 1 else 0
+            previous = current
+            stable >= 3
+        }
     }
 
     private fun choose(label: String) {
@@ -840,7 +1175,7 @@ class FlutterProductionUiTest {
             .put("elapsedRealtimeMs", SystemClock.elapsedRealtime()).put("node", nodeJson(node)))
     }
 
-    private fun capture(label: String, configuration: JSONObject? = null): String {
+    private fun capture(label: String, configuration: JSONObject? = null, expectedPackage: String = PACKAGE): String {
         checkInterrupted()
         if (label != "failure") {
             var previous = ""
@@ -854,7 +1189,7 @@ class FlutterProductionUiTest {
         }
         val hierarchy = tree()
         if (label != "failure") {
-            check(ui.rootInActiveWindow?.packageName?.toString() == PACKAGE) {
+            check(ui.rootInActiveWindow?.packageName?.toString() == expectedPackage) {
                 "Production app lost the active window at $stage"
             }
         }
@@ -883,7 +1218,7 @@ class FlutterProductionUiTest {
                 .put("focused", window.isFocused).put("active", window.isActive)
                 .put("boundsPx", rect(Rect().also { window.getBoundsInScreen(it) })) }))
             .put("elapsedRealtimeMs", SystemClock.elapsedRealtime()).put("configuration", configuration)
-        frames.put(row)
+        if (expectedPackage == PACKAGE) frames.put(row) else receipt.getJSONArray("opticalSystemSettingsEvidence").put(row)
         return image.name
     }
 

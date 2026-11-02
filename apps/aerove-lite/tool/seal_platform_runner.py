@@ -48,12 +48,16 @@ def seal(info, app, test, signature, manifest, graph, mapping, defined, driver):
             "dev.aerove.lite.FlutterProductionUiTest" in defined_classes, "Runner lacks actual observer/UI test definitions")
     contract = json.loads(Path(__file__).with_name("android_acceptance_contract.json").read_text())
     require(hashlib.sha256(driver.read_bytes().replace(b"\r\n",b"\n")).hexdigest() == contract["uiSourceSha256"], "Integrate the precise coordinated Flutter UI candidate before building")
+    device_source = Path(__file__).resolve().parents[1] / contract["runtimeDeviceAttestorSource"]["path"]
+    require(hashlib.sha256(device_source.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == contract["runtimeDeviceAttestorSource"]["sha256"],
+            "Actual runtime device observer source differs from its current contract")
     return dict(schema=1, source=info["source"], tree=info["tree"], productionApkSha256=sha(app), testApkSha256=sha(test),
                 signerSha256=info["signer_sha256"], targetPackage="dev.aerove.lite", testPackage="dev.aerove.lite.platform.test",
                 runner="dev.aerove.lite.platformqa.AcceptanceCheckpointRunner", productionBuildCount=1,
                 targetR8MappingSha256=hashlib.sha256(mapping.encode()).hexdigest(),
                 definedClassesSha256=hashlib.sha256(defined.encode()).hexdigest(), copiedProductionClasses=False,
-                uiTestSourceSha256=contract["uiSourceSha256"], uiTestPhysicalSha256=sha(driver), androidExecuted=False)
+                uiTestSourceSha256=contract["uiSourceSha256"], uiTestPhysicalSha256=sha(driver),
+                runtimeDeviceAttestorSourceSha256=contract["runtimeDeviceAttestorSource"]["sha256"], androidExecuted=False)
 
 
 def seal_abi(graph, mapping, references, rules_path, report_path, test_mapping, test_configuration):

@@ -23,6 +23,51 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class VpnCoordinatorOwnedStopTest {
+    @Test fun originalNetworkFailureSurvivesOwnedStopButWrongRequestAndNewSessionCannotBorrowIt() = runTest {
+        for (sameWireRequest in listOf(true, false)) {
+            val joined = CompletableDeferred<Unit>()
+            val old = Session(joined = joined)
+            val newer = Session()
+            val coordinator = VpnCoordinator(backgroundScope, TunnelBackend { if (it.profileId == "old") old else newer })
+            coordinator.start(VpnPlan("old", LiteSettings())); runCurrent()
+            val originalGeneration = coordinator.state.value.sessionGeneration
+            val target = LiteSettings().network.copy(ports = dev.aerove.lite.networksettings.UserProxyPorts(18083))
+            val wire = dev.aerove.lite.networksettings.NetworkApplyFailure(java.util.UUID.randomUUID().toString(), "11",
+                18083, 503, """{"error":"userListenerBindFailed"}""", networkRequestId = 7L)
+            val reason = "Live update failed: Core API aerove returned HTTP 503"
+            val status = dev.aerove.lite.networksettings.NetworkRuntimeStatus(old.endpoint, LiteSettings().network,
+                false, "Core API aerove returned HTTP 503", request = dev.aerove.lite.networksettings.NetworkRuntimeRequest(
+                    7L, target, false, dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Failed), networkApplyFailure = wire)
+            coordinator.recordNetworkStatus(status.copy(endpoint = CoreEndpoint(old.endpoint.port, old.endpoint.secret)))
+            org.junit.Assert.assertNull(coordinator.state.value.networkApplyFailure)
+            coordinator.recordNetworkStatus(status)
+            val contextual = wire.copy(serviceOwner = 99L, sessionGeneration = originalGeneration,
+                requestId = if (sameWireRequest) wire.requestId else java.util.UUID.randomUUID().toString())
+            assertFalse(coordinator.stopIfCurrent(CoreEndpoint(old.endpoint.port, old.endpoint.secret), reason, contextual))
+            val stopping = async { coordinator.stopIfCurrent(old.endpoint, reason, contextual) }
+            runCurrent()
+            assertFalse(stopping.isCompleted)
+            if (sameWireRequest) assertEquals(contextual, coordinator.state.value.networkApplyFailure)
+            else org.junit.Assert.assertNull(coordinator.state.value.networkApplyFailure)
+            assertTrue(coordinator.state.value.sessionGeneration > originalGeneration)
+            joined.complete(Unit); runCurrent()
+            assertTrue(stopping.await())
+            assertEquals(VpnPhase.Stopped, coordinator.state.value.phase)
+            assertEquals(reason, coordinator.state.value.error)
+            if (sameWireRequest) {
+                assertEquals(contextual, coordinator.state.value.networkApplyFailure)
+                assertEquals(originalGeneration, checkNotNull(coordinator.state.value.networkApplyFailure!!.sessionGeneration))
+            } else org.junit.Assert.assertNull(coordinator.state.value.networkApplyFailure)
+            coordinator.start(VpnPlan("new", LiteSettings())); runCurrent()
+            org.junit.Assert.assertNull(coordinator.state.value.networkApplyFailure)
+            coordinator.recordNetworkStatus(status)
+            org.junit.Assert.assertNull(coordinator.state.value.networkApplyFailure)
+            assertFalse(coordinator.stopIfCurrent(old.endpoint, reason, contextual))
+            assertSame(newer.endpoint, coordinator.state.value.endpoint)
+            coordinator.close()
+        }
+    }
+
     private fun assertFailureOrigin(original: Throwable, actual: Throwable) {
         assertEquals(original.javaClass, actual.javaClass)
         assertEquals(original.message, actual.message)

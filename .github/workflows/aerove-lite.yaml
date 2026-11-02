@@ -1296,6 +1296,9 @@ jobs:
         avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
         printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
+    - name: Prepare the existing separate-UID fixture compiler
+      if: ${{ matrix.phase == 'flutter-full' }}
+      run: sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
     - name: Real API 33 ${{ matrix.phase }} verification
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |

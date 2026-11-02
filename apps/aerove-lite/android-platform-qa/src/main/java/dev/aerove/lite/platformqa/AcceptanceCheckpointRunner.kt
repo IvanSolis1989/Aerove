@@ -63,8 +63,9 @@ private class Checkpoints(private val runner: AndroidJUnitRunner, private val ar
         digest.digest().joinToString("") { "%02x".format(it) }
     }
     private val profileCancel by lazy { ProfileCancelAttestor(app, root, args) }
+    private val runtimeDevice by lazy { RuntimeDeviceAttestor(app) }
     private val stages = (setOf("imported-selected", "vpn-active", "background-active", "resumed-active",
-        "vpn-stopped", "vpn-permission-cancelled", "functional-running-for-host-restart", "restart-observed") + ProfileCancelAttestor.stages).toSet()
+        "vpn-stopped", "vpn-permission-cancelled", "functional-running-for-host-restart", "restart-observed") + ProfileCancelAttestor.stages + RuntimeDeviceAttestor.stages).toSet()
 
     fun start() {
         check(parent.isDirectory || parent.mkdirs())
@@ -124,8 +125,9 @@ private class Checkpoints(private val runner: AndroidJUnitRunner, private val ar
             evidence.put("qaToken", token).put("stage", row.getString("stage")).put("nonce", row.getString("nonce"))
                 .put("requestSha256", requestHash).put("pid", Process.myPid())
             listOf("source", "tree", "apkSha256").forEach { evidence.put(it, row.getString(it)) }
-            runBlocking { withTimeout(30_000) {
-                if (row.optString("checkpointKind") == "profile-update-cancel") profileCancel.capture(row,evidence)
+            runBlocking { withTimeout(if (row.optString("checkpointKind") == "runtime-device") 50_000 else 30_000) {
+                if (row.optString("checkpointKind") == "runtime-device") runtimeDevice.capture(row,evidence)
+                else if (row.optString("checkpointKind") == "profile-update-cancel") profileCancel.capture(row,evidence)
                 else snapshot(row, evidence)
             } }
             check(digest(file.readBytes()) == requestHash) { "Checkpoint changed during attestation" }

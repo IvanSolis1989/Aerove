@@ -692,6 +692,7 @@ class LiteVpnService : VpnService() {
             val handoff = meowServiceProjection(previous,next,JSONObject(projection.sharedStateJson),projection.updateParamsJson,setup.json.toString(),setup.testUrl)
             return@withLock persistFlutterProjection(before,endpoint,handoff)
         }
+        var failedNetwork: dev.aerove.lite.networksettings.NetworkApplyFailure? = null
         try {
             publishFlutterRuntime(null)
             coordinator.configurePolicies(next)
@@ -708,6 +709,13 @@ class LiteVpnService : VpnService() {
                             it.outcome != dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Applying
                     } == true
                 } }
+                val adopted = readback.networkRequest
+                failedNetwork = readback.networkApplyFailure?.takeIf {
+                    readback.endpoint === endpoint && readback.phase == VpnPhase.Running &&
+                        adopted != null && adopted.id > requestBefore && adopted.network == next.network &&
+                        adopted.ipv6 == next.ipv6 && adopted.outcome == dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Failed &&
+                        it.networkRequestId == adopted.id && it.mixedPort == next.network.ports.mixed
+                }?.copy(serviceOwner = owner, sessionGeneration = actual.sessionGeneration)
                 check(readback.endpoint === endpoint && readback.networkError == null &&
                     readback.networkRequest?.outcome == dev.aerove.lite.networksettings.NetworkRuntimeOutcome.Applied) { readback.networkError ?: "network: Native apply was not confirmed" }
             }
@@ -719,7 +727,8 @@ class LiteVpnService : VpnService() {
             refreshNetworkPermissions()
             result
         } catch (failure: Throwable) {
-            coordinator.stopIfCurrent(endpoint, "Live update failed: ${failure.message}")
+            coordinator.stopIfCurrent(endpoint, "Live update failed: ${failure.message}",
+                failedNetwork?.takeIf { graph.ownsVpnOwner(owner) })
             throw failure
         }
     }

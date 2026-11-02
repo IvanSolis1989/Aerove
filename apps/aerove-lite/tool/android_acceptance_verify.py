@@ -50,6 +50,8 @@ def platform_binding(runtime, info):
             receipt.get("productionBuildCount") == 1 and receipt.get("androidExecuted") is False and
             receipt.get("uiTestSourceSha256") == load(CONTRACT)["uiSourceSha256"],
             "Platform test APK is not tied to the one original target build/signer/source")
+    require(receipt.get("runtimeDeviceAttestorSourceSha256") == load(CONTRACT)["runtimeDeviceAttestorSource"]["sha256"],
+            "Platform build is not tied to the current runtime device observer")
     abi=receipt.get("r8Abi",{})
     require(abi.get("mode")=="typed-pre-r8-app-keeps-and-official-test-r8-applymapping" and
             abi.get("appR8Enabled") is True and abi.get("testR8Enabled") is True,
@@ -204,6 +206,11 @@ def ui_capture(directory, method, info, token, prepared=False, profile_proof=Non
         image = (directory/frame["file"]).read_bytes()
         require(image[:8] == b"\x89PNG\r\n\x1a\n" and len(image) >= 33 and image[12:16] == b"IHDR" and
                 frame.get("bytes") == len(image) and frame.get("density",0) > 0 and frame.get("windows"), "Invalid original functional capture")
+    from runtime_device_verify import LIFECYCLE_METHOD, OWNER_METHOD, sequence as device_sequence
+    if method in (LIFECYCLE_METHOD, OWNER_METHOD):
+        natives = device_sequence(directory, method, info, token)
+        require(all(native["pid"] == receipt["pid"] for native in natives), "Runtime device scene uses another target process")
+        return receipt, natives
     if method == "profileUpdateCancelBatchAndRetry":
         from profile_cancel_verify import sequence
         require(profile_proof is not None and receipt.get("profileUpdateCancelAccepted") is False,"Missing sealed prerequisite or self-certified cancellation")
@@ -256,7 +263,7 @@ def aggregate(directory, source, run, attempt, require_full=True):
     require(info["source"] == source and info["apk_sha256"] == ui["apkSha256"], "Raw build identity differs")
     invocations = ui.get("uiInvocations", [])
     require(["dev.aerove.lite.FlutterProductionUiTest#" + row["method"] for row in invocations] == contract["uiSelectors"] and
-            len({row["qaToken"] for row in invocations}) == 7, "Each exact UI method requires its own fresh token")
+            len({row["qaToken"] for row in invocations}) == len(contract["uiSelectors"]), "Each exact UI method requires its own fresh token")
     from profile_cancel_verify import prerequisite
     profile_proof=prerequisite(ui_root/"profile-cancel-prerequisite")
     require(ui.get("profileUpdateCancelVerified") is True,"Actual seventh Android cancellation method was not verified")
@@ -273,6 +280,9 @@ def aggregate(directory, source, run, attempt, require_full=True):
         raw_process_log = (ui_root / (row["method"] + "-renderer.out")).read_text(errors="replace")
         require(row.get("renderer") == renderer(raw_process_log, row["pid"]), "UI invocation lacks its actual PID-scoped Impeller proof")
         Producer.check_process_log(raw_process_log, row["pid"])
+        if row["method"] == "independentApplicationTcpUdpNativeAttribution":
+            from runtime_device_verify import verify_host_owner
+            verify_host_owner(ui_root, natives, info)
         all_natives.extend(natives)
     boundary = load(ui_root / "PROCESS-BOUNDARY.json")
     prepared = invocations[4]; recovered = invocations[5]

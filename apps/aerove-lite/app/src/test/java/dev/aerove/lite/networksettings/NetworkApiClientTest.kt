@@ -100,10 +100,87 @@ class NetworkApiClientTest {
                 val error = runCatching { api.applyNetwork(settings, true) }.exceptionOrNull()
                 assertTrue(error is CoreApiException)
                 assertEquals(409, (error as CoreApiException).statusCode)
+                assertNull(error.networkApplyFailure)
                 assertFalse(error.stackTraceToString().contains(password))
                 assertFalse(error.stackTraceToString().contains(secret))
             }
             assertEquals(4, server.requestCount)
+        }
+    }
+
+    @Test fun actualBindFailureKeepsOnlyTheFailedWireRequestAndSafeErrorBody() = runBlocking<Unit> {
+        val body = """{"error":"userListenerBindFailed"}"""
+        for (retryConflict in listOf(false, true)) MockWebServer().use { server ->
+            var routes = 0
+            val posts = mutableListOf<JSONObject>()
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    if (request.path == "/aerove/route") return route(if (++routes == 1) 1uL else high)
+                    assertEquals("POST", request.method)
+                    assertEquals("/aerove/network", request.path)
+                    posts += JSONObject(request.body.readUtf8())
+                    return if (retryConflict && posts.size == 1)
+                        MockResponse().setResponseCode(409).setBody("""{"error":"staleCoreEpoch"}""")
+                    else MockResponse().setResponseCode(503).setBody(body)
+                }
+            }
+            CoreApiClient(ControlEndpoint(server.port, secret)).use { api ->
+                val failure = runCatching { api.applyNetwork(settings, true) }.exceptionOrNull()
+                assertTrue(failure is CoreApiException)
+                failure as CoreApiException
+                assertEquals("Core API aerove returned HTTP 503", failure.message)
+                val diagnostic = checkNotNull(failure.networkApplyFailure)
+                val sent = posts.last()
+                assertEquals(sent.getString("requestId"), diagnostic.requestId)
+                assertEquals(sent.getString("expectedCoreEpoch"), diagnostic.expectedCoreEpoch)
+                assertEquals(sent.getJSONObject("network").getInt("mixed-port"), diagnostic.mixedPort)
+                assertEquals(503, diagnostic.statusCode)
+                assertEquals(body, diagnostic.responseBody)
+                assertEquals("aerove/network", diagnostic.operation)
+                assertEquals("POST", diagnostic.method)
+                assertNull(diagnostic.networkRequestId)
+                assertNull(diagnostic.serviceOwner)
+                assertNull(diagnostic.sessionGeneration)
+                assertFalse(diagnostic.toString().contains(secret))
+                assertFalse(diagnostic.toString().contains(password))
+            }
+            assertEquals(if (retryConflict) 2 else 1, posts.size)
+            assertEquals(posts.size * 2, server.requestCount) // No readback or additional POST after failure.
+            if (retryConflict) assertNotEquals(posts[0].getString("requestId"), posts[1].getString("requestId"))
+        }
+    }
+
+    @Test fun unrelatedOrMalformedNetworkErrorsCannotBecomeBindEvidence() {
+        for (body in listOf("not JSON", """{"error":"userListenerStartFailed"}""",
+            """{"error":"userListenerBindFailed","detail":"$password $secret"}""")) {
+            val failure = decodeNetworkApplyFailure(503, body, UUID.randomUUID().toString(), high, 14000)
+            assertEquals(503, failure.statusCode)
+            assertEquals("Core API aerove returned HTTP 503", failure.message)
+            assertNull(failure.networkApplyFailure)
+            assertFalse(failure.stackTraceToString().contains(password))
+            assertFalse(failure.stackTraceToString().contains(secret))
+        }
+    }
+
+    @Test fun trailingOrNonStandardFailureBodiesCannotEnterDiagnostics() = runBlocking<Unit> {
+        val bodies = listOf(
+            """{"error":"userListenerBindFailed"} password=$password secret=$secret""",
+            """{"error":"userListenerBindFailed","error":"userListenerBindFailed"}""",
+            """{'error':'userListenerBindFailed'}""",
+        )
+        for (body in bodies) MockWebServer().use { server ->
+            server.enqueue(route(high))
+            server.enqueue(MockResponse().setResponseCode(503).setBody(body))
+            CoreApiClient(ControlEndpoint(server.port, secret)).use { api ->
+                val failure = runCatching { api.applyNetwork(settings, true) }.exceptionOrNull()
+                assertTrue(failure is CoreApiException)
+                failure as CoreApiException
+                assertEquals("Core API aerove returned HTTP 503", failure.message)
+                assertNull(failure.networkApplyFailure)
+                assertFalse(failure.stackTraceToString().contains(password))
+                assertFalse(failure.stackTraceToString().contains(secret))
+            }
+            assertEquals(2, server.requestCount)
         }
     }
 

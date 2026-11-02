@@ -38,7 +38,9 @@
     "dev.aerove.lite.FlutterProductionUiTest#cancelVpnAuthorizationThenRecover",
     "dev.aerove.lite.FlutterProductionUiTest#prepareImportedRunningSessionForProcessRestart",
     "dev.aerove.lite.FlutterProductionUiTest#persistedImportedProfileAfterProcessRestart",
-    "dev.aerove.lite.FlutterProductionUiTest#profileUpdateCancelBatchAndRetry"
+    "dev.aerove.lite.FlutterProductionUiTest#profileUpdateCancelBatchAndRetry",
+    "dev.aerove.lite.FlutterProductionUiTest#listenerRebindFailureRecoveryAndNotificationLifecycle",
+    "dev.aerove.lite.FlutterProductionUiTest#independentApplicationTcpUdpNativeAttribution"
   ],
   "normalUiSelectors": [
     "dev.aerove.lite.FlutterProductionUiTest#consentNavigationTheme12",
@@ -46,10 +48,12 @@
     "dev.aerove.lite.FlutterProductionUiTest#profileImportApplyVpnNetworkAndBackgroundResume",
     "dev.aerove.lite.FlutterProductionUiTest#cancelVpnAuthorizationThenRecover",
     "dev.aerove.lite.FlutterProductionUiTest#persistedImportedProfileAfterProcessRestart",
-    "dev.aerove.lite.FlutterProductionUiTest#profileUpdateCancelBatchAndRetry"
+    "dev.aerove.lite.FlutterProductionUiTest#profileUpdateCancelBatchAndRetry",
+    "dev.aerove.lite.FlutterProductionUiTest#listenerRebindFailureRecoveryAndNotificationLifecycle",
+    "dev.aerove.lite.FlutterProductionUiTest#independentApplicationTcpUdpNativeAttribution"
   ],
   "expectedTerminationSelector": "dev.aerove.lite.FlutterProductionUiTest#prepareImportedRunningSessionForProcessRestart",
-  "uiSourceSha256": "e1c31ac1a3222d808fc8036f8173000bc7c821180105409a82a02d915e995fcc",
+  "uiSourceSha256": "30a781bed006cc4cb9b50defd5f907473360b76403b25e237dd4e885f629ea4c",
   "stages": [
     "imported-selected",
     "vpn-active",
@@ -81,6 +85,14 @@
     "profile-batch-cancelled",
     "profile-batch-retried"
   ],
-  "uiCandidatePhysicalSha256": "c82b44a4b82c6f9f16e8404a1d586d8b0d282753fd266884a90d3d50cbe871ba",
-  "uiSourceEncoding": "UTF-8; exact canonical LF, only CRLF-to-LF conversion"
+  "uiCandidatePhysicalSha256": "6cbc44c1ad01f1c000c76f9d6905749d91af8be0f6c87932487ac161c1c20a1f",
+  "uiSourceEncoding": "UTF-8; exact canonical LF, only CRLF-to-LF conversion",
+  "ownerFixtureSources": {
+    "AndroidManifest.xml": "87e53938ea7bab45cb22ebd7ce6be75f2f1925705a1f083deea3980c3b969957",
+    "src/dev/aerove/fixture/socketowner/SocketOwnerService.java": "28c6fd7039729b84d18a3c134b31d5ffee1a4bcb27ae4a0ec7168bbc626f3f11"
+  },
+  "runtimeDeviceAttestorSource": {
+    "path": "android-platform-qa/src/main/java/dev/aerove/lite/platformqa/RuntimeDeviceAttestor.kt",
+    "sha256": "ff0e1f7181efc10fbc3cea0ed210cb0a146b78809509db02230004c9d1d48416"
+  }
 }

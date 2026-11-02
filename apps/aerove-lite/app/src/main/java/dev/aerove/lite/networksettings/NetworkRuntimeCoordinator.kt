@@ -21,6 +21,7 @@ data class NetworkRuntimeStatus(
     val error: String? = null,
     val appliedIpv6: Boolean? = null,
     val request: NetworkRuntimeRequest? = null,
+    val networkApplyFailure: NetworkApplyFailure? = null,
 )
 
 enum class NetworkRuntimeOutcome { Applying, Applied, Failed }
@@ -38,6 +39,7 @@ class NetworkRuntimeCoordinator(
     private class Binding(val endpoint: CoreEndpoint, val startup: Desired, var applied: Desired = startup) {
         var failed: InboundKey? = null
         var failedError: String? = null
+        var failedDiagnostic: NetworkApplyFailure? = null
         var parked = false
     }
     private data class InboundKey(val ports: UserProxyPorts, val allowLan: Boolean, val ipv6: Boolean,
@@ -75,9 +77,13 @@ class NetworkRuntimeCoordinator(
                                 work.binding.applied = work.desired
                                 work.binding.failed = null
                                 work.binding.failedError = null
+                                work.binding.failedDiagnostic = null
                             } else {
                                 work.binding.failed = work.fields
                                 work.binding.failedError = failure?.let { it.message ?: it.javaClass.simpleName }
+                                work.binding.failedDiagnostic = (failure as? dev.aerove.lite.data.CoreApiException)
+                                    ?.networkApplyFailure?.takeIf { it.mixedPort == work.desired.network.ports.mixed }
+                                    ?.copy(networkRequestId = work.desired.requestId)
                             }
                             val requested = desired?.let(::fields)
                             val pending = requested != null && requested != fields(work.binding.applied) &&
@@ -119,6 +125,7 @@ class NetworkRuntimeCoordinator(
         if (!closed) {
             binding?.failed = null
             binding?.failedError = null
+            binding?.failedDiagnostic = null
             signals.trySend(Unit)
         }
     }
@@ -192,6 +199,8 @@ class NetworkRuntimeCoordinator(
         val applied = binding.applied.network.copy(systemProxy = binding.startup.network.systemProxy,
             allowBypass = binding.startup.network.allowBypass, bypassDomains = binding.startup.network.bypassDomains.toList())
         onStatus(NetworkRuntimeStatus(binding.endpoint, applied, applying, error, binding.applied.ipv6,
-            NetworkRuntimeRequest(target.requestId, target.network, target.ipv6, outcome)))
+            NetworkRuntimeRequest(target.requestId, target.network, target.ipv6, outcome),
+            binding.failedDiagnostic?.takeIf { outcome == NetworkRuntimeOutcome.Failed &&
+                it.networkRequestId == target.requestId && it.mixedPort == target.network.ports.mixed && error != null }))
     }
 }

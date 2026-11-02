@@ -52,5 +52,6 @@ class ControlEndpoint(val port: Int, val secret: String) {
     override fun toString(): String = "ControlEndpoint(127.0.0.1:$port, secret=<redacted>)"
 }
 
-class CoreApiException(val statusCode: Int, val operation: String) :
+class CoreApiException(val statusCode: Int, val operation: String,
+    val networkApplyFailure: dev.aerove.lite.networksettings.NetworkApplyFailure? = null) :
     IOException("Core API $operation returned HTTP $statusCode")

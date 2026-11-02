@@ -279,5 +279,179 @@ class CurrentRouteAndFixtureTest(unittest.TestCase):
             self.assertEqual(first + response.read(), expected)
 
 
+class RuntimeDeviceReplayTests(unittest.TestCase):
+    """Parser policy only. Synthetic rows never claim an App/Android acceptance pass."""
+    def test_contract_preserves_original_seven_and_adds_the_two_real_device_scenes(self):
+        contract = v.load(v.CONTRACT)
+        prefix = "dev.aerove.lite.FlutterProductionUiTest#"
+        original = ["consentNavigationTheme12", "persistedConsentAfterProcessRestart",
+                    "profileImportApplyVpnNetworkAndBackgroundResume", "cancelVpnAuthorizationThenRecover",
+                    "prepareImportedRunningSessionForProcessRestart", "persistedImportedProfileAfterProcessRestart",
+                    "profileUpdateCancelBatchAndRetry"]
+        self.assertEqual(contract["uiSelectors"][:7], [prefix + method for method in original])
+        self.assertEqual(contract["uiSelectors"][7:], [prefix + "listenerRebindFailureRecoveryAndNotificationLifecycle",
+            prefix + "independentApplicationTcpUdpNativeAttribution"])
+        self.assertEqual(contract["platformCount"], 28)
+        self.assertFalse(contract["fullAcceptance"])
+        self.assertFalse(contract["visualApproved"])
+
+    def lifecycle(self):
+        import runtime_device_verify as device
+        import uuid
+        result = []
+        for stage in device.LIFECYCLE:
+            stopped = stage in ("listener-bind-failed", "listener-stopped", "proxy-notification-stopped", "proxy-notification-still-stopped")
+            proxy = stage.startswith("proxy-") and not stopped
+            port = 18081 if stage == "listener-baseline" else 18082
+            generation = 1 if stage in ("listener-baseline", "listener-rebound") else 2 if stage == "listener-retry" else 3
+            epoch = "2" if stage == "listener-rebound" else str(generation)
+            row = dict(stage=stage, phase="Stopped" if stopped else "Running", serviceOwner=generation,
+                       sessionGeneration=generation, coreEpoch=epoch, requestedPort=port,
+                       vpnHandles=[] if stopped or proxy else ["123"], listening=not stopped, suspended=False,
+                       appUid=10001, pid=999, notifications=[])
+            row["networkRequestId"] = 2 if stage == "listener-rebound" else 1
+            row["profileName"] = "ControlledProfile"
+            row["networkReadbackJson"] = json.dumps(dict(coreEpoch=epoch, network={"mixed-port": port}, activePorts=[port]))
+            token = str(uuid.uuid4())
+            row["proxyEcho"] = dict(port=port, token=token, response="HTTP/1.0 200 OK\r\n\r\nAEROVE_LITE_FIXTURE:" + token)
+            if stage == "listener-rebound" or stopped:
+                row.update(releasedPort=18081 if stage == "listener-rebound" else 18082, releasedPortBindSucceeded=True)
+            if stage == "listener-bind-failed":
+                # Parser-policy fixture, never a claim that the current Android collector emits it.
+                row.update(occupiedPort=18083, occupiedPortRejected=True,
+                    error="Live update failed: Core API aerove returned HTTP 503",
+                    networkApplyFailure=dict(operation="aerove/network", method="POST", statusCode=503,
+                        requestId=str(uuid.uuid4()), networkRequestId=3, mixedPort=18083, expectedCoreEpoch="2",
+                        serviceOwner=1, sessionGeneration=1, responseBody='{"error":"userListenerBindFailed"}'))
+            if proxy:
+                row["notifications"] = [dict(channel="aerove-lite-vpn", title="ControlledProfile", flags=10, channelImportance=2,
+                    actions=[] if stage == "proxy-stop-hidden" else ["Stop"])]
+            result.append(row)
+        return result
+
+    def test_hot_rebind_keeps_the_same_runtime_and_releases_the_old_port(self):
+        import runtime_device_verify as device
+        records = self.lifecycle()
+        self.assertEqual(device.validate_rows(device.LIFECYCLE_METHOD, records), records)
+        for key, value in (("serviceOwner", 9), ("sessionGeneration", 9), ("coreEpoch", "9"), ("vpnHandles", ["other"]), ("pid", 9)):
+            changed = copy.deepcopy(records); changed[1][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, changed)
+        changed = copy.deepcopy(records); changed[1]["releasedPortBindSucceeded"] = False
+        with self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, changed)
+
+    def test_hot_rebind_requires_actual_target_readback_new_request_and_canonical_epoch_advance(self):
+        import runtime_device_verify as device
+        # Native apply receipts require a new u64 epoch, while owner/session/TUN/PID stay unchanged.
+        records = self.lifecycle()
+        self.assertEqual((records[0]["coreEpoch"], records[1]["coreEpoch"]), ("1", "2"))
+        self.assertEqual(device.validate_rows(device.LIFECYCLE_METHOD, records), records)
+        for epoch in ("1", "0", "02", "18446744073709551616", 2):
+            records = self.lifecycle()
+            records[1]["coreEpoch"] = epoch
+            readback = json.loads(records[1]["networkReadbackJson"])
+            readback["coreEpoch"] = epoch
+            records[1]["networkReadbackJson"] = json.dumps(readback)
+            with self.subTest(epoch=epoch), self.assertRaises(ValueError):
+                device.validate_rows(device.LIFECYCLE_METHOD, records)
+        records = self.lifecycle(); records[1]["networkRequestId"] = records[0]["networkRequestId"]
+        with self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, records)
+        records = self.lifecycle()
+        readback = json.loads(records[1]["networkReadbackJson"]); readback["network"]["mixed-port"] = 18081
+        records[1]["networkReadbackJson"] = json.dumps(readback)
+        with self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, records)
+
+    def test_active_listener_readback_does_not_replace_a_real_http_response(self):
+        import runtime_device_verify as device
+        records = self.lifecycle(); records[1]["proxyEcho"]["response"] = "HTTP/1.0 200 OK\r\n\r\nwrong body"
+        with self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, records)
+
+    def test_notification_updates_cannot_restart_or_repost_after_stop(self):
+        import runtime_device_verify as device
+        records = self.lifecycle(); records[6]["serviceOwner"] += 1
+        with self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, records)
+        records = self.lifecycle(); records[-1]["notifications"] = [dict(channel="aerove-lite-vpn", actions=["Stop"])]
+        with self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, records)
+
+    def test_any_extra_application_notification_channel_is_rejected(self):
+        import runtime_device_verify as device
+        for index in (0, 4, 5, 9):
+            records = self.lifecycle()
+            records[index]["notifications"].append(dict(channel="unrelated-app-channel", actions=[]))
+            with self.subTest(stage=records[index]["stage"]), self.assertRaises(ValueError):
+                device.validate_rows(device.LIFECYCLE_METHOD, records)
+
+    def test_busy_port_requires_original_native_code_request_port_and_session(self):
+        import runtime_device_verify as device
+        records = self.lifecycle()
+        del records[2]["networkApplyFailure"]
+        with self.assertRaisesRegex(ValueError, "original network apply diagnostic"):
+            device.validate_rows(device.LIFECYCLE_METHOD, records)
+        invalid = (("operation", "delay"), ("method", "GET"), ("statusCode", 409),
+                   ("requestId", "not-a-request"), ("networkRequestId", 1),
+                   ("mixedPort", 18082), ("expectedCoreEpoch", "stale"),
+                   ("serviceOwner", 90), ("sessionGeneration", 90),
+                   ("responseBody", '{"error":"networkApplyCancelled"}'))
+        for key, value in invalid:
+            records = self.lifecycle()
+            records[2]["networkApplyFailure"][key] = value
+            with self.subTest(field=key), self.assertRaises(ValueError):
+                device.validate_rows(device.LIFECYCLE_METHOD, records)
+        records = self.lifecycle()
+        records[2]["error"] = "Live update failed: unrelated configuration error"
+        with self.assertRaises(ValueError):
+            device.validate_rows(device.LIFECYCLE_METHOD, records)
+
+    def test_occupied_failure_needs_actual_collision_release_and_a_new_retry_session(self):
+        import runtime_device_verify as device
+        for field, value in (("occupiedPortRejected", False), ("releasedPortBindSucceeded", False), ("error", "")):
+            records = self.lifecycle(); records[2][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, records)
+        records = self.lifecycle(); records[3].update(serviceOwner=1, sessionGeneration=1, coreEpoch="1")
+        readback = json.loads(records[3]["networkReadbackJson"]); readback["coreEpoch"] = "1"
+        records[3]["networkReadbackJson"] = json.dumps(readback)
+        with self.assertRaises(ValueError): device.validate_rows(device.LIFECYCLE_METHOD, records)
+
+    def owner(self):
+        from uuid import uuid4
+        package, uid = "dev.aerove.fixture.socketowner", 10099
+        row = dict(appUid=10001, pid=999)
+        owner = dict(fixtureUid=uid, fixturePackage=package, fixturePid=1000, retained=True, fixtureClosed=True,
+                     fixtureTestOnly=True, fixtureApkSha256="a" * 64, token=str(uuid4()))
+        connections = []
+        for protocol, source_port, target_port in (("tcp", 40001, 19001), ("udp", 40002, 19002)):
+            owner[protocol] = dict(source=f"[172.19.0.1]:{source_port}", target=f"[10.0.2.2]:{target_port}")
+            connections.append(dict(metadata=dict(network=protocol, type="Tun", sourceIP="172.19.0.1", sourcePort=source_port,
+                destinationIP="10.0.2.2", destinationPort=target_port, uid=uid, process=package)))
+        owner["connectionsJson"] = json.dumps(dict(connections=connections)); row["owner"] = owner
+        return row
+
+    def test_owner_requires_native_tcp_and_udp_metadata_for_the_actual_ordinary_uid(self):
+        import runtime_device_verify as device
+        row = self.owner(); self.assertEqual(device.validate_owner(row), row["owner"])
+        for uid in (row["appUid"], 2000):
+            changed = copy.deepcopy(row); changed["owner"]["fixtureUid"] = uid
+            with self.subTest(uid=uid), self.assertRaises(ValueError): device.validate_owner(changed)
+        for index in (0, 1):
+            changed = copy.deepcopy(row); raw = json.loads(changed["owner"]["connectionsJson"])
+            raw["connections"][index]["metadata"]["uid"] = 10098
+            changed["owner"]["connectionsJson"] = json.dumps(raw)
+            with self.subTest(protocol=index), self.assertRaises(ValueError): device.validate_owner(changed)
+        changed = copy.deepcopy(row); raw = json.loads(changed["owner"]["connectionsJson"])
+        raw["connections"][0]["metadata"]["type"] = "Mixed"
+        changed["owner"]["connectionsJson"] = json.dumps(raw)
+        with self.assertRaises(ValueError): device.validate_owner(changed)
+
+    def test_owner_rejects_missing_udp_wrong_tuple_or_unclosed_helper(self):
+        import runtime_device_verify as device
+        row = self.owner(); raw = json.loads(row["owner"]["connectionsJson"])
+        raw["connections"] = raw["connections"][:1]; row["owner"]["connectionsJson"] = json.dumps(raw)
+        with self.assertRaises(ValueError): device.validate_owner(row)
+        row = self.owner(); row["owner"]["tcp"]["source"] = "[172.19.0.1]:44444"
+        with self.assertRaises(ValueError): device.validate_owner(row)
+        row = self.owner(); row["owner"]["fixtureClosed"] = False
+        with self.assertRaises(ValueError): device.validate_owner(row)
+
+
+
 if __name__ == "__main__":
     unittest.main()
