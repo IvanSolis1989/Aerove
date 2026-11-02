@@ -25,7 +25,7 @@ APP_DIR = TOOL_DIR.parent
 REPO = "IvanSolis1989/Aerove"
 WORKFLOW = "aerove-lite.yaml"
 BUILD_BRANCHES = {"codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",
-                  "codex/aerove-lite-beta24-validation"}
+                  "codex/aerove-lite-beta24-validation", "codex/lite-shared-flutter-complete114"}
 ARTIFACT_PREFIXES = {
     "arm": "AEROVE-Lite-preview-arm64-attempt-",
     "x86": "AEROVE-Lite-runtime-contract-attempt-",

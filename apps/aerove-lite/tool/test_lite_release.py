@@ -653,7 +653,7 @@ class LitePromotionGateTests(unittest.TestCase):
                 mock.patch.object(release, "_candidate_jobs", return_value={"complete": True}):
             outputs = Path(temp) / "outputs"
             for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",
-                           "codex/aerove-lite-beta24-validation"):
+                           "codex/aerove-lite-beta24-validation", "codex/lite-shared-flutter-complete114"):
                 for event in ("push", "workflow_dispatch"):
                     run.update(head_branch=branch,event=event)
                     with self.subTest(branch=branch,event=event):
@@ -885,7 +885,7 @@ class ExplicitBuildPromotionTest(unittest.TestCase):
 
     def test_explicit_original_accepts_only_exact_approved_development_branches(self):
         for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",
-                       "codex/aerove-lite-beta24-validation"):
+                       "codex/aerove-lite-beta24-validation", "codex/lite-shared-flutter-complete114"):
             for event in ("push", "workflow_dispatch"):
                 self.run.update(head_branch=branch, event=event)
                 with self.subTest(branch=branch, event=event):
@@ -893,33 +893,37 @@ class ExplicitBuildPromotionTest(unittest.TestCase):
                     self.assertEqual((result["build_source"], result["run_id"], result["run_attempt"]),
                                      (self.source, 123, 2))
         for branch in ("main", "codex/unrelated", "feature/lite", "codex/aerove-lite-beta24-validation-extra",
-                       "codex/aerove-lite-beta24-validation/child", "CODEX/aerove-lite-beta24-validation", "", None):
+                       "codex/aerove-lite-beta24-validation/child", "CODEX/aerove-lite-beta24-validation",
+                       "codex/lite-shared-flutter-complete114-extra", "codex/lite-shared-flutter-complete114/child",
+                       "CODEX/lite-shared-flutter-complete114", "", None):
             self.run["head_branch"] = branch
             with self.subTest(rejectedBranch=branch), self.assertRaises(release.PromotionError):
                 self.select()
 
     def test_validation_branch_still_rejects_incomplete_or_forged_original_identity(self):
-        self.run["head_branch"] = "codex/aerove-lite-beta24-validation"
-        for key, value in (("id", 999), ("run_attempt", 0), ("run_attempt", True),
-                           ("run_number", 0), ("run_number", True), ("head_sha", "main"),
-                           ("path", ".github/workflows/another.yaml"),
-                           ("repository", dict(full_name="fork/repository")),
-                           ("head_repository", dict(full_name="fork/repository")),
-                           ("event", "pull_request"), ("status", "in_progress"), ("conclusion", "failure")):
-            original = self.run[key]
-            self.run[key] = value
-            with self.subTest(field=key, value=value), self.assertRaises(release.PromotionError):
-                self.select()
-            self.run[key] = original
-        with self.assertRaises(release.PromotionError):
-            release._run_identity(self.run, 123, "c" * 40)
+        for branch in ("codex/aerove-lite-beta24-validation", "codex/lite-shared-flutter-complete114"):
+            self.run["head_branch"] = branch
+            for key, value in (("id", 999), ("run_attempt", 0), ("run_attempt", True),
+                               ("run_number", 0), ("run_number", True), ("head_sha", "main"),
+                               ("path", ".github/workflows/another.yaml"),
+                               ("repository", dict(full_name="fork/repository")),
+                               ("head_repository", dict(full_name="fork/repository")),
+                               ("event", "pull_request"), ("status", "in_progress"), ("conclusion", "failure")):
+                original = self.run[key]
+                self.run[key] = value
+                with self.subTest(field=key, value=value), self.assertRaises(release.PromotionError):
+                    self.select()
+                self.run[key] = original
+            with self.assertRaises(release.PromotionError):
+                release._run_identity(self.run, 123, "c" * 40)
 
     def test_development_branch_admission_does_not_expand_main_dispatch_release_gate(self):
         self.run["head_branch"] = "main"
         release._run_identity(self.run, 123, self.source, release=True)
         for branch, event in (("main", "push"), ("codex/aerove-lite-beta24-validation", "workflow_dispatch"),
                               ("codex/aerove-lite-meow-app", "workflow_dispatch"),
-                              ("codex/aerove-independent-architecture", "workflow_dispatch")):
+                              ("codex/aerove-independent-architecture", "workflow_dispatch"),
+                              ("codex/lite-shared-flutter-complete114", "workflow_dispatch")):
             self.run.update(head_branch=branch, event=event)
             with self.subTest(branch=branch, event=event), self.assertRaises(release.PromotionError):
                 release._run_identity(self.run, 123, self.source, release=True)
