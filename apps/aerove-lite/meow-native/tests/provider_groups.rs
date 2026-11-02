@@ -255,15 +255,34 @@ async fn existing_periodic_provider_owner_installs_new_graph_and_joins_at_stop()
     let (api,tunnel,scope) = fixture(&files,&yaml).await;
     let provider = api.state.proxy_providers.get("feed").unwrap().value().clone();
     let groups = api.control.activate_groups(&scope).unwrap(); let mut events = api.control.subscribe_groups();
-    api.activate_providers().unwrap(); let before = api.control.snapshot().await.unwrap();
-    files.write("feed.yaml","proxies:\n - {name: c, type: direct}\n");
-    timeout(Duration::from_secs(5),async {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    api.activate_providers().unwrap();
+    let before = tokio::time::timeout_at(deadline, async {
         loop {
-            events.recv().await.unwrap();
-            if api.control.snapshot().await.unwrap().picks["PICK"] == "c" { break; }
+            match api.control.snapshot().await {
+                Ok(snapshot) => return snapshot,
+                Err(ControlError::ProviderBusy) => tokio::task::yield_now().await,
+                Err(error) => panic!("activated provider baseline snapshot failed: {error:?}"),
+            }
         }
     }).await.unwrap();
-    assert_ne!(api.control.snapshot().await.unwrap().core_epoch,before.core_epoch);
+    files.write("feed.yaml","proxies:\n - {name: c, type: direct}\n");
+    let after = tokio::time::timeout_at(deadline, async {
+        loop {
+            events.recv().await.unwrap();
+            loop {
+                match api.control.snapshot().await {
+                    Ok(snapshot) => {
+                        if snapshot.picks["PICK"] == "c" { return snapshot; }
+                        break;
+                    }
+                    Err(ControlError::ProviderBusy) => tokio::task::yield_now().await,
+                    Err(error) => panic!("periodic provider graph snapshot failed: {error:?}"),
+                }
+            }
+        }
+    }).await.unwrap();
+    assert_ne!(after.core_epoch,before.core_epoch);
     assert!(provider.proxies()[0].health().observed()); forward(tunnel,true).await;
     stop(&api,&scope,groups).await;
 }
