@@ -1198,6 +1198,14 @@ Lite Flutter test-only packaging 候选 94 另核 Android 官方 [AndroidJUnitRu
 
 Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.10.0：官方 Google Maven [core 1.6.1 POM](https://dl.google.com/dl/android/maven2/androidx/test/core/1.6.1/core-1.6.1.pom)（SHA256 `44d102e5879664a4a4e1006881f2e6d886af99db362d20cb9a659d997b32464b`）引入 lifecycle-common 2.3.1；[lifecycle-common 2.10.0 module](https://dl.google.com/dl/android/maven2/androidx/lifecycle/lifecycle-common/2.10.0/lifecycle-common-2.10.0.module)（SHA256 `5d1247b1edfbdc9ddedcbe525c9d2629567b1c538cb7a9c620cd044a124b5c73`）的 JVM runtime 指向 lifecycle-common-jvm 2.10.0。只声明该已确认冲突模块的 runtimeOnly 版本，避免旧 Lifecycling 内部类调用新 App 已不存在的方法，不强制全图或放宽 ABI 检查。两者沿用 AndroidX / Apache-2.0；另只读核对[官方传统测试库说明](https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/test-setup#projects-using-deprecated-classes)，未据此新增 SDK 可选库或认定运行兼容通过。
 
+#### [Google Error Prone](https://github.com/google/error-prone)
+
+**固定版本 / revision：** release tag `v2.38.0` / `com.google.errorprone:error_prone_annotations:2.38.0`，沿用本项目既有测试依赖版本。
+
+**用途与采用方式：** Lite 独立 QA 的 compileOnly 注解定义，用于 AndroidX Test 的实际 R8 类型引用。目标 App 的编译依赖闭包不含这两项测试注解，因此单独保留其来源。只读核对固定 [CanIgnoreReturnValue.java](https://github.com/google/error-prone/blob/v2.38.0/annotations/src/main/java/com/google/errorprone/annotations/CanIgnoreReturnValue.java) 与 [MustBeClosed.java](https://github.com/google/error-prone/blob/v2.38.0/annotations/src/main/java/com/google/errorprone/annotations/MustBeClosed.java) 的 CLASS 保留语义；采用注解发布库，未复制源码。
+
+**许可证、署名与证据：** Apache-2.0，保留 Error Prone Authors 署名与发布物许可；上述固定源码头及 [LICENSE](https://github.com/google/error-prone/blob/v2.38.0/LICENSE)。
+
 #### [AOSP platform/packages/modules/Wifi](https://android.googlesource.com/platform/packages/modules/Wifi)
 
 **固定版本 / revision：** `android13-release` / `0cc694bd8537a85f1dc7fd91852915227b7d673c`；固定 [`WifiShellCommand.java`](https://android.googlesource.com/platform/packages/modules/Wifi/+/0cc694bd8537a85f1dc7fd91852915227b7d673c/service/java/com/android/server/wifi/WifiShellCommand.java#L4-L13) blob `367979f3c07d0b9dd91e06d80f6fe1b95b46d276`
@@ -1278,6 +1286,8 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 共享 Flutter Lite 的独立平台验收 runner 另只读核对同一 `9.4.1` source artifact 的 `TestApplicationTaskManager.kt`、`CheckTestedAppObfuscation.java`、`ProguardConfigurableTask.kt`、`R8Task.kt`、`PublishingSpecs.kt`、`BundleAllClasses.kt` 及 `TestVariantFactory.java`。独立测试启用官方 Test R8 并消费目标 App mapping，复用既有 typed TraceReferences 生成最小 App ABI keep；独立插件默认仅创建 debug，验收模块显式创建 release；Kotlin friend 关联目标实际发布的 compile Jar，保留生产 internal 可见性。不复制上游实现，不关闭生产混淆。源码接线与真实 Gradle/R8、Android 验收分别记录。
 
 同源 `TaskManager.kt`、`LinkApplicationAndroidResourcesTask.kt`、`ArtifactsImpl.kt` 与 `InternalArtifactType.kt` 另用于核对资源类来源：AGP 将 `COMPILE_AND_RUNTIME_R_CLASS_JAR` 加入 PROJECT scoped classes，其中包含依赖的 R 类。ABI 推断通过该精确 provider 将测试资源 jar 归入依赖输入，保留项目代码重叠错误及测试自有资源引用；不按类名豁免冲突，也不修改生成文件。
+
+同源 `ComponentImpl.kt` / `ComponentUtils.kt`、`ProvidedClasspath.kt` 与 `ProguardConfigurableTask.kt` 另用于独立平台 Test R8 的真实依赖闭包：通过目标 release variant 的公开 `compileClasspath` FileCollection 提供 compileOnly 类型，保留 pre-R8 producer 依赖，替代手写且已漏 Camera 类型的清单；不把目标 Kotlin/Javac 业务类或这些依赖打进 runner，不宣称文件依赖自动按 Maven 坐标对齐 runtime。已确认的 Lifecycle runtime 仍单独对齐。原生封包另按 [JniLibsPackaging.keepDebugSymbols](https://developer.android.com/reference/tools/gradle-api/9.4/com/android/build/api/dsl/JniLibsPackaging#keepDebugSymbols()) 将已绑定收据的 Meow 核心纳入现有保留列表，防止 AGP 再次 strip 改变字节；不放宽 native 哈希、ELF、JNI 或对齐验收。
 
 另参考 Android tools/base 固定提交 [`44330ad8b855e38930c70ca44f65e781dd95d1ab`](https://android.googlesource.com/platform/tools/base/+/44330ad8b855e38930c70ca44f65e781dd95d1ab) 及其外部 Kotlin 构建脚本回归，定位 KT-89716 对已应用 KTS 的 FIR/UAST 分类问题。Lite 两入口在原有时点直接应用既有共同插件，移除多余脚本中转；未复制上游补丁、升级依赖或关闭 lint，实际 lint 结果仍由新源码 CI 核验。
 

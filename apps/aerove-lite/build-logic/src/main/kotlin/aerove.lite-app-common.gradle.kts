@@ -148,6 +148,8 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
         // AGP compiles tests against pre-R8 classes, then applies the same App mapping in Test R8.
         val platformProject = checkNotNull(platformTests)
         platformProject.plugins.withId("com.android.test") {
+            // Test R8 needs the target's pre-R8 dependency types without packaging them in the runner.
+            platformProject.dependencies.add("compileOnly", variant.compileClasspath)
             val testComponents = platformProject.extensions.getByType<
                 com.android.build.api.variant.TestAndroidComponentsExtension>()
             testComponents.onVariants(testComponents.selector().withBuildType("release")) { testVariant ->
@@ -256,7 +258,7 @@ android.apply {
     packaging {
         jniLibs.useLegacyPackaging = false
         jniLibs.excludes += "**/libaerove_core.so"
-        jniLibs.keepDebugSymbols += setOf("**/libaerove_filter_helper.so", "**/libaerove_filter_jni.so")
+        jniLibs.keepDebugSymbols += setOf("**/libaerove_filter_helper.so", "**/libaerove_filter_jni.so", "**/libaerove_meow_core.so")
     }
     testBuildType = "release"
     signingConfigs {

@@ -389,6 +389,9 @@ jobs:
         mkdir -p "$RUNNER_TEMP/lite-package-diagnostics"
         git status --short > "$RUNNER_TEMP/lite-package-diagnostics/git-status.txt"
         git diff --binary > "$RUNNER_TEMP/lite-package-diagnostics/generated.patch"
+        if [[ '${{ job.status }}' != success && -f apps/aerove-lite/build/app/outputs/apk/release/app-release.apk ]]; then
+          cp apps/aerove-lite/build/app/outputs/apk/release/app-release.apk "$RUNNER_TEMP/lite-package-diagnostics/unverified-app-release.apk"
+        fi
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: ${{ always() }}
       with:
@@ -397,7 +400,12 @@ jobs:
           apps/aerove-lite/build/app/reports/
           apps/aerove-lite/build/app/intermediates/androidTestAppKeepRules/
           apps/aerove-lite/build/app/outputs/androidTest-results/
+          apps/aerove-lite/build/app/outputs/mapping/release/
+          apps/aerove-lite/build/flutter-host/platform-qa/outputs/mapping/release/
           apps/aerove-lite/android-qa/build/reports/
+          ${{ runner.temp }}/lite-badging.txt
+          ${{ runner.temp }}/lite-signature.txt
+          ${{ runner.temp }}/lite-core/provenance.json
           ${{ runner.temp }}/lite-flutter-runner-*
           ${{ runner.temp }}/lite-platform-*
           ${{ runner.temp }}/lite-production-before-runner.sha256

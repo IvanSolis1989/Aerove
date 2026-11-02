@@ -93,12 +93,7 @@ dependencies {
     implementation("junit:junit:4.13.2")
     // The runner runtime must match the target's existing Lifecycle 2.10 ABI.
     runtimeOnly("androidx.lifecycle:lifecycle-common:2.10.0")
-    // Existing target coordinates, variant-aware compile-only; no target production classes are packaged.
-    compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-    compileOnly("com.squareup.okhttp3:okhttp:4.12.0")
-    compileOnly("com.google.zxing:core:3.5.3")
-    compileOnly("io.github.rosemoe:editor:0.23.7")
-    compileOnly("io.github.rosemoe:language-textmate:0.23.7")
-    compileOnly("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
-    compileOnly("androidx.core:core-ktx:1.19.0")
+    // AndroidX runner bytecode references these test-only compile annotations.
+    compileOnly("com.google.errorprone:error_prone_annotations:2.38.0")
+    // Target compile libraries are wired by the App variant callback as compileOnly files.
 }
