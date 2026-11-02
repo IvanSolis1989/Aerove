@@ -154,6 +154,24 @@ class ContractTest(unittest.TestCase):
             self.assertEqual(any(call.args[0].startswith('install-') for call in commands.call_args_list), reaches_install)
             self.assertFalse(json.loads((self.root / 'qa-receipt.json').read_text())['releaseAccepted'])
 
+    def test_api33_randomized_installed_base_still_requires_original_bytes_and_no_splits(self):
+        path = '/data/app/~~7Hs06DjwO1r3r0HEmxkGWg==/dev.aerove.lite-aS-QNBQIXJ9HHqomOtz1Yg==/base.apk'
+        original = self.apk.read_bytes()
+        expected = hashlib.sha256(original).hexdigest()
+        producer = qa.Producer(SimpleNamespace(adb=Path('adb'), serial='emulator-5554', output=self.root))
+        with patch.object(producer, 'adb_command', side_effect=[('package:' + path + '\n').encode(), original]) as commands:
+            self.assertEqual(producer.installed_hash('app', qa.PACKAGE, expected), dict(path=path, sha256=expected))
+        self.assertEqual(commands.call_args_list[1].args, ('app-installed-apk', 'exec-out', 'cat', path))
+        with patch.object(producer, 'adb_command', side_effect=[('package:' + path + '\n').encode(), original + b'changed']):
+            with self.assertRaisesRegex(ValueError, 'bytes differ'):
+                producer.installed_hash('app', qa.PACKAGE, expected)
+        for bad in ('package:' + path + '\npackage:' + path.replace('base.apk', 'split_config.en.apk'),
+                    'package:/sdcard/base.apk', 'package:' + path + ';id'):
+            with self.subTest(path=bad), patch.object(producer, 'adb_command', return_value=bad.encode()) as commands:
+                with self.assertRaisesRegex(ValueError, 'one installed base APK'):
+                    producer.installed_hash('app', qa.PACKAGE, expected)
+                self.assertEqual(commands.call_count, 1)
+
     def test_only_instrumentation_install_allows_test_only_apk(self):
         info_path = self.root / 'BUILD_INFO.json'
         self.info['signer_sha256'] = 'c' * 64

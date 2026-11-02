@@ -1299,6 +1299,14 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 
 **许可证、署名与证据：** Apache-2.0；sources jar 原版权头及 `NOTICE`，有序 provider 源文件保留 AOSP 2017 署名；`NOTICE` 解压后 SHA256 `4842d6b86dc14afab28106d484946e1f927974896772c4644030be8758405ae0`。固定 `ClassFileProviderFactory.java` SHA256 `d400669af2f4773736dd1b85b01060d5d7051ba681d9611c535498b6d3b8b412`，第 49、64–65 行为顺序选首个 descriptor 的来源依据；[官方 Gradle source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/gradle/9.4.1/gradle-9.4.1-sources.jar)、[官方 Builder source artifact](https://dl.google.com/dl/android/maven2/com/android/tools/build/builder/9.4.1/builder-9.4.1-sources.jar)
 
+#### [AOSP frameworks/base](https://github.com/aosp-mirror/platform_frameworks_base)
+
+**固定来源：** Android 13/API 33 的 `android-13.0.0_r1`；[`PackageManagerServiceUtils.getNextCodePath`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/services/core/java/com/android/server/pm/PackageManagerServiceUtils.java#L1111-L1139) 与 [`PackageManagerService.RANDOM_DIR_PREFIX`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/services/core/java/com/android/server/pm/PackageManagerService.java#L512)。
+
+**用途与采用方式：** 只读核对系统安装目录的 `~~` 前缀和随机路径。Lite Android 验收工具接纳实际 `pm path` 输出中的 `~` 字符，继续要求单一 `/data/app/…/base.apk`，并读取已安装 APK 比较封存哈希；未复制实现、引入依赖或更改应用包。
+
+**许可证与署名：** Apache-2.0，保留上游文件的 AOSP 版权与许可头；仅作路径协议参考。
+
 #### [AOSP libcore](https://android.googlesource.com/platform/libcore/)
 
 **固定来源：** Android 13/API 33 的 `android-13.0.0_r1`，提交 `7267082c39a25fb5afbc4eeb5752c1b276d29344`；[JSONObject.java](https://android.googlesource.com/platform/libcore/+/7267082c39a25fb5afbc4eeb5752c1b276d29344/json/src/main/java/org/json/JSONObject.java) SHA256 `4d3ce46839c56c6b4ec650aa983ed40fbda9fdf07895372f6c27bcc8cf0cca85`。

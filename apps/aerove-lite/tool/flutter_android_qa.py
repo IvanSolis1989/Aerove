@@ -177,7 +177,7 @@ class Producer:
     def installed_hash(self, label, package, expected):
         output = self.adb_command(label + '-path', 'shell', 'pm', 'path', package).decode().strip()
         paths = output.splitlines()
-        if len(paths) != 1 or not re.fullmatch(r'package:/data/app/[A-Za-z0-9_./+=-]+/base.apk', paths[0]):
+        if len(paths) != 1 or not re.fullmatch(r'package:/data/app/[A-Za-z0-9_./+=~-]+/base.apk', paths[0]):
             raise ValueError('Requires one installed base APK without splits')
         target = paths[0][len('package:'):]
         data = self.adb_command(label + '-installed-apk', 'exec-out', 'cat', target, timeout=60)
