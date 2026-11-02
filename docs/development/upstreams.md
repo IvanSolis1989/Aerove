@@ -1273,7 +1273,7 @@ Lite Flutter test-only packaging 候选 94 另核 Android 官方 [AndroidJUnitRu
 
 标准版原包诊断另只读核对[固定 `sdkmanager.sh`](https://android.googlesource.com/platform/tools/base/+/dcded801a4942d06805cc74b56dc2cecbece2f80/sdklib/wrappers/sdkmanager.sh)，提交为 `dcded801a4942d06805cc74b56dc2cecbece2f80`。该 wrapper 的 `--licenses` 警告并返回成功，用于解释 CI 新工具未生成旧 preview 许可记录的边界；参考源与运行二进制身份分别记录，不互相冒充。诊断流程改用环境中已存在且核版本为 12.0 的 Java SDKmanager 执行正式许可登记，保留实际退出码和原许可文件检查；未复制 wrapper 实现、未新增或伪造许可文件。原文件保留 AOSP 2026 的 Apache-2.0 版权头。
 
-共享 Flutter Lite 的独立平台验收 runner 另只读核对同一 `9.4.1` source artifact 的 `TestApplicationTaskManager.kt`、`CheckTestedAppObfuscation.java`、`ProguardConfigurableTask.kt`、`R8Task.kt`、`PublishingSpecs.kt` 及 `TestVariantFactory.java`。独立测试启用官方 Test R8 并消费目标 App mapping，复用既有 typed TraceReferences 生成最小 App ABI keep；独立插件默认仅创建 debug，验收模块显式创建 release。不复制上游实现，不关闭生产混淆。源码接线与真实 Gradle/R8、Android 验收分别记录。
+共享 Flutter Lite 的独立平台验收 runner 另只读核对同一 `9.4.1` source artifact 的 `TestApplicationTaskManager.kt`、`CheckTestedAppObfuscation.java`、`ProguardConfigurableTask.kt`、`R8Task.kt`、`PublishingSpecs.kt`、`BundleAllClasses.kt` 及 `TestVariantFactory.java`。独立测试启用官方 Test R8 并消费目标 App mapping，复用既有 typed TraceReferences 生成最小 App ABI keep；独立插件默认仅创建 debug，验收模块显式创建 release；Kotlin friend 关联目标实际发布的 compile Jar，保留生产 internal 可见性。不复制上游实现，不关闭生产混淆。源码接线与真实 Gradle/R8、Android 验收分别记录。
 
 另参考 Android tools/base 固定提交 [`44330ad8b855e38930c70ca44f65e781dd95d1ab`](https://android.googlesource.com/platform/tools/base/+/44330ad8b855e38930c70ca44f65e781dd95d1ab) 及其外部 Kotlin 构建脚本回归，定位 KT-89716 对已应用 KTS 的 FIR/UAST 分类问题。Lite 两入口在原有时点直接应用既有共同插件，移除多余脚本中转；未复制上游补丁、升级依赖或关闭 lint，实际 lint 结果仍由新源码 CI 核验。
 

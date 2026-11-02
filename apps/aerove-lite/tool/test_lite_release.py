@@ -897,7 +897,7 @@ class LiteReleaseNotesTests(unittest.TestCase):
         history = notes._sections(markdown)["历史未发行候选记录"]
         self.assertIn("### 0.1.0-beta.25（安装编号 25）", history)
         for entry in ("融合编辑", "主题名称", "局域网地址", "统计刷新", "曲线延续", "国旗定心",
-                      "更新备用源", "专版脚本", "验证接线", "c18c314d94206eb6724d235ca0d590c3e14e9121",
+                      "更新备用源", "**专版脚本：**", "验证接线", "c18c314d94206eb6724d235ca0d590c3e14e9121",
                       "v6.0.21-meow.7"):
             self.assertIn(entry, history)
             self.assertNotIn(entry, rendered)

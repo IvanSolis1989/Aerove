@@ -1,5 +1,6 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.gradle.api.tasks.compile.JavaCompile
+import com.android.build.gradle.internal.feature.BundleAllClasses
 
 plugins {
     id("com.android.test")
@@ -70,10 +71,10 @@ kotlin {
 androidComponents.beforeVariants { it.enable = it.buildType == "release" }
 
 // Existing internal component tests remain friends of the actual current target compilation.
-val appKotlin = project(":app").tasks.named<KotlinCompile>("compileReleaseKotlin")
+val appCompileJar = project(":app").tasks.named<BundleAllClasses>("bundleReleaseClassesToCompileJar")
 tasks.withType<KotlinCompile>().configureEach {
-    dependsOn(preparePlatformSources, appKotlin)
-    friendPaths.from(appKotlin.flatMap { it.destinationDirectory })
+    dependsOn(preparePlatformSources, appCompileJar)
+    friendPaths.from(appCompileJar.flatMap { it.outputJar })
 }
 tasks.withType<JavaCompile>().configureEach {
     dependsOn(preparePlatformSources)
