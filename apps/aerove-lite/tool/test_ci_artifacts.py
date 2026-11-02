@@ -12,6 +12,28 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 class TransportTests(unittest.TestCase):
     expected=dict(sourceRevision='a'*40,sourceTree='b'*40,workflowRun='123',runAttempt=2,runNumber=7)
 
+    def test_only_exact_original201_archive_can_reach_download_without_current_identity_spoofing(self):
+        import emulator_original84 as original
+        import lite_release
+        pin = original.LITE201_FLUTTER_UI
+        row = dict(id=13172267167,name='AEROVE-Lite-runtime-contract-attempt-1',expired=False,
+            digest='sha256:025cfb5b5710c3964539fb08fa527cbad96429dff3cfa598ed35437e9945eca3',
+            size_in_bytes=59034507,workflow_run=copy.deepcopy(pin['workflowRun']))
+        with tempfile.TemporaryDirectory() as temp, \
+                mock.patch.dict(ci.os.environ, GITHUB_REPOSITORY='IvanSolis1989/Aerove',GITHUB_SHA='f'*40,GITHUB_RUN_ID='900'), \
+                mock.patch.object(ci,'_gh_json',return_value={'artifacts':[row]}), \
+                mock.patch.object(lite_release,'_gh_binary',side_effect=RuntimeError('safe pinned download boundary')) as download:
+            for key,value in (('id',13172267168),('digest','sha256:'+'a'*64),('size_in_bytes',59034508)):
+                old=row[key];row[key]=value
+                with self.subTest(changed=key),self.assertRaises(ci.PromotionError):
+                    ci.fetch(pin['artifactName'],Path(temp)/'runtime',pin['identity'],runtime=True,original201=True)
+                row[key]=old
+            download.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError,'safe pinned download'):
+                ci.fetch(pin['artifactName'],Path(temp)/'runtime',pin['identity'],runtime=True,original201=True)
+            self.assertEqual(ci.os.environ['GITHUB_SHA'],'f'*40)
+            self.assertEqual(ci.os.environ['GITHUB_RUN_ID'],'900')
+
     def test_actual_file_roundtrip_rejects_changed_content_identity_and_extras(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);(root/'lib.so').write_bytes(b'actual fixture ELF bytes')

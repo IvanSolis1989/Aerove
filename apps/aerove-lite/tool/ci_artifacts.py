@@ -80,7 +80,7 @@ def verify(directory, expected, runtime=False):
     return value
 
 
-def fetch(name, directory, expected, runtime=False):
+def fetch(name, directory, expected, runtime=False, original201=False):
     if Path(directory).exists():
         raise PromotionError('Artifact destination already exists')
     run = expected['workflowRun']
@@ -90,7 +90,25 @@ def fetch(name, directory, expected, runtime=False):
                row.get('workflow_run', {}).get('head_sha') == expected['sourceRevision']]
     if len(matches) != 1:
         raise PromotionError('No unique same-run source artifact')
-    download_artifact(matches[0]['id'], directory)
+    if original201:
+        from emulator_original84 import LITE201_FLUTTER_UI, checked_archive
+        from lite_release import _gh_binary
+        pin = LITE201_FLUTTER_UI
+        row = matches[0]
+        if (os.environ['GITHUB_REPOSITORY'] != 'IvanSolis1989/Aerove'
+                or runtime is not True or expected != pin['identity'] or name != pin['artifactName']
+                or row.get('id') != pin['artifact'] or row.get('size_in_bytes') != pin['zipBytes']
+                or row.get('digest') != 'sha256:' + pin['zipSha256'] or row.get('workflow_run') != pin['workflowRun']):
+            raise PromotionError('Fixed Flutter201 original archive identity differs')
+        archive = Path(directory).with_suffix('.zip')
+        if archive.exists():
+            raise PromotionError('Never overwrite the original Flutter201 archive')
+        _gh_binary(f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/artifacts/{pin["artifact"]}/zip', archive)
+        if archive.stat().st_size != pin['zipBytes']:
+            raise PromotionError('Fixed Flutter201 original archive size differs')
+        checked_archive(archive, Path(directory), 'lite201-flutter-ui')
+    else:
+        download_artifact(matches[0]['id'], directory)
     return verify(directory, expected, runtime)
 
 

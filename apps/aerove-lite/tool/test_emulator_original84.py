@@ -72,6 +72,117 @@ class Original84Tests(unittest.TestCase):
         self.assertEqual('f' * 40, os.environ['GITHUB_SHA'])
         self.assertEqual('900', os.environ['GITHUB_RUN_ID'])
 
+    def test_flutter201_pin_keeps_failed_run_diagnostic_and_versioned_driver_distinct(self):
+        pin = original.runtime_spec('lite201-flutter-ui')
+        self.assertEqual(pin['identity'], dict(sourceRevision='47c02d2f94b08e3ca9b2d7744284ba06e2086882',
+            sourceTree='82d6953a1f61a54bafdc1a67420ec086e05d0075', workflowRun='41504098596',runNumber=201,runAttempt=1))
+        self.assertEqual((pin['artifact'],pin['zipBytes'],pin['producerJob']), (13172267167,59034507,125488460138))
+        self.assertEqual(pin['zipSha256'], '025cfb5b5710c3964539fb08fa527cbad96429dff3cfa598ed35437e9945eca3')
+        product = dict(applicationId='dev.aerove.lite',version='0.1.0-beta.26',versionCode='26',signerSha256=original.PRODUCT['signerSha256'])
+        derived = dict(apks=self.proof['apks'], product=product,manifestSha256='b'*64)
+        self.proof.update(originalAppIdentity=pin['identity'],artifactId=pin['artifact'],artifactZipSha256=pin['zipSha256'],
+            runtimeManifestSha256='b'*64, diagnosticOriginalRuntime=True,runtimeTarget='lite201-flutter-ui',
+            diagnosticOnly=True,representativeOnly=True,accepted=False,aggregateAcceptance=False)
+        self.proof.pop('diagnosticOriginal84')
+        self.proof['packages']['app-release.apk'].update(version='0.1.0-beta.26',version_code=26)
+        self.proof['packages']['app-release-androidTest.apk'].update(version='0.1.0-beta.26',version_code=26,version_attributes_declared=True)
+        self.write()
+        with mock.patch.dict(os.environ, {'AEROVE_ORIGINAL_RUNTIME_PROOF':str(self.path)},clear=True), \
+                mock.patch.object(original,'flutter201_payload',return_value=derived):
+            result = original.verify_original_runtime(self.runtime)
+            self.assertEqual(result['identity'],pin['identity'])
+            self.assertEqual(result['harnessIdentity'],self.harness)
+            self.assertIs(result['promotionAccepted'],False)
+            self.assertIs(result['representativeOnly'],True)
+            self.proof['packages']['app-release-androidTest.apk'].update(version=None,version_code=None,version_attributes_declared=False)
+            self.write()
+            with self.assertRaisesRegex(ValueError,'signer proof'):
+                original.verify_original_runtime(self.runtime)
+
+    def test_legacy_native_driver_still_requires_boolean_false_not_zero(self):
+        self.proof['packages']['app-release-androidTest.apk']['version_attributes_declared']=0
+        self.write()
+        with self.assertRaisesRegex(ValueError,'signer proof'):
+            original.verify_original_runtime(self.runtime)
+
+    def test_flutter201_requires_successful_fixed_package_producer_before_fetch(self):
+        pin = original.LITE201_FLUTTER_UI
+        row = dict(id=pin['artifact'],name=pin['artifactName'],expired=False,digest='sha256:'+pin['zipSha256'],
+                   size_in_bytes=pin['zipBytes'],workflow_run=pin['workflowRun'])
+        run = dict(id=41504098596,head_sha=pin['identity']['sourceRevision'],run_number=201,run_attempt=1,
+                   status='completed',conclusion='failure')  # Original red status is retained, never promoted.
+        job = dict(id=125488460138,run_id=41504098596,status='completed',conclusion='failure')
+        def api(route):
+            return job if '/jobs/' in route else row if '/artifacts/' in route else run
+        with mock.patch.object(original.release,'_gh_json',side_effect=api), \
+                mock.patch.object(original.artifacts,'fetch') as fetch:
+            with self.assertRaisesRegex(ValueError,'producer job'):
+                original.prepare(self.root/'fixed201',self.root/'evidence201',target='lite201-flutter-ui')
+            fetch.assert_not_called()
+            job['conclusion']='success'
+            fetch.side_effect=RuntimeError('safe fixed-fetch boundary')
+            with self.assertRaisesRegex(RuntimeError,'safe fixed-fetch'):
+                original.prepare(self.root/'fixed201',self.root/'evidence201',target='lite201-flutter-ui')
+            fetch.assert_called_once_with(pin['artifactName'],self.root/'fixed201',pin['identity'],runtime=True,original201=True)
+
+    def test_flutter201_dynamic_hashes_still_require_every_original_zip_byte_and_git_version(self):
+        pin = copy.deepcopy(original.LITE201_FLUTTER_UI)
+        runtime = self.root/'zip201';(runtime/'apks').mkdir(parents=True)
+        for name in ('app-release.apk','app-release-androidTest.apk'):
+            (runtime/'apks'/name).write_bytes(('synthetic transport only '+name).encode())
+        props = ('applicationId=dev.aerove.lite\nversion=0.1.0-beta.26\nversionCode=26\nchannel=preview\n'
+                 'signerSha256='+original.PRODUCT['signerSha256']+'\n').encode()
+        source_root=self.root/'immutable-source';version=source_root/'apps/aerove-lite/version.properties'
+        version.parent.mkdir(parents=True);version.write_bytes(props)
+        info=dict(product='AEROVE Lite',application_id='dev.aerove.lite',version='0.1.0-beta.26',version_code=26,
+            signer_sha256=original.PRODUCT['signerSha256'],channel='preview',abi='x86_64',
+            source=pin['identity']['sourceRevision'],tree=pin['identity']['sourceTree'],run_number=201,run_attempt=1,
+            workflow='https://github.com/IvanSolis1989/Aerove/actions/runs/41504098596',apk_sha256=original.sha(runtime/'apks/app-release.apk'))
+        (runtime/'BUILD_INFO.json').write_text(json.dumps(info))
+        rows=[dict(path=p.relative_to(runtime).as_posix(),bytes=p.stat().st_size,sha256=original.sha(p)) for p in runtime.rglob('*') if p.is_file()]
+        (runtime/'source-manifest.json').write_text(json.dumps(dict(pin['identity'],abi='x86_64',prebuiltApks=True,apkInspectorOutcome='success',files=rows)))
+        (runtime/'SHA256SUMS').write_text('synthetic transport fixture')
+        archive=runtime.with_suffix('.zip')
+        with zipfile.ZipFile(archive,'w') as package:
+            for p in runtime.rglob('*'):
+                if p.is_file():package.write(p,p.relative_to(runtime).as_posix())
+        pin.update(zipBytes=archive.stat().st_size,zipSha256=original.sha(archive))
+        def git(command,**kwargs):
+            return props if command[1]=='show' else pin['identity']['sourceTree'] if command[2]=='HEAD^{tree}' else pin['identity']['sourceRevision']
+        with mock.patch.object(original,'LITE201_FLUTTER_UI',pin),mock.patch.object(original,'ORIGINAL201_SOURCE',source_root), \
+                mock.patch.object(original.subprocess,'check_output',side_effect=git):
+            result=original.flutter201_payload(runtime)
+            self.assertEqual(result['apks']['app-release.apk'],info['apk_sha256'])
+            self.assertEqual(result['product']['versionCode'],'26')
+            version.write_bytes(props.replace(b'versionCode=26',b'versionCode=27'))
+            with self.assertRaisesRegex(ValueError,'original Git bytes'):original.flutter201_payload(runtime)
+            version.write_bytes(props)
+            (runtime/'apks/app-release.apk').write_bytes(b'changed original bytes')
+            with self.assertRaises(original.release.product_source.ProjectionError):original.flutter201_payload(runtime)
+
+    def test_flutter201_actual_versioned_driver_readback_does_not_relax_legacy_null_versions(self):
+        # Original runtime artifact 13172267167, archive SHA 025cfb5b...45eca3.
+        fixtures=Path(__file__).with_name('fixtures')/'original201'
+        badging=(fixtures/'lite-flutter-runner-badging.txt').read_text()
+        xml=(fixtures/'lite-flutter-runner-manifest.txt').read_text()
+        signature=(fixtures/'lite-flutter-runner-signature.txt').read_text()
+        product=dict(applicationId='dev.aerove.lite',version='0.1.0-beta.26',versionCode='26',signerSha256=original.PRODUCT['signerSha256'])
+        derived=dict(product=product,apks=self.proof['apks'],manifestSha256='b'*64)
+        def inspect(target, text=badging):
+            def run(command,**kwargs):
+                return subprocess.CompletedProcess(command,0,xml if 'xmltree' in command else signature if 'verify' in command else text,'')
+            with mock.patch.object(original,'flutter201_payload',return_value=derived), \
+                    mock.patch.dict(os.environ,ANDROID_HOME=str(self.root)), \
+                    mock.patch.object(original.subprocess,'run',side_effect=run), \
+                    mock.patch.object(original,'verify_identity',return_value={}):
+                return original.inspect_packages(self.runtime,self.root/'driver-readback',target=target)
+        actual=inspect('lite201-flutter-ui')['app-release-androidTest.apk']
+        self.assertEqual((actual['version_code'],actual['version'],actual['version_attributes_declared']), (26,'0.1.0-beta.26',True))
+        with self.assertRaisesRegex(ValueError,'package identity'):
+            inspect('original84')
+        with self.assertRaisesRegex(ValueError,'package identity'):
+            inspect('lite201-flutter-ui',badging.replace("versionCode='26'", "versionCode='27'"))
+
     def test_lite125_fixed_original_runtime_and_three_precise_test_selectors(self):
         spec = original.runtime_spec('lite125-original-samples')
         self.assertEqual('d52726dc24756847b2b268d307a611cc37f994a3', spec['identity']['sourceRevision'])

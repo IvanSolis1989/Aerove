@@ -75,7 +75,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite125_test_only:
@@ -118,6 +118,17 @@ jobs:
     with:
       exclusive_mode: true
       runtime_target: beta14
+  diagnostic_lite201_flutter_ui:
+    name: Lite201 original Flutter representative UI (diagnostic only)
+    needs: diagnostic_guard
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite201-flutter-ui') }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/aerove-lite-qa84.yaml
+    with:
+      exclusive_mode: true
+      runtime_target: lite201-flutter-ui
   diagnostic_lite158_frame_sample:
     name: Lite158 original first-frame trace (diagnostic only)
     needs: diagnostic_guard
@@ -1144,7 +1155,7 @@ jobs:
         for sdk_attempt in 1 2; do
           sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
           set +e
-          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
+          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
           sdk_install_status=("${PIPESTATUS[@]}")
           set -e
           sdkmanager_rc="${sdk_install_status[0]}"
@@ -1168,6 +1179,24 @@ jobs:
           fi
           exit "$sdkmanager_rc"
         done
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip'
+        emulator_archive_sha256='b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16428233.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16428233.zip"
+        printf 'url=%s\nsize=349654171\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
+        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
+          --output "$emulator_archive" "$emulator_archive_url" \
+          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
+        test "$(stat -c '%s' "$emulator_archive")" = '349654171'
+        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
+        unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
+        test -x "$emulator_stage/extracted/emulator/emulator"
+        test -f "$emulator_stage/extracted/emulator/source.properties"
+        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties"
+        if test -e "$ANDROID_HOME/emulator"; then
+          mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
+        fi
+        mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         mkdir -p "$RUNNER_TEMP/lite-diagnostics/flutter-ui"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
         grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
@@ -1253,6 +1282,9 @@ jobs:
           --receipt "$RUNNER_TEMP/lite-diagnostics/flutter-platform/smart-fixture-source.json"
         echo "SMART_CONFIG_MEOW_FIXTURE_DIR=$RUNNER_TEMP/lite-smart-config-meow" >> "$GITHUB_ENV"
         echo "SMART_CONFIG_MEOW_FIXTURE_RECEIPT=$RUNNER_TEMP/lite-diagnostics/flutter-platform/smart-fixture-source.json" >> "$GITHUB_ENV"
+    - name: Prepare the existing separate-UID fixture compiler
+      if: ${{ matrix.phase == 'flutter-full' }}
+      run: sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
     - name: Existing API33 emulator environment with unchanged configuration
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
@@ -1262,7 +1294,7 @@ jobs:
         for sdk_attempt in 1 2; do
           sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
           set +e
-          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;35.0.0' emulator 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
+          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;35.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
           sdk_install_status=("${PIPESTATUS[@]}")
           set -e
           sdkmanager_rc="${sdk_install_status[0]}"
@@ -1286,6 +1318,24 @@ jobs:
           fi
           exit "$sdkmanager_rc"
         done
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip'
+        emulator_archive_sha256='b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16428233.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16428233.zip"
+        printf 'url=%s\nsize=349654171\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
+        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
+          --output "$emulator_archive" "$emulator_archive_url" \
+          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
+        test "$(stat -c '%s' "$emulator_archive")" = '349654171'
+        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
+        unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
+        test -x "$emulator_stage/extracted/emulator/emulator"
+        test -f "$emulator_stage/extracted/emulator/source.properties"
+        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties"
+        if test -e "$ANDROID_HOME/emulator"; then
+          mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
+        fi
+        mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
         grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
@@ -1296,9 +1346,6 @@ jobs:
         avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
         printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
-    - name: Prepare the existing separate-UID fixture compiler
-      if: ${{ matrix.phase == 'flutter-full' }}
-      run: sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
     - name: Real API 33 ${{ matrix.phase }} verification
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
@@ -1385,7 +1432,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

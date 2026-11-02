@@ -75,6 +75,47 @@ LITE125_ORIGINAL_SAMPLES = dict(
 
 SAMPLE_TARGETS = ('lite125-original-samples', 'lite158-frame-sample')
 
+LITE201_FLUTTER_UI = dict(
+    identity=dict(sourceRevision='47c02d2f94b08e3ca9b2d7744284ba06e2086882',
+                  sourceTree='82d6953a1f61a54bafdc1a67420ec086e05d0075',
+                  workflowRun='41504098596', runNumber=201, runAttempt=1),
+    artifact=13172267167, artifactName='AEROVE-Lite-runtime-contract-attempt-1',
+    zipBytes=59034507, zipSha256='025cfb5b5710c3964539fb08fa527cbad96429dff3cfa598ed35437e9945eca3',
+    producerJob=125488460138,
+    workflowRun=dict(id=41504098596, head_sha='47c02d2f94b08e3ca9b2d7744284ba06e2086882',
+                     head_branch='codex/lite-shared-flutter-complete114',
+                     head_repository_id=1429390079, repository_id=1429390079))
+ORIGINAL201_SOURCE = Path('.ci-original-lite201-source')
+
+
+def flutter201_payload(directory):
+    """Derive identities only from the fixed whole ZIP, without relabelling any bytes."""
+    directory = Path(directory)
+    pin = LITE201_FLUTTER_UI
+    release.product_source.bind_archive(directory.with_suffix('.zip'), directory,
+        dict(digest='sha256:' + pin['zipSha256'], size_in_bytes=pin['zipBytes']))
+    artifacts.verify(directory, pin['identity'], runtime=True)
+    info = release._json(directory / 'BUILD_INFO.json')
+    source_root = ORIGINAL201_SOURCE
+    source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=source_root, text=True).strip()
+    tree = subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=source_root, text=True).strip()
+    if source != pin['identity']['sourceRevision'] or tree != pin['identity']['sourceTree']:
+        raise ValueError('Flutter201 version reader is not the immutable original source/tree')
+    properties = subprocess.check_output(['git', 'show', source + ':apps/aerove-lite/version.properties'], cwd=source_root)
+    version_path = source_root / 'apps/aerove-lite/version.properties'
+    if version_path.is_symlink() or version_path.read_bytes() != properties:
+        raise ValueError('Flutter201 product properties differ from original Git bytes')
+    from verify_apk import product_version
+    product = product_version(version_path)
+    expected = dict(product='AEROVE Lite', application_id=product['applicationId'], version=product['version'],
+        version_code=int(product['versionCode']), signer_sha256=product['signerSha256'], channel='preview', abi='x86_64',
+        source=source, tree=tree, workflow='https://github.com/' + release.REPO + '/actions/runs/41504098596',
+        run_number=201, run_attempt=1, apk_sha256=sha(directory / 'apks/app-release.apk'))
+    if any(info.get(key) != value for key,value in expected.items()):
+        raise ValueError('Flutter201 original BUILD_INFO/product source differs')
+    apks = {name:sha(directory / 'apks' / name) for name in ('app-release.apk','app-release-androidTest.apk')}
+    return dict(apks=apks, product=product, manifestSha256=sha(directory / 'source-manifest.json'))
+
 
 def original_sample_selector(sample, target='lite125-original-samples'):
     if target not in SAMPLE_TARGETS:
@@ -131,6 +172,8 @@ LITE158_FRAME_SAMPLE = dict(
 
 
 def runtime_spec(target='original84'):
+    if target == 'lite201-flutter-ui':
+        return LITE201_FLUTTER_UI
     if target == 'original84':
         return dict(identity=ORIGINAL, artifact=ARTIFACT_ID, zipSha256=ZIP_SHA256,
                     manifestSha256=MANIFEST_SHA256, apks=APKS, product=PRODUCT)
@@ -156,7 +199,7 @@ def proof_context():
     if legacy:
         return legacy, 'original84'
     if neutral:
-        if release._json(neutral).get('runtimeTarget') not in ('lite94','beta14', *SAMPLE_TARGETS, 'lite141-prebuilt-shards'):
+        if release._json(neutral).get('runtimeTarget') not in ('lite94','beta14', *SAMPLE_TARGETS, 'lite141-prebuilt-shards', 'lite201-flutter-ui'):
             raise ValueError('Neutral proof requires approved lite94 target')
         return neutral, release._json(neutral)['runtimeTarget']
     raise ValueError('Original runtime identity is diagnostic opt-in only')
@@ -194,6 +237,9 @@ def checked_archive(archive, destination, target='original84'):
 
 def validate_original_files(directory, target='original84'):
     spec = runtime_spec(target)
+    if target == 'lite201-flutter-ui':
+        flutter201_payload(directory)
+        return release._json(Path(directory) / 'BUILD_INFO.json')
     directory = Path(directory)
     if directory.is_symlink():
         raise ValueError('Original runtime directory must not be a symlink')
@@ -267,6 +313,10 @@ def inspection_command(command, reports, name, kind):
 
 def inspect_packages(directory, reports, tools=None, target='original84'):
     spec = runtime_spec(target)
+    if target == 'lite201-flutter-ui':
+        spec = dict(spec, **flutter201_payload(directory))
+        if tools is None:
+            tools = Path(os.environ['ANDROID_HOME']) / 'build-tools/37.0.0'
     tools = Path(tools) if tools is not None else Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
     reports.mkdir(parents=True, exist_ok=True)
     result = {}
@@ -279,15 +329,20 @@ def inspect_packages(directory, reports, tools=None, target='original84'):
         product = dict(spec['product'])
         if name == 'app-release-androidTest.apk':
             identity = re.findall(r"^package: name='([^']+)' versionCode='([^']*)' versionName='([^']*)'[^\n]*$", badging, re.M)
-            if identity != [(spec['product']['applicationId'] + '.test', '', '')]:
+            versions = (spec['product']['versionCode'], spec['product']['version']) if target == 'lite201-flutter-ui' else ('', '')
+            if identity != [(spec['product']['applicationId'] + '.test', *versions)]:
                 raise ValueError('Original84 test APK package identity mismatch')
             xml = inspection_command([str(tools / ('aapt.exe' if os.name == 'nt' else 'aapt')),
                                       'dump', 'xmltree', str(apk), 'AndroidManifest.xml'], reports, name, 'xmltree')
             if (re.findall(r'android:targetPackage(?:\(0x[0-9a-f]+\))?="([^"]+)"', xml) != [spec['product']['applicationId']]
                     or len(re.findall(r'^\s+E: instrumentation \(line=', xml, re.M)) != 1
                     or not re.search(r'android:name(?:\(0x[0-9a-f]+\))?="androidx\.test\.runner\.AndroidJUnitRunner"', xml)
-                    or re.search(r'android:version(?:Code|Name)(?:\(0x[0-9a-f]+\))?=', xml)):
+                    or target != 'lite201-flutter-ui' and re.search(r'android:version(?:Code|Name)(?:\(0x[0-9a-f]+\))?=', xml)):
                 raise ValueError('Original84 instrumentation target mismatch')
+            if target == 'lite201-flutter-ui' and any(
+                    len(re.findall(r'android:' + field + r'(?:\(0x[0-9a-f]+\))?=', xml)) != 1
+                    for field in ('versionCode', 'versionName')):
+                raise ValueError('Flutter201 driver must declare its actual production version attributes')
             digests = re.findall(r'^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$', signature, re.M)
             digests += re.findall(r'^V2 Signer: certificate SHA-256 digest: ([0-9a-f]{64})$', signature, re.M)
             if (digests != [spec['product']['signerSha256']] or signature.splitlines().count('Verifies') != 1
@@ -298,8 +353,9 @@ def inspect_packages(directory, reports, tools=None, target='original84'):
                        != ['Number of signers: 1']
                     or not re.search(r"^sdkVersion:'33'$", badging, re.M)):
                 raise ValueError('Original84 instrumentation signing or SDK identity mismatch')
-            result[name] = dict(application_id=identity[0][0], version_code=None, version=None,
-                                version_attributes_declared=False,
+            result[name] = dict(application_id=identity[0][0],
+                                version_code=int(versions[0]) if versions[0] else None, version=versions[1] or None,
+                                version_attributes_declared=target == 'lite201-flutter-ui',
                                 min_sdk=33, signer_sha256=digests[0], target_package=spec['product']['applicationId'])
         else:
             result[name] = verify_identity(badging, signature, product, 'preview')
@@ -309,6 +365,8 @@ def inspect_packages(directory, reports, tools=None, target='original84'):
 def verify_original_runtime(directory):
     proof_path, target = proof_context()
     spec = runtime_spec(target)
+    if target == 'lite201-flutter-ui':
+        spec = dict(spec, **flutter201_payload(directory))
     proof = release._json(proof_path)
     if target != 'original84' and (type(proof.get('schema')) is not int or proof.get('promotionAccepted') is not False
             or proof.get('diagnosticOriginalRuntime') is not True
@@ -326,6 +384,8 @@ def verify_original_runtime(directory):
         expected.update(diagnosticOnly=True, accepted=False)
     if target in ('lite141-prebuilt-shards', 'lite158-frame-sample'):
         expected.update(diagnosticOnly=True, accepted=False, aggregateAcceptance=False)
+    if target == 'lite201-flutter-ui':
+        expected.update(diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False)
     if any(proof.get(key) != value for key, value in expected.items()):
         raise ValueError('Original84 proof identity differs from fixed app or current harness')
     if Path(proof['runtimeDirectory']).resolve() != Path(directory).resolve():
@@ -342,16 +402,21 @@ def verify_original_runtime(directory):
             or test.get('signer_sha256') != spec['product']['signerSha256'] or test.get('application_id') != spec['product']['applicationId'] + '.test'
             or test.get('min_sdk') != 33 or test.get('target_package') != spec['product']['applicationId']
             or 'version_code' not in test or 'version' not in test
-            or test.get('version_code') is not None or test.get('version') is not None
-            or test.get('version_attributes_declared') is not False):
+            or (test.get('version_code'), test.get('version')) !=
+               ((int(spec['product']['versionCode']), spec['product']['version']) if target == 'lite201-flutter-ui' else (None, None))
+            or test.get('version_attributes_declared') is not (target == 'lite201-flutter-ui')
+            or target == 'lite201-flutter-ui' and type(test.get('version_code')) is not int):
         raise ValueError('Original84 verified package signer proof is missing')
     if target == 'beta14':
         from beta14_runtime import verify_contract
         if proof.get('nativeBundleProof') != verify_contract(directory):
             raise ValueError('beta14 exact26/3 proof missing or changed')
-    return dict(identity=spec['identity'], apks=spec['apks'], runtimeManifestSha256=spec['manifestSha256'],
+    result = dict(identity=spec['identity'], apks=spec['apks'], runtimeManifestSha256=spec['manifestSha256'],
                 apkInspectorOutcome='success', **diagnostic_fields(target), originalAppIdentity=spec['identity'],
                 harnessIdentity=proof['harnessIdentity'], promotionAccepted=False)
+    if target == 'lite201-flutter-ui':
+        result.update(diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False)
+    return result
 
 
 def validate_original_renderer(path):
@@ -383,7 +448,7 @@ def prepare(directory, evidence, target='original84'):
             or row.get('workflow_run', {}).get('id') != int(spec['identity']['workflowRun'])
             or row['workflow_run'].get('head_sha') != spec['identity']['sourceRevision']):
         raise ValueError('Original84 artifact API identity changed')
-    if target in ('beta14', *SAMPLE_TARGETS, 'lite141-prebuilt-shards'):
+    if target in ('beta14', *SAMPLE_TARGETS, 'lite141-prebuilt-shards', 'lite201-flutter-ui'):
         if row.get('size_in_bytes') != spec['zipBytes']:
             raise ValueError(f'{target} artifact API size differs')
         run=reader(f"repos/{release.REPO}/actions/runs/{spec['identity']['workflowRun']}")
@@ -392,7 +457,7 @@ def prepare(directory, evidence, target='original84'):
                 or run.get('run_number') != int(identity['runNumber'])
                 or run.get('run_attempt') != int(identity['runAttempt']) or run.get('status') != 'completed'):
             raise ValueError(f'{target} original run API identity differs')
-    if target in ('lite141-prebuilt-shards', 'lite158-frame-sample'):
+    if target in ('lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui'):
         job = reader(f"repos/{release.REPO}/actions/jobs/{spec['producerJob']}")
         if (job.get('id') != spec['producerJob'] or job.get('run_id') != int(spec['identity']['workflowRun'])
                 or job.get('status') != 'completed' or job.get('conclusion') != 'success'):
@@ -404,6 +469,7 @@ def prepare(directory, evidence, target='original84'):
                        'lite125-original-artifact-api.json' if target == 'lite125-original-samples' else
                        'lite141-original-artifact-api.json' if target == 'lite141-prebuilt-shards' else
                        'lite158-original-artifact-api.json' if target == 'lite158-frame-sample' else
+                       'lite201-original-artifact-api.json' if target == 'lite201-flutter-ui' else
                        'original94-artifact-api.json')
     (evidence / artifact_record).write_text(json.dumps(row, indent=2) + '\n')
     if target == 'lite141-prebuilt-shards':
@@ -412,14 +478,20 @@ def prepare(directory, evidence, target='original84'):
     if target == 'lite158-frame-sample':
         (evidence / 'lite158-original-run-api.json').write_text(json.dumps(run, indent=2) + '\n')
         (evidence / 'lite158-producer-job-api.json').write_text(json.dumps(job, indent=2) + '\n')
-    if target == 'beta14':
+    if target == 'lite201-flutter-ui':
+        (evidence / 'lite201-original-run-api.json').write_text(json.dumps(run, indent=2) + '\n')
+        (evidence / 'lite201-producer-job-api.json').write_text(json.dumps(job, indent=2) + '\n')
+        artifacts.fetch(spec['artifactName'], directory, spec['identity'], runtime=True, original201=True)
+        spec = dict(spec, **flutter201_payload(directory))
+    elif target == 'beta14':
         from beta14_runtime import download
         download(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}/zip",archive)
     else:
         release._gh_binary(f"repos/{release.REPO}/actions/artifacts/{spec['artifact']}/zip",archive)
     if target in ('beta14', 'lite158-frame-sample') and archive.stat().st_size != spec['zipBytes']:
         raise ValueError(f'{target} complete archive size differs')
-    checked_archive(archive, directory, target)
+    if target != 'lite201-flutter-ui':
+        checked_archive(archive, directory, target)
     validate_original_files(directory, target)
     packages = inspect_packages(directory, evidence / (target + '-package-readback') if target != 'original84' else evidence / 'original84-package-readback', target=target)
     for name, location in [('app-release.apk', 'release'), ('app-release-androidTest.apk', 'androidTest/release')]:
@@ -441,6 +513,8 @@ def prepare(directory, evidence, target='original84'):
         proof.update(diagnosticOnly=True, accepted=False)
     if target in ('lite141-prebuilt-shards', 'lite158-frame-sample'):
         proof.update(diagnosticOnly=True, accepted=False, aggregateAcceptance=False)
+    if target == 'lite201-flutter-ui':
+        proof.update(diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False)
     path = evidence / ('ORIGINAL84-APP-PROOF.json' if target == 'original84' else 'ORIGINAL-RUNTIME-APP-PROOF.json')
     path.write_text(json.dumps(proof, indent=2) + '\n')
     return path
@@ -449,9 +523,9 @@ def prepare(directory, evidence, target='original84'):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--directory', type=Path, required=True)
-    parser.add_argument('--target', choices=['original84', 'lite94','beta14', *SAMPLE_TARGETS, 'lite141-prebuilt-shards'], default='original84')
+    parser.add_argument('--target', choices=['original84', 'lite94','beta14', *SAMPLE_TARGETS, 'lite141-prebuilt-shards', 'lite201-flutter-ui'], default='original84')
     parser.add_argument('--sample', choices=sorted(LITE125_SAMPLES))
-    parser.add_argument('--phase', choices=['matrix','remaining'])
+    parser.add_argument('--phase', choices=['matrix','remaining','flutter-ui'])
     parser.add_argument('--shard-index', type=int)
     args = parser.parse_args()
     if (args.target in SAMPLE_TARGETS) != (args.sample is not None):
@@ -460,6 +534,9 @@ def main():
     if args.target == 'lite141-prebuilt-shards':
         if args.sample is not None or args.phase != 'remaining' or args.shard_index not in range(8):
             parser.error('lite141-prebuilt-shards requires --phase remaining and one --shard-index 0..7')
+    elif args.target == 'lite201-flutter-ui':
+        if args.phase != 'flutter-ui' or args.shard_index is not None or args.sample is not None:
+            parser.error('Flutter201 requires only its fixed --phase flutter-ui representative diagnosis')
     elif args.phase is not None or args.shard_index is not None:
         parser.error('--phase/--shard-index are valid only for lite141-prebuilt-shards')
     if os.environ.get('AEROVE_QA79_PROOF') or os.environ.get('AEROVE_CURRENT_RENDERER_PROOF') or os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
