@@ -30,7 +30,7 @@ final standardProduct = ProductSpec(
   resources: ProductResources(
     defaultScriptAsset: 'assets/data/smart-config-kit-flclash.js',
     defaultScriptSha256:
-        'f33ea7ef24043899d734f3174000b87f4f620cd35c4328af484c32775ea062bc',
+        '1c692381d0069d89edab73a31a43afa13e1d2079e2c58eb0852597e498df1e14',
     defaultScriptUrl: standardDefaultScriptUrl,
     legacyScriptUrls: standardLegacyScriptUrls,
     iconAsset: 'assets/images/icon.png',

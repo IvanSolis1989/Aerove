@@ -121,8 +121,90 @@ def _source_shard_count(root, source):
     return count
 
 
+FLUTTER_AGGREGATE_STEP = "Verify current Android execution and retain pending release gates"
+FLUTTER_ACCEPTANCE = {
+    "acceptance (fixed 28 native/platform regressions)": ("Real API 33 flutter-platform verification",),
+    "acceptance (Flutter UI and same-session native lifecycle)": ("Real API 33 flutter-full verification",),
+}
+
+
+def _source_acceptance_plan(root, source):
+    """Read the producer protocol from the original Git source, never from an artifact."""
+    if not re.fullmatch(r"[0-9a-f]{40}", str(source)):
+        raise PromotionError("Original source SHA is required for the acceptance plan")
+    try:
+        workflow = subprocess.check_output(["git", "show", source + ":.github/workflows/" + WORKFLOW], cwd=root).decode("utf-8")
+    except (OSError, subprocess.CalledProcessError, UnicodeError) as error:
+        raise PromotionError("Original Git workflow acceptance plan is unavailable") from error
+    if "- phase: flutter-platform" not in workflow and "- phase: flutter-full" not in workflow:
+        return dict(kind="shards", shard_count=_source_shard_count(root, source))
+    sections = {}
+    for job in ("acceptance", "accepted"):
+        matches = re.findall(r"(?ms)^  " + job + r":\n(.*?)(?=^  [A-Za-z0-9_-]+:|^'on':|\Z)", workflow)
+        if len(matches) != 1:
+            raise PromotionError("Original workflow has no unique Flutter producer/aggregate")
+        sections[job] = matches[0]
+    matrices = re.findall(r"(?ms)^      matrix:\n        include:\n(.*?)^    name: acceptance \(\$\{\{ matrix.label \}\}\)\n", sections["acceptance"])
+    expected = ("        - phase: flutter-platform\n          label: fixed 28 native/platform regressions\n"
+                "          artifact_suffix: flutter-platform\n"
+                "        - phase: flutter-full\n          label: Flutter UI and same-session native lifecycle\n"
+                "          artifact_suffix: flutter-full\n")
+    required = (
+        "    - name: " + FLUTTER_AGGREGATE_STEP + "\n",
+        "    - name: All exact-source Android execution gates passed\n",
+        '        python3 apps/aerove-lite/tool/android_acceptance_verify.py \\\n',
+        '          --directory "$RUNNER_TEMP/lite-current-acceptance" --source "$GITHUB_SHA" \\\n',
+        '          --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \\\n',
+        '          --execution-only --output "$RUNNER_TEMP/lite-current-acceptance/AGGREGATE.json"\n',
+        '        pattern: AEROVE-Lite-current-acceptance-*-attempt-${{ github.run_attempt }}\n',
+        '        name: AEROVE-Lite-current-acceptance-aggregate-attempt-${{ github.run_attempt }}\n',
+        '        path: ${{ runner.temp }}/lite-current-acceptance/\n',
+        '        merge-multiple: false\n',
+    )
+    if matrices != [expected] or any(sections["accepted"].count(token) != 1 for token in required):
+        raise PromotionError("Original Flutter aggregate does not enforce exact execution and preserve raw evidence")
+    command = '        python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"\n'
+    if sections["acceptance"].count(command) != 1:
+        raise PromotionError("Original Flutter phases do not execute the current Android producer")
+    return dict(kind="flutter")
+
+
+def _artifact_prefixes(plan):
+    prefixes = dict(ARTIFACT_PREFIXES)
+    if plan["kind"] == "flutter":
+        # Keep the four-directory promotion interface; matrix carries both raw phases.
+        prefixes["matrix"] = "AEROVE-Lite-current-acceptance-aggregate-attempt-"
+    return prefixes
+
+
+def _source_package_step(root, source):
+    """The original reusable producer fixes its package protocol independently of shards/UI phases."""
+    if not re.fullmatch(r"[0-9a-f]{40}", str(source)):
+        raise PromotionError("Original source SHA is required for the package protocol")
+    try:
+        workflow = subprocess.check_output([
+            "git", "show", source + ":.github/workflows/aerove-lite-build.yaml"], cwd=root).decode("utf-8")
+    except (OSError, subprocess.CalledProcessError, UnicodeError) as error:
+        raise PromotionError("Original reusable workflow package protocol is unavailable") from error
+    sections = re.findall(r"(?ms)^  package:\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)", workflow)
+    protocols = {
+        ("Emulator application and instrumentation APK", "emulator_apks"),
+        ("Build the emulator production Flutter APK once", "emulator_app"),
+    }
+    if len(sections) != 1:
+        raise PromotionError("Original reusable workflow has no unique package producer")
+    matches = re.findall(r"(?m)^    - name: (.+)\n      id: (emulator_apks|emulator_app)\n      if: inputs.abi == 'x86_64'$", sections[0])
+    declared = re.findall(r"(?m)^    - name: (.+)$", sections[0])
+    if (len(matches) != 1 or matches[0] not in protocols
+            or sum(declared.count(name) for name, _ in protocols) != 1):
+        raise PromotionError("Original reusable workflow has an unknown, duplicate or mixed x86 package protocol")
+    return matches[0][0]
+
+
 def _candidate_jobs(run, attempt, source=None, root=None):
-    shard_count = _source_shard_count(root or TOOL_DIR.parents[2], source)
+    plan = _source_acceptance_plan(root or TOOL_DIR.parents[2], source)
+    x86_package_step = _source_package_step(root or TOOL_DIR.parents[2], source)
+    shard_count = plan.get("shard_count", 0)
     route = f"repos/{REPO}/actions/runs/{run}/attempts/{attempt}/jobs?per_page=100"
     jobs = _gh_items(route, "jobs")
     expected = {
@@ -134,17 +216,23 @@ def _candidate_jobs(run, attempt, source=None, root=None):
     }
     for shard_index in range(shard_count):
         expected[f"acceptance (remaining shard {shard_index}/{shard_count})"] = ("Real API 33 remaining verification",)
+    if plan["kind"] == "flutter":
+        del expected["acceptance (matrix)"]
+        expected["accepted"] = ("All exact-source Android execution gates passed", FLUTTER_AGGREGATE_STEP)
+        expected.update(FLUTTER_ACCEPTANCE)
+        expected["Shared Flutter client verification and Android host compilation (no APK)"] = (
+            "Compile the Flutter host and actual platform acceptance runner",)
     acceptance_names = [job.get("name") for job in jobs if str(job.get("name", "")).startswith("acceptance (")]
     expected_acceptance = [name for name in expected if name.startswith("acceptance (")]
     if sorted(acceptance_names) != sorted(expected_acceptance):
-        raise PromotionError(f"Acceptance run requires exactly the matrix and {shard_count} unique remaining shards 0..{shard_count - 1}/{shard_count}")
+        raise PromotionError("Acceptance run does not have exactly the original producer phases")
     for abi in ("arm64-v8a", "x86_64"):
         prefix = f"build ({abi}) / "
         expected[prefix + "rust"] = ("Build the pinned Rust Android bridge",)
         expected[prefix + "helper"] = ("Build the isolated client helper for this ABI",)
         expected[prefix + "package"] = (
             "Prepare the independent Lite release signing identity",
-            "Signed preview ARM64 APK" if abi == "arm64-v8a" else "Emulator application and instrumentation APK",
+            "Signed preview ARM64 APK" if abi == "arm64-v8a" else x86_package_step,
             "Check the signed APK and record its exact provenance",
         )
     found = {}
@@ -196,7 +284,7 @@ def _run_identity(run, run_id, source=None, release=False):
     elif (run.get("event") not in {"push", "workflow_dispatch"}
             or run.get("head_branch") not in BUILD_BRANCHES
             or run.get("status") != "completed" or run.get("conclusion") != "success"):
-        raise PromotionError("Explicit original build is not a fully accepted product run")
+        raise PromotionError("Explicit original build is not a completed production execution run")
 
 
 def accepted_build(root, source, build_run, current_run):
@@ -209,7 +297,8 @@ def accepted_build(root, source, build_run, current_run):
     _candidate_jobs(build_run, run["run_attempt"], run["head_sha"], root)
     artifacts = _gh_items(f"repos/{REPO}/actions/runs/{build_run}/artifacts?per_page=100", "artifacts")
     selected = {}
-    for key, prefix in ARTIFACT_PREFIXES.items():
+    plan = _source_acceptance_plan(root, run["head_sha"])
+    for key, prefix in _artifact_prefixes(plan).items():
         rows = [item for item in artifacts if item.get("name") == prefix + str(run["run_attempt"])]
         if len(rows) != 1:
             raise PromotionError("Original artifact is missing or duplicated")
@@ -272,7 +361,8 @@ def select_acceptance(source, current_run, outputs, root=None, build_run=None):
         try:
             _candidate_jobs(run["id"], run["run_attempt"], source, root)
             artifacts = _gh_json(f"repos/{REPO}/actions/runs/{run['id']}/artifacts?per_page=100").get("artifacts", [])
-            wanted = {key: prefix + str(run["run_attempt"]) for key, prefix in ARTIFACT_PREFIXES.items()}
+            wanted = {key: prefix + str(run["run_attempt"]) for key, prefix in
+                      _artifact_prefixes(_source_acceptance_plan(root or TOOL_DIR.parents[2], source)).items()}
             picked = {}
             for key, name in wanted.items():
                 matches = [item for item in artifacts if item.get("name") == name and not item.get("expired")
@@ -492,6 +582,30 @@ def _verify_matrix(root, runtime_root, source, tree, run, attempt, number):
         raise PromotionError("Expected twelve validated dashboard captures")
 
 
+def _verify_android_bundle(directory, runtime, source, tree, run, attempt, number):
+    """Replay Android raw evidence; successful execution never supplies release approval."""
+    from android_acceptance_verify import aggregate, platform_binding
+    root = Path(directory)
+    result = aggregate(root, source, run, attempt, require_full=False)
+    if _json(root / "AGGREGATE.json") != result:
+        raise PromotionError("Stored Android aggregate differs from replayed raw evidence")
+    manifest = _sha(Path(runtime) / "source-manifest.json")
+    apk = _sha(Path(runtime) / "apks/app-release.apk")
+    platform = _sha(platform_binding(runtime, _json(Path(runtime) / "BUILD_INFO.json")))
+    for path in root.rglob("android-acceptance.json"):
+        receipt = _json(path)
+        identity = receipt["identity"]
+        if (identity.get("sourceTree") != tree or str(identity.get("runNumber")) != str(number)
+                or receipt.get("apkSha256") != apk or receipt.get("platformApkSha256") != platform
+                or receipt.get("runtimeManifestSha256") != manifest):
+            raise PromotionError("Android evidence is not bound to the selected original APK/runtime/tree")
+    if (result.get("fullAcceptance") is not True or result.get("visualApproved") is not True
+            or result.get("releaseAccepted") is not True):
+        raise PromotionError("Original Android execution is not complete release acceptance: " +
+            repr(result.get("unresolvedCoverage", [])) +
+            "; execution-bound device/optical/client evidence and user approval remain required")
+
+
 def _verify_flutter_build_info(info, actual, identity, abi, launcher):
     proof = actual.get("flutter_packaging")
     if (info.get("launcher_activity") != launcher or identity.get("launcher_activity") != launcher
@@ -502,7 +616,7 @@ def _verify_flutter_build_info(info, actual, identity, abi, launcher):
 
 
 def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt, number, helper_source,
-                       arm_badging, arm_signature, x86_badging, x86_signature):
+                       arm_badging, arm_signature, x86_badging, x86_signature, acceptance_plan=None):
     arm = Path(arm); helper = Path(helper); runtime = Path(runtime); matrix = Path(matrix)
     _only_files(arm, {"AEROVE-Lite-android-arm64.apk", "BUILD_INFO.json", "SHA256SUMS"})
     _checksums(arm, {"AEROVE-Lite-android-arm64.apk", "BUILD_INFO.json"})
@@ -517,7 +631,10 @@ def validate_artifacts(arm, helper, runtime, matrix, source, tree, run, attempt,
         raise PromotionError("ARM64 Build Info does not match the exact accepted source/run/attempt")
     tag = f"lite-v{build['version']}+{build['version_code']}"
     _validate_manifest(runtime, source, tree, run, attempt, number)
-    _verify_matrix(matrix, runtime, source, tree, run, attempt, number)
+    if acceptance_plan is not None and acceptance_plan["kind"] == "flutter":
+        _verify_android_bundle(matrix, runtime, source, tree, run, attempt, number)
+    else:
+        _verify_matrix(matrix, runtime, source, tree, run, attempt, number)
     helper_receipts = list(helper.rglob("build-receipt.json"))
     if len(helper_receipts) != 1:
         raise PromotionError("Expected exactly one ARM64 helper build receipt")
@@ -866,7 +983,8 @@ def main():
         elif args.command == "validate":
             result = validate_artifacts(args.arm, args.helper, args.runtime, args.matrix, args.source,
                 args.tree, args.run, args.attempt, args.number, args.helper_source,
-                args.arm_badging, args.arm_signature, args.x86_badging, args.x86_signature)
+                args.arm_badging, args.arm_signature, args.x86_badging, args.x86_signature,
+                acceptance_plan=_source_acceptance_plan(args.root or TOOL_DIR.parents[2], args.source))
             promotion_args = (args.root, args.release_source, args.release_run, args.release_attempt, args.receipt)
             if any(value is not None for value in promotion_args):
                 if any(value is None for value in promotion_args):

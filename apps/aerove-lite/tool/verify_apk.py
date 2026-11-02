@@ -597,8 +597,8 @@ def verify_identity(badging, signature, product, channel):
 
 BUNDLED_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 BUNDLED_SCRIPT_FILES = {
-    "smart-config-kit-meow.js": (116534, "96b798d1d01129c0d8552a4a7a39b5108668d9007c6af996cb58b82d0d429586"),
-    "smart-config-kit-meow.source.json": (3502, "d422fd4ef19018aceb46e9cab518b0ab83183b766021a0603eef6297df1b7ce4"),
+    "smart-config-kit-meow.js": (117854, "e6e451d7f85bd7a7151e9048daa5294ebaea8b65dda73d38d6af1d150941c6fc"),
+    "smart-config-kit-meow.source.json": (3653, "e3eea778fb91186115d04e93dec9e530d18dbdbbf9e5c95265da3976b5f76c1f"),
     "smart-config-kit-meow.upstream-README.md": (6493, "886f312178aea697990c1a7d1a9076afa4a7ded154a896624cdc1870c15a8344"),
 }
 
@@ -609,15 +609,15 @@ def validate_bundled_script(archive, source_root=None):
     source = root / "app/src/main"
     constants = (source / "java/dev/aerove/lite/overrides/BundledMeowScript.kt").read_text(encoding="utf-8")
     expected_constants = {
-        "ASSET": "scripts/smart-config-kit-meow.js", "VERSION": "v6.0.21-meow.7",
-        "COMMIT": "c18c314d94206eb6724d235ca0d590c3e14e9121",
+        "ASSET": "scripts/smart-config-kit-meow.js", "VERSION": "v6.0.21-meow.8",
+        "COMMIT": "5e28b84fa5161c67222b1b12f71732a2e7b80fae",
         "SHA256": BUNDLED_SCRIPT_FILES["smart-config-kit-meow.js"][1],
         "UPDATE_URL": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
     }
     for key, value in expected_constants.items():
         if re.findall(r'const val ' + key + r' = "([^"\n]+)"', constants) != [value]:
             raise ValueError("Bundled script Kotlin/source constant mismatch: " + key)
-    if re.findall(r"const val BYTES = ([0-9]+)", constants) != ["116534"]:
+    if re.findall(r"const val BYTES = ([0-9]+)", constants) != ["117854"]:
         raise ValueError("Bundled script Kotlin byte count mismatch")
     return _validate_bundled_script_assets(archive, BUNDLED_SCRIPT_FILES, expected_constants, source)
 

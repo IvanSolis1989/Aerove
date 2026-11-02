@@ -17,7 +17,7 @@ final liteProduct = ProductSpec(
   resources: ProductResources(
     defaultScriptAsset: 'app/src/main/assets/scripts/smart-config-kit-meow.js',
     defaultScriptSha256:
-        '96b798d1d01129c0d8552a4a7a39b5108668d9007c6af996cb58b82d0d429586',
+        'e6e451d7f85bd7a7151e9048daa5294ebaea8b65dda73d38d6af1d150941c6fc',
     defaultScriptUrl:
         'https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/'
         'refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/'

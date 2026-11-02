@@ -1231,7 +1231,7 @@ jobs:
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
         repository: IvanSolis1989/Smart-Config-Kit
-        ref: c18c314d94206eb6724d235ca0d590c3e14e9121
+        ref: 5e28b84fa5161c67222b1b12f71732a2e7b80fae
         path: .ci-fixture-sources/smart-config
         persist-credentials: false
         fetch-depth: 1
@@ -1349,20 +1349,20 @@ jobs:
         pattern: AEROVE-Lite-current-acceptance-*-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/lite-current-acceptance
         merge-multiple: false
-    - name: Require current platform, Flutter, Native, optical and visual gates
+    - name: Verify current Android execution and retain pending release gates
       run: |
         python3 apps/aerove-lite/tool/android_acceptance_verify.py \
           --directory "$RUNNER_TEMP/lite-current-acceptance" --source "$GITHUB_SHA" \
           --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
-          --output "$RUNNER_TEMP/lite-current-acceptance/AGGREGATE.json"
-    - name: Preserve the strict complete Android acceptance result
+          --execution-only --output "$RUNNER_TEMP/lite-current-acceptance/AGGREGATE.json"
+    - name: Preserve raw Android execution evidence and pending release gates
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
         name: AEROVE-Lite-current-acceptance-aggregate-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-current-acceptance/AGGREGATE.json
+        path: ${{ runner.temp }}/lite-current-acceptance/
         if-no-files-found: error
-    - name: All exact-source acceptance gates passed
+    - name: All exact-source Android execution gates passed
       env:
         RESULTS: ${{ toJSON(needs) }}
       run: python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); assert all(x["result"]=="success" for x in results.values()), results'

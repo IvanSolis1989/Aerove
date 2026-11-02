@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 export const fixedSource = Object.freeze({
-  revision: '66a5eb6034bae4f2bda905669de788a418cacd9a',
-  gitBlob: '02ac2030b0a190958ed590fc6475f83132aa1c4f',
-  scriptSha256: 'f33ea7ef24043899d734f3174000b87f4f620cd35c4328af484c32775ea062bc',
+  revision: '5e28b84fa5161c67222b1b12f71732a2e7b80fae',
+  gitBlob: '038fa343693daa4519755e3e723d9ee0eeef291a',
+  scriptSha256: '1c692381d0069d89edab73a31a43afa13e1d2079e2c58eb0852597e498df1e14',
 });
 
 export function syntheticInput(kind) {
@@ -93,7 +93,7 @@ function main() {
   assert.equal(metadata.revision, fixedSource.revision);
   assert.equal(metadata.gitBlob, fixedSource.gitBlob);
   assert.equal(metadata.sha256, fixedSource.scriptSha256);
-  assert.equal(metadata.version, 'v6.0.21-flclash.25');
+  assert.equal(metadata.version, 'v6.0.21-flclash.26');
   const outputs = new Map();
   for (const kind of ['baseline', 'private']) {
     outputs.set(`dns-${kind}.json`, runDns(source.toString('utf8'), syntheticInput(kind)));

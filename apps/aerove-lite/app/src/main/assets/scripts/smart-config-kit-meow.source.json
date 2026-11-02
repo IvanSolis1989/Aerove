@@ -1,17 +1,17 @@
 {
   "repository": "IvanSolis1989/Smart-Config-Kit",
-  "commit": "c18c314d94206eb6724d235ca0d590c3e14e9121",
+  "commit": "5e28b84fa5161c67222b1b12f71732a2e7b80fae",
   "requestedRef": "main",
   "path": "Meow内核系/Aerove Lite/AeroveLite(meow).js",
-  "blobSha": "c995576a11e06be1ed6ae386c34e17b886f96484",
-  "bytes": 116534,
-  "sha256": "96b798d1d01129c0d8552a4a7a39b5108668d9007c6af996cb58b82d0d429586",
-  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/c18c314d94206eb6724d235ca0d590c3e14e9121/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
-  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/c18c314d94206eb6724d235ca0d590c3e14e9121/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
+  "blobSha": "7a0e936689124fa27a918a042b440ae28841c4ee",
+  "bytes": 117854,
+  "sha256": "e6e451d7f85bd7a7151e9048daa5294ebaea8b65dda73d38d6af1d150941c6fc",
+  "sourceUrl": "https://github.com/IvanSolis1989/Smart-Config-Kit/blob/5e28b84fa5161c67222b1b12f71732a2e7b80fae/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
+  "downloadUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/5e28b84fa5161c67222b1b12f71732a2e7b80fae/Meow内核系/Aerove%20Lite/AeroveLite(meow).js",
   "updateUrl": "https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/AeroveLite(meow).js",
   "versionHeader": [
     "// AEROVE Lite / meow-rs 分流覆写候选（共享 Meow 分流实现）",
-    "// 版本：v6.0.21-meow.7 | Build：2026-10-29",
+    "// 版本：v6.0.21-meow.8 | Build：2026-10-31",
     "// 架构：最多 22 个 url-test 区域组 + 33 业务组；融合 MRS / residual YAML",
     "// 规则源：rulesets/source/routing-graph.js v6.0.21",
     "// 生成：node tools/generate-meow.js；运行时输入：Mihomo内核系/FlClash/FlClash(mihomo).js",
@@ -53,17 +53,17 @@
     ],
     "originalLicenseFetch": "Fresh fixed-commit root inventory; no tracked independent root license text"
   },
-  "fetchedBy": "Fixed-commit HTTPS download; bytes independently match local Git object",
+  "fetchedBy": "Read-only git cat-file blob from fixed Smart-Config-Kit revision; exact original LF bytes",
   "scriptExecuted": true,
-  "scriptExecutionRuntime": "Offline Node vm main(config); Android QuickJS/JNI pending CI",
+  "scriptExecutionRuntime": "Offline Node vm main(config) via the fixed-source fixture generator; official rules/providers/group-order projection and unchanged resource bytes verified. QuickJS/JNI and Android not executed.",
   "sourceManifests": {
     "adapter": {
       "path": "Meow内核系/adapter-manifest.json",
-      "sha256": "2cdef32271601fec6c63b5cd5387a169f983757a2aaa72bcc20d24f543fa7695"
+      "sha256": "841fc5a21481fa87cc527272039fe989c462dcc785322a2eb4fedb2fe18528a5"
     },
     "ruleAssets": {
       "path": "Meow内核系/Aerove Lite/rule-assets/manifest.json",
-      "sha256": "6b1373486ffc79e2f7d5294ad3545aaf79b416cba4a3746fb98b034642543c0a"
+      "sha256": "3d7a7d849cea0fa41e39f3e38fc50a60c820532c425522dd21cb3a3bfcd88b8b"
     }
   }
 }

@@ -18,7 +18,8 @@ notes_spec.loader.exec_module(notes)
 
 
 def workflow_aggregate_step():
-    workflow = Path(__file__).resolve().parents[3] / ".github/workflows/aerove-lite.yaml"
+    # Immutable b999bf2e7798fded051b2180ecd8f70889839afe producer, before Flutter migration.
+    workflow = Path(__file__).with_name("fixtures") / "lite-workflow-b999bf2.yaml"
     text = workflow.read_text(encoding="utf-8")
     section_match = re.search(r"(?ms)^  accepted:\s*\n(?P<section>.*?)(?=^  [A-Za-z0-9_-]+:\s*$|\Z)", text)
     if not section_match:
@@ -28,6 +29,21 @@ def workflow_aggregate_step():
     if len(matches) != 1:
         raise AssertionError(f"expected one aggregate acceptance step in the actual Lite workflow, got {matches!r}")
     return matches[0]
+
+
+def workflow_git_fixture(current):
+    root = Path(__file__).resolve().parents[3]
+    fixtures = Path(__file__).with_name("fixtures")
+    files = {
+        ".github/workflows/aerove-lite.yaml": root / ".github/workflows/aerove-lite.yaml" if current else fixtures / "lite-workflow-b999bf2.yaml",
+        ".github/workflows/aerove-lite-build.yaml": root / ".github/workflows/aerove-lite-build.yaml" if current else fixtures / "lite-build-workflow-b999bf2.yaml",
+    }
+
+    def read(command, cwd):
+        if command[:2] != ["git", "show"] or not re.fullmatch(r"[0-9a-f]{40}:.+", command[2]):
+            raise AssertionError("expected immutable source Git read")
+        return files[command[2].split(":", 1)[1]].read_text(encoding="utf-8").encode()
+    return read
 
 
 class LitePromotionGateTests(unittest.TestCase):
@@ -204,8 +220,42 @@ class LitePromotionGateTests(unittest.TestCase):
 
     def test_parallel_jobs_require_every_producer_and_android_phase_in_same_attempt(self):
         for count in (8, 16):
-            with self.subTest(count=count), mock.patch.object(release, "_source_shard_count", return_value=count):
+            with self.subTest(count=count), mock.patch.object(release, "_source_acceptance_plan",
+                    return_value=dict(kind="shards", shard_count=count)), \
+                    mock.patch.object(release.subprocess, "check_output", side_effect=workflow_git_fixture(False)):
                 self.check_parallel_jobs(count)
+
+    def test_flutter_jobs_require_every_producer_and_both_exact_android_phases(self):
+        with mock.patch.object(release, "_source_acceptance_plan", return_value=dict(kind="flutter")), \
+                mock.patch.object(release.subprocess, "check_output", side_effect=workflow_git_fixture(True)):
+            self.check_parallel_jobs(0)
+
+    def test_package_protocol_is_fixed_by_original_reusable_source_not_acceptance_kind(self):
+        fixtures = Path(__file__).with_name("fixtures")
+        cases = (
+            ("a9f518b9568d7a124f1bf3946c0084e81f2e6d5b", "lite-build-workflow-a9f518b.yaml",
+             "Emulator application and instrumentation APK"),
+            ("b999bf2e7798fded051b2180ecd8f70889839afe", "lite-build-workflow-b999bf2.yaml",
+             "Build the emulator production Flutter APK once"),
+        )
+        for source, fixture, expected in cases:
+            workflow = (fixtures / fixture).read_text(encoding="utf-8")
+            with self.subTest(source=source), mock.patch.object(release.subprocess, "check_output", return_value=workflow.encode()) as git:
+                self.assertEqual(release._source_package_step(Path("original"), source), expected)
+                git.assert_called_once_with(["git", "show", source + ":.github/workflows/aerove-lite-build.yaml"], cwd=Path("original"))
+            extra = ("    - name: Emulator application and instrumentation APK\n"
+                     "      id: emulator_apks\n      if: inputs.abi == 'x86_64'\n")
+            invalid = (
+                workflow.replace(expected, "Unknown APK producer"),
+                workflow.replace("if: inputs.abi == 'x86_64'", "if: inputs.abi == 'arm64-v8a'"),
+                workflow.replace("    name: package\n", extra + "    name: package\n"),
+                workflow + "\n  package:\n    steps: []\n",
+            )
+            for index, text in enumerate(invalid):
+                self.assertNotEqual(text, workflow)
+                with self.subTest(source=source, mutation=index), mock.patch.object(release.subprocess, "check_output", return_value=text.encode()):
+                    with self.assertRaises(release.PromotionError):
+                        release._source_package_step(Path("original"), source)
 
     def check_parallel_jobs(self, count):
         actual_aggregate_step = f"Verify the {count} runtime-discovered shard sets form one complete APK test selection"
@@ -221,6 +271,12 @@ class LitePromotionGateTests(unittest.TestCase):
         }
         for shard_index in range(count):
             required[f"acceptance (remaining shard {shard_index}/{count})"] = ["Real API 33 remaining verification"]
+        if count == 0:
+            del required["acceptance (matrix)"]
+            required["accepted"] = ["All exact-source Android execution gates passed", release.FLUTTER_AGGREGATE_STEP]
+            required.update(release.FLUTTER_ACCEPTANCE)
+            required["Shared Flutter client verification and Android host compilation (no APK)"] = [
+                "Compile the Flutter host and actual platform acceptance runner"]
         for abi in ("arm64-v8a", "x86_64"):
             prefix = f"build ({abi}) / "
             required[prefix+"rust"] = ["Build the pinned Rust Android bridge"]
@@ -228,6 +284,21 @@ class LitePromotionGateTests(unittest.TestCase):
             required[prefix+"package"] = ["Prepare the independent Lite release signing identity",
                 "Signed preview ARM64 APK" if abi=="arm64-v8a" else "Emulator application and instrumentation APK",
                 "Check the signed APK and record its exact provenance"]
+        root = Path(__file__).resolve().parents[3]
+        producer_path = (root / ".github/workflows/aerove-lite-build.yaml" if count == 0 else
+                         Path(__file__).with_name("fixtures") / "lite-build-workflow-b999bf2.yaml")
+        producer = producer_path.read_text(encoding="utf-8")
+        # The real producer's stable step id is independent of the promotion consumer.
+        actual_x86 = re.findall(r"(?m)^    - name: (.+)\n      id: emulator_app\n      if: inputs.abi == 'x86_64'$", producer)
+        self.assertEqual(len(actual_x86), 1, "actual x86 APK producer must remain unique")
+        required["build (x86_64) / package"][1] = actual_x86[0]
+        for abi in ("arm64-v8a", "x86_64"):
+            for job in ("rust", "helper", "package"):
+                section = re.search(r"(?ms)^  " + job + r":\n(.*?)(?=^  [A-Za-z0-9_-]+:|\Z)", producer)
+                self.assertIsNotNone(section, "actual reusable producer job is required")
+                declared = re.findall(r"(?m)^    - name: (.+)$", section.group(1))
+                for step in required[f"build ({abi}) / {job}"]:
+                    self.assertIn(step, declared, "required producer step must exist in actual workflow")
         jobs = [dict(name=name,status="completed",conclusion="success",run_id=11,run_attempt=2,
             steps=[dict(name=step,conclusion="success") for step in steps]) for name,steps in required.items()]
         for index, job in enumerate(jobs):
@@ -241,6 +312,13 @@ class LitePromotionGateTests(unittest.TestCase):
                 job["head_sha"] = "a" * 40
         with mock.patch.object(release,"_gh_items",return_value=jobs):
             self.assertEqual(len(required),len(release._candidate_jobs(11,2,"a" * 40)))
+            if count == 0:
+                package = next(job for job in jobs if job["name"] == "build (x86_64) / package")
+                step = next(step for step in package["steps"] if step["name"] == actual_x86[0])
+                step["name"] = "Emulator application and instrumentation APK"
+                with self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11, 2, "a" * 40)
+                step["name"] = actual_x86[0]
             for target in range(len(jobs)):
                 removed = jobs.pop(target)
                 with self.subTest(missing=removed["name"]), self.assertRaises(release.PromotionError):
@@ -292,7 +370,7 @@ class LitePromotionGateTests(unittest.TestCase):
 
     def test_original_source_plan_is_read_from_git_and_not_artifact_claims(self):
         root = Path(__file__).resolve().parents[3]
-        workflow = (root / ".github/workflows/aerove-lite.yaml").read_text()
+        workflow = (Path(__file__).with_name("fixtures") / "lite-workflow-b999bf2.yaml").read_text()
         for count in (8, 16):
             candidate = workflow
             if count == 8:
@@ -318,6 +396,70 @@ class LitePromotionGateTests(unittest.TestCase):
                     release._source_shard_count(root, "a" * 40)
         with self.assertRaises(release.PromotionError):
             release._source_shard_count(root, "main")
+
+    def test_flutter_source_plan_requires_both_phases_execution_and_raw_evidence(self):
+        root = Path(__file__).resolve().parents[3]
+        workflow = (root / ".github/workflows/aerove-lite.yaml").read_text(encoding="utf-8")
+        with mock.patch.object(release.subprocess, "check_output", return_value=workflow.encode()) as git:
+            self.assertEqual(release._source_acceptance_plan(root, "a" * 40), dict(kind="flutter"))
+            git.assert_called_once_with(["git", "show", "a" * 40 + ":.github/workflows/aerove-lite.yaml"], cwd=root)
+        invalid = [workflow.replace("- phase: flutter-full", "- phase: flutter-platform"),
+                   workflow.replace("--execution-only --output", "--output"),
+                   workflow.replace(release.FLUTTER_AGGREGATE_STEP, "Unverified evidence"),
+                   workflow.replace("path: ${{ runner.temp }}/lite-current-acceptance/\n",
+                                    "path: ${{ runner.temp }}/lite-current-acceptance/AGGREGATE.json\n"),
+                   workflow.replace("merge-multiple: false", "merge-multiple: true"),
+                   workflow.replace("emulator_current.py ${{ matrix.phase }}", "emulator_current.py flutter-full")]
+        for index, text in enumerate(invalid):
+            self.assertNotEqual(text, workflow)
+            with self.subTest(mutation=index), mock.patch.object(release.subprocess, "check_output", return_value=text.encode()):
+                with self.assertRaises(release.PromotionError):
+                    release._source_acceptance_plan(root, "a" * 40)
+
+    def test_original_flutter_source_selects_current_bundle_without_accepting_legacy_matrix(self):
+        expected = dict(release.ARTIFACT_PREFIXES)
+        expected["matrix"] = "AEROVE-Lite-current-acceptance-aggregate-attempt-"
+        self.assertEqual(release._artifact_prefixes(dict(kind="flutter")), expected)
+        self.assertEqual(release._artifact_prefixes(dict(kind="shards", shard_count=16)), release.ARTIFACT_PREFIXES)
+
+    def test_replayed_flutter_execution_cannot_promote_without_final_evidence_and_approval(self):
+        import android_acceptance_verify as verifier
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            runtime = root / "runtime"
+            (runtime / "apks").mkdir(parents=True)
+            for name in ("app-release.apk", "platform-qa-release.apk"):
+                (runtime / "apks" / name).write_bytes(name.encode())
+            (runtime / "source-manifest.json").write_text("{}")
+            (runtime / "BUILD_INFO.json").write_text("{}")
+            receipt = dict(identity=dict(sourceTree="b" * 40, runNumber=90),
+                apkSha256=release._sha(runtime / "apks/app-release.apk"),
+                platformApkSha256=release._sha(runtime / "apks/platform-qa-release.apk"),
+                runtimeManifestSha256=release._sha(runtime / "source-manifest.json"))
+            phase = root / "flutter-full"
+            phase.mkdir()
+            receipt_path = phase / "android-acceptance.json"
+            receipt_path.write_text(json.dumps(receipt))
+            pending = dict(exactAndroidExecutionPassed=True, fullAcceptance=False,
+                           visualApproved=False, releaseAccepted=False,
+                           unresolvedCoverage=["Lite real optical displacement", "user twelve-frame visual approval"])
+            (root / "AGGREGATE.json").write_text(json.dumps(pending))
+            with mock.patch.object(verifier, "aggregate", return_value=pending) as replay, \
+                    mock.patch.object(verifier, "platform_binding", return_value=runtime / "apks/platform-qa-release.apk"):
+                with self.assertRaisesRegex(release.PromotionError, "not complete release acceptance"):
+                    release._verify_android_bundle(root, runtime, "a" * 40, "b" * 40, 123, 2, 90)
+                replay.assert_called_once_with(root, "a" * 40, 123, 2, require_full=False)
+                for key in ("apkSha256", "platformApkSha256", "runtimeManifestSha256"):
+                    old = receipt[key]
+                    receipt[key] = "f" * 64
+                    receipt_path.write_text(json.dumps(receipt))
+                    with self.subTest(hash=key), self.assertRaisesRegex(release.PromotionError, "not bound"):
+                        release._verify_android_bundle(root, runtime, "a" * 40, "b" * 40, 123, 2, 90)
+                    receipt[key] = old
+                receipt_path.write_text(json.dumps(receipt))
+                (root / "AGGREGATE.json").write_text(json.dumps({**pending, "fullAcceptance": True}))
+                with self.assertRaisesRegex(release.PromotionError, "differs from replayed"):
+                    release._verify_android_bundle(root, runtime, "a" * 40, "b" * 40, 123, 2, 90)
 
     def test_required_build_steps_must_all_pass(self):
         job = {"status": "completed", "conclusion": "success", "steps": [
@@ -418,6 +560,7 @@ class LitePromotionGateTests(unittest.TestCase):
                 return {"artifacts": artifact_rows}
             raise AssertionError(route)
         with tempfile.TemporaryDirectory() as temp, mock.patch.object(release, "_gh_json", side_effect=api), \
+                mock.patch.object(release, "_source_acceptance_plan", return_value=dict(kind="shards", shard_count=16)), \
                 mock.patch.object(release, "_candidate_jobs", return_value={"complete": True}):
             outputs = Path(temp) / "outputs"
             for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",
@@ -618,9 +761,10 @@ class ExplicitBuildPromotionTest(unittest.TestCase):
             size_in_bytes=1000) for index, prefix in enumerate(release.ARTIFACT_PREFIXES.values())]
         self.projection = dict(build_tree="d" * 40, release_tree="e" * 40)
 
-    def select(self):
+    def select(self, plan=None):
         with mock.patch.object(release, "_gh_json", return_value=self.run), \
                 mock.patch.object(release, "_gh_items", return_value=self.artifacts), \
+                mock.patch.object(release, "_source_acceptance_plan", return_value=plan or dict(kind="shards", shard_count=16)), \
                 mock.patch.object(release, "_candidate_jobs") as jobs, \
                 mock.patch.object(release.product_source, "equivalent", return_value=self.projection):
             result = release.accepted_build(Path("unused"), self.target, 123, 456)
@@ -633,6 +777,22 @@ class ExplicitBuildPromotionTest(unittest.TestCase):
         self.assertEqual(result["run_id"], 123)
         self.assertEqual(result["run_attempt"], 2)
         self.assertEqual(set(result["artifact_ids"]), {"arm", "x86", "helper", "matrix"})
+
+    def test_flutter_explicit_original_requires_exact_immutable_execution_bundle(self):
+        plan = dict(kind="flutter")
+        with self.assertRaises(release.PromotionError):
+            self.select(plan)
+        matrix = next(row for row in self.artifacts if row["name"].startswith(release.ARTIFACT_PREFIXES["matrix"]))
+        matrix["name"] = "AEROVE-Lite-current-acceptance-aggregate-attempt-2"
+        result = self.select(plan)
+        self.assertEqual(result["artifacts"]["matrix"]["id"], matrix["id"])
+        for key, value in (("expired", True), ("digest", None), ("name", matrix["name"][:-1] + "1"),
+                           ("workflow_run", dict(id=123, head_sha="f" * 40))):
+            original = matrix[key]
+            matrix[key] = value
+            with self.subTest(field=key), self.assertRaises(release.PromotionError):
+                self.select(plan)
+            matrix[key] = original
 
     def test_explicit_original_accepts_only_exact_approved_development_branches(self):
         for branch in ("codex/aerove-independent-architecture", "codex/aerove-lite-meow-app",

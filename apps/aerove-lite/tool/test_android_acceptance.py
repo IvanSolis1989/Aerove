@@ -130,6 +130,30 @@ class FixedSelectionTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Exactly platform and Flutter"):
             v.aggregate(self.root, "1" * 40, "123", "1")
 
+    def test_execution_only_command_retains_pending_gates_and_strict_default_rejects_them(self):
+        # Isolate CLI policy from the raw-evidence parser, exercised by the other tests.
+        import sys
+        pending = dict(schema=1, exactAndroidExecutionPassed=True, fullAcceptance=False,
+                       visualApproved=False, releaseAccepted=False,
+                       unresolvedCoverage=["Lite real optical displacement", "user twelve-frame visual approval"])
+        output = self.root / "AGGREGATE.json"
+        arguments = ["verify", "--directory", str(self.root), "--source", "a" * 40,
+                     "--run", "123", "--attempt", "2", "--output", str(output)]
+        for execution_only in (False, True):
+            with patch.object(sys, "argv", arguments + (["--execution-only"] if execution_only else [])), \
+                    patch.object(v, "aggregate", return_value=copy.deepcopy(pending)) as aggregate:
+                if execution_only:
+                    v.main()
+                else:
+                    with self.assertRaisesRegex(ValueError, "Full acceptance pending"):
+                        v.main()
+                aggregate.assert_called_once_with(self.root, "a" * 40, "123", "2", require_full=False)
+                self.assertEqual(v.load(output), pending)
+        pending["exactAndroidExecutionPassed"] = False
+        with patch.object(sys, "argv", arguments + ["--execution-only"]), \
+                patch.object(v, "aggregate", return_value=pending), self.assertRaisesRegex(ValueError, "Exact Android execution"):
+            v.main()
+
     def test_sealed_paths_cannot_escape_or_change_bytes(self):
         p = self.root / "one"; p.write_text("one")
         manifest = dict(files=[dict(path="one", bytes=3, sha256=v.sha(p))])

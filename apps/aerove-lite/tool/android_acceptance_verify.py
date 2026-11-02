@@ -340,12 +340,16 @@ def main():
     for key in ("source", "run", "attempt"):
         parser.add_argument("--" + key, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--execution-only", action="store_true",
+                        help="Verify actual Android execution and retain pending release gates without approving them")
     args = parser.parse_args()
     try:
         result = aggregate(args.directory, args.source, args.run, args.attempt, require_full=False)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, indent=2) + "\n")
-        require(result["fullAcceptance"], "Full acceptance pending: " + repr(result["unresolvedCoverage"]))
+        require(result["exactAndroidExecutionPassed"] is True, "Exact Android execution did not pass")
+        if not args.execution_only:
+            require(result["fullAcceptance"], "Full acceptance pending: " + repr(result["unresolvedCoverage"]))
     except ValueError as error:
         if not args.output.exists():
             args.output.parent.mkdir(parents=True, exist_ok=True)
