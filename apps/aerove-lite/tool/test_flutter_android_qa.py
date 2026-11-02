@@ -124,6 +124,36 @@ class ContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'changed'):
             qa.validate_capture(self.root, self.info, 'token', matrix=False)
 
+    def test_original201_v2_signer_reaches_install_but_wrong_or_ambiguous_certificate_does_not(self):
+        signature = (Path(__file__).parent / 'fixtures/original201/lite-flutter-runner-signature.txt').read_text()
+        digest = '09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'
+        self.info['signer_sha256'] = digest
+        info_path = self.root / 'BUILD_INFO.json'
+        qa.save(info_path, self.info)
+        proof_path = self.root / 'owner.json'
+        qa.save(proof_path, self.proof)
+        self.proof['deviceSerial'] = 'emulator-5554'
+        args = SimpleNamespace(adb=Path('adb'), serial='emulator-5554', output=self.root,
+                               apk=self.apk, test_apk=self.test_apk, build_info=info_path,
+                               apksigner=Path('apksigner'))
+        owner = SimpleNamespace(validate_renderer_proof=lambda _: self.proof)
+        for signed, reaches_install in ((signature, True), (signature.replace(digest, 'b' * 64), False),
+                                        (signature + '\nSigner #1 certificate SHA-256 digest: ' + digest, False),
+                                        (signature.replace('V2 Signer: certificate SHA-256', 'Unknown Signer: certificate SHA-256'), False)):
+            producer = qa.Producer(args)
+            def adb(label, *_args, **_kwargs):
+                if label == 'install-' + qa.PACKAGE:
+                    raise InterruptedError('host-only test stops before any installation')
+                return b''
+            with self.subTest(reaches_install=reaches_install, signature=signed), \
+                    patch.dict('sys.modules', {'emulator_current': owner}), \
+                    patch.dict('os.environ', AEROVE_CURRENT_RENDERER_PROOF=str(proof_path), ANDROID_SERIAL='emulator-5554'), \
+                    patch.object(producer, 'adb_command', side_effect=adb) as commands, \
+                    patch.object(producer, 'command', return_value=signed.encode()):
+                self.assertEqual(producer.run(), 1)
+            self.assertEqual(any(call.args[0].startswith('install-') for call in commands.call_args_list), reaches_install)
+            self.assertFalse(json.loads((self.root / 'qa-receipt.json').read_text())['releaseAccepted'])
+
     def test_only_instrumentation_install_allows_test_only_apk(self):
         info_path = self.root / 'BUILD_INFO.json'
         self.info['signer_sha256'] = 'c' * 64

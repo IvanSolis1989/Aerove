@@ -177,6 +177,38 @@ class FixedSelectionTest(unittest.TestCase):
         producer.interrupt(2,None)
         self.assertEqual(producer.receipt["interruptSignals"],[15])
 
+    def test_original201_v2_certificate_preflight_keeps_platform_install_boundary(self):
+        from types import SimpleNamespace
+        signature = (Path(__file__).parent / "fixtures/original201/lite-flutter-runner-signature.txt").read_text()
+        digest = "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8"
+        app, test, platform = (self.root / name for name in ("app.apk", "driver.apk", "platform.apk"))
+        for path in (app, test, platform): path.write_bytes(b"host-only preflight fixture; not an installable APK")
+        info_path = self.root / "BUILD_INFO.json"
+        info_path.write_text(json.dumps(dict(signer_sha256=digest)))
+        (self.root / "platform-runner-build.json").write_text(json.dumps(dict(sharedUiReuse={})))
+        proof_path = self.root / "owner.json"; proof_path.write_text("{}")
+        proof = dict(deviceSerial="emulator-5554", runtimeDirectory=str(self.root), runtimeManifestSha256="a"*64)
+        args = Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root, phase="flutter-platform",
+                         apk=app, test_apk=test, platform_apk=platform, build_info=info_path, apksigner=Path("apksigner"))
+        owner = SimpleNamespace(validate_renderer_proof=lambda _: proof)
+        for signed, reaches_install in ((signature, True), (signature.replace(digest, "b"*64), False),
+                                        (signature + "\nSigner #1 certificate SHA-256 digest: " + digest, False)):
+            producer = Acceptance(args)
+            def adb(label, *_args, **_kwargs):
+                if label == "install-dev.aerove.lite":
+                    raise InterruptedError("host-only test stops before any installation")
+                return b""
+            with self.subTest(reaches_install=reaches_install, signature=signed), \
+                    patch.dict("sys.modules", {"emulator_current": owner}), \
+                    patch.dict("os.environ", AEROVE_CURRENT_RENDERER_PROOF=str(proof_path), ANDROID_SERIAL="emulator-5554"), \
+                    patch("android_acceptance.validate_binding", return_value={}), \
+                    patch("android_acceptance.platform_binding", return_value=platform), \
+                    patch.object(producer, "adb_command", side_effect=adb) as commands, \
+                    patch.object(producer, "command", return_value=signed.encode()):
+                self.assertEqual(producer.run(), 1)
+            self.assertEqual(any(call.args[0].startswith("install-") for call in commands.call_args_list), reaches_install)
+            self.assertFalse(v.load(self.root / "android-acceptance.json")["fullAcceptance"])
+
     def test_failed_owner_preflight_never_contacts_a_device(self):
         producer=Acceptance(Namespace(adb=Path("adb"),serial="physical-device",output=self.root,phase="flutter-platform"))
         with patch.dict("sys.modules",{"emulator_current":None}),patch.object(producer,"adb_command") as adb:

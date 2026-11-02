@@ -555,19 +555,8 @@ def product_version(path):
     return product
 
 
-def verify_identity(badging, signature, product, channel):
-    identity = re.search(r"^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", badging, re.MULTILINE)
-    expected_id = product["applicationId"] + (".dev" if channel == "development" else "")
-    expected_version = product["version"] + ("+debug" if channel == "development" else "")
-    if identity is None or tuple(identity.groups()) != (expected_id, product["versionCode"], expected_version):
-        raise ValueError("Unexpected package identity or version")
-    if not re.search(r"^sdkVersion:'33'$", badging, re.MULTILINE):
-        raise ValueError("Unexpected minimum SDK")
-    launcher_lines = [line for line in badging.splitlines() if line.startswith("launchable-activity:")]
-    launcher = re.fullmatch(r"launchable-activity: name='([^']+)'(?: .*)?", launcher_lines[0]) if len(launcher_lines) == 1 else None
-    if (launcher is None or launcher[1] != FLUTTER_LAUNCHER
-            or len(re.findall(r"(?:^| )name='[^']*'", launcher_lines[0])) != 1):
-        raise ValueError("Expected exactly one Flutter launchable activity")
+def signing_certificate(signature):
+    """Read one verified certificate from supported SDK output; callers bind its identity."""
     lines = signature.splitlines()
     legacy_signers = re.findall(r"^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.MULTILINE)
     modern_signers = re.findall(r"^V2 Signer: certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.MULTILINE)
@@ -588,10 +577,27 @@ def verify_identity(badging, signature, product, channel):
     signer = legacy_signers + modern_signers
     if len(signer_digest_lines) != len(signer) or len(signer) != 1:
         raise ValueError("Unexpected or ambiguous verified signing certificate")
-    if len(signer) != 1 or (channel != "development" and signer[0] != product["signerSha256"]):
+    return signer[0]
+
+
+def verify_identity(badging, signature, product, channel):
+    identity = re.search(r"^package: name='([^']+)' versionCode='([0-9]+)' versionName='([^']+)'", badging, re.MULTILINE)
+    expected_id = product["applicationId"] + (".dev" if channel == "development" else "")
+    expected_version = product["version"] + ("+debug" if channel == "development" else "")
+    if identity is None or tuple(identity.groups()) != (expected_id, product["versionCode"], expected_version):
+        raise ValueError("Unexpected package identity or version")
+    if not re.search(r"^sdkVersion:'33'$", badging, re.MULTILINE):
+        raise ValueError("Unexpected minimum SDK")
+    launcher_lines = [line for line in badging.splitlines() if line.startswith("launchable-activity:")]
+    launcher = re.fullmatch(r"launchable-activity: name='([^']+)'(?: .*)?", launcher_lines[0]) if len(launcher_lines) == 1 else None
+    if (launcher is None or launcher[1] != FLUTTER_LAUNCHER
+            or len(re.findall(r"(?:^| )name='[^']*'", launcher_lines[0])) != 1):
+        raise ValueError("Expected exactly one Flutter launchable activity")
+    signer = signing_certificate(signature)
+    if channel != "development" and signer != product["signerSha256"]:
         raise ValueError("Unexpected or ambiguous verified signing certificate")
     return {"application_id": expected_id, "version": expected_version,
-        "version_code": int(product["versionCode"]), "min_sdk": 33, "signer_sha256": signer[0],
+        "version_code": int(product["versionCode"]), "min_sdk": 33, "signer_sha256": signer,
         "launcher_activity": launcher[1]}
 
 

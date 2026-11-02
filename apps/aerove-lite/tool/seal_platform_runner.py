@@ -7,6 +7,8 @@ import re
 import subprocess
 import xml.etree.ElementTree as ET
 
+from verify_apk import signing_certificate
+
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -25,11 +27,8 @@ def classes(text):
 
 def seal(info, app, test, signature, manifest, graph, mapping, defined, driver):
     require(sha(app) == info["apk_sha256"], "Target app changed after its inspected one-time build")
-    signers = re.findall(r"^(?:Signer #\d+|V2 Signer:) certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.M)
-    certificate_lines = [line for line in signature.splitlines() if "certificate SHA-256 digest:" in line]
-    signer_counts = [line for line in signature.splitlines() if line.startswith("Number of signers:")]
-    require(len(certificate_lines) == 1 and signers == [info["signer_sha256"]] and
-            (not signer_counts or signer_counts == ["Number of signers: 1"]),
+    require(signing_certificate(signature) == info["signer_sha256"] and
+            len([line for line in signature.splitlines() if "certificate SHA-256 digest:" in line]) == 1,
             "Platform runner signer differs from original production signer or is ambiguous")
     root = ET.fromstring(manifest); a = "{http://schemas.android.com/apk/res/android}"
     instrumentation = root.findall("instrumentation")

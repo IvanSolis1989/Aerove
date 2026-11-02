@@ -15,6 +15,8 @@ import sys
 import time
 import zipfile
 
+from verify_apk import signing_certificate
+
 PACKAGE = 'dev.aerove.lite'
 LAUNCHER = PACKAGE + '.FlutterMainActivity'
 TEST_PACKAGE = PACKAGE + '.test'
@@ -228,8 +230,7 @@ class Producer:
                     raise ValueError('Dedicated fresh emulator required; refuses to clear/replace existing user app')
             for label, path in (('app', self.args.apk), ('test', self.args.test_apk)):
                 signature = self.command(label + '-signature', [self.args.apksigner, 'verify', '--verbose', '--print-certs', path]).decode()
-                signers = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})$', signature, re.M)
-                if signers != [info['signer_sha256']]:
+                if signing_certificate(signature) != info['signer_sha256']:
                     raise ValueError('App and runner must share the sealed production signer')
             self.receipt['stage'] = 'install-exact-originals'
             for package, path in ((PACKAGE, self.args.apk), (TEST_PACKAGE, self.args.test_apk)):

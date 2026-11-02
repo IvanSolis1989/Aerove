@@ -69,7 +69,7 @@ jobs:
       if: ${{ inputs.runtime_target == 'lite201-flutter-ui' }}
       working-directory: apps/aerove-lite/tool
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: python3 -B -m unittest -v test_emulator_original84 test_emulator_current test_ci_artifacts test_prebuilt_android_runtime test_flutter_android_qa
+      run: python3 -B -m unittest -v test_emulator_original84 test_emulator_current test_ci_artifacts test_prebuilt_android_runtime test_flutter_android_qa test_verify_apk test_android_acceptance
     - name: Checkout immutable Lite141 source for Smart fixture ownership
       if: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' }}
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

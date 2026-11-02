@@ -16,6 +16,7 @@ from flutter_android_qa import Producer, PACKAGE, CLASS, LAUNCHER, idle, rendere
 from android_acceptance_verify import (CONTRACT, checkpoint, load, platform_binding, platform_log, require,
                                        separate_uid, ui_capture)
 from instrumentation_shards import parse_log
+from verify_apk import signing_certificate
 
 TEST_PACKAGE = "dev.aerove.lite.platform.test"
 RUNNER = TEST_PACKAGE + "/dev.aerove.lite.platformqa.AcceptanceCheckpointRunner"
@@ -234,7 +235,7 @@ class Acceptance(Producer):
                         "Fresh dedicated emulator required; existing user package will not be replaced")
             for label, path in (("app", self.args.apk), ("platform", platform)):
                 signature = self.command(label + "-signature", [self.args.apksigner, "verify", "--verbose", "--print-certs", path]).decode()
-                require(re.findall(r"^Signer #\d+ certificate SHA-256 digest: ([0-9a-f]{64})$", signature, re.M) == [info["signer_sha256"]],
+                require(signing_certificate(signature) == info["signer_sha256"],
                         "Original app and platform runner must share the sealed signer")
             for package, path in ((PACKAGE, self.args.apk), (TEST_PACKAGE, platform)):
                 self.installed.append(package)

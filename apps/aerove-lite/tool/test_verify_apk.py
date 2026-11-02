@@ -114,6 +114,23 @@ class ApkInspectionTests(unittest.TestCase):
             module.verify_identity(self.badging(), "Signer #1 certificate SHA-256 digest: " + "b" * 64,
                 self.product(), "preview")
 
+    def test_shared_signing_certificate_uses_original201_sdk_output_and_preserves_development(self):
+        signature = (Path(__file__).parent / "fixtures/original201/lite-flutter-runner-signature.txt").read_text()
+        digest = "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8"
+        self.assertEqual(module.signing_certificate(signature), digest)
+        self.assertEqual(module.signing_certificate("Signer #1 certificate SHA-256 digest: " + digest), digest)
+        product = self.product()
+        self.assertEqual(module.verify_identity(self.badging(package="dev.aerove.lite.dev", version=product["version"] + "+debug"),
+            signature, product, "development")["signer_sha256"], digest)
+        for bad in ("", signature + "\nSigner #1 certificate SHA-256 digest: " + digest,
+                    signature.replace("V2 Signer: certificate SHA-256", "Unknown Signer: certificate SHA-256"),
+                    signature.replace("Number of signers: 1", "Number of signers: 2"),
+                    signature.replace("Verified using v2 scheme (APK Signature Scheme v2): true", "Verified using v2 scheme (APK Signature Scheme v2): false"),
+                    signature.replace("Verifies\n", ""),
+                    signature.replace("V2 Signer: certificate SHA-256 digest: " + digest, "")):
+            with self.subTest(signature=bad), self.assertRaisesRegex(ValueError, "signing certificate"):
+                module.signing_certificate(bad)
+
     def test_build_tools_37_verified_v2_signer_format_is_accepted(self):
         digest = "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8"
         signature = "\n".join((

@@ -13,7 +13,7 @@ import zipfile
 import ci_artifacts as artifacts
 import lite_release as release
 from emulator_qa79 import GPU_BACKEND, RENDERER_LABEL, renderer_evidence, sha
-from verify_apk import verify_identity
+from verify_apk import signing_certificate, verify_identity
 
 ORIGINAL = dict(sourceRevision='5d2c2bb550ab54ae485837c1dec55e961e273dab',
                 sourceTree='8a9334db3c6d332e8ce098c1608c1ce613499ea1',
@@ -343,8 +343,7 @@ def inspect_packages(directory, reports, tools=None, target='original84'):
                     len(re.findall(r'android:' + field + r'(?:\(0x[0-9a-f]+\))?=', xml)) != 1
                     for field in ('versionCode', 'versionName')):
                 raise ValueError('Flutter201 driver must declare its actual production version attributes')
-            digests = re.findall(r'^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$', signature, re.M)
-            digests += re.findall(r'^V2 Signer: certificate SHA-256 digest: ([0-9a-f]{64})$', signature, re.M)
+            digests = [signing_certificate(signature)]
             if (digests != [spec['product']['signerSha256']] or signature.splitlines().count('Verifies') != 1
                     or len([line for line in signature.splitlines() if 'Signer' in line and 'certificate SHA-256 digest:' in line]) != 1
                     or [line for line in signature.splitlines() if line.startswith('Verified using v2 scheme ')]
