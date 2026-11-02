@@ -52,6 +52,34 @@ void main() {
       },
     );
 
+    test(
+      'a prepared update remains private until guarded publication',
+      () async {
+        final profile = Profile.normal(label: 'prepared');
+        final file = await profile.file;
+        await file.writeAsString('original');
+        var current = true;
+        final prepared = await profile.prepareFile(
+          Uint8List.fromList(utf8.encode('replacement')),
+          validate: (_, _) async => '',
+          isCurrent: () => current,
+        );
+        try {
+          expect(await file.readAsString(), 'original');
+          current = false;
+          expect(
+            () => prepared.publish(isCurrent: () => current),
+            throwsA(isA<UpdateCancelledException>()),
+          );
+          expect(await file.readAsString(), 'original');
+        } finally {
+          await prepared.dispose();
+        }
+        expect(await prepared.stage.exists(), isFalse);
+        expect(await prepared.backup.exists(), isFalse);
+      },
+    );
+
     // EditProfileView relies on this throwing rather than silently
     // succeeding, so a caller-level try/catch can surface the failure.
     test('rejects an invalid config without touching the saved file', () async {

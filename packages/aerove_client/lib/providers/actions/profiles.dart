@@ -8,8 +8,41 @@ class ProfilesAction extends _$ProfilesAction {
 
   void resetAutomaticBackoff() => _automaticBackoff.reset();
 
+  final _profileUpdates = <int, ProfileUpdateIntent>{};
+
   @override
-  void build() {}
+  void build() {
+    ref.onDispose(() {
+      for (final intent in _profileUpdates.values) {
+        intent.cancel();
+      }
+    });
+    ref.listen(maintenanceVisibleProvider, (_, visible) {
+      if (visible) return;
+      for (final intent in _profileUpdates.values) {
+        if (intent.automatic) intent.cancel();
+      }
+    });
+    ref.listen(profilesProvider, (_, profiles) {
+      for (final intent in _profileUpdates.values) {
+        if (!intent.isCurrent) intent.cancel();
+      }
+    });
+  }
+
+  Future<void> cancelProfileUpdate(int id) async {
+    final intent = _profileUpdates[id];
+    intent?.cancel();
+    await intent?.done;
+  }
+
+  Future<void> cancelProfileUpdates(Iterable<int> ids) async {
+    final intents = [for (final id in ids) ?_profileUpdates[id]];
+    for (final intent in intents) {
+      intent.cancel();
+    }
+    await Future.wait(intents.map((intent) => intent.done));
+  }
 
   void updateCurrentSelectedMap(String groupName, String proxyName) {
     final currentProfile = ref.read(currentProfileProvider);
@@ -24,6 +57,7 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> deleteProfile(int id) async {
+    await cancelProfileUpdate(id);
     await ref.read(profilesProvider.notifier).del(id);
     await clearEffect(id);
     final currentProfileId = ref.read(currentProfileIdProvider);
@@ -152,7 +186,11 @@ class ProfilesAction extends _$ProfilesAction {
     ]) {
       final profile = ref.read(profilesProvider).getProfile(id);
       if (profile == null || profile.type != ProfileType.url) continue;
-      await updateProfile(profile, showLoading: true);
+      try {
+        await updateProfile(profile, showLoading: true);
+      } on UpdateCancelledException {
+        return;
+      }
     }
   }
 
@@ -163,29 +201,123 @@ class ProfilesAction extends _$ProfilesAction {
   }) async {
     checkUpdateCurrent(isCurrent);
     if (isCurrent == null) _automaticBackoff.reset(profile.id.toString());
+    final previous = _profileUpdates[profile.id];
+    previous?.cancel();
+    final initial = ref.read(profilesProvider).getProfile(profile.id);
+    var admitted = false;
+    var source = profile;
+    late final ProfileUpdateIntent intent;
+    bool sourceCurrent() {
+      if (!ref.mounted ||
+          !identical(_profileUpdates[profile.id], intent) ||
+          !(isCurrent?.call() ?? true)) {
+        return false;
+      }
+      final latest = ref.read(profilesProvider).getProfile(profile.id);
+      if (!admitted) {
+        return initial == null
+            ? latest == null
+            : latest != null &&
+                  latest.type == initial.type &&
+                  latest.url == initial.url &&
+                  latest.ageSecretKey == initial.ageSecretKey;
+      }
+      return latest != null &&
+          latest.type == source.type &&
+          latest.url == source.url &&
+          latest.ageSecretKey == source.ageSecretKey &&
+          latest.lastUpdateDate == source.lastUpdateDate;
+    }
+
+    intent = ProfileUpdateIntent(
+      isSourceCurrent: sourceCurrent,
+      automatic: isCurrent != null,
+    );
+    _profileUpdates[profile.id] = intent;
     final operation = showLoading
         ? ref.read(updatingKeysProvider.notifier).start(profile.updatingKey)
         : null;
+    PreparedProfileUpdate? prepared;
     try {
-      ref.read(profilesProvider.notifier).put(profile);
-      final updated = await profile.update(
-        validate: (path, key) => _core.validateProfile(path, key),
-        isCurrent: isCurrent,
-      );
-      checkUpdateCurrent(isCurrent);
-      _automaticBackoff.reset(profile.id.toString());
-      // The download can take minutes; edits and deletes made meanwhile win.
+      await previous?.done;
+      checkUpdateCurrent(() => intent.isCurrent);
       final latest = ref.read(profilesProvider).getProfile(profile.id);
-      if (latest == null) {
-        await clearEffect(profile.id);
+      if (latest != null && initial != null) {
+        T merge<T>(T requested, T before, T after) =>
+            const DeepCollectionEquality().equals(before, after)
+            ? requested
+            : after;
+        source = profile.copyWith(
+          label: merge(profile.label, initial.label, latest.label),
+          currentGroupName: merge(
+            profile.currentGroupName,
+            initial.currentGroupName,
+            latest.currentGroupName,
+          ),
+          autoUpdateDuration: merge(
+            profile.autoUpdateDuration,
+            initial.autoUpdateDuration,
+            latest.autoUpdateDuration,
+          ),
+          autoUpdate: merge(
+            profile.autoUpdate,
+            initial.autoUpdate,
+            latest.autoUpdate,
+          ),
+          selectedMap: merge(
+            profile.selectedMap,
+            initial.selectedMap,
+            latest.selectedMap,
+          ),
+          unfoldSet: merge(
+            profile.unfoldSet,
+            initial.unfoldSet,
+            latest.unfoldSet,
+          ),
+          extendType: merge(
+            profile.extendType,
+            initial.extendType,
+            latest.extendType,
+          ),
+          scriptId: merge(profile.scriptId, initial.scriptId, latest.scriptId),
+          matchTarget: merge(
+            profile.matchTarget,
+            initial.matchTarget,
+            latest.matchTarget,
+          ),
+          order: merge(profile.order, initial.order, latest.order),
+          overrides: merge(
+            profile.overrides,
+            initial.overrides,
+            latest.overrides,
+          ),
+          lastUpdateDate: latest.lastUpdateDate,
+          subscriptionInfo: latest.subscriptionInfo,
+        );
+      }
+      admitted = true;
+      ref.read(profilesProvider.notifier).put(source);
+      prepared = await source.prepareUpdate(
+        validate: (path, key) => _core.validateProfile(path, key),
+        isCurrent: () => intent.isCurrent,
+        cancelToken: intent.cancelToken,
+      );
+      checkUpdateCurrent(() => intent.isCurrent);
+      await ref
+          .read(profilesProvider.notifier)
+          .publishUpdate(
+            prepared.profile,
+            isCurrent: () => intent.isCurrent,
+            publishFile: () {
+              intent.beginCommit();
+              prepared!.file.publish();
+            },
+            rollbackFile: prepared.file.rollback,
+          );
+      _automaticBackoff.reset(profile.id.toString());
+      if (!ref.mounted || !identical(_profileUpdates[profile.id], intent)) {
         return;
       }
-      final newProfile = latest.copyWith(
-        label: latest.label.takeFirstValid([updated.label]),
-        subscriptionInfo: updated.subscriptionInfo,
-        lastUpdateDate: updated.lastUpdateDate,
-      );
-      ref.read(profilesProvider.notifier).put(newProfile);
       if (profile.id == ref.read(currentProfileIdProvider)) {
         final setup = ref.read(setupActionProvider.notifier);
         if (isCurrent == null) {
@@ -194,29 +326,36 @@ class ProfilesAction extends _$ProfilesAction {
           await setup.applyProfile(silence: true);
         }
       } else {
-        final label = ref
-            .read(profilesProvider.notifier)
-            .labeled(newProfile)
-            .realLabel;
-        final apply = ref
+        final latest = ref.read(profilesProvider).getProfile(profile.id);
+        if (latest == null) return;
+        await ref
             .read(clashProvidersActionProvider.notifier)
             .applyIfReferenced(
               ProviderKind.proxy,
-              {label},
+              {latest.realLabel},
               force: true,
-              isCurrent: isCurrent,
+              isCurrent: () =>
+                  ref.mounted && identical(_profileUpdates[profile.id], intent),
             );
-        if (isCurrent == null) {
-          unawaited(apply);
-        } else {
-          await apply;
-        }
       }
+    } catch (_) {
+      if (intent.cancelled) {
+        throw const UpdateCancelledException();
+      }
+      rethrow;
     } finally {
-      if (operation != null) {
-        ref
-            .read(updatingKeysProvider.notifier)
-            .stop(profile.updatingKey, operation);
+      try {
+        await prepared?.file.dispose();
+      } finally {
+        if (identical(_profileUpdates[profile.id], intent)) {
+          _profileUpdates.remove(profile.id);
+        }
+        if (operation != null && ref.mounted) {
+          ref
+              .read(updatingKeysProvider.notifier)
+              .stop(profile.updatingKey, operation);
+        }
+        intent.finish();
       }
     }
   }

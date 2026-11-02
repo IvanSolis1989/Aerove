@@ -39,43 +39,52 @@ class ProfilesView extends ConsumerStatefulWidget {
 }
 
 class _ProfilesViewState extends ConsumerState<ProfilesView> {
-  bool _isUpdating = false;
-
   Future<void> _updateProfiles(List<Profile> profiles) async {
-    if (_isUpdating == true) {
-      return;
-    }
-    _isUpdating = true;
     final appLocalizations = context.appLocalizations;
     final profilesAction = ref.read(profilesActionProvider.notifier);
     final List<UpdatingMessage> messages = [];
-    final updateProfiles = profiles.map<Future>((profile) async {
-      if (profile.type != ProfileType.url) return;
-      try {
-        await profilesAction.updateProfile(profile, showLoading: true);
-      } catch (e) {
-        messages.add(
-          UpdatingMessage(
-            label: profile.realLabel,
-            message: userFacingErrorMessage(e, appLocalizations),
-          ),
-        );
-      }
-    });
-    await Future.wait(updateProfiles);
-    dialogs.showFailures(messages);
-    _isUpdating = false;
+    await Future.wait([
+      for (final profile in profiles)
+        if (profile.type == ProfileType.url)
+          profilesAction.updateProfile(profile, showLoading: true).catchError((
+            Object e,
+          ) {
+            if (e is UpdateCancelledException) return;
+            messages.add(
+              UpdatingMessage(
+                label: profile.realLabel,
+                message: userFacingErrorMessage(e, appLocalizations),
+              ),
+            );
+          }),
+    ]);
+    if (mounted) dialogs.showFailures(messages);
   }
 
-  List<IconButtonData> _buildActions(List<Profile> profiles) {
+  List<IconButtonData> _buildActions(
+    List<Profile> profiles, {
+    required bool updating,
+  }) {
     return profiles.isNotEmpty
         ? [
             IconButtonData(
-              glyph: AppGlyphs.sync,
+              glyph: updating ? AppGlyphs.close : AppGlyphs.sync,
               onPressed: () {
-                _updateProfiles(profiles);
+                if (updating) {
+                  unawaited(
+                    ref
+                        .read(profilesActionProvider.notifier)
+                        .cancelProfileUpdates(
+                          profiles.map((profile) => profile.id),
+                        ),
+                  );
+                } else {
+                  unawaited(_updateProfiles(profiles));
+                }
               },
-              tooltip: context.appLocalizations.update,
+              tooltip: updating
+                  ? context.appLocalizations.cancel
+                  : context.appLocalizations.update,
             ),
             IconButtonData(
               glyph: AppGlyphs.sort,
@@ -100,6 +109,10 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
         final appLocalizations = context.appLocalizations;
         final isLoading = ref.watch(loadingProvider(LoadingTag.profiles));
         final state = ref.watch(profilesStateProvider);
+        final keys = ref.watch(updatingKeysProvider);
+        final updating = state.profiles.any(
+          (profile) => keys.contains(profile.updatingKey),
+        );
         final spacing = cardSpacingOf(context, ref.watch(viewModeProvider));
         final picker = widget.picker;
         return CommonScaffold(
@@ -112,7 +125,9 @@ class _ProfilesViewState extends ConsumerState<ProfilesView> {
                   onPressed: () => showAddProfilePage(context),
                   tooltip: appLocalizations.addProfile,
                 ),
-          iconActions: picker ? const [] : _buildActions(state.profiles),
+          iconActions: picker
+              ? const []
+              : _buildActions(state.profiles, updating: updating),
           foldPrimaryAction: true,
           body: NullStatusSwitcher(
             isEmpty: state.profiles.isEmpty,
@@ -305,9 +320,13 @@ class ProfileItem extends ConsumerWidget {
   Future updateProfile(WidgetRef ref) async {
     if (profile.type != ProfileType.url) return;
     await globalState.loadingRun(() async {
-      await ref
-          .read(profilesActionProvider.notifier)
-          .updateProfile(profile, showLoading: true);
+      try {
+        await ref
+            .read(profilesActionProvider.notifier)
+            .updateProfile(profile, showLoading: true);
+      } on UpdateCancelledException {
+        return;
+      }
     }, tag: LoadingTag.profiles);
   }
 
@@ -501,7 +520,21 @@ class ProfileItem extends ConsumerWidget {
     final subscriptionInfo = _subscriptionInfo;
     final isSelected = profile.id == groupValue;
     return ContextMenuRegion(
-      menuItems: isUpdating ? null : _menuItems(context, ref),
+      menuItems: isUpdating
+          ? [
+              CommonPopupMenuItem(
+                glyph: AppGlyphs.close,
+                label: context.appLocalizations.cancel,
+                onPressed: () {
+                  unawaited(
+                    ref
+                        .read(profilesActionProvider.notifier)
+                        .cancelProfileUpdate(profile.id),
+                  );
+                },
+              ),
+            ]
+          : _menuItems(context, ref),
       child: CommonCard(
         enterActionsOnRight: true,
         radius: AppCorner.xl,

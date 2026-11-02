@@ -3,9 +3,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collection/collection.dart';
+
 import 'package:fl_clash/common/app_data.dart';
 import 'package:fl_clash/common/boot_guard.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/profile_update.dart';
 import 'package:fl_clash/common/system_dns.dart';
 import 'package:fl_clash/common/update_download.dart';
 import 'package:fl_clash/common/xclash_defaults.dart';

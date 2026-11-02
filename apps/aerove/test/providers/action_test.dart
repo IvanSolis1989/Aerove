@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/desktop/model.dart';
@@ -18,11 +19,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:riverpod/riverpod.dart';
 
+import '../helpers/app_paths.dart';
 import '../helpers/test_profiles.dart';
 
 class _MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory pathsHome;
+  setUpAll(() async {
+    pathsHome = await Directory.systemTemp.createTemp('action-test-paths-');
+    await useAppPaths(pathsHome);
+  });
+  tearDownAll(() => pathsHome.delete(recursive: true));
+
   group('ProfilesAction', () {
     test('keeps edited profile data when remote update fails', () async {
       final original = Profile.normal(label: 'old label', url: 'bad-url');

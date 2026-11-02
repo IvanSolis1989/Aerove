@@ -26,6 +26,14 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **许可证、署名与证据：** SIL Open Font License 1.1；[固定字体](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf)、[原许可证](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE)，许可证 Git blob `d952d62c065f3f35fb83a173496e90b21525aef3`；原字体与许可证保持原样，公开图片保留渲染来源记录。
 
+#### [cfug/dio](https://github.com/cfug/dio)
+
+**固定版本 / revision：** 现有锁定依赖 `5.11.1`，官方 tag `dio_v5.11.1`；不推测未记录的提交 SHA。
+
+**用途与采用方式：** 共享订阅更新取消复用 `CancelToken` 与 `IOHttpClientAdapter`，只读参照官方取消、请求中止和响应流释放路径。调用方取消 Future 的完成不等于底层请求已经结束；本项目在现有下载入口持有该请求专用 adapter，并等待 fetch 与响应流清理。未复制上游实现、未新增依赖；普通请求继续复用原路径。
+
+**许可证、署名与证据：** MIT，保留现有依赖许可与版权；[固定取消实现](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/cancel_token.dart)、[固定 IO adapter](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/adapters/io_adapter.dart)、[固定请求分发](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/dio_mixin.dart)、[原许可证](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/LICENSE)。本项目 socket、文件及 SQL 取消验证不代替 Android 实际验收。
+
 #### [chen08209/FlClash](https://github.com/chen08209/FlClash)
 
 **固定版本 / revision：** 历史整合 `v0.9.2-pre.1` / `7220961f7c5e494df831ca196ab53ef08a17e926`；2026-10-25 按用户授权选择性整合 `v0.9.2` / `7fd417fb9a9a277c6a9339a8ac87f907df7c25f7`（以第二父提交保留血缘，合并树不整套采用）；只读参照 `8d4f9744948751f1273fe871e1d05276fac09b0e`
@@ -492,7 +500,9 @@ Lite 端口释放探针另只读核对 `1.54.0` / tag `tokio-1.54.0` / commit [`
 
 #### [Smart-Config-Kit](https://github.com/IvanSolis1989/Smart-Config-Kit)
 
-**固定版本 / revision：** 流程参考 `28b86e2e991cde8bc2fa71b874e807c622f2b096`；历史 README 参考 `18a676345de86af38f511b8137add605e0a59588`；标准版当前专版 `v6.0.21-flclash.25` 固定 `66a5eb6034bae4f2bda905669de788a418cacd9a`；Lite 当前专版 `v6.0.21-meow.7` 固定本次核实的主线 `c18c314d94206eb6724d235ca0d590c3e14e9121`（脚本引入提交 `b4180b0a3bd136b68376b9c26dbc5b5c0fd5dffd`）。Lite 旧联调基线 `89abb221a157acc98d6b52c85583e6b5a5b2742b`、旧专版 `70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd` / `23a2c93b6cba799b83f51e56f95b7f378b425503` / `dba12215fe8f8d139a94fbd2d5b981282fbcf9c7` 及标准版旧快照 `6847cd225d70bc9eb6fdd9311d50ff53bc91981c` 保留历史身份，不改写旧产物。
+标准版当前候选采用 `v6.0.21-flclash.26`，固定主线 `5e28b84fa5161c67222b1b12f71732a2e7b80fae` 的 [FlClash 脚本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/5e28b84fa5161c67222b1b12f71732a2e7b80fae/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js)：158060字节、Git blob `038fa343693daa4519755e3e723d9ee0eeef291a`、SHA-256 `1c692381d0069d89edab73a31a43afa13e1d2079e2c58eb0852597e498df1e14`。原样保留上游脚本，沿用更新地址及用户正文保护；新增默认关闭的 Windows 浏览器 UDP 保护。现有生成器已实际执行新脚本 main(config)，两份 DNS 产物内容未变；该结果不代替完整 App、网络及手机验收。以下 `.25` 来源与执行事实保留为历史。
+
+**固定版本 / revision：** 流程参考 `28b86e2e991cde8bc2fa71b874e807c622f2b096`；历史 README 参考 `18a676345de86af38f511b8137add605e0a59588`；标准版历史专版 `v6.0.21-flclash.25` 固定 `66a5eb6034bae4f2bda905669de788a418cacd9a`；Lite 当前专版 `v6.0.21-meow.7` 固定本次核实的主线 `c18c314d94206eb6724d235ca0d590c3e14e9121`（脚本引入提交 `b4180b0a3bd136b68376b9c26dbc5b5c0fd5dffd`）。Lite 旧联调基线 `89abb221a157acc98d6b52c85583e6b5a5b2742b`、旧专版 `70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd` / `23a2c93b6cba799b83f51e56f95b7f378b425503` / `dba12215fe8f8d139a94fbd2d5b981282fbcf9c7` 及标准版旧快照 `6847cd225d70bc9eb6fdd9311d50ff53bc91981c` 保留历史身份，不改写旧产物。
 
 **用途与采用方式：** 分类 Issue Forms、MiMo Flash 首轮与 Pro 追问、过滤 / 失败只读模式作为流程参考；未复制规则、提示词或自动 PR。另参考首页内容分层、下载导航与二级文档组织，按本产品事实重写，未复制 SVG、文案或 UI。Lite 兼容准入、provider / Geo 准备及脚本联调用固定 Meow 配置与测试向量；分流脚本仍由上游生成维护，本项目不另维护生产路由基线。
 
@@ -502,7 +512,7 @@ Lite 当前内置专版为 `v6.0.21-meow.7`，按固定提交 `c18c314d94206eb67
 
 第三方规则与数据库继续保留各自来源和许可约束，不视为 SCK 原创或推定采用 MIT；实际聚合规则来源沿用固定历史树中的[来源账本](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/rulesets/generated/source-ledger.json)和[聚合清单](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/89abb221a157acc98d6b52c85583e6b5a5b2742b/rulesets/generated/fused/manifest.json)，保留各数据源声明许可及未核状态，不推定重新授权。
 
-标准版原样采用 `v6.0.21-flclash.25`，内置于 `apps/aerove/assets/data/smart-config-kit-flclash.js`；[固定上游文件](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/66a5eb6034bae4f2bda905669de788a418cacd9a/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js)为156065字节、Git blob `02ac2030b0a190958ed590fc6475f83132aa1c4f`、SHA-256 `f33ea7ef24043899d734f3174000b87f4f620cd35c4328af484c32775ea062bc`。上一版 `v6.0.21-flclash.24` / `3971964b4089b38c6a1233537e1cf2e44bf2be4d` 的149434字节、blob `9dc3bb723779f835f94d0267aac401c735a2ac71`、SHA-256 `8bbbe11ca809c1c49e56919e4aef4d4480683a7c9d843bd8875947d6c4cd9d9e`保留历史。旧 `v6.0.20-flclash.23` / `70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd` 的149441字节、blob `65beff76d400f51d21686b04b09ccc40df6e620e`、SHA-256 `0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec`保留历史。跟随主线的[更新地址](https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js)与固定打包身份分开。已知旧官方地址仅迁移 URL 元数据，保留用户正文、关联、自定义来源和删除状态；客户端不手改上游生成脚本。本轮标准版两份 DNS 用例与完整配置均以固定输入实际执行66a5新脚本，保存读回结果与397前像相同；每份配置含38个实际非空组、168条规则、149个 provider，组、规则及 provider 引用闭合。固定上游融合 manifest 将 FCM 来源映射到 `scki-fused-031-google`，本轮该段三条规则均指向 Google 服务；Lite 复用前述既有独立证据。新版本增加显式 `hosts-only` 模式，随包默认仍为 `adaptive`；主线 Raw 与固定快照字节相同。这些离线结果不代替 QuickJS、完整 App 或真实网络验收。
+历史标准版原样采用 `v6.0.21-flclash.25`，内置于 `apps/aerove/assets/data/smart-config-kit-flclash.js`；[固定上游文件](https://github.com/IvanSolis1989/Smart-Config-Kit/blob/66a5eb6034bae4f2bda905669de788a418cacd9a/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js)为156065字节、Git blob `02ac2030b0a190958ed590fc6475f83132aa1c4f`、SHA-256 `f33ea7ef24043899d734f3174000b87f4f620cd35c4328af484c32775ea062bc`。上一版 `v6.0.21-flclash.24` / `3971964b4089b38c6a1233537e1cf2e44bf2be4d` 的149434字节、blob `9dc3bb723779f835f94d0267aac401c735a2ac71`、SHA-256 `8bbbe11ca809c1c49e56919e4aef4d4480683a7c9d843bd8875947d6c4cd9d9e`保留历史。旧 `v6.0.20-flclash.23` / `70d4ddbe0b6d52af7acbd503ff1bf556a3bddacd` 的149441字节、blob `65beff76d400f51d21686b04b09ccc40df6e620e`、SHA-256 `0f8c6d3c6385e2a22b6435a5ade37c6236f376531749bf446642ce481977f6ec`保留历史。跟随主线的[更新地址](https://raw.githubusercontent.com/IvanSolis1989/Smart-Config-Kit/refs/heads/main/Mihomo%E5%86%85%E6%A0%B8%E7%B3%BB/FlClash/FlClash%28mihomo%29.js)与固定打包身份分开。已知旧官方地址仅迁移 URL 元数据，保留用户正文、关联、自定义来源和删除状态；客户端不手改上游生成脚本。本轮标准版两份 DNS 用例与完整配置均以固定输入实际执行66a5新脚本，保存读回结果与397前像相同；每份配置含38个实际非空组、168条规则、149个 provider，组、规则及 provider 引用闭合。固定上游融合 manifest 将 FCM 来源映射到 `scki-fused-031-google`，本轮该段三条规则均指向 Google 服务；Lite 复用前述既有独立证据。新版本增加显式 `hosts-only` 模式，随包默认仍为 `adaptive`；主线 Raw 与固定快照字节相同。这些离线结果不代替 QuickJS、完整 App 或真实网络验收。
 
 #### [tun-rs/tun-rs](https://github.com/tun-rs/tun-rs)
 

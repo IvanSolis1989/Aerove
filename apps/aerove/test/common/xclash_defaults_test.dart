@@ -228,13 +228,13 @@ void main() {
                 ).readAsString(),
               )
               as Map<String, dynamic>;
-      expect(source['revision'], '66a5eb6034bae4f2bda905669de788a418cacd9a');
-      expect(source['version'], 'v6.0.21-flclash.25');
+      expect(source['revision'], '5e28b84fa5161c67222b1b12f71732a2e7b80fae');
+      expect(source['version'], 'v6.0.21-flclash.26');
       expect(source['sourcePath'], 'Mihomo内核系/FlClash/FlClash(mihomo).js');
       expect(source['updateUrl'], xclashDefaultScriptUrl);
       expect(source['sha256'], xclashDefaultScriptSha256);
       expect(sha256.convert(bundledScript).toString(), source['sha256']);
-      expect(bundledScript.length, 156065);
+      expect(bundledScript.length, 158060);
       expect(
         sha1.convert([
           ...utf8.encode('blob ${bundledScript.length}\u0000'),
@@ -242,7 +242,7 @@ void main() {
         ]).toString(),
         source['gitBlob'],
       );
-      expect(source['gitBlob'], '02ac2030b0a190958ed590fc6475f83132aa1c4f');
+      expect(source['gitBlob'], '038fa343693daa4519755e3e723d9ee0eeef291a');
       expect(
         utf8.decode(bundledScript),
         contains('// 版本：${source['version']} '),

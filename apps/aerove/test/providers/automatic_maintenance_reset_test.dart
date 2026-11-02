@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:drift/native.dart';
 import 'package:fl_clash/application.dart';
@@ -15,6 +17,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../helpers/app_paths.dart';
 import '../helpers/test_profiles.dart';
 
 class _FailingProfiles extends ProfilesAction {
@@ -89,13 +92,21 @@ Widget _managers(Widget child) => ThemeManager(child: child);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory pathsHome;
   late db.Database store;
   late ProviderContainer container;
   late _FailingProfiles profiles;
   late _FailingResources resources;
   late _LifecycleCore core;
 
-  setUpAll(() => AppLocalizations.load(const Locale('en')));
+  setUpAll(() async {
+    pathsHome = await Directory.systemTemp.createTemp(
+      'maintenance-reset-paths-',
+    );
+    await useAppPaths(pathsHome);
+    await AppLocalizations.load(const Locale('en'));
+  });
+  tearDownAll(() => pathsHome.delete(recursive: true));
   setUp(() async {
     store = db.Database(NativeDatabase.memory());
     db.database = store;
