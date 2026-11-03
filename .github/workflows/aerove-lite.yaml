@@ -723,11 +723,49 @@ jobs:
     - name: Compile the Flutter host and actual platform acceptance runner
       working-directory: apps/aerove-lite
       run: |-
-        mkdir -p "$RUNNER_TEMP/lite-flutter-host"
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/lite-flutter-host/dependencies"
         gradle --no-daemon --continue -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
           :app:compileReleaseKotlin :app:compileReleaseUnitTestKotlin \
           :platform-qa:compileReleaseKotlin :platform-qa:compileReleaseJavaWithJavac \
+          :app:generateReleasePlatformTestAppKeepRules --dry-run \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/abi-task-graph.txt"
+        python3 - <<'PY'
+        import json, os, re
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
+        graph = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', (output / 'abi-task-graph.txt').read_text())
+        tasks = re.findall(r'(?m)^\s*(?:> Task\s+)?(:\S+)\s+SKIPPED\s*$', graph)
+        required = {':app:compileReleaseKotlin', ':app:compileReleaseUnitTestKotlin',
+                    ':platform-qa:compileReleaseKotlin', ':platform-qa:compileReleaseJavaWithJavac',
+                    ':app:generateReleasePlatformTestAppKeepRules'}
+        forbidden = [task for task in tasks if re.fullmatch(r':(?:app|platform-qa):(?:minify[^:]+|packageRelease|assembleRelease)', task)]
+        (output / 'abi-task-selection.json').write_text(json.dumps(dict(tasks=tasks, forbidden=forbidden,
+            missing=sorted(required-set(tasks)), duplicateRequired=sorted(task for task in required if tasks.count(task) != 1)), indent=2) + '\n')
+        assert tasks and all(tasks.count(task) == 1 for task in required), 'ABI preflight graph lacks its exact compile/inference tasks'
+        assert not forbidden, 'ABI preflight must stop before App/Test minification or APK packaging: ' + repr(forbidden)
+        PY
+        query_failure=0
+        for component in app platform-qa; do
+          if gradle --no-daemon -p android ":$component:dependencies" --configuration releaseRuntimeClasspath \
+            -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+            > "$RUNNER_TEMP/lite-flutter-host/dependencies/$component-releaseRuntimeClasspath.stdout.txt" \
+            2> "$RUNNER_TEMP/lite-flutter-host/dependencies/$component-releaseRuntimeClasspath.stderr.txt"; then
+            query_exit=0
+          else
+            query_exit=$?
+            query_failure=$query_exit
+          fi
+          printf '%s\n' "$query_exit" > "$RUNNER_TEMP/lite-flutter-host/dependencies/$component-releaseRuntimeClasspath.exit.txt"
+        done
+        test "$query_failure" = 0
+        gradle --no-daemon --continue -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          :app:compileReleaseKotlin :app:compileReleaseUnitTestKotlin \
+          :platform-qa:compileReleaseKotlin :platform-qa:compileReleaseJavaWithJavac \
+          :app:generateReleasePlatformTestAppKeepRules \
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/compile.log"
+        test -s build/app/intermediates/androidTestAppKeepRules/release/rules.pro
+        test -s build/app/intermediates/androidTestAppKeepRules/release/inputs.json
     - name: Verify DNS and Geo fixtures in eight independent Flutter processes
       timeout-minutes: 30
       working-directory: apps/aerove
@@ -812,13 +850,45 @@ jobs:
       run: |-
         mkdir -p "$RUNNER_TEMP/lite-flutter-host"
         python3 - <<'PY'
-        import json, os
+        import hashlib, json, os, shutil
         from pathlib import Path
         output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
+        abi = output / 'abi'
+        abi.mkdir(parents=True, exist_ok=True)
+        product = Path('apps/aerove-lite')
+        inference = product / 'build/app/intermediates/androidTestAppKeepRules/release'
+        entries = []
+        for name, source in [('app-abi-rules.pro', inference/'rules.pro'), ('app-abi-report.json', inference/'inputs.json')]:
+            entry = dict(source=str(source), file=name, status='missing')
+            if source.is_file() and not source.is_symlink():
+                shutil.copyfile(source, abi/name)
+                entry.update(status='present', bytes=source.stat().st_size, sha256=hashlib.sha256((abi/name).read_bytes()).hexdigest())
+            entries.append(entry)
+        # AGP 9.4.1 PackagedDependenciesWriterTask writes deps.txt; do not request APK tasks to obtain it.
+        intermediates = product / 'build/app/intermediates'
+        provided = [path for path in intermediates.rglob('deps.txt') if path.is_file() and not path.is_symlink()
+                    and ('packaged_dependencies' in path.parts or 'generateReleaseFeatureTransitiveDeps' in path.parts)
+                    and 'release' in path.parts] if intermediates.is_dir() else []
+        for source in sorted(provided):
+            relative = Path('provided') / source.relative_to(intermediates)
+            target = abi/relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            entries.append(dict(source=str(source), file=relative.as_posix(), status='present', bytes=target.stat().st_size,
+                                sha256=hashlib.sha256(target.read_bytes()).hexdigest()))
+        original = '792966adf1057f3cce0aac558d7be3f0a40c9178ee7f04f5d45e7fb4ba3460c3'
+        rules = entries[0].get('sha256')
+        (abi/'export.json').write_text(json.dumps(dict(files=entries, original201RulesSha256=original,
+            actualRulesSha256=rules, rulesMatchOriginal201=None if rules is None else rules == original,
+            providedMetadata=dict(status='present' if provided else 'missing',
+                searched=str(intermediates/'**/deps.txt'), producer=':app:generateReleaseFeatureTransitiveDeps',
+                missingReason=None if provided else 'No release packaged-dependency metadata was produced by requested pre-R8 tasks; no APK task was added'),
+            acceptance=False), indent=2) + '\n')
+        (abi/'SHA256SUMS').write_text(''.join(row['sha256']+'  '+row['file']+'\n' for row in entries if row['status']=='present'))
         roots = [Path('apps/aerove-lite/build'), Path('apps/aerove-lite/android/app/build'), Path('apps/aerove-lite/app/build'), Path('apps/aerove-lite/android-qa/build'), Path('apps/aerove-lite/android-platform-qa/build')]
         apks = sorted({str(p) for root in roots if root.exists() for p in root.rglob('*.apk')})
         receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
-                       buildRoot='apps/aerove-lite/android', requestedTasks=[':app:compileReleaseKotlin', ':app:compileReleaseUnitTestKotlin', ':platform-qa:compileReleaseKotlin', ':platform-qa:compileReleaseJavaWithJavac'],
+                       buildRoot='apps/aerove-lite/android', requestedTasks=[':app:compileReleaseKotlin', ':app:compileReleaseUnitTestKotlin', ':platform-qa:compileReleaseKotlin', ':platform-qa:compileReleaseJavaWithJavac', ':app:generateReleasePlatformTestAppKeepRules'],
                        checkedOutputRoots=[str(root) for root in roots], appApkBuilt=bool(apks), apks=apks, acceptance=False)
         (output / 'scope.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert not apks, 'Compile-only preflight unexpectedly packaged an application'

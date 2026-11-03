@@ -153,6 +153,8 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
             val testComponents = platformProject.extensions.getByType<
                 com.android.build.api.variant.TestAndroidComponentsExtension>()
             testComponents.onVariants(testComponents.selector().withBuildType("release")) { testVariant ->
+                // Match shared module variants before AGP filters dependencies already provided by the target.
+                testVariant.runtimeConfiguration.shouldResolveConsistentlyWith(variant.runtimeConfiguration)
                 infer.configure {
                     libraries.from(testComponents.sdkComponents.bootClasspath, testVariant.compileClasspath)
                     testResourceJar.set((testVariant.artifacts as ArtifactsImpl).get(InternalArtifactType.COMPILE_AND_RUNTIME_R_CLASS_JAR))
