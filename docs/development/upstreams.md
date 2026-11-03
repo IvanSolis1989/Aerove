@@ -1110,7 +1110,7 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 **许可证、署名与证据：** GNU GDB / GPLv3+，官方手册 / GNU FDL；[Attach](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Attach.html)、[Signals](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Signals.html)、[Events In Python](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Events-In-Python.html)。
 
-同一诊断复用 runner 的 GNU Binutils `readelf`，只读记录实际 gfxstream ELF 的程序头、section、build-id 和动态符号；版本、字节数与 SHA256 由同 job 原始输出绑定。依据 [readelf 官方手册](https://sourceware.org/binutils/docs/binutils/readelf.html)，不上传完整 SDK、不将公共源码符号冒充实际 stripped 库。GNU Binutils 为 GPLv3+ 工具，未复制实现或增加 APP 依赖。
+同一诊断复用 runner 的 GNU Binutils `readelf` 与 `objdump`，只读记录实际 gfxstream ELF 的程序头、section、build-id、动态符号及已证 ELF 地址的代码页；版本、字节数与 SHA256 由同 job 原始输出绑定。依据 [readelf 官方手册](https://sourceware.org/binutils/docs/binutils/readelf.html)与 [objdump 官方手册](https://sourceware.org/binutils/docs/binutils/objdump.html)，只保留文本，不上传完整 SDK 或 ELF，不将公共源码符号冒充实际 stripped 库。GNU Binutils 为 GPLv3+ 工具，未复制实现或增加 APP 依赖。
 
 #### [google/perfetto](https://github.com/google/perfetto)
 

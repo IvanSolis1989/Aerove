@@ -75,9 +75,108 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'gfxstream37-static') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
+  diagnostic_gfxstream37_static:
+    name: SDK37.2.13 gfxstream fixed code pages (static diagnosis only)
+    needs: diagnostic_guard
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'gfxstream37-static') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      DEBUGINFOD_URLS: ''
+    steps:
+    - name: Verify the fixed SDK archive and gfxstream ELF without executing SDK code
+      run: |
+        set -euo pipefail
+        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/gfxstream37-static"
+        mkdir -p "$sdk_install_dir"
+        printf 'diagnosticOnly=true\naccepted=false\nperformanceEvidence=false\nsdkExecuted=false\nappExecuted=false\nharnessRevision=%s\nharnessRun=%s\nattempt=%s\nstatus=started\n' \
+          "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$sdk_install_dir/receipt.txt"
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
+        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-static-16740729.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
+        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
+        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
+          --output "$emulator_archive" "$emulator_archive_url" \
+          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
+        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
+        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
+        timeout --signal=TERM --kill-after=2s 30s \
+          unzip -q "$emulator_archive" 'emulator/lib64/libgfxstream_backend.so' 'emulator/source.properties' -d "$emulator_stage/extracted"
+        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties.txt"
+        gfx="$emulator_stage/extracted/emulator/lib64/libgfxstream_backend.so"
+        stat -c '%s' "$gfx" > "$sdk_install_dir/elf-bytes.txt"
+        sha256sum "$gfx" > "$sdk_install_dir/elf-sha256.txt"
+        test "$(stat -c '%s' "$gfx")" = '15727152'
+        printf '%s  %s\n' '67fa485ebe97369429e283fbefb6db9046024f7264102de60c4bfc70d2628f7e' "$gfx" \
+          | sha256sum --check --strict > "$sdk_install_dir/elf-sha256-check.txt"
+        readelf --version > "$sdk_install_dir/readelf-version.txt"
+        objdump --version > "$sdk_install_dir/objdump-version.txt"
+        timeout --signal=TERM --kill-after=2s 10s \
+          readelf --wide --program-headers --section-headers --notes "$gfx" \
+          > "$sdk_install_dir/layout-and-build-id.txt" 2> "$sdk_install_dir/layout.stderr.txt"
+        grep -E 'Build ID: 49b9fc8e45122f00b3970a89a72eb26101bcffe4$' "$sdk_install_dir/layout-and-build-id.txt" \
+          > "$sdk_install_dir/build-id-check.txt"
+        timeout --signal=TERM --kill-after=2s 10s \
+          readelf --wide --dyn-syms --demangle "$gfx" \
+          > "$sdk_install_dir/dynamic-symbols.txt" 2> "$sdk_install_dir/symbols.stderr.txt"
+        timeout --signal=TERM --kill-after=2s 10s \
+          readelf --string-dump=.gnu_debuglink "$gfx" \
+          > "$sdk_install_dir/debuglink.txt" 2> "$sdk_install_dir/debuglink.stderr.txt"
+        # These are verified ELF VMAs, not file offsets. Retain raw code beside disassembly.
+        for range in 'trap 0x7c3b00 0x7c3f00' 'caller 0x739e80 0x73a000' 'post-trap-call 0x509300 0x509520'; do
+          read -r label begin end <<< "$range"
+          timeout --signal=TERM --kill-after=2s 10s \
+            objdump -WN --full-contents --section=.text --start-address="$begin" --stop-address="$end" "$gfx" \
+            > "$sdk_install_dir/$label.bytes.txt" 2> "$sdk_install_dir/$label.bytes.stderr.txt"
+          timeout --signal=TERM --kill-after=2s 10s \
+            objdump -WN --disassemble --demangle --start-address="$begin" --stop-address="$end" "$gfx" \
+            > "$sdk_install_dir/$label.window.txt" 2> "$sdk_install_dir/$label.window.stderr.txt"
+        done
+        timeout --signal=TERM --kill-after=2s 30s \
+          objdump -WN --disassemble --demangle --start-address=0x728e80 --stop-address=0x73da28 "$gfx" \
+          > "$sdk_install_dir/decode-function.txt" 2> "$sdk_install_dir/decode-function.stderr.txt"
+        # Hidden helpers need an actual unwind boundary to avoid misaligned x86 windows.
+        timeout --signal=TERM --kill-after=2s 20s \
+          readelf --wide -wFN "$gfx" > "$emulator_stage/unwind.txt" 2> "$sdk_install_dir/unwind.stderr.txt"
+        python3 - "$emulator_stage/unwind.txt" "$sdk_install_dir/unwind-targets.txt" "$emulator_stage/ranges.txt" <<'PY'
+        from pathlib import Path
+        import re, sys
+        raw = Path(sys.argv[1]).read_text()
+        matches = list(re.finditer(r'(?m)^[^\n]*\bFDE\b[^\n]*\bpc=([0-9a-fA-F]+)\.\.([0-9a-fA-F]+)', raw))
+        ranges, evidence = [], []
+        for label, pc in [('trap', 0x7c3dad), ('post-trap-call', 0x5093e0)]:
+            candidates = {(int(m[1], 16), int(m[2], 16)) for m in matches if int(m[1], 16) <= pc < int(m[2], 16)}
+            if len(candidates) != 1:
+                raise SystemExit(f'{label}: need one actual FDE range, got {sorted(candidates)}')
+            begin, end = candidates.pop()
+            if not 0 < end - begin <= 262144:
+                raise SystemExit(f'{label}: helper exceeds the bounded 256KiB readback')
+            ranges.append(f'{label} {begin:#x} {end:#x}\n')
+            evidence.append(f'{label} target={pc:#x} FDE={begin:#x}..{end:#x}\n')
+            for index, match in enumerate(matches):
+                if (int(match[1], 16), int(match[2], 16)) == (begin, end):
+                    stop = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
+                    evidence.append(raw[match.start():stop][:65536] + '\n')
+        Path(sys.argv[2]).write_text(''.join(evidence))
+        Path(sys.argv[3]).write_text(''.join(ranges))
+        PY
+        while read -r label begin end; do
+          timeout --signal=TERM --kill-after=2s 30s \
+            objdump -WN --disassemble --demangle --start-address="$begin" --stop-address="$end" "$gfx" \
+            > "$sdk_install_dir/$label.function.txt" 2> "$sdk_install_dir/$label.function.stderr.txt"
+        done < "$emulator_stage/ranges.txt"
+        printf 'status=complete\n' >> "$sdk_install_dir/receipt.txt"
+    - name: Preserve fixed SDK static text diagnostics only
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-SDK-gfxstream37-static-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-diagnostics/gfxstream37-static/*.txt
+        if-no-files-found: error
   diagnostic_lite125_test_only:
     name: Lite125 test-only dry-run task graph (no APK build)
     needs: diagnostic_guard
@@ -1509,11 +1608,11 @@ jobs:
   workflow_dispatch:
     inputs:
       diagnostic_target:
-        description: Immutable prebuilt Android diagnosis only; no build or promotion
+        description: Fixed Android or pinned SDK static diagnosis only; no build or promotion
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, gfxstream37-static]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false
