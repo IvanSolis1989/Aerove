@@ -159,12 +159,25 @@ class ContractTest(unittest.TestCase):
         original = self.apk.read_bytes()
         expected = hashlib.sha256(original).hexdigest()
         producer = qa.Producer(SimpleNamespace(adb=Path('adb'), serial='emulator-5554', output=self.root))
-        with patch.object(producer, 'adb_command', side_effect=[('package:' + path + '\n').encode(), original]) as commands:
+        with patch.object(producer, 'adb_command', side_effect=[('package:' + path + '\n').encode(), (expected + '  ' + path + '\n').encode()]) as commands:
             self.assertEqual(producer.installed_hash('app', qa.PACKAGE, expected), dict(path=path, sha256=expected))
-        self.assertEqual(commands.call_args_list[1].args, ('app-installed-apk', 'exec-out', 'cat', path))
-        with patch.object(producer, 'adb_command', side_effect=[('package:' + path + '\n').encode(), original + b'changed']):
+        self.assertEqual(commands.call_args_list[1].args, ('app-installed-apk', 'shell', 'sha256sum', path))
+        with patch.object(producer, 'adb_command', side_effect=[('package:' + path + '\n').encode(), (hashlib.sha256(original + b'changed').hexdigest() + '  ' + path + '\n').encode()]):
             with self.assertRaisesRegex(ValueError, 'bytes differ'):
                 producer.installed_hash('app', qa.PACKAGE, expected)
+        self.assertEqual(commands.call_args_list[1].kwargs, dict(timeout=60))
+        for output in ('', expected, expected + '  /data/app/another/base.apk\n',
+                       expected + '  ' + path + '\n' + expected + '  ' + path + '\n'):
+            with self.subTest(output=output), patch.object(producer, 'adb_command', side_effect=[
+                    ('package:' + path + '\n').encode(), output.encode()]):
+                with self.assertRaisesRegex(ValueError, 'digest bound to its exact base path'):
+                    producer.installed_hash('app', qa.PACKAGE, expected)
+        unavailable = RuntimeError('sha256sum exited 127')
+        with patch.object(producer, 'adb_command', side_effect=[('package:' + path + '\n').encode(), unavailable]) as calls:
+            with self.assertRaises(RuntimeError) as caught:
+                producer.installed_hash('app', qa.PACKAGE, expected)
+            self.assertIs(caught.exception, unavailable)
+            self.assertEqual(calls.call_count, 2)  # No unchecked hash/cat fallback.
         for bad in ('package:' + path + '\npackage:' + path.replace('base.apk', 'split_config.en.apk'),
                     'package:/sdcard/base.apk', 'package:' + path + ';id'):
             with self.subTest(path=bad), patch.object(producer, 'adb_command', return_value=bad.encode()) as commands:

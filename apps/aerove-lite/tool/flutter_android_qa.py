@@ -194,8 +194,11 @@ class Producer:
         if len(paths) != 1 or not re.fullmatch(r'package:/data/app/[A-Za-z0-9_./+=~-]+/base.apk', paths[0]):
             raise ValueError('Requires one installed base APK without splits')
         target = paths[0][len('package:'):]
-        data = self.adb_command(label + '-installed-apk', 'exec-out', 'cat', target, timeout=60)
-        if hashlib.sha256(data).hexdigest() != expected:
+        output = self.adb_command(label + '-installed-apk', 'shell', 'sha256sum', target, timeout=60).decode().strip()
+        digest = re.fullmatch(r'([0-9a-f]{64})[ \t]+' + re.escape(target), output)
+        if digest is None:
+            raise ValueError('Requires one installed APK digest bound to its exact base path')
+        if digest[1] != expected:
             raise ValueError('Installed package bytes differ from sealed original: ' + package)
         return dict(path=target, sha256=expected)
 
