@@ -499,7 +499,7 @@ Future<RealProfile> makeRealProfileTask(
   String coreId = 'mihomo',
   ProfileSelectionBinding? selectionBinding,
   ({Map<String, String> proxies, Map<String, String> rules})
-  providerFileReferences = (
+  providerFileReferences = const (
     proxies: {},
     rules: {},
   ),
