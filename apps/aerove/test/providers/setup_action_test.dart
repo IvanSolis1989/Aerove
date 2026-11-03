@@ -194,6 +194,9 @@ void main() {
     container = ProviderContainer(
       overrides: [
         profilesProvider.overrideWith(TestProfiles.new),
+        coreHandlerProvider.overrideWithValue(
+          CoreController.scoped(_MockCoreHandlerInterface()),
+        ),
         setupActionProvider.overrideWith(() => action),
         commonActionProvider.overrideWith(TestCommonAction.new),
       ],
@@ -1929,6 +1932,80 @@ void main() {
         await appPath.getProviderCachePath(localRule.fileName),
       );
     });
+
+    for (final behavior in [
+      RuleProviderBehavior.domain,
+      RuleProviderBehavior.ipcidr,
+    ]) {
+      for (final format in [RuleProviderFormat.yaml, RuleProviderFormat.text]) {
+        test('local imported ${behavior.name}/${format.name} provider keeps '
+            'the readable owned source through the real resolver', () async {
+          final profile = Profile.custom(label: 'local imported');
+          final provider = ClashProvider(
+            id: 300 + behavior.index * 10 + format.index,
+            label: 'local-${behavior.name}-${format.name}',
+            behavior: behavior,
+            format: format,
+            sourceDefinition: {
+              'type': 'file',
+              'path': '../../../../untrusted-rules',
+              'behavior': behavior.name,
+              'format': format.name,
+            },
+          );
+          final content = behavior == RuleProviderBehavior.domain
+              ? '+.example.invalid'
+              : '192.0.2.0/24';
+          final body = format == RuleProviderFormat.yaml
+              ? 'payload:\n  - $content\n'
+              : '$content\n';
+          final sourcePath = await provider.path;
+          final source = File(sourcePath)
+            ..createSync(recursive: true)
+            ..writeAsStringSync(body);
+          addTearDown(source.deleteSync);
+          expect(provider.isCompiled, isTrue);
+          expect(await provider.corePath, '$sourcePath.mrs');
+          final core = _MockCoreHandlerInterface();
+          when(
+            () => core.compileRuleSet(provider.fileName, url: ''),
+          ).thenAnswer((_) async => (behavior: behavior, format: format));
+          final scoped = ProviderContainer(
+            overrides: [
+              coreHandlerProvider.overrideWithValue(
+                CoreController.scoped(core),
+              ),
+              setupActionProvider.overrideWith(SetupAction.new),
+            ],
+          );
+          addTearDown(scoped.dispose);
+          final setupState = nullProfileSetupState.copyWith(
+            profileId: profile.id,
+            profileType: ProfileType.custom,
+            rules: [Rule.parse('RULE-SET,${provider.label},DIRECT', id: 303)],
+            clashProviders: [provider],
+          );
+          final result = await scoped
+              .read(setupActionProvider.notifier)
+              .getProfile(
+                setupState: setupState,
+                patchConfig: const PatchClashConfig(),
+              );
+          final definition =
+              (loadYaml(result.yaml)
+                  as YamlMap)['rule-providers'][provider.label];
+          expect(definition['type'], 'file');
+          expect(definition['path'], sourcePath);
+          expect(definition['format'], format.name);
+          expect(definition['behavior'], behavior.name);
+          expect(definition.containsKey('url'), isFalse);
+          expect(File(definition['path'] as String).readAsStringSync(), body);
+          verify(
+            () => core.compileRuleSet(provider.fileName, url: ''),
+          ).called(1);
+        });
+      }
+    }
 
     test('a provider a custom profile names carries its options', () async {
       final profile = Profile.custom(label: 'p');
