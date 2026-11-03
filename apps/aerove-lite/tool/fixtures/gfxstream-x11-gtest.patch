@@ -1,0 +1,17 @@
+diff --git a/host/tests/TextureDraw_unittest.cpp b/host/tests/TextureDraw_unittest.cpp
+index 1a306f1..0b86348 100644
+--- a/host/tests/TextureDraw_unittest.cpp
++++ b/host/tests/TextureDraw_unittest.cpp
+@@ -14,10 +14,11 @@
+ 
+ #include "texture_draw.h"
+ 
++#include "gfxstream/host/testing/OpenGLTestContext.h"
++
+ #include <gtest/gtest.h>
+ 
+ #include "gfxstream/host/testing/GLTestUtils.h"
+-#include "gfxstream/host/testing/OpenGLTestContext.h"
+ 
+ namespace gfxstream {
+ namespace host {

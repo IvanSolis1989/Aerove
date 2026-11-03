@@ -23,19 +23,22 @@ BASE_SHA=67fa485ebe97369429e283fbefb6db9046024f7264102de60c4bfc70d2628f7e
 BASE_BUILD_ID=49b9fc8e45122f00b3970a89a72eb26101bcffe4
 PRODUCTION=host/gl/glestranslator/gles_v2/gles_v30_imp.cpp
 TEST_SOURCE=host/tests/DefaultFramebufferBlit_unittest.cpp
+X11_TEST_SOURCE=host/tests/TextureDraw_unittest.cpp
 PATCH="$SCRIPT_DIR/fixtures/gfxstream-zero-attachments.patch"
 TEST_PATCH="$SCRIPT_DIR/fixtures/gfxstream-zero-attachments-tests.patch"
+X11_TEST_PATCH="$SCRIPT_DIR/fixtures/gfxstream-x11-gtest.patch"
 check_sha() { printf '%s  %s\n' "$2" "$1" | sha256sum --check --status; }
 check_sha "$BASE_LIB" "$BASE_SHA"
 [[ $(readelf -n "$BASE_LIB" | sed -n 's/.*Build ID: //p') == "$BASE_BUILD_ID" ]]
 check_sha "$PATCH" a4d633095cb249ea9d7cada1127aab0692c84c5f9950e5926ebabe6a13ee9180
 check_sha "$TEST_PATCH" 4e33b60eaf701019e67514aeedbf976e0b7591bf76518ca918aaf1d2884ac38e
+check_sha "$X11_TEST_PATCH" 0e061d4f2bea1de57416600a7552e0f487c44e6606f2b68054d3078d7ffd0a43
 mkdir -- "$OUTPUT"
 mkdir -- "$OUTPUT/logs" "$OUTPUT/artifact"
 STAGE=identity
 STATUS=failed
 BUILDER_SCRIPT=$(realpath -e -- "$0")
-export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH BUILDER_SCRIPT
+export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT
 finish() {
   local code=$?
   trap - EXIT
@@ -58,7 +61,7 @@ receipt = dict(schema=1, kind='source-derived-sdk-host-module', status=os.enviro
         tree=(root / 'source-identity.txt').read_text().splitlines()[1] if (root / 'source-identity.txt').is_file() else None),
     builderSha256=digest(os.environ['BUILDER_SCRIPT']),
     googleTestRevision=os.environ['GTEST'],
-    patches={pathlib.Path(os.environ[k]).name:digest(os.environ[k]) for k in ('PATCH','TEST_PATCH')},
+    patches={pathlib.Path(os.environ[k]).name:digest(os.environ[k]) for k in ('PATCH','TEST_PATCH','X11_TEST_PATCH')},
     derivedLibrarySha256=digest(library),
     derivedLibraryBuildId=(root / 'artifact/build-id.txt').read_text().strip() if (root / 'artifact/build-id.txt').is_file() else None,
     hostRegressionPassed=os.environ['STATUS'] == 'host-module-built-and-tested',
@@ -96,6 +99,7 @@ run source-checkout 30s git -c core.autocrlf=false -C "$OUTPUT/source" checkout 
 git -C "$OUTPUT/source" rev-parse HEAD HEAD^{tree} > "$OUTPUT/source-identity.txt"
 check_sha "$OUTPUT/source/$PRODUCTION" 7a0b481b2633a2f433c4961412451f66b36f30c43fa013d009ef4d95104a942a
 check_sha "$OUTPUT/source/$TEST_SOURCE" 6e5485142d1e3f0a287d74994e1404364b94b2ffebfc75fa130ae534bb13e44f
+check_sha "$OUTPUT/source/$X11_TEST_SOURCE" 0fba089104b04943a2f01f4ef0f6e07fe282468e39eb84e7e26c02e0377b64a1
 run gtest-init 30s git init "$OUTPUT/googletest"
 run gtest-remote 30s git -C "$OUTPUT/googletest" remote add origin https://github.com/google/googletest.git
 run gtest-fetch 300s git -C "$OUTPUT/googletest" fetch --depth 1 origin "$GTEST"
@@ -112,6 +116,9 @@ pkg-config --modversion gtest gtest_main gmock gmock_main > "$OUTPUT/gtest-packa
 run test-patch-check 30s git -C "$OUTPUT/source" apply --check "$TEST_PATCH"
 run test-patch 30s git -C "$OUTPUT/source" apply "$TEST_PATCH"
 check_sha "$OUTPUT/source/$TEST_SOURCE" bea09f474edc39a3ade868656e6dc60345d9bd56e65f90b0c8edd6bdeddfdb96
+run x11-test-patch-check 30s git -C "$OUTPUT/source" apply --check "$X11_TEST_PATCH"
+run x11-test-patch 30s git -C "$OUTPUT/source" apply "$X11_TEST_PATCH"
+check_sha "$OUTPUT/source/$X11_TEST_SOURCE" c9bd13619a7d35fd89901e8f70e9dfe696ab749ed14d9331545b9e38034936ce
 run configure 180s cmake -S "$OUTPUT/source" -B "$OUTPUT/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 \
   -DCMAKE_CXX_FLAGS="$CXX_FLAGS" -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++ \
@@ -180,9 +187,9 @@ derived_build_id=$(readelf -n "$OUTPUT/artifact/libgfxstream_backend.so" | sed -
 printf '%s\n' "$derived_build_id" > "$OUTPUT/artifact/build-id.txt"
 sha256sum "$OUTPUT/artifact/libgfxstream_backend.so" > "$OUTPUT/artifact/SHA256SUMS"
 git -C "$OUTPUT/source" diff --binary > "$OUTPUT/applied-source.patch"
-sha256sum "$OUTPUT/source/$PRODUCTION" "$OUTPUT/source/$TEST_SOURCE" > "$OUTPUT/source-after.sha256"
+sha256sum "$OUTPUT/source/$PRODUCTION" "$OUTPUT/source/$TEST_SOURCE" "$OUTPUT/source/$X11_TEST_SOURCE" > "$OUTPUT/source-after.sha256"
 cp "$OUTPUT/build/CMakeCache.txt" "$OUTPUT/build/compile_commands.json" "$OUTPUT/"
-cp "$PATCH" "$TEST_PATCH" "$OUTPUT/artifact/"
+cp "$PATCH" "$TEST_PATCH" "$X11_TEST_PATCH" "$OUTPUT/artifact/"
 # Retain all source/third-party licensing with the derived module, without shipping the SDK.
 find "$OUTPUT/source" "$OUTPUT/googletest" -type f \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) -not -path '*/.git/*' -print0 \
   | tar --null -T - -czf "$OUTPUT/artifact/upstream-notices.tar.gz"
