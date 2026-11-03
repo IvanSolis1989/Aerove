@@ -27,18 +27,26 @@ X11_TEST_SOURCE=host/tests/TextureDraw_unittest.cpp
 PATCH="$SCRIPT_DIR/fixtures/gfxstream-zero-attachments.patch"
 TEST_PATCH="$SCRIPT_DIR/fixtures/gfxstream-zero-attachments-tests.patch"
 X11_TEST_PATCH="$SCRIPT_DIR/fixtures/gfxstream-x11-gtest.patch"
+PARSER_INCLUDE="$SCRIPT_DIR/fixtures/angle-shader-translator"
+PARSER_HEADER="$PARSER_INCLUDE/ShaderTranslator.h"
+PARSER_SOURCE="$PARSER_INCLUDE/SOURCE.json"
+PARSER_LIB="$BASE_DIR/libshadertranslator.so"
+PARSER_GIT_BLOB=bf6f43c6b36c4c4b2651ac9e74db4b58035af270
 check_sha() { printf '%s  %s\n' "$2" "$1" | sha256sum --check --status; }
 check_sha "$BASE_LIB" "$BASE_SHA"
 [[ $(readelf -n "$BASE_LIB" | sed -n 's/.*Build ID: //p') == "$BASE_BUILD_ID" ]]
 check_sha "$PATCH" a4d633095cb249ea9d7cada1127aab0692c84c5f9950e5926ebabe6a13ee9180
 check_sha "$TEST_PATCH" 4e33b60eaf701019e67514aeedbf976e0b7591bf76518ca918aaf1d2884ac38e
 check_sha "$X11_TEST_PATCH" 0e061d4f2bea1de57416600a7552e0f487c44e6606f2b68054d3078d7ffd0a43
+check_sha "$PARSER_HEADER" 979138ea0b60d23ee604b065743ebd9a2a32fbe76bee4e68081e3c73975b673a
+check_sha "$PARSER_INCLUDE/LICENSE" 54aff7276217df9f6b5181613999d208c9e40d2b1d51bf55217837e6871a4a63
+check_sha "$PARSER_SOURCE" a4e12b6243fa04768a630f350ac7cffb9bd6d387da5cefc8335febaef95a6dba
 mkdir -- "$OUTPUT"
 mkdir -- "$OUTPUT/logs" "$OUTPUT/artifact"
 STAGE=identity
 STATUS=failed
 BUILDER_SCRIPT=$(realpath -e -- "$0")
-export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT
+export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT PARSER_HEADER PARSER_SOURCE PARSER_LIB PARSER_GIT_BLOB
 finish() {
   local code=$?
   trap - EXIT
@@ -61,6 +69,10 @@ receipt = dict(schema=1, kind='source-derived-sdk-host-module', status=os.enviro
         tree=(root / 'source-identity.txt').read_text().splitlines()[1] if (root / 'source-identity.txt').is_file() else None),
     builderSha256=digest(os.environ['BUILDER_SCRIPT']),
     googleTestRevision=os.environ['GTEST'],
+    angleShaderParser=dict(enabled=True, source=json.loads(pathlib.Path(os.environ['PARSER_SOURCE']).read_text()),
+        headerSha256=digest(os.environ['PARSER_HEADER']), librarySha256=digest(os.environ['PARSER_LIB']),
+        requiredLibraryGitBlob=os.environ['PARSER_GIT_BLOB'],
+        actualLibraryGitBlob=(root / 'parser-git-blob.txt').read_text().strip() if (root / 'parser-git-blob.txt').is_file() else None),
     patches={pathlib.Path(os.environ[k]).name:digest(os.environ[k]) for k in ('PATCH','TEST_PATCH','X11_TEST_PATCH')},
     derivedLibrarySha256=digest(library),
     derivedLibraryBuildId=(root / 'artifact/build-id.txt').read_text().strip() if (root / 'artifact/build-id.txt').is_file() else None,
@@ -81,6 +93,27 @@ run() {
   printf '\n' >> "$OUTPUT/logs/$label.command"
   timeout --signal=TERM --kill-after=10s "$limit" "$@" > "$OUTPUT/logs/$label.out" 2> "$OUTPUT/logs/$label.err"
 }
+STAGE=parser-preflight
+[[ -f "$PARSER_LIB" ]] || { echo 'Pinned SDK shader translator library is missing' >&2; exit 1; }
+git hash-object --no-filters "$PARSER_LIB" > "$OUTPUT/parser-git-blob.txt"
+[[ $(cat "$OUTPUT/parser-git-blob.txt") == "$PARSER_GIT_BLOB" ]] || { echo 'SDK shader translator does not match the fixed official header; refusing an unpaired C API' >&2; exit 1; }
+sha256sum "$PARSER_LIB" > "$OUTPUT/original-sdk-parser.sha256"
+readelf -h -n -d -Ws -C "$PARSER_LIB" > "$OUTPUT/original-sdk-parser-elf.txt"
+nm -D --defined-only "$PARSER_LIB" > "$OUTPUT/original-sdk-parser-exports.txt"
+for symbol in STInitialize STFinalize STGenerateResources STCompileAndResolve STFreeShaderResolveState STCopyVariable STCopyInterfaceBlock STDestroyVariable STDestroyInterfaceBlock; do
+  grep -Eq "[[:space:]][TW][[:space:]]$symbol$" "$OUTPUT/original-sdk-parser-exports.txt"
+done
+run parser-loader 30s env LD_LIBRARY_PATH="$BASE_DIR" ldd -r "$PARSER_LIB"
+if grep -Eq 'undefined symbol:|not found' "$OUTPUT/logs/parser-loader.out" "$OUTPUT/logs/parser-loader.err"; then
+  echo 'Original SDK shader translator has unresolved runtime dependencies' >&2
+  exit 1
+else
+  grep_exit=$?
+  if (( grep_exit != 1 )); then
+    echo 'Could not read shader translator loader evidence' >&2
+    exit "$grep_exit"
+  fi
+fi
 readelf -h -n -d -Ws -C "$BASE_LIB" > "$OUTPUT/base-elf.txt"
 nm -DC --defined-only "$BASE_LIB" > "$OUTPUT/base-exports.txt"
 clang++-18 --version > "$OUTPUT/compiler-version.txt"
@@ -119,16 +152,17 @@ check_sha "$OUTPUT/source/$TEST_SOURCE" bea09f474edc39a3ade868656e6dc60345d9bd56
 run x11-test-patch-check 30s git -C "$OUTPUT/source" apply --check "$X11_TEST_PATCH"
 run x11-test-patch 30s git -C "$OUTPUT/source" apply "$X11_TEST_PATCH"
 check_sha "$OUTPUT/source/$X11_TEST_SOURCE" c9bd13619a7d35fd89901e8f70e9dfe696ab749ed14d9331545b9e38034936ce
+GFX_CXX_FLAGS="$CXX_FLAGS -I\"$PARSER_INCLUDE\""
 run configure 180s cmake -S "$OUTPUT/source" -B "$OUTPUT/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 \
-  -DCMAKE_CXX_FLAGS="$CXX_FLAGS" -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++ \
+  -DCMAKE_CXX_FLAGS="$GFX_CXX_FLAGS" -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++ \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DDEPENDENCY_RESOLUTION=SYSTEM \
-  -DBUILD_STANDALONE=ON -DBUILD_SHARED_LIBS=OFF -DCONFIG_AEMU=OFF -DENABLE_VKCEREAL_TESTS=ON
+  -DBUILD_STANDALONE=ON -DBUILD_SHARED_LIBS=OFF -DCONFIG_AEMU=OFF -DENABLE_VKCEREAL_TESTS=ON -DUSE_ANGLE_SHADER_PARSER=ON
 # First prove the fixed source's zero-count defect under hardening, using the existing GLES3 fixture.
 run red-build 2400s cmake --build "$OUTPUT/build" --target OpenglRender_unittests --parallel 2
 STAGE=zero-attachment-red
 set +e
-timeout --signal=TERM --kill-after=10s 120s env ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
+timeout --signal=TERM --kill-after=10s 120s env LD_LIBRARY_PATH="$BASE_DIR" ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
   xvfb-run -a "$OUTPUT/build/OpenglRender_unittests" \
   --gtest_filter=InvalidateFramebufferTest.ZeroAttachmentsPreserveColor \
   > "$OUTPUT/logs/zero-attachment-red.out" 2> "$OUTPUT/logs/zero-attachment-red.err"
@@ -143,7 +177,7 @@ run production-patch-check 30s git -C "$OUTPUT/source" apply --check "$PATCH"
 run production-patch 30s git -C "$OUTPUT/source" apply "$PATCH"
 check_sha "$OUTPUT/source/$PRODUCTION" e7864041afccb6236d70c62861e149048754e9e6c261ebd6630d31998045f008
 run green-build 2400s cmake --build "$OUTPUT/build" --target gfxstream_backend OpenglRender_unittests --parallel 2
-run gles-regression 180s env ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
+run gles-regression 180s env LD_LIBRARY_PATH="$BASE_DIR" ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
   xvfb-run -a "$OUTPUT/build/OpenglRender_unittests" \
   '--gtest_filter=InvalidateFramebufferTest.*:CombinedFramebufferBlitTest/CombinedFramebufferBlit.*' \
   --gtest_output="xml:$OUTPUT/gles-regression.xml"
@@ -191,10 +225,12 @@ git -C "$OUTPUT/source" diff --binary > "$OUTPUT/applied-source.patch"
 sha256sum "$OUTPUT/source/$PRODUCTION" "$OUTPUT/source/$TEST_SOURCE" "$OUTPUT/source/$X11_TEST_SOURCE" > "$OUTPUT/source-after.sha256"
 cp "$OUTPUT/build/CMakeCache.txt" "$OUTPUT/build/compile_commands.json" "$OUTPUT/"
 cp "$PATCH" "$TEST_PATCH" "$X11_TEST_PATCH" "$OUTPUT/artifact/"
+cp -a -- "$PARSER_INCLUDE" "$OUTPUT/artifact/angle-shader-translator"
 # Retain all source/third-party licensing with the derived module, without shipping the SDK.
 find "$OUTPUT/source" "$OUTPUT/googletest" -type f \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) -not -path '*/.git/*' -print0 \
   | tar --null -T - -czf "$OUTPUT/artifact/upstream-notices.tar.gz"
 check_sha "$BASE_LIB" "$BASE_SHA"
+[[ $(git hash-object --no-filters "$PARSER_LIB") == "$PARSER_GIT_BLOB" ]]
 STAGE=host-module-built-and-tested
 STATUS=host-module-built-and-tested
 # This is a module/test result only. Root must wire the derived path into the original owned emulator,

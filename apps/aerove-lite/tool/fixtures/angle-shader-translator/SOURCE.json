@@ -1,0 +1,23 @@
+{
+  "repository": "https://android.googlesource.com/platform/prebuilts/android-emulator-build/common",
+  "revision": "1ebd9720117e7e3c495a1e1c43e069f1727d60d5",
+  "upstreamAngleBase": "7d712e7d05418533fd90652ad089b3cacfcfca72",
+  "header": {
+    "path": "ANGLE/linux-x86_64/include/ShaderTranslator.h",
+    "bytes": 30117,
+    "gitBlob": "5b65385968d2d3288489068ce6c8e18719a1cc1d",
+    "sha256": "979138ea0b60d23ee604b065743ebd9a2a32fbe76bee4e68081e3c73975b673a"
+  },
+  "pairedOriginalSdkLibrary": {
+    "path": "ANGLE/linux-x86_64/lib/libshadertranslator.so",
+    "gitBlob": "bf6f43c6b36c4c4b2651ac9e74db4b58035af270",
+    "binaryDownloaded": false
+  },
+  "license": {
+    "path": "ANGLE/LICENSE",
+    "spdx": "BSD-3-Clause",
+    "copyright": "2018 The ANGLE Project Authors",
+    "bytes": 1675,
+    "sha256": "54aff7276217df9f6b5181613999d208c9e40d2b1d51bf55217837e6871a4a63"
+  }
+}
