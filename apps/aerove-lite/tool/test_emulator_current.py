@@ -556,3 +556,134 @@ class OriginalSamplePhaseTests(unittest.TestCase):
             current.original_sample_phase_selector('original-sample', 'glyph', {'runtimeTarget': 'lite94'})
         with self.assertRaises(ValueError):
             current.original_sample_phase_selector('matrix', 'glyph', runtime)
+
+class SigillCaptureBoundaryTests(unittest.TestCase):
+    def test_forensic_optin_cannot_enter_a_normal_current_or_full_owner(self):
+        import sys
+        for phase in ('matrix', 'flutter-full', 'flutter-ui'):
+            with self.subTest(phase=phase), \
+                    patch.dict(os.environ, AEROVE_EMULATOR_SIGILL_TRACE='1'), \
+                    patch.object(current.sys, 'platform', 'linux'), \
+                    patch.object(sys, 'argv', ['owner', phase, '--runtime-directory', 'fixture']), \
+                    patch.object(current, 'verify_current_runtime', return_value={'identity': {}}), \
+                    patch.object(current.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(ValueError, 'restricted to the fixed original208'):
+                    current.main()
+                spawn.assert_not_called()
+
+
+@unittest.skipUnless(os.name == 'posix' and os.environ.get('AEROVE_TEST_SIGILL_GDB') == '1',
+                     'Explicit Linux CI GDB/ptrace fixture; never Android execution')
+class SigillCaptureHostTests(unittest.TestCase):
+    """Real GDB plus harmless owned host children, required before the opt-in SDK run."""
+    def setUp(self):
+        import shutil
+        import sys
+        import subprocess
+        self.assertEqual('linux', sys.platform)
+        self.assertIsNotNone(shutil.which('gdb'), 'Requested fixture requires CI GDB, never a skip')
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.receipt = {'interruptSignals': []}
+        self.child = subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.readline()'],
+                                      stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL, start_new_session=True)
+        # LIFO: debugger must detach before the existing owner stops its target.
+        self.addCleanup(self.child.stdin.close)
+        self.addCleanup(current.stop_owned, self.child)
+        self.capture = current.SigillCapture(self.child, self.root, self.receipt)
+        self.addCleanup(self.capture.close)
+
+    def logs(self):
+        return '\n'.join(path.read_text(errors='replace') for path in self.root.glob('sigill-gdb.*.log'))
+
+    def test_normal_child_exit_keeps_original_status_and_is_not_owner_acceptance(self):
+        self.capture.start()
+        self.child.stdin.write(b'exit\n')
+        self.child.stdin.flush()
+        self.assertEqual(0, self.child.wait(timeout=15), self.logs())
+        self.capture.close()
+        self.assertEqual(0, self.capture.child.returncode, self.logs())
+        self.assertEqual(1, current.finish_emulator(self.child, self.receipt, 0))
+        self.assertTrue(self.receipt['unexpectedEmulatorExit'])
+        self.assertFalse(self.receipt['cleanupRequested'])
+        self.assertFalse(self.capture.state['accepted'])
+
+    def test_original_sigill_reaches_parent_even_if_one_diagnostic_read_fails(self):
+        import signal
+        original = current.sigill_gdb_script
+        with patch.object(current, 'sigill_gdb_script', side_effect=lambda *args:
+                          original(*args).replace('"info symbol $pc"', '"aerove-intentionally-unknown-read"')):
+            self.capture.start()
+        self.child.send_signal(signal.SIGILL)
+        self.assertEqual(-signal.SIGILL, self.child.wait(timeout=15), self.logs())
+        self.capture.close()
+        self.assertEqual(0, self.capture.child.returncode, self.logs())
+        self.assertIn('AEROVE_OWNED_SIGILL_CAPTURE pid=' + str(self.child.pid), self.logs())
+        self.assertIn('AEROVE_GDB_READ_ERROR', self.logs())
+        self.assertFalse(self.receipt['sigillForensics']['performanceEvidence'])
+        self.assertFalse(self.receipt['sigillForensics']['accepted'])
+        self.assertEqual(self.child.pid, json.loads(self.capture.fault.read_text())['targetPid'])
+
+    def test_owner_cancellation_detaches_then_original_cleanup_joins_only_owned_target(self):
+        import signal
+        import subprocess
+        import sys
+        unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL, start_new_session=True)
+        self.addCleanup(current.stop_owned, unrelated)
+        self.capture.start()
+        self.receipt['interruptSignals'].append(signal.SIGTERM)
+        with self.assertRaises(InterruptedError):
+            current.check_cancelled(self.receipt)
+        self.capture.close()  # Cleanup deliberately ignores cancellation while detaching.
+        self.assertIsNotNone(self.capture.child.poll(), self.logs())
+        self.assertIsNone(self.child.poll())
+        from beta14_render_profile import proc_stat
+        self.assertNotIn(proc_stat((Path('/proc') / str(self.child.pid) / 'stat').read_text())['state'], ('t', 'T'))
+        self.assertEqual(1, current.finish_emulator(self.child, self.receipt, 1))
+        self.assertIsNotNone(self.child.poll())
+        self.assertIsNone(unrelated.poll())
+        self.assertTrue(self.receipt['cleanupRequested'])
+        self.assertFalse(self.receipt['unexpectedEmulatorExit'])
+        self.assertEqual([signal.SIGTERM], self.receipt['interruptSignals'])
+        for row in self.capture.state['commands']:
+            self.assertEqual('-' + str(self.capture.child.pid), row['command'][-1])
+
+    def test_failed_attach_is_terminal_and_does_not_leave_a_stopped_target(self):
+        # A real failed sudo child exercises ready/exit handling without ptracing anything.
+        with patch('shutil.which', return_value='/usr/bin/false'):
+            with self.assertRaisesRegex(RuntimeError, 'GDB exited while emulator remained live'):
+                self.capture.start()
+        self.capture.close()
+        self.assertIsNotNone(self.capture.child.poll())
+        self.assertIsNone(self.child.poll())
+        self.assertFalse(self.capture.ready.exists())
+        self.assertEqual('failed', self.capture.state['status'])
+        self.assertIsNotNone(current.stop_owned(self.child)['returnCode'])
+    def test_sidecar_death_after_last_check_is_terminal_at_owner_close(self):
+        import subprocess
+        self.capture.start()
+        self.capture.check()  # The last monitor check saw the actual debugger alive.
+        result = subprocess.run(['sudo', '-n', '--', 'kill', '-KILL', '--',
+                                 '-' + str(self.capture.child.pid)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotEqual(0, self.capture.child.wait(timeout=15), self.logs())
+        self.assertIsNone(self.child.poll())
+        with self.assertRaisesRegex(RuntimeError, 'GDB exited before owner cleanup'):
+            self.capture.close()
+        self.assertTrue(self.capture.state['cleanupClosed'])
+        self.assertTrue(self.capture.state['unexpectedExitBeforeCleanup'])
+        self.assertEqual('failed', self.capture.state['status'])
+        self.capture.close()  # Already-cleaned retry must not replace the first error.
+        from beta14_render_profile import proc_stat
+        self.assertNotIn(proc_stat((Path('/proc') / str(self.child.pid) / 'stat').read_text())['state'], ('t', 'T'))
+        # main records the close exception in cleanupErrors and retains failure through
+        # this same original emulator finalizer, even when acceptance had returned zero.
+        self.assertEqual(1, current.finish_emulator(self.child, self.receipt, 1))
+        self.assertIsNotNone(self.child.poll())
+        self.assertFalse(self.capture.state['accepted'])
+        self.assertFalse(self.capture.state['performanceEvidence'])

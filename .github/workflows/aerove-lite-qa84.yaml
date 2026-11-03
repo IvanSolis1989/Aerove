@@ -74,6 +74,32 @@ jobs:
         persist-credentials: false
         sparse-checkout: apps/aerove-lite/version.properties
         sparse-checkout-cone-mode: false
+    - name: Prepare existing GDB and verify bounded owned host SIGILL capture
+      if: ${{ inputs.runtime_target == 'lite208-flutter-ui' }}
+      timeout-minutes: 8
+      working-directory: apps/aerove-lite/tool
+      env:
+        AEROVE_TEST_SIGILL_GDB: '1'
+      run: |
+        set -euo pipefail
+        ulimit -c 0
+        if ! command -v gdb >/dev/null 2>&1; then
+          sudo -n env DEBIAN_FRONTEND=noninteractive \
+            timeout --signal=TERM --kill-after=10s 90s \
+            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 update
+          sudo -n env DEBIAN_FRONTEND=noninteractive \
+            timeout --signal=TERM --kill-after=10s 150s \
+            apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
+            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+            install --yes --no-install-recommends gdb
+        fi
+        command -v gdb
+        command -v kill
+        timeout --signal=TERM --kill-after=5s 10s \
+          sudo -n -- gdb -nx -nh --batch -ex 'show version' -ex quit
+        timeout --signal=TERM --kill-after=10s 90s \
+          python3 -B -m unittest -v test_emulator_current.SigillCaptureHostTests
     - name: Verify fixed original Flutter admission with canonical Linux fixture bytes
       if: ${{ inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui' }}
       working-directory: apps/aerove-lite/tool
@@ -169,6 +195,7 @@ jobs:
         RUNTIME_DIRECTORY: ${{ inputs.runtime_target == 'lite158-frame-sample' && 'lite158-original-frame-runtime' || inputs.runtime_target == 'lite141-prebuilt-shards' && 'lite141-original-shards-runtime' || inputs.runtime_target == 'beta14' && 'beta14-original-runtime' || inputs.runtime_target == 'lite94' && 'lite94-original-runtime' || 'qa84-original-runtime' }}
         SHARD_INDEX: ${{ inputs.shard_index }}
         ORIGINAL_SAMPLE: ${{ inputs.sample }}
+        AEROVE_EMULATOR_SIGILL_TRACE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
       run: |
         if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite208-original-flutter-runtime"

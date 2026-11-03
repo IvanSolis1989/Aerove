@@ -1102,6 +1102,14 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 **许可证、署名与证据：** R8 project authors，源码所示 BSD-style license；[固定命令源码](https://r8.googlesource.com/r8/+/d3a004e326742850d743833562cc2d6ca267d117/src/main/java/com/android/tools/r8/tracereferences/TraceReferencesCommandParser.java)、[固定公共诊断 API](https://r8.googlesource.com/r8/+/61dc59bf271ddb314b5e0953231bd22df0ffb17e/src/main/java/com/android/tools/r8/DiagnosticsHandler.java)、[官方 LICENSE](https://r8.googlesource.com/r8/+/refs/heads/main/LICENSE)；本项目 `generate_android_test_keep_rules.py` 与 `AndroidTestAppAbiTrace.java`。
 
+#### [GNU GDB](https://sourceware.org/gdb/)
+
+**已核来源 / 版本边界：** GNU GDB 官方在线手册 Attach、Signals、Events In Python（2026-11-03 读取）。CI 复用 runner 已有 GDB，实际版本由同 job 的 `show version` 原始输出记录；不将手册或 Android SDK 版本当成 GDB 源码提交。
+
+**用途与采用方式：** 仅对原 #208 APK 的 owned emulator 宿主 SIGILL 诊断。复用现有 native-preflight 的 GDB 准备能力，attach owner 的原 Popen PID，通过 SignalEvent 只读记录 PC、无参数栈和映射，再 continue 并传递原 SIGILL；取消时 detach 并清理本次 sidecar。未复制 GDB 实现，未新增 APP 依赖；取证会影响时序，不作为性能或应用验收证据。
+
+**许可证、署名与证据：** GNU GDB / GPLv3+，官方手册 / GNU FDL；[Attach](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Attach.html)、[Signals](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Signals.html)、[Events In Python](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Events-In-Python.html)。
+
 #### [google/perfetto](https://github.com/google/perfetto)
 
 **固定版本 / revision：** `v25.0` / `7e8d6801dbf73936a916dbcd8ed06a758c8d989e`

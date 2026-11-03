@@ -77,16 +77,211 @@ def check_cancelled(receipt):
         raise InterruptedError('Owner cancellation observed during runtime')
 
 
+def sigill_gdb_script(pid, ready, fault):
+    # GDB reads only this live Popen PID; no process search, inferior calls or patching.
+    return """set pagination off
+set confirm off
+set auto-load off
+set debuginfod enabled off
+set print frame-arguments none
+set print entry-values no
+set print thread-events off
+set follow-fork-mode parent
+set detach-on-fork on
+handle all nostop noprint pass
+handle SIGTRAP nostop noprint pass
+handle SIGILL stop print pass
+python
+import gdb, json, os, pathlib, time
+pid = %d
+ready = pathlib.Path(%r)
+fault = pathlib.Path(%r)
+event = [None]
+budget = [1048576]
+captures = 0
+def save(path, value):
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(value) + "\\n")
+    os.replace(temporary, path)
+def stopped(value):
+    event[0] = value
+def emit(command):
+    print("AEROVE_GDB_COMMAND " + command, flush=True)
+    try:
+        text = gdb.execute(command, to_string=True)
+        limit = min(262144, budget[0])
+        print(text[:limit], flush=True)
+        budget[0] -= min(len(text), limit)
+        if len(text) > limit:
+            print("AEROVE_GDB_OUTPUT_TRUNCATED", flush=True)
+    except gdb.error as error:
+        print("AEROVE_GDB_READ_ERROR " + str(error), flush=True)
+gdb.events.stop.connect(stopped)
+try:
+    gdb.execute("attach " + str(pid), to_string=True)
+    assert gdb.selected_inferior().pid == pid
+    save(ready, dict(targetPid=pid, gdbPid=os.getpid()))
+    while gdb.selected_inferior().pid:
+        event[0] = None
+        gdb.execute("continue", to_string=True)
+        if not gdb.selected_inferior().pid:
+            break
+        if not isinstance(event[0], gdb.SignalEvent) or event[0].stop_signal != "SIGILL":
+            break
+        captures += 1
+        if captures > 3:
+            continue
+        observed = dict(targetPid=pid, gdbPid=os.getpid(), monotonic=time.monotonic(), readbackComplete=False, capture=captures)
+        save(fault, observed)
+        print("AEROVE_OWNED_SIGILL_CAPTURE pid=" + str(pid), flush=True)
+        for command in ("p $_siginfo", "info registers rip rsp rbp eflags", "x/16bx $pc", "x/8i $pc", "info symbol $pc", "bt 24", "info sharedlibrary", "info proc mappings"):
+            emit(command)
+        fault_thread = gdb.selected_thread()
+        threads = [thread for thread in gdb.selected_inferior().threads() if thread != fault_thread]
+        for thread in threads[:63]:
+            if budget[0] <= 0:
+                break
+            thread.switch()
+            emit("bt 24")
+        fault_thread.switch()
+        observed["readbackComplete"] = True
+        save(fault, observed)
+        # SIGILL stays pass: the next continue delivers the original signal.
+except KeyboardInterrupt:
+    print("AEROVE_GDB_OWNER_INTERRUPT", flush=True)
+finally:
+    if gdb.selected_inferior().pid:
+        gdb.execute("detach")
+end
+""" % (pid, str(ready), str(fault))
+
+
+class SigillCapture:
+    """One opt-in sidecar; the emulator remains the owner's original Popen child."""
+    def __init__(self, emulator, directory, receipt):
+        self.emulator, self.directory, self.receipt = emulator, Path(directory), receipt
+        self.child = None
+        self.ready, self.fault = self.directory / 'sigill-gdb-ready.json', self.directory / 'sigill-observed.json'
+        self.deadline = time.monotonic() + 1500
+        self.state = dict(diagnosticOnly=True, performanceEvidence=False, accepted=False,
+                          targetPid=emulator.pid, commands=[], status='starting')
+        receipt['sigillForensics'] = self.state
+
+    def start(self):
+        import shutil
+        gdb = shutil.which('gdb')
+        if gdb is None:
+            raise RuntimeError('Requested SIGILL capture requires the existing CI GDB')
+        if self.ready.exists() or self.fault.exists():
+            raise ValueError('SIGILL capture cannot reuse an earlier phase receipt')
+        from beta14_render_profile import proc_stat
+        self.state['targetStarttime'] = proc_stat((Path('/proc') / str(self.emulator.pid) / 'stat').read_text())['starttime']
+        keys = {'processor', 'vendor_id', 'cpu family', 'model', 'model name', 'stepping', 'microcode', 'flags', 'bugs'}
+        cpu = []
+        for block in Path('/proc/cpuinfo').read_text().split('\n\n'):
+            fields = dict((key.strip(), value.strip()) for line in block.splitlines()
+                          if ':' in line for key, value in [line.split(':', 1)] if key.strip() in keys)
+            if fields:
+                cpu.append(fields)
+        (self.directory / 'host-cpu-flags.json').write_text(json.dumps(cpu, indent=2) + '\n')
+        script = self.directory / 'sigill-capture.gdb'
+        script.write_text(sigill_gdb_script(self.emulator.pid, self.ready, self.fault))
+        command = ['sudo', '-n', '--', gdb, '-nx', '-nh', '--batch', '-x', str(script)]
+        self.state['command'] = command
+        with (self.directory / 'sigill-gdb.stdout.log').open('wb') as out, (self.directory / 'sigill-gdb.stderr.log').open('wb') as err:
+            self.child = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+        self.state['sidecarPid'] = self.child.pid
+        deadline = time.monotonic() + 15
+        while not self.ready.exists():
+            check_cancelled(self.receipt)
+            if self.emulator.poll() is not None:
+                raise RuntimeError('Owned emulator exited before SIGILL GDB became ready')
+            self.check()
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Owned SIGILL GDB attach did not become ready in 15 seconds')
+            time.sleep(.05)
+        actual = json.loads(self.ready.read_text())
+        if actual['targetPid'] != self.emulator.pid or not isinstance(actual['gdbPid'], int):
+            raise ValueError('GDB attached PID differs from the owned emulator')
+        if proc_stat((Path('/proc') / str(self.emulator.pid) / 'stat').read_text())['starttime'] != self.state['targetStarttime']:
+            raise ValueError('Owned emulator changed during GDB attach')
+        self.state.update(status='attached', gdbPid=actual['gdbPid'])
+        self.check()
+
+    def check(self):
+        if self.child is None:
+            return
+        if self.emulator.poll() is not None:
+            return  # Original owner, never GDB's exit status, determines emulator failure.
+        if self.child.poll() is not None:
+            self.state.update(status='failed', returnCode=self.child.returncode)
+            raise RuntimeError('Owned SIGILL GDB exited while emulator remained live')
+        if time.monotonic() >= self.deadline:
+            raise TimeoutError('Owned SIGILL capture reached its 1500-second bound')
+        if self.fault.exists():
+            observed = json.loads(self.fault.read_text())
+            if not observed['readbackComplete'] and time.monotonic() - observed['monotonic'] >= 15:
+                raise TimeoutError('Owned SIGILL readback exceeded 15 seconds')
+
+    def close(self):
+        if self.child is None or self.state.get('cleanupClosed'):
+            return
+        unexpected_dead = (self.emulator.poll() is None and self.child.poll() is not None
+                           and self.state.get('status') != 'failed'
+                           and not self.state.get('stopRequested'))
+        # Allow pending SIGILL readback to continue+pass before owner cleanup intervenes.
+        if self.fault.exists() and self.child.poll() is None:
+            try:
+                self.child.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                self.state['readbackTimeout'] = True
+        for name in ('INT', 'TERM', 'KILL'):
+            if self.child.poll() is not None:
+                break
+            command = ['sudo', '-n', '--', 'kill', '-' + name, '--', '-' + str(self.child.pid)]
+            entry = dict(command=command)
+            self.state['commands'].append(entry)
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+                entry.update(returnCode=result.returncode, stdout=result.stdout, stderr=result.stderr)
+                if result.returncode == 0:
+                    self.state['stopRequested'] = True
+            except (OSError, subprocess.TimeoutExpired) as error:
+                entry['error'] = repr(error)
+            try:
+                self.child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                continue
+        if self.child.poll() is None:
+            raise RuntimeError('Owned GDB sidecar did not exit after bounded cleanup')
+        self.state['returnCode'] = self.child.returncode
+        if self.emulator.poll() is None:
+            if not self.state.get('stopRequested') and self.state.get('status') != 'failed':
+                unexpected_dead = True
+            # SIGINT normally detaches via the script's finally. After forced GDB exit,
+            # resume only the original owned group before its existing TERM/KILL cleanup.
+            try:
+                os.killpg(self.emulator.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+        self.state['cleanupClosed'] = True
+        if unexpected_dead:
+            self.state.update(status='failed', unexpectedExitBeforeCleanup=True)
+            raise RuntimeError('Owned SIGILL GDB exited before owner cleanup while emulator remained live')
+
 class CancellationView:
-    def __init__(self, child, receipt):
+    def __init__(self, child, receipt, capture=None):
         self.child = child
         self.receipt = receipt
+        self.capture = capture
 
     def __getattr__(self, name):
         return getattr(self.child, name)
 
     def poll(self):
         check_cancelled(self.receipt)
+        if self.capture is not None:
+            self.capture.check()
         return self.child.poll()
 
     def wait(self, *args, **kwargs):
@@ -95,6 +290,8 @@ class CancellationView:
             return self.child.wait(*args, **kwargs)
         finally:
             check_cancelled(self.receipt)
+            if self.capture is not None:
+                self.capture.check()
 
 def original_sample_phase_selector(phase, sample, runtime):
     if phase != 'original-sample':
@@ -204,6 +401,9 @@ def main():
     current = verify_current_runtime(args.runtime_directory)
     if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') and args.phase != 'flutter-ui':
         raise ValueError('Fixed original Flutter diagnosis permits only the representative flutter-ui phase')
+    forensic = os.environ.get('AEROVE_EMULATOR_SIGILL_TRACE') == '1'
+    if forensic and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
+        raise ValueError('SIGILL capture is restricted to the fixed original208 representative diagnosis')
     sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
     flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase in ('flutter-ui', 'flutter-platform', 'flutter-full') else None
     if args.phase in ('matrix', 'remaining') and not current.get('runtimeTarget'):
@@ -239,7 +439,7 @@ def main():
                 raise InterruptedError(f'Finalized owner interrupted by signal {signum}')
     signal.signal(signal.SIGTERM, interrupt)
     signal.signal(signal.SIGINT, interrupt)
-    emulator = acceptance = None
+    emulator = acceptance = capture = None
     result = 1
     crash_before = crash_inventory()
     try:
@@ -249,6 +449,14 @@ def main():
             receipt['emulatorPid'] = emulator.pid
             check_cancelled(receipt)
             wait_ready(emulator, directory, receipt, check_cancelled)
+            check_cancelled(receipt)
+            if forensic:
+                capture = SigillCapture(emulator, directory, receipt)
+                try:
+                    capture.start()
+                except Exception as error:
+                    capture.state.update(status='failed', error=repr(error))
+                    raise
             check_cancelled(receipt)
             receipt['rendererEvidence'] = renderer_evidence((directory / 'emulator.stdout.log').read_text(errors='replace'))
             proof = dict(current, schema=1, owner='emulator_current.py',
@@ -277,7 +485,7 @@ def main():
                 acceptance_command.append(args.sample)
             acceptance = subprocess.Popen(acceptance_command, env=environment, start_new_session=True)
             check_cancelled(receipt)
-            result = monitor(emulator, CancellationView(acceptance, receipt), receipt)
+            result = monitor(emulator, CancellationView(acceptance, receipt, capture), receipt)
             check_cancelled(receipt)
     finally:
         phase = 'cleanup'
@@ -292,6 +500,11 @@ def main():
                 if acceptance is not None:
                     receipt['acceptanceReturnCode'] = acceptance.returncode
                 try:
+                    if capture is not None:
+                        try:
+                            capture.close()
+                        except Exception as error:
+                            cleanup_errors.append(dict(owner='sigill-gdb', error=str(error)))
                     if emulator is not None:
                         result = finish_emulator(emulator, receipt, result)
                 except Exception as error:
