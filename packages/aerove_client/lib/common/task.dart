@@ -12,14 +12,16 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 
+bool _hasNativeProxyProviderEdits(ProxyProviderOptions value) =>
+    value.sourceDefinition != null &&
+    (value.editedFields == null || value.editedFields!.isNotEmpty);
+
 /// Applies only persisted user edits before the existing single script evaluation.
 String nativeProxyProviderScriptInput(
   String configJson,
   ProfileOverrides overrides,
 ) {
-  if (!overrides.proxyProviders.values.any(
-    (value) => value.sourceDefinition != null,
-  ))
+  if (!overrides.proxyProviders.values.any(_hasNativeProxyProviderEdits))
     return configJson;
   final decoded = jsonDecode(configJson);
   if (decoded is! Map<String, dynamic>)
@@ -29,12 +31,14 @@ String nativeProxyProviderScriptInput(
 }
 
 void _applyNativeProxyProviderEdits(Map config, ProfileOverrides overrides) {
+  if (!overrides.proxyProviders.values.any(_hasNativeProxyProviderEdits))
+    return;
   final providers = config['proxy-providers'];
   if (providers == null) return;
   if (providers is! Map)
     throw const FormatException('proxy-providers: expected mapping');
   for (final entry in overrides.proxyProviders.entries) {
-    if (entry.value.sourceDefinition == null ||
+    if (!_hasNativeProxyProviderEdits(entry.value) ||
         !providers.containsKey(entry.key))
       continue;
     final current = providers[entry.key];
@@ -494,10 +498,16 @@ Future<RealProfile> makeRealProfileTask(
   MakeRealProfileState data, {
   String coreId = 'mihomo',
   ProfileSelectionBinding? selectionBinding,
+  ({Map<String, String> proxies, Map<String, String> rules})
+  providerFileReferences = (
+    proxies: {},
+    rules: {},
+  ),
 }) => compute(_makeRealProfileTask, (
   data: data,
   coreId: coreId,
   selectionBinding: selectionBinding,
+  providerFileReferences: providerFileReferences,
 ));
 
 Future<RealProfile> _makeRealProfileTask(
@@ -505,6 +515,8 @@ Future<RealProfile> _makeRealProfileTask(
     MakeRealProfileState data,
     String coreId,
     ProfileSelectionBinding? selectionBinding,
+    ({Map<String, String> proxies, Map<String, String> rules})
+    providerFileReferences,
   })
   payload,
 ) async {
@@ -619,14 +631,28 @@ Future<RealProfile> _makeRealProfileTask(
     );
   }
 
-  void confineProviders(String section, String type) {
+  void confineProviders(
+    String section,
+    String type,
+    Map<String, String> fileReferences,
+  ) {
     final providers = rawConfig[section];
     if (providers is! Map) {
       return;
     }
+    final sourceProviders = data.rawConfig[section];
     for (final name in providers.keys) {
       final provider = providers[name];
+      final source = sourceProviders is Map ? sourceProviders[name] : null;
       if (provider is! Map || provider['type'] == 'inline') {
+        continue;
+      }
+      if (provider['type'] == 'file' &&
+          fileReferences.containsKey(name) &&
+          provider['path'] == fileReferences[name] &&
+          source is Map &&
+          source['type'] == 'file' &&
+          source['path'] == fileReferences[name]) {
         continue;
       }
       // Two providers may share a URL and differ only by header.
@@ -856,8 +882,16 @@ Future<RealProfile> _makeRealProfileTask(
     rawConfig[field] = resourcePath(item);
   }
 
-  confineProviders('proxy-providers', proxiesProviderDirectoryName);
-  confineProviders('rule-providers', rulesProviderDirectoryName);
+  confineProviders(
+    'proxy-providers',
+    proxiesProviderDirectoryName,
+    payload.providerFileReferences.proxies,
+  );
+  confineProviders(
+    'rule-providers',
+    rulesProviderDirectoryName,
+    payload.providerFileReferences.rules,
+  );
   injectUnconfinedProviders('proxy-providers', data.injectedProxyProviders);
   injectUnconfinedProviders('rule-providers', data.injectedRuleProviders);
   if (!capabilities.androidHostTun)

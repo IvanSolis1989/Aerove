@@ -1252,6 +1252,7 @@ class SetupAction extends _$SetupAction {
         safeMode: ref.read(safeModeProvider),
       ),
       coreId: ClientProduct.current.expectedCoreId,
+      providerFileReferences: injected.files,
       selectionBinding:
           ClientProduct.current.expectedCoreId == 'meow-rs' &&
               ref.read(profileProvider(profileId)) != null
@@ -1286,7 +1287,13 @@ class SetupAction extends _$SetupAction {
 
   /// Only what the custom profile actually references is injected, so an
   /// app-level provider costs nothing in the profiles that never name it.
-  Future<({Map<String, dynamic> proxies, Map<String, dynamic> rules})>
+  Future<
+    ({
+      Map<String, dynamic> proxies,
+      Map<String, dynamic> rules,
+      ({Map<String, String> proxies, Map<String, String> rules}) files,
+    })
+  >
   _resolveInjectedProviders(
     SetupState setupState, {
     required List<ProxyGroup> proxyGroups,
@@ -1305,17 +1312,25 @@ class SetupAction extends _$SetupAction {
       return (
         proxies: const <String, dynamic>{},
         rules: const <String, dynamic>{},
+        files: (
+          proxies: const <String, String>{},
+          rules: const <String, String>{},
+        ),
       );
     }
     final options = setupState.overrides.proxyProviders;
     final proxies = <String, dynamic>{};
+    final proxyFiles = <String, String>{};
+    final ruleFiles = <String, String>{};
     for (final entry in setupState.profileProviders.entries) {
       if (!usedProxyProviders.contains(entry.key)) {
         continue;
       }
+      final path = await appPath.getProfilePath(entry.value.toString());
+      proxyFiles[entry.key] = path;
       proxies[entry.key] = {
         'type': 'file',
-        'path': await appPath.getProfilePath(entry.value.toString()),
+        'path': path,
         ...?options[entry.key]?.definition,
       };
     }
@@ -1336,11 +1351,20 @@ class SetupAction extends _$SetupAction {
         continue;
       }
       final prepared = await clashProvidersAction.prepare(provider);
+      final path = await prepared.corePath;
+      final filePath = prepared.sourceDefinition != null
+          ? await prepared.path
+          : path;
       for (final label in aliases.isEmpty ? [prepared.label] : aliases) {
-        ruleProviders[label] = prepared.definition(await prepared.corePath);
+        ruleProviders[label] = prepared.definition(path);
+        ruleFiles[label] = filePath;
       }
     }
-    return (proxies: proxies, rules: ruleProviders);
+    return (
+      proxies: proxies,
+      rules: ruleProviders,
+      files: (proxies: proxyFiles, rules: ruleFiles),
+    );
   }
 
   Future<String> getProfileWithId(int profileId) async {

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fl_clash/common/common.dart';
@@ -152,6 +153,235 @@ void main() {
 
     expect(result.yaml, isNotEmpty);
   });
+
+  test(
+    'no persisted provider edits keep malformed sections tolerable',
+    () async {
+      const overrides = ProfileOverrides(
+        proxyProviders: {
+          'unmodified': ProxyProviderOptions(
+            sourceDefinition: {'type': 'file'},
+            editedFields: {},
+          ),
+        },
+      );
+      const source = '{"proxy-providers":["not-a-map"]}';
+      expect(nativeProxyProviderScriptInput(source, overrides), source);
+      final result = await makeRealProfileTask(
+        MakeRealProfileState(
+          profilesPath: await appPath.profilesPath,
+          profileId: 7,
+          rawConfig: jsonDecode(source) as Map<String, dynamic>,
+          overrides: overrides,
+          realPatchConfig: const PatchClashConfig(),
+          appendSystemDns: false,
+          proxyGroups: const [],
+          rules: const [],
+          addedRules: const [],
+          defaultUA: 'FlClash',
+        ),
+      );
+      expect(result.yaml, isNotEmpty);
+    },
+  );
+
+  test('persisted provider edits still reject a malformed section', () async {
+    const overrides = ProfileOverrides(
+      proxyProviders: {
+        'edited': ProxyProviderOptions(
+          sourceDefinition: {'type': 'http'},
+          editedFields: {'filter'},
+          filter: 'HK',
+        ),
+      },
+    );
+    expect(
+      () => nativeProxyProviderScriptInput(
+        '{"proxy-providers":["not-a-map"]}',
+        overrides,
+      ),
+      throwsFormatException,
+    );
+    await expectLater(
+      makeRealProfileTask(
+        MakeRealProfileState(
+          profilesPath: await appPath.profilesPath,
+          profileId: 7,
+          rawConfig: {
+            'proxy-providers': ['not-a-map'],
+          },
+          overrides: overrides,
+          realPatchConfig: const PatchClashConfig(),
+          appendSystemDns: false,
+          proxyGroups: const [],
+          rules: const [],
+          addedRules: const [],
+          defaultUA: 'FlClash',
+        ),
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test(
+    'unchanged injected file references stay readable across script output',
+    () async {
+      final profilePath = await appPath.getProfilePath('42');
+      final rulePath = await appPath.getProviderCachePath('owned-rules.yaml');
+      File(profilePath)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('proxies: []\n');
+      File(rulePath)
+        ..createSync(recursive: true)
+        ..writeAsStringSync('payload: [example.invalid]\n');
+      for (final scripted in [false, true]) {
+        final proxies = <String, dynamic>{
+          'sub': {'type': 'file', 'path': profilePath},
+        };
+        final rules = <String, dynamic>{
+          'owned': {'type': 'file', 'path': rulePath},
+        };
+        final raw = <String, dynamic>{
+          'proxy-providers': proxies,
+          'rule-providers': rules,
+        };
+        final result = await makeRealProfileTask(
+          MakeRealProfileState(
+            profilesPath: await appPath.profilesPath,
+            profileId: 7,
+            rawConfig: raw,
+            rawConfigJson: scripted ? jsonEncode(raw) : null,
+            injectedProxyProviders: scripted ? const {} : proxies,
+            injectedRuleProviders: scripted ? const {} : rules,
+            realPatchConfig: const PatchClashConfig(),
+            appendSystemDns: false,
+            proxyGroups: const [],
+            rules: const [],
+            addedRules: const [],
+            defaultUA: 'FlClash',
+          ),
+          providerFileReferences: (
+            proxies: {'sub': profilePath},
+            rules: {'owned': rulePath},
+          ),
+        );
+        final config = loadYaml(result.yaml) as YamlMap;
+        final proxy = config['proxy-providers']['sub'];
+        final rule = config['rule-providers']['owned'];
+        expect(proxy['path'], profilePath);
+        expect(rule['path'], rulePath);
+        expect(
+          File(proxy['path'] as String).readAsStringSync(),
+          'proxies: []\n',
+        );
+        expect(
+          File(rule['path'] as String).readAsStringSync(),
+          'payload: [example.invalid]\n',
+        );
+      }
+    },
+  );
+
+  test(
+    'script path type and name changes cannot inherit injected file trust',
+    () async {
+      final profilePath = await appPath.getProfilePath('42');
+      final rulePath = await appPath.getProviderCachePath('owned-rules.yaml');
+      for (final (name, type, escapes, changedSource) in [
+        ('sub', 'file', true, false),
+        ('sub', 'http', false, false),
+        ('renamed', 'file', false, false),
+        ('sub', 'file', false, true),
+      ]) {
+        final result = await makeRealProfileTask(
+          MakeRealProfileState(
+            profilesPath: await appPath.profilesPath,
+            profileId: 7,
+            rawConfig: {
+              'proxy-providers': {
+                'sub': {
+                  'type': 'file',
+                  'path': changedSource
+                      ? '../../../../config.yaml'
+                      : profilePath,
+                },
+              },
+              'rule-providers': {
+                'sub': {
+                  'type': 'file',
+                  'path': changedSource ? '../../../../config.yaml' : rulePath,
+                },
+              },
+            },
+            rawConfigJson: jsonEncode({
+              'proxy-providers': {
+                name: {
+                  'type': type,
+                  'path': escapes ? '../../../../config.yaml' : profilePath,
+                },
+              },
+              'rule-providers': {
+                name: {
+                  'type': type,
+                  'path': escapes ? '../../../../config.yaml' : rulePath,
+                },
+              },
+            }),
+            realPatchConfig: const PatchClashConfig(),
+            appendSystemDns: false,
+            proxyGroups: const [],
+            rules: const [],
+            addedRules: const [],
+            defaultUA: 'FlClash',
+          ),
+          providerFileReferences: (
+            proxies: {'sub': profilePath},
+            rules: {'sub': rulePath},
+          ),
+        );
+        final config = loadYaml(result.yaml) as YamlMap;
+        for (final (section, directory) in [
+          ('proxy-providers', proxiesProviderDirectoryName),
+          ('rule-providers', rulesProviderDirectoryName),
+        ]) {
+          expect(
+            config[section][name]['path'],
+            join(
+              await appPath.getProviderDirPath(7, directory),
+              '$section/$name'.toMd5(),
+            ),
+          );
+        }
+      }
+    },
+  );
+
+  test(
+    'a script can remove an injected file without it being restored',
+    () async {
+      final profilePath = await appPath.getProfilePath('42');
+      final result = await makeRealProfileTask(
+        MakeRealProfileState(
+          profilesPath: await appPath.profilesPath,
+          profileId: 7,
+          rawConfig: {
+            'proxy-providers': {
+              'sub': {'type': 'file', 'path': profilePath},
+            },
+          },
+          rawConfigJson: '{"proxy-providers":{}}',
+          realPatchConfig: const PatchClashConfig(),
+          appendSystemDns: false,
+          proxyGroups: const [],
+          rules: const [],
+          addedRules: const [],
+          defaultUA: 'FlClash',
+        ),
+        providerFileReferences: (proxies: {'sub': profilePath}, rules: {}),
+      );
+      expect((loadYaml(result.yaml) as YamlMap)['proxy-providers'], isEmpty);
+    },
+  );
 
   test('ensureProviderDirs creates both provider directories', () async {
     await appPath.ensureProviderDirs(9);

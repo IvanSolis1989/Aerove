@@ -549,6 +549,9 @@ int _maxDelta(Uint8List a, Uint8List b) {
 
 class _IdleSetupAction extends SetupAction {
   @override
+  void build() {}
+
+  @override
   void autoApplyProfile() {}
 }
 
