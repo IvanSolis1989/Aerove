@@ -1364,7 +1364,7 @@ jobs:
         for sdk_attempt in 1 2; do
           sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
           set +e
-          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;35.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
+          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
           sdk_install_status=("${PIPESTATUS[@]}")
           set -e
           sdkmanager_rc="${sdk_install_status[0]}"
