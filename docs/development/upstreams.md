@@ -881,9 +881,11 @@ Lite 端口释放探针另只读核对 `1.54.0` / tag `tokio-1.54.0` / commit [`
 
 #### [actions/runner-images](https://github.com/actions/runner-images)
 
-**固定版本 / revision：** `4f94a804ccf6254bfc5c7fd90a213db4b21794cd`（2026-10-25）
+**固定版本 / revision：** `4f94a804ccf6254bfc5c7fd90a213db4b21794cd`（2026-10-25）；Lite AEMU 容量准备另参照 `a2d4955654f519bd5b559bffaea60d9f90156630`。
 
 **用途与采用方式：** 只读核实 `ubuntu-24.04` 镜像说明及 Coreutils 9.4 包清单，用作 workflow `nice` 命令可用性的镜像依据；未复制、修改或依赖镜像代码。该镜像清单不证明未来某次 workflow 实际选择的镜像状态或 CPU 调度效果。
+
+Lite225 临时 runner 磁盘耗尽后，容量准备仅参照固定安装脚本确认 .NET、GHCup、Swift、CodeQL 安装根，清理该专用 job 的四个无关预装目录；不引入第三方清理 action，不改变 Android SDK、JDK 或 AEMU 依赖。该次运行保存实际镜像、删除前后 `df/du` 与可用字节，不能以参考源码认定未来镜像版本或空间足够。来源为同一固定提交的 [dotnet](https://github.com/actions/runner-images/blob/a2d4955654f519bd5b559bffaea60d9f90156630/images/ubuntu/scripts/build/install-dotnetcore-sdk.sh)、[GHCup](https://github.com/actions/runner-images/blob/a2d4955654f519bd5b559bffaea60d9f90156630/images/ubuntu/scripts/build/install-haskell.sh)、[Swift](https://github.com/actions/runner-images/blob/a2d4955654f519bd5b559bffaea60d9f90156630/images/ubuntu/scripts/build/install-swift.sh)、[CodeQL](https://github.com/actions/runner-images/blob/a2d4955654f519bd5b559bffaea60d9f90156630/images/ubuntu/scripts/build/install-codeql-bundle.sh)；许可证仍为 MIT。
 
 **许可证、署名与证据：** MIT；固定提交 [`LICENSE`](https://github.com/actions/runner-images/blob/4f94a804ccf6254bfc5c7fd90a213db4b21794cd/LICENSE)、[`Ubuntu2404-Readme.md` 镜像元数据](https://github.com/actions/runner-images/blob/4f94a804ccf6254bfc5c7fd90a213db4b21794cd/images/ubuntu/Ubuntu2404-Readme.md#L198-L204) 与 [Coreutils 清单](https://github.com/actions/runner-images/blob/4f94a804ccf6254bfc5c7fd90a213db4b21794cd/images/ubuntu/Ubuntu2404-Readme.md#L483-L494)。
 

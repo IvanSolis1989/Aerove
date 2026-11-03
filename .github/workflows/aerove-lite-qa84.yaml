@@ -153,6 +153,54 @@ jobs:
     - name: Fixed original Flutter production APK inspection tools
       if: ${{ inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui' }}
       run: sdkmanager --install 'build-tools;37.0.0' --channel=0
+    - name: Reclaim unrelated hosted tools for the fixed AEMU source build
+      if: ${{ inputs.runtime_target == 'lite208-flutter-ui' }}
+      timeout-minutes: 5
+      run: |
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-diagnostics/aemu-disk-capacity"
+        mkdir -p "$evidence"
+        printf 'imageOS=%s\nimageVersion=%s\nrunnerOS=%s\nrunnerArch=%s\n' \
+          "${ImageOS:-unknown}" "${ImageVersion:-unknown}" "$RUNNER_OS" "$RUNNER_ARCH" > "$evidence/runner-image.txt"
+        df -B1 "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/df-before.txt"
+        df -i "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/inodes-before.txt"
+        before_available=$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' ')
+        finish_capacity() {
+          local code=$?
+          trap - EXIT
+          set +e
+          df -B1 "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/df-after.txt"
+          df -i "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/inodes-after.txt"
+          printf '%s\n' "$code" > "$evidence/cleanup.exit"
+          exit "$code"
+        }
+        trap finish_capacity EXIT
+        # Fixed runner-images install roots only; keep Android, Java, Python and all other toolcache entries.
+        for directory in /usr/share/dotnet /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL; do
+          if [[ ! -e "$directory" && ! -L "$directory" ]]; then
+            printf 'absent\t%s\n' "$directory" >> "$evidence/directories.tsv"
+            continue
+          fi
+          [[ -d "$directory" && ! -L "$directory" && $(realpath -e -- "$directory") == "$directory" ]] || {
+            printf 'Refuse unexpected hosted-tool path: %s\n' "$directory" >&2
+            exit 1
+          }
+          sudo -n du -x -B1 -s -- "$directory" >> "$evidence/directories-before.tsv"
+          sudo -n rm -rf --one-file-system -- "$directory"
+          [[ ! -e "$directory" && ! -L "$directory" ]]
+          printf 'removed\t%s\n' "$directory" >> "$evidence/directories.tsv"
+        done
+        after_available=$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' ')
+        printf 'beforeAvailableBytes=%s\nafterAvailableBytes=%s\nnetAvailableIncreaseBytes=%s\n' \
+          "$before_available" "$after_available" "$((after_available - before_available))" > "$evidence/available-bytes.txt"
+        cat "$evidence/available-bytes.txt"
+    - name: Preserve disk-capacity evidence before AEMU checkout and build
+      if: ${{ always() && inputs.runtime_target == 'lite208-flutter-ui' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-original208-disk-capacity-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-diagnostics/aemu-disk-capacity/
+        if-no-files-found: error
     - name: Existing API33 emulator environment and fixed SDK
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
