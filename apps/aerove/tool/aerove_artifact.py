@@ -412,6 +412,13 @@ RECHECK_POLICY_124 = dict(
     test='apps/aerove/test/providers/setup_action_test.dart',
     test_blobs=('486d971944ca88b18e8ec2220aa23ab355603eba', '5c38127e76ef7b524ec96bc5954b1cf9b3260e78'),
     workflow_blob='c78b35a6767b674934271da8d1ab6261fae92951',
+    publisher_workflow_blob='39241d9e4fa534c5985ed2cc9617053ac04a8a9e',
+    reviewed_wiring={
+        'apps/aerove/tool/aerove_release_notes.py':
+            ('1e272f704606154fab76dd443fc5467be573a228', 'b2c7a36e69eca7ef2b5154431714d061913d670d'),
+        'apps/aerove/tool/test_aerove_release_notes.py':
+            ('d1eb9832a3e7ce9f90a3578770752eb5ae8788f8', 'b9078da5ae97a7f40c5ce2dbf1e268b00dc8fe26'),
+    },
     artifacts={
         'Aerove-android-arm64': (13240503684, 64886669,
             'sha256:ea3cbdf0f546fd4cb55685e9ae7ca0a148c416472d1d42273f634d80df05f87d'),
@@ -523,9 +530,19 @@ def _workflow_inputs_unchanged(before: str, after: str, *, build_run: int = RECH
     policy = _recheck_policy(build_run)
     old_description = 'Immutable original APK run to recheck (40488925368 only)'
     if build_run == RECHECK_RUN_124:
-        if (before.count(RECHECK_DESCRIPTION) != 1 or after.count(RECHECK_DESCRIPTION_124) != 1
-                or before.replace(RECHECK_DESCRIPTION, RECHECK_DESCRIPTION_124) != after):
-            raise ArtifactError('Std124 recheck changed protected workflow beyond its exact reviewed description')
+        if before.count(RECHECK_DESCRIPTION) != 1 or after.count(RECHECK_DESCRIPTION_124) != 1:
+            raise ArtifactError('Std124 recheck requires its exact reviewed description')
+        expected = before.replace(RECHECK_DESCRIPTION, RECHECK_DESCRIPTION_124)
+        if after != expected:
+            original_notes = (
+                '          python3 tool/aerove_release_notes.py \\\n'
+                '            --tag "$TAG" --source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE" --previous-tag "$previous_tag" \\\n')
+            publisher_notes = original_notes.replace(
+                '            --tag ',
+                '            --repo "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" \\\n'
+                '            --tag ')
+            if expected.count(original_notes) != 1 or expected.replace(original_notes, publisher_notes) != after:
+                raise ArtifactError('Std124 recheck changed protected workflow beyond the exact notes command')
         return
     if policy['promotion_request']:
         if (before.count(old_description) != 1 or after.count(RECHECK_DESCRIPTION) != 1
@@ -579,7 +596,18 @@ def recheck_inputs(root: Path, source: str, build_run: int = RECHECK_RUN) -> lis
         result.append(dict(path=path, before=before, after=after))
     if policy['test'] not in {row['path'] for row in result}:
         raise ArtifactError('Recheck must contain the exact reviewed original-run test fix')
-    if _git(root, 'rev-parse', f'{source}:{WORKFLOW}') != policy['workflow_blob']:
+    workflow_blob = _git(root, 'rev-parse', f'{source}:{WORKFLOW}')
+    if build_run == RECHECK_RUN_124:
+        publisher_paths = reviewed.keys() & {row['path'] for row in result}
+        if workflow_blob == policy['publisher_workflow_blob']:
+            if publisher_paths != reviewed.keys():
+                raise ArtifactError('Std124 publisher workflow requires both exact reviewed notes changes')
+        elif workflow_blob == policy['workflow_blob']:
+            if publisher_paths:
+                raise ArtifactError('Std124 legacy workflow cannot mix publisher notes changes')
+        else:
+            raise ArtifactError('Recheck workflow is not the exact reviewed verification wiring')
+    elif workflow_blob != policy['workflow_blob']:
         raise ArtifactError('Recheck workflow is not the exact reviewed verification wiring')
     _workflow_inputs_unchanged(
         _command(['git', 'show', f'{original}:{WORKFLOW}'], root),

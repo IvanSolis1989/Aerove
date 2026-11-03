@@ -1173,6 +1173,128 @@ class OriginalApk124RecheckTest(unittest.TestCase):
         OriginalApk74RecheckTest.test_explicit_selection_requires_its_own_unchanged_receipt)
 
 
+class Original124PublisherHarnessTest(unittest.TestCase):
+    def setUp(self):
+        self.fixture = OriginalApkRecheckTest()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.module, self.root = self.fixture.module, self.fixture.root
+        self.run_id = self.module.RECHECK_RUN_124
+        self.fixed = copy.deepcopy(self.module.RECHECK_POLICY_124)
+        self.policy = copy.deepcopy(self.fixed)
+        self.old_command = (
+            '          python3 tool/aerove_release_notes.py \\\n'
+            '            --tag "$TAG" --source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE" --previous-tag "$previous_tag" \\\n')
+        self.new_command = (
+            '          python3 tool/aerove_release_notes.py \\\n'
+            '            --repo "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" \\\n'
+            '            --tag "$TAG" --source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE" --previous-tag "$previous_tag" \\\n')
+        self.baseline = self.fixture.workflow.read_text(encoding='utf-8').replace(
+            'Immutable original APK run to recheck (40488925368 only)', self.module.RECHECK_DESCRIPTION) + self.old_command
+        self.fixture.workflow.write_text(self.baseline, encoding='utf-8')
+        test = self.root / self.policy['test']
+        test.parent.mkdir(parents=True, exist_ok=True)
+        test.write_text('unchanged production and gating assertions\n', encoding='utf-8')
+        before_contents = {}
+        for path in self.policy['reviewed_wiring']:
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            before_contents[path] = 'original notes fixture ' + path + '\n'
+            target.write_text(before_contents[path], encoding='utf-8')
+        self.fixture.commit()
+        self.original = self.fixture.git('rev-parse', 'HEAD')
+        before_test = self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')
+        before_blobs = {path: self.fixture.git('rev-parse', f'HEAD:{path}') for path in before_contents}
+        self.legacy_workflow = self.baseline.replace(self.module.RECHECK_DESCRIPTION, self.module.RECHECK_DESCRIPTION_124)
+        self.fixture.workflow.write_text(self.legacy_workflow, encoding='utf-8')
+        test.write_text('unchanged production and gating assertions\nscoped backend dependency\n', encoding='utf-8')
+        self.fixture.commit()
+        self.legacy_harness = self.fixture.git('rev-parse', 'HEAD')
+        self.policy.update(source=self.original, tree=self.fixture.git('rev-parse', self.original + '^{tree}'),
+            test_blobs=(before_test, self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')),
+            workflow_blob=self.fixture.git('rev-parse', f'HEAD:{self.module.WORKFLOW}'))
+        self.publisher_workflow = self.legacy_workflow.replace(self.old_command, self.new_command)
+        self.fixture.workflow.write_text(self.publisher_workflow, encoding='utf-8')
+        for path in before_contents:
+            (self.root / path).write_text('reviewed accepted original notes fixture ' + path + '\n', encoding='utf-8')
+        self.fixture.commit()
+        self.publisher_harness = self.fixture.git('rev-parse', 'HEAD')
+        self.policy.update(publisher_workflow_blob=self.fixture.git('rev-parse', f'HEAD:{self.module.WORKFLOW}'),
+            reviewed_wiring={path: (before_blobs[path], self.fixture.git('rev-parse', f'HEAD:{path}'))
+                             for path in before_contents})
+        patch.object(self.module, 'RECHECK_POLICY_124', self.policy).start()
+
+    def inputs(self, source):
+        return self.module.recheck_inputs(self.root, source, self.run_id)
+
+    def test_actual_policy_keeps_125_and_fixes_only_reviewed_publisher_blobs(self):
+        self.assertEqual(self.fixed['workflow_blob'], 'c78b35a6767b674934271da8d1ab6261fae92951')
+        self.assertEqual(self.fixed['publisher_workflow_blob'], '39241d9e4fa534c5985ed2cc9617053ac04a8a9e')
+        self.assertEqual(self.fixed['reviewed_wiring'], {
+            'apps/aerove/tool/aerove_release_notes.py':
+                ('1e272f704606154fab76dd443fc5467be573a228', 'b2c7a36e69eca7ef2b5154431714d061913d670d'),
+            'apps/aerove/tool/test_aerove_release_notes.py':
+                ('d1eb9832a3e7ce9f90a3578770752eb5ae8788f8', 'b9078da5ae97a7f40c5ce2dbf1e268b00dc8fe26'),
+        })
+        self.assertTrue(set(self.fixed['reviewed_wiring']).isdisjoint(self.module.RECHECK_WIRING))
+        legacy = self.inputs(self.legacy_harness)
+        self.assertEqual({row['path'] for row in legacy}, {self.policy['test'], self.module.WORKFLOW})
+        publisher = self.inputs(self.publisher_harness)
+        self.assertEqual({row['path'] for row in publisher},
+            {self.policy['test'], self.module.WORKFLOW, *self.policy['reviewed_wiring']})
+
+    def test_only_exact_second_command_delta_is_admitted(self):
+        self.module._workflow_inputs_unchanged(self.baseline, self.legacy_workflow, build_run=self.run_id)
+        self.module._workflow_inputs_unchanged(self.baseline, self.publisher_workflow, build_run=self.run_id)
+        for old, new in [('$ACCEPTED_BUILD_RUN', '$GITHUB_RUN_ID'),
+                         ('--repo "$GITHUB_WORKSPACE" ', ''),
+                         ('--source "$BUILD_SOURCE"', '--source "$RELEASE_SOURCE"'),
+                         ('preserved-verify', 'bypass-verify'), ('fail-fast: false', 'fail-fast: true'),
+                         ('name: fixture', 'name: changed')]:
+            with self.subTest(delta=old), self.assertRaises(self.module.ArtifactError):
+                self.module._workflow_inputs_unchanged(self.baseline,
+                    self.publisher_workflow.replace(old, new), build_run=self.run_id)
+        with self.assertRaises(self.module.ArtifactError):
+            self.module._workflow_inputs_unchanged(self.baseline,
+                self.publisher_workflow + self.new_command, build_run=self.run_id)
+
+    def test_notes_blob_mixture_or_unknown_workflow_is_not_a_third_plan(self):
+        for kind in ('legacy_with_notes', 'publisher_without_notes', 'unknown_notes', 'unknown_workflow', 'shared_input'):
+            self.fixture.git('reset', '--hard', self.publisher_harness)
+            if kind == 'legacy_with_notes':
+                self.fixture.workflow.write_text(self.legacy_workflow, encoding='utf-8')
+            elif kind == 'publisher_without_notes':
+                for path in self.policy['reviewed_wiring']:
+                    old = self.fixture.git('show', self.original + ':' + path)
+                    (self.root / path).write_text(old + '\n', encoding='utf-8')
+            elif kind == 'unknown_notes':
+                path = next(iter(self.policy['reviewed_wiring']))
+                (self.root / path).write_text('unreviewed helper\n', encoding='utf-8')
+            elif kind == 'unknown_workflow':
+                self.fixture.workflow.write_text(self.publisher_workflow + '# unknown workflow variant\n', encoding='utf-8')
+            else:
+                target = self.root / 'packages/aerove_client/lib/common/task.dart'
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text('changed shared production input\n', encoding='utf-8')
+            self.fixture.commit()
+            with self.subTest(kind=kind), self.assertRaises(self.module.ArtifactError):
+                self.inputs(self.fixture.git('rev-parse', 'HEAD'))
+
+    def test_complete_main_guard_rejects_old_harness_and_accepts_new_harness_with_docs_only(self):
+        with self.assertRaisesRegex(self.module.ArtifactError, 'outside existing regular Markdown'):
+            self.module.recheck_main_inputs(self.root, self.legacy_harness, self.publisher_harness)
+        self.module.recheck_main_inputs(self.root, self.publisher_harness, self.publisher_harness)
+        doc = self.root / 'docs/development/recheck.md'
+        doc.write_text('Post-acceptance original-package facts\n', encoding='utf-8')
+        self.fixture.commit()
+        latest = self.fixture.git('rev-parse', 'HEAD')
+        self.module.recheck_main_inputs(self.root, self.publisher_harness, latest)
+        (self.root / next(iter(self.policy['reviewed_wiring']))).write_text('later publisher mutation\n', encoding='utf-8')
+        self.fixture.commit()
+        with self.assertRaisesRegex(self.module.ArtifactError, 'outside existing regular Markdown'):
+            self.module.recheck_main_inputs(self.root, self.publisher_harness, self.fixture.git('rev-parse', 'HEAD'))
+
+
 class OriginalSignerOutputTest(unittest.TestCase):
     def setUp(self):
         self.module = importlib.import_module('tool.aerove_artifact')
