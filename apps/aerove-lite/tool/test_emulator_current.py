@@ -582,10 +582,15 @@ class SigillCaptureHostTests(unittest.TestCase):
         import subprocess
         self.assertEqual('linux', sys.platform)
         self.assertIsNotNone(shutil.which('gdb'), 'Requested fixture requires CI GDB, never a skip')
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.receipt = {'interruptSignals': []}
+        if os.environ.get('RUNNER_TEMP'):
+            self.root = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics' / 'sigill-host-tests' / self._testMethodName
+            self.root.mkdir(parents=True, exist_ok=False)
+        else:
+            self.temp = tempfile.TemporaryDirectory()
+            self.addCleanup(self.temp.cleanup)
+            self.root = Path(self.temp.name)
+        self.receipt = {'interruptSignals': [], 'unexpectedEmulatorExit': False,
+                        'cleanupRequested': False}
         self.child = subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.readline()'],
                                       stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                       stderr=subprocess.DEVNULL, start_new_session=True)
@@ -593,6 +598,7 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.addCleanup(self.child.stdin.close)
         self.addCleanup(current.stop_owned, self.child)
         self.capture = current.SigillCapture(self.child, self.root, self.receipt)
+        self.addCleanup(current.write_owner_receipt, self.root / 'HOST-OWNER.json', self.receipt)
         self.addCleanup(self.capture.close)
 
     def logs(self):
