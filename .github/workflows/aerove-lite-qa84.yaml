@@ -146,11 +146,11 @@ jobs:
         emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
         emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
         emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
-        printf 'url=%s\nsize=349654171\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
+        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
         curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
           --output "$emulator_archive" "$emulator_archive_url" \
           2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
-        test "$(stat -c '%s' "$emulator_archive")" = '349654171'
+        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
         printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
         unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
         test -x "$emulator_stage/extracted/emulator/emulator"
