@@ -28,8 +28,8 @@ TEST_PATCH="$SCRIPT_DIR/fixtures/gfxstream-zero-attachments-tests.patch"
 check_sha() { printf '%s  %s\n' "$2" "$1" | sha256sum --check --status; }
 check_sha "$BASE_LIB" "$BASE_SHA"
 [[ $(readelf -n "$BASE_LIB" | sed -n 's/.*Build ID: //p') == "$BASE_BUILD_ID" ]]
-check_sha "$PATCH" a22e3a0ea345cad6493bf88a2a63805d4715a66a016346fd81aadf0bc6393804
-check_sha "$TEST_PATCH" 767749195df93343676b1360999fb1262249032d2ed285e2bb216bd59e5308f4
+check_sha "$PATCH" a4d633095cb249ea9d7cada1127aab0692c84c5f9950e5926ebabe6a13ee9180
+check_sha "$TEST_PATCH" 4e33b60eaf701019e67514aeedbf976e0b7591bf76518ca918aaf1d2884ac38e
 mkdir -- "$OUTPUT"
 mkdir -- "$OUTPUT/logs" "$OUTPUT/artifact"
 STAGE=identity

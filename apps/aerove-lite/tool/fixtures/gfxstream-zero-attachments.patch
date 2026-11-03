@@ -1,7 +1,8 @@
 diff --git a/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp b/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp
+index 5d4cb85..17922d4 100644
 --- a/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp
 +++ b/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp
-@@ -645,30 +645,36 @@
+@@ -645,6 +645,9 @@ GL_APICALL void GL_APIENTRY glInvalidateFramebuffer(GLenum target, GLsizei numAt
                   target != GL_READ_FRAMEBUFFER &&
                   target != GL_DRAW_FRAMEBUFFER, GL_INVALID_ENUM);
  
@@ -11,25 +12,7 @@ diff --git a/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp b/host/gl/glestrans
      GLint maxColorAttachments;
      glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
  
-     for (int i = 0; i < numAttachments; i++) {
-         if (attachments[i] >= GL_COLOR_ATTACHMENT0 &&
-             attachments[i] <= GL_COLOR_ATTACHMENT15) {
-                 SET_ERROR_IF((GLint)(attachments[i] - GL_COLOR_ATTACHMENT0 + 1) >
-                              maxColorAttachments, GL_INVALID_OPERATION);
-         }
-     }
- 
-     std::vector<GLenum> emulatedAttachments = sGetEmulatedAttachmentList(ctx, target, numAttachments, attachments);
-     if (ctx->dispatcher().glInvalidateFramebuffer) {
-         ctx->dispatcher().glInvalidateFramebuffer(target, numAttachments, &emulatedAttachments[0]);
-     } else {
-         // If we are missing glInvalidateFramebuffer, just don't do anything and hope things work out.
-     }
- }
- 
- GL_APICALL void GL_APIENTRY glInvalidateSubFramebuffer(GLenum target, GLsizei numAttachments, const GLenum * attachments, GLint x, GLint y, GLsizei width, GLsizei height) {
-     GET_CTX_V2();
-     SET_ERROR_IF(target != GL_FRAMEBUFFER &&
+@@ -670,6 +673,9 @@ GL_APICALL void GL_APIENTRY glInvalidateSubFramebuffer(GLenum target, GLsizei nu
              target != GL_READ_FRAMEBUFFER &&
              target != GL_DRAW_FRAMEBUFFER, GL_INVALID_ENUM);
  
@@ -38,3 +21,4 @@ diff --git a/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp b/host/gl/glestrans
 +
      GLint maxColorAttachments;
      glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
+ 

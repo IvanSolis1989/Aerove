@@ -1,13 +1,26 @@
 diff --git a/host/tests/DefaultFramebufferBlit_unittest.cpp b/host/tests/DefaultFramebufferBlit_unittest.cpp
+index b351cbe..602dfbe 100644
 --- a/host/tests/DefaultFramebufferBlit_unittest.cpp
 +++ b/host/tests/DefaultFramebufferBlit_unittest.cpp
-@@ -14,1 +14,2 @@
+@@ -12,12 +12,14 @@
+ // See the License for the specific language governing permissions and
+ // limitations under the License.
  #include <gtest/gtest.h>
 +#include <cstdio>
-@@ -20,1 +21,2 @@
+ 
+ #include <memory>
+ 
+ #include "frame_buffer.h"
+ #include "OpenGLESDispatch/OpenGLDispatchLoader.h"
  #include "gfxstream/host/testing/GLTestUtils.h"
 +#include "gfxstream/host/testing/OpenGLTestContext.h"
-@@ -276,3 +278,72 @@
+ #include "gfxstream/host/testing/SampleApplication.h"
+ 
+ namespace gfxstream {
+@@ -273,6 +275,75 @@ INSTANTIATE_TEST_SUITE_P(DefaultFramebufferBlitTest,
+                         testing::Values(
+                             ClearColorParam(GLESApi_3_0, true)));
+ 
 +class InvalidateFramebufferTest : public gfxstream::host::gl::GLTest {
 +protected:
 +    void SetUp() override {
