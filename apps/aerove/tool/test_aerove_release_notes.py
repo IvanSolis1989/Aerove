@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from tool import aerove_release_notes as notes
@@ -11,6 +12,91 @@ from tool import aerove_release_notes as notes
 
 TAG = 'v0.9.1-X+2026102001'
 INFO = {'source': 'a' * 40, 'version': TAG.removeprefix('v')}
+
+
+class AcceptedOriginalNotesTest(unittest.TestCase):
+    def setUp(self):
+        from tool.test_aerove_artifact import OriginalApk124RecheckTest, OriginalApkRecheckTest
+        self.case = OriginalApk124RecheckTest()
+        self.case.setUp()
+        self.addCleanup(self.case.doCleanups)
+        self.artifacts = self.case.module
+        self.root = self.case.root
+        self.original = self.case.original_build()
+        self.expected = {**self.original, 'build_tree': self.case.policy['tree'],
+            'test_harness_source': self.case.harness, 'changed': self.case.inputs()}
+        self.run = {**self.case.run, 'id': 777, 'run_number': 125,
+                    'head_sha': self.case.harness, 'conclusion': 'success'}
+        self.jobs = OriginalApkRecheckTest.jobs(self.case, self.run)
+        self.jobs.append(dict(id=100, name='promotion_request', run_id=777, run_attempt=1,
+            head_sha=self.case.harness, status='completed', conclusion='success'))
+        self.receipt = dict(schema=1, role='originalApkVerificationRecheck', accepted=True, compiled=False,
+            repository='IvanSolis1989/Aerove', originalBuild=self.expected,
+            testHarness=dict(source=self.case.harness,
+                tree=self.case.fixture.git('rev-parse', self.case.harness + '^{tree}'), run_id=777, run_attempt=1),
+            signer_sha256=self.case.policy['signer'],
+            files={name: digest for name, (_, digest) in self.case.policy['payloads'].items()
+                   if name in (self.artifacts.APK_NAME, 'BUILD_INFO.json', 'SHA256SUMS')})
+        self.markdown = '## 0.12.0-beta.2+2026102324 — fixture\n- Preserve original APK identity\n'
+        target = self.root / notes.CHANGELOG_PATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(self.markdown, encoding='utf-8')
+        self.case.fixture.commit()
+        self.release_source = self.case.fixture.git('rev-parse', 'HEAD')
+
+    def read(self, *, receipt=None, build_run=41657833826, release_run=999):
+        def items(endpoint, *args, **kwargs):
+            if '/actions/workflows/' in endpoint:
+                return [self.run]
+            if f'/runs/{self.case.run_id}/attempts/1/jobs' in endpoint:
+                return self.case.producers
+            if f'/runs/{self.case.run_id}/artifacts' in endpoint:
+                return self.case.artifacts
+            if '/runs/777/attempts/1/jobs' in endpoint:
+                return self.jobs
+            if '/runs/777/artifacts' in endpoint:
+                return [dict(name=self.artifacts.RECHECK_ARTIFACT)]
+            self.fail(endpoint)
+        with patch.object(self.artifacts, '_api_object', return_value=self.case.run), \
+                patch.object(self.artifacts, '_api_items', side_effect=items), \
+                patch.object(self.artifacts, '_download_receipt', return_value=self.receipt if receipt is None else receipt):
+            return notes.release_changelog(self.case.original, self.release_source, repo=self.root,
+                build_run=build_run, release_run=release_run)
+
+    def test_real_fixed_recheck_consumer_accepts_harness_to_main_without_relabelling_original(self):
+        with self.assertRaises(notes.product_source.ProjectionError):
+            notes.release_changelog(self.case.original, self.release_source, repo=self.root)
+        self.assertEqual(self.read(), self.markdown)
+        self.assertEqual(self.case.run['conclusion'], 'failure')
+        self.assertEqual(self.receipt['originalBuild']['build_source'], self.case.original)
+        self.assertNotEqual(self.case.original, self.case.harness)
+
+    def test_missing_context_unapproved_original_or_changed_receipt_remain_failures(self):
+        for build, release in ((self.case.run_id, None), (None, 999)):
+            with self.subTest(build=build), self.assertRaises(ValueError):
+                self.read(build_run=build, release_run=release)
+        for change in ({'compiled': True}, {'files': {}}, {'originalBuild': None}):
+            with self.subTest(change=change), self.assertRaises(self.artifacts.ArtifactError):
+                self.read(receipt={**self.receipt, **change})
+        with self.assertRaises(self.artifacts.ArtifactError):
+            self.read(build_run=41641815730)
+        verify = next(job for job in self.jobs if job['name'] == 'verify')
+        verify['conclusion'] = 'failure'
+        with self.assertRaises(self.artifacts.ArtifactError):
+            self.read()
+
+    def test_changed_shared_input_or_wrong_original_identity_cannot_borrow_recheck(self):
+        with patch.object(self.artifacts, 'accepted_build', return_value={'build_source': 'f' * 40}), \
+                self.assertRaisesRegex(ValueError, 'selected original APK'):
+            notes.release_changelog(self.case.original, self.release_source, repo=self.root,
+                build_run=self.case.run_id, release_run=999)
+        changed = self.root / 'packages/aerove_client/lib/common/task.dart'
+        changed.parent.mkdir(parents=True, exist_ok=True)
+        changed.write_text('changed production input\n', encoding='utf-8')
+        self.case.fixture.commit()
+        self.release_source = self.case.fixture.git('rev-parse', 'HEAD')
+        with self.assertRaises(self.artifacts.ArtifactError):
+            self.read()
 
 
 class AeroveReleaseNotesTest(unittest.TestCase):

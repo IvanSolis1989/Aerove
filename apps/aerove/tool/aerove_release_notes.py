@@ -134,13 +134,28 @@ def previous_source_changelog(previous_tag, repo=None):
     return source_changelog(previous_tag, repo=repo, required=False)
 
 
-def release_changelog(build_source, changelog_source=None, repo=None):
+def release_changelog(build_source, changelog_source=None, repo=None, *, build_run=None, release_run=None):
+    if (build_run is None) != (release_run is None):
+        raise ValueError('Accepted original notes require both build and release run IDs')
+    if build_run is not None and not changelog_source:
+        raise ValueError('Accepted original notes require an explicit release source')
     if not changelog_source:
         return source_changelog(build_source, repo=repo)
     source = git('rev-parse', f'{changelog_source}^{{commit}}', repo=repo)
     git('merge-base', '--is-ancestor', build_source, source, repo=repo)
-    product_source.equivalent(root=repo, product='aerove',
-                             build_source=build_source, release_source=source)
+    if build_run is None:
+        product_source.equivalent(root=repo, product='aerove',
+                                 build_source=build_source, release_source=source)
+    else:
+        if __package__:
+            from . import aerove_artifact
+        else:
+            import aerove_artifact
+        root = Path(git('rev-parse', '--show-toplevel', repo=repo))
+        selected = aerove_artifact.accepted_build(root=root, repository='IvanSolis1989/Aerove',
+            source=source, build_run=build_run, release_run=release_run)
+        if selected['build_source'] != build_source:
+            raise ValueError('Accepted original notes source differs from the selected original APK')
     return source_changelog(source, repo=repo)
 
 
@@ -149,6 +164,8 @@ def main():
     parser.add_argument('--tag', required=True)
     parser.add_argument('--source', required=True)
     parser.add_argument('--changelog-source')
+    parser.add_argument('--build-run', type=int)
+    parser.add_argument('--release-run', type=int)
     parser.add_argument('--previous-tag', default='')
     parser.add_argument('--repo', type=Path, default=Path.cwd())
     parser.add_argument('--build-info', type=Path, required=True)
@@ -158,7 +175,8 @@ def main():
     source = git('rev-parse', f'{args.source}^{{commit}}', repo=args.repo)
     if info.get('source') != source:
         raise ValueError('The requested source does not match BUILD_INFO.json')
-    markdown = release_changelog(source, args.changelog_source, repo=args.repo)
+    markdown = release_changelog(source, args.changelog_source, repo=args.repo,
+                                 build_run=args.build_run, release_run=args.release_run)
     previous = previous_source_changelog(args.previous_tag, repo=args.repo)
     args.output.write_text(render_release(markdown, args.tag, info, previous), encoding='utf-8')
 

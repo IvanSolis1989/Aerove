@@ -384,6 +384,10 @@ class OriginalApkRecheckWorkflowTest(unittest.TestCase):
         self.assertIn('test "$(jq -r .source dist/BUILD_INFO.json)" = "$BUILD_SOURCE"', release)
         self.assertIn('--target "$RELEASE_SOURCE"', release)
         self.assertNotIn('> dist/BUILD_INFO.json', release)
+        notes = run_block('Publish verified APK to Releases')
+        self.assertIn('--repo "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID"', notes)
+        self.assertIn('--source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE"', notes)
+        self.assertIn('--build-source "$RELEASE_SOURCE" --source "$main"', notes)
         self.assertIn('apksigner" verify --print-certs', release)
 
     def test_main_push_source_sync_graph_skips_all_app_jobs_and_publication(self):
