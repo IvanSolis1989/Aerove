@@ -14,11 +14,14 @@ OUTPUT=$(realpath -m -- "$2")
 [[ -f "$BASE_LIB" && ! -e "$OUTPUT" ]] || { echo 'Require an existing base library and a new output directory' >&2; exit 2; }
 BASE_DIR=$(dirname -- "$BASE_LIB")
 case "$OUTPUT/" in "$BASE_DIR/"*) echo 'Output must be outside the original SDK library directory' >&2; exit 2 ;; esac
-for tool in git cmake ninja clang-18 clang++-18 pkg-config readelf nm sha256sum python3 timeout xvfb-run ldd cmp; do
+for tool in git readelf nm sha256sum python3 timeout xvfb-run ldd cmp; do
   command -v "$tool" >/dev/null || { echo "Missing build dependency: $tool" >&2; exit 2; }
 done
-SOURCE=0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9
-GTEST=f8d7d77c06936315286eb55f8de22cd23c188571
+SOURCE=49ee51f297118cd2e98c5f4867df556e8966562a
+GTEST=013ef6db94e3677b24b8e4c9fbdf1708ecea516b
+SOURCE_DIR="$OUTPUT/aosp/hardware/google/gfxstream"
+AOSP_DIR="$OUTPUT/aosp"
+SOURCE_PINS="$SCRIPT_DIR/fixtures/aemu-integration-sources.json"
 BASE_SHA=67fa485ebe97369429e283fbefb6db9046024f7264102de60c4bfc70d2628f7e
 BASE_BUILD_ID=49b9fc8e45122f00b3970a89a72eb26101bcffe4
 PRODUCTION=host/gl/glestranslator/gles_v2/gles_v30_imp.cpp
@@ -45,16 +48,31 @@ check_sha "$X11_TEST_PATCH" 0e061d4f2bea1de57416600a7552e0f487c44e6606f2b68054d3
 check_sha "$PARSER_HEADER" 979138ea0b60d23ee604b065743ebd9a2a32fbe76bee4e68081e3c73975b673a
 check_sha "$PARSER_INCLUDE/LICENSE" 54aff7276217df9f6b5181613999d208c9e40d2b1d51bf55217837e6871a4a63
 check_sha "$PARSER_SOURCE" 305f8d997b9e94f311824b9601f151d51048e1af697b2964fcb81f6af0601346
+check_sha "$SOURCE_PINS" c04f658bc64a9c2ea1076848f836a46a212cd5748850cc5a00b04f9390f1d695
 mkdir -- "$OUTPUT"
 mkdir -- "$OUTPUT/logs" "$OUTPUT/artifact"
 STAGE=identity
 STATUS=failed
 BUILDER_SCRIPT=$(realpath -e -- "$0")
+export AOSP_DIR SOURCE_DIR SOURCE_PINS
 export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT PARSER_HEADER PARSER_SOURCE PARSER_LIB PARSER_GIT_BLOB PARSER_SHA PARSER_REFERENCE_BLOB PARSER_OBJCOPY_REVISION PARSER_OBJCOPY_BLOB
 finish() {
   local code=$?
   trap - EXIT
   set +e
+  # Preserve available configure diagnostics even when the first integrated configure fails.
+  if [[ -d "$AOSP_DIR/.repo" && ! -f "$OUTPUT/resolved-manifest.xml" ]]; then
+    (cd "$AOSP_DIR" && timeout --kill-after=5s 30s python3 "$OUTPUT/repo-tool/repo" manifest -r -o "$OUTPUT/partial-resolved-manifest.xml") > "$OUTPUT/logs/partial-source-manifest.out" 2> "$OUTPUT/logs/partial-source-manifest.err"
+  fi
+  if [[ -d "$OUTPUT/build" ]]; then
+    for build_file in CMakeCache.txt compile_commands.json; do
+      if [[ -f "$OUTPUT/build/$build_file" ]]; then cp -- "$OUTPUT/build/$build_file" "$OUTPUT/"; fi
+    done
+    mkdir -p "$OUTPUT/logs/cmake"
+    if [[ -d "$OUTPUT/build/CMakeFiles" ]]; then
+      find "$OUTPUT/build/CMakeFiles" -maxdepth 1 -type f \( -name '*.log' -o -name '*Log.yaml' \) -exec cp -- {} "$OUTPUT/logs/cmake/" \;
+    fi
+  fi
   # Retain reference ELF and debuglink evidence even when acquisition or pairing fails.
   for parser_item in unstripped.so libshadertranslator.so build/debug_info/libshadertranslator.so.debug; do
     parser_label=${parser_item##*/}
@@ -94,9 +112,11 @@ library = root / 'artifact/libgfxstream_backend.so'
 receipt = dict(schema=1, kind='source-derived-sdk-host-module', status=os.environ['STATUS'],
     stage=os.environ['STAGE'], exitCode=int(sys.argv[1]), googleOriginal=False,
     baseLibrary=dict(sha256=os.environ['BASE_SHA'], buildId=os.environ['BASE_BUILD_ID']),
-    source=dict(repository='https://github.com/google/gfxstream', revision=os.environ['SOURCE'],
+    source=dict(repository='https://android.googlesource.com/platform/hardware/google/gfxstream', revision=os.environ['SOURCE'],
         tree=(root / 'source-identity.txt').read_text().splitlines()[1] if (root / 'source-identity.txt').is_file() else None),
     builderSha256=digest(os.environ['BUILDER_SCRIPT']),
+    integrationSources=json.loads(pathlib.Path(os.environ['SOURCE_PINS']).read_text()),
+    resolvedManifestSha256=digest(root / 'resolved-manifest.xml'),
     googleTestRevision=os.environ['GTEST'],
     angleShaderParser=dict(enabled=True, source=json.loads(pathlib.Path(os.environ['PARSER_SOURCE']).read_text()),
         headerSha256=digest(os.environ['PARSER_HEADER']), librarySha256=digest(os.environ['PARSER_LIB']),
@@ -219,53 +239,112 @@ else
 fi
 readelf -h -n -d -Ws -C "$BASE_LIB" > "$OUTPUT/base-elf.txt"
 nm -DC --defined-only "$BASE_LIB" > "$OUTPUT/base-exports.txt"
-clang++-18 --version > "$OUTPUT/compiler-version.txt"
-sha256sum "$(realpath -e "$(command -v clang-18)")" "$(realpath -e "$(command -v clang++-18)")" > "$OUTPUT/compiler-files.sha256"
-dpkg-query -W clang-18 libc++-18-dev libc++abi-18-dev cmake ninja-build xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri libvulkan1 > "$OUTPUT/packages.txt"
-CXX_FLAGS='-stdlib=libc++ -D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE'
-clang++-18 $CXX_FLAGS -dM -E -x c++ -include __config /dev/null > "$OUTPUT/libcxx-macros.txt"
-[[ $(grep -c '^#define _LIBCPP_ABI_VERSION 1$' "$OUTPUT/libcxx-macros.txt") == 1 ]]
+# Use the official repo source client and public AEMU checkout, all inside this new output.
 df -B1 "$OUTPUT" > "$OUTPUT/disk-before.txt"
 free -b > "$OUTPUT/memory-before.txt"
-run source-init 30s git init "$OUTPUT/source"
-run source-remote 30s git -C "$OUTPUT/source" remote add origin https://github.com/google/gfxstream.git
-run source-fetch 300s git -C "$OUTPUT/source" fetch --depth 1 origin "$SOURCE"
-run source-checkout 30s git -c core.autocrlf=false -C "$OUTPUT/source" checkout --detach FETCH_HEAD
-[[ $(git -C "$OUTPUT/source" rev-parse HEAD) == "$SOURCE" ]]
-git -C "$OUTPUT/source" rev-parse HEAD HEAD^{tree} > "$OUTPUT/source-identity.txt"
-check_sha "$OUTPUT/source/$PRODUCTION" 7a0b481b2633a2f433c4961412451f66b36f30c43fa013d009ef4d95104a942a
-check_sha "$OUTPUT/source/$TEST_SOURCE" 6e5485142d1e3f0a287d74994e1404364b94b2ffebfc75fa130ae534bb13e44f
-check_sha "$OUTPUT/source/$X11_TEST_SOURCE" 0fba089104b04943a2f01f4ef0f6e07fe282468e39eb84e7e26c02e0377b64a1
-run gtest-init 30s git init "$OUTPUT/googletest"
-run gtest-remote 30s git -C "$OUTPUT/googletest" remote add origin https://github.com/google/googletest.git
-run gtest-fetch 300s git -C "$OUTPUT/googletest" fetch --depth 1 origin "$GTEST"
-run gtest-checkout 30s git -c core.autocrlf=false -C "$OUTPUT/googletest" checkout --detach FETCH_HEAD
-[[ $(git -C "$OUTPUT/googletest" rev-parse HEAD) == "$GTEST" ]]
-git -C "$OUTPUT/googletest" rev-parse HEAD HEAD^{tree} > "$OUTPUT/gtest-identity.txt"
-run gtest-configure 120s cmake -S "$OUTPUT/googletest" -B "$OUTPUT/gtest-out" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$OUTPUT/gtest-install" \
-  -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_CXX_FLAGS="$CXX_FLAGS"
-run gtest-build 600s cmake --build "$OUTPUT/gtest-out" --parallel 2
-run gtest-install 60s cmake --install "$OUTPUT/gtest-out"
-export PKG_CONFIG_PATH="$OUTPUT/gtest-install/lib/pkgconfig:$OUTPUT/gtest-install/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-pkg-config --modversion gtest gtest_main gmock gmock_main > "$OUTPUT/gtest-packages.txt"
-run test-patch-check 30s git -C "$OUTPUT/source" apply --check "$TEST_PATCH"
-run test-patch 30s git -C "$OUTPUT/source" apply "$TEST_PATCH"
-check_sha "$OUTPUT/source/$TEST_SOURCE" bea09f474edc39a3ade868656e6dc60345d9bd56e65f90b0c8edd6bdeddfdb96
-run x11-test-patch-check 30s git -C "$OUTPUT/source" apply --check "$X11_TEST_PATCH"
-run x11-test-patch 30s git -C "$OUTPUT/source" apply "$X11_TEST_PATCH"
-check_sha "$OUTPUT/source/$X11_TEST_SOURCE" c9bd13619a7d35fd89901e8f70e9dfe696ab749ed14d9331545b9e38034936ce
-GFX_CXX_FLAGS="$CXX_FLAGS -I\"$PARSER_INCLUDE\""
-run configure 180s cmake -S "$OUTPUT/source" -B "$OUTPUT/build" -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 \
-  -DCMAKE_CXX_FLAGS="$GFX_CXX_FLAGS" -DCMAKE_SHARED_LINKER_FLAGS=-stdlib=libc++ \
-  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DDEPENDENCY_RESOLUTION=SYSTEM \
-  -DBUILD_STANDALONE=ON -DBUILD_SHARED_LIBS=OFF -DCONFIG_AEMU=OFF -DENABLE_VKCEREAL_TESTS=ON -DUSE_ANGLE_SHADER_PARSER=ON
+cp -- "$SOURCE_PINS" "$OUTPUT/source-pins.json"
+# git-repo explicitly supports this location for its user config; keep it in this output.
+export REPO_CONFIG_DIR="$OUTPUT/repo-user-config"
+mkdir -- "$REPO_CONFIG_DIR"
+run repo-tool-init 30s git init "$OUTPUT/repo-tool"
+run repo-tool-remote 30s git -C "$OUTPUT/repo-tool" remote add origin https://gerrit.googlesource.com/git-repo
+run repo-tool-fetch 120s git -C "$OUTPUT/repo-tool" fetch --depth 1 origin refs/tags/v2.59
+run repo-tool-checkout 30s git -c core.autocrlf=false -C "$OUTPUT/repo-tool" checkout --detach FETCH_HEAD
+[[ $(git -C "$OUTPUT/repo-tool" rev-parse HEAD) == 1afe96a7e997ce7748f066b206a85ac648f7a87c ]]
+git -C "$OUTPUT/repo-tool" rev-parse HEAD HEAD^{tree} > "$OUTPUT/repo-tool-identity.txt"
+mkdir -- "$AOSP_DIR"
+pushd "$AOSP_DIR" > /dev/null
+REPO=(python3 "$OUTPUT/repo-tool/repo")
+run manifest-init 300s "${REPO[@]}" init --no-clone-bundle --depth=1 \
+  --repo-url=https://gerrit.googlesource.com/git-repo --repo-rev=v2.59 \
+  -u https://android.googlesource.com/platform/manifest \
+  -b 2692acc620f6563b21995540656674faeb536cdc -g default,platform-linux
+[[ $(git -C .repo/repo rev-parse HEAD) == 1afe96a7e997ce7748f066b206a85ac648f7a87c ]]
+[[ $(git -C .repo/manifests rev-parse HEAD) == 2692acc620f6563b21995540656674faeb536cdc ]]
+python3 - "$SOURCE_PINS" "$AOSP_DIR" <<'PY'
+import json, pathlib, sys, xml.etree.ElementTree as ET
+pins = json.loads(pathlib.Path(sys.argv[1]).read_text())
+root = ET.Element('manifest')
+for project in pins['projects']:
+    ET.SubElement(root, 'extend-project', name=project['name'], path=project['path'], revision=project['revision'])
+destination = pathlib.Path(sys.argv[2]) / '.repo/local_manifests/aerove-fixed-integration.xml'
+destination.parent.mkdir(parents=True, exist_ok=True)
+ET.ElementTree(root).write(destination, encoding='utf-8', xml_declaration=True)
+PY
+# No custom multi-repo downloader, toolchain fallback or prebuilt rebuild matrix.
+run source-sync 1800s "${REPO[@]}" sync -c -j2 --fail-fast --no-clone-bundle
+run source-manifest 120s "${REPO[@]}" manifest -r -o "$OUTPUT/resolved-manifest.xml"
+popd > /dev/null
+run source-pins-check 30s python3 - "$SOURCE_PINS" "$AOSP_DIR" <<'PY'
+import json, pathlib, subprocess, sys
+pins = json.loads(pathlib.Path(sys.argv[1]).read_text())
+for project in pins['projects']:
+    actual = subprocess.check_output(['git', '-C', str(pathlib.Path(sys.argv[2]) / project['path']), 'rev-parse', 'HEAD'], text=True).strip()
+    print(project['path'], actual, flush=True)
+    if actual != project['revision']:
+        raise ValueError('Public integration source differs: ' + project['path'])
+PY
+git -C "$SOURCE_DIR" rev-parse HEAD HEAD^{tree} > "$OUTPUT/source-identity.txt"
+git -C "$AOSP_DIR/external/googletest" rev-parse HEAD HEAD^{tree} > "$OUTPUT/gtest-identity.txt"
+check_sha "$SOURCE_DIR/$PRODUCTION" f80e1b6083072d86602cc4c8aed4e3972180ea244d3939b611012dc89e6ed6ab
+check_sha "$SOURCE_DIR/$TEST_SOURCE" 6e5485142d1e3f0a287d74994e1404364b94b2ffebfc75fa130ae534bb13e44f
+check_sha "$SOURCE_DIR/$X11_TEST_SOURCE" 0fba089104b04943a2f01f4ef0f6e07fe282468e39eb84e7e26c02e0377b64a1
+# Bind the exact header identity to the common source used by QEMU's ANGLE prebuilt configuration.
+check_sha "$AOSP_DIR/prebuilts/android-emulator-build/common/ANGLE/linux-x86_64/include/ShaderTranslator.h" 979138ea0b60d23ee604b065743ebd9a2a32fbe76bee4e68081e3c73975b673a
+run test-patch-check 30s git -C "$SOURCE_DIR" apply --check "$TEST_PATCH"
+run test-patch 30s git -C "$SOURCE_DIR" apply "$TEST_PATCH"
+check_sha "$SOURCE_DIR/$TEST_SOURCE" bea09f474edc39a3ade868656e6dc60345d9bd56e65f90b0c8edd6bdeddfdb96
+run x11-test-patch-check 30s git -C "$SOURCE_DIR" apply --check "$X11_TEST_PATCH"
+run x11-test-patch 30s git -C "$SOURCE_DIR" apply "$X11_TEST_PATCH"
+check_sha "$SOURCE_DIR/$X11_TEST_SOURCE" c9bd13619a7d35fd89901e8f70e9dfe696ab749ed14d9331545b9e38034936ce
+CMAKE_TOOL="$AOSP_DIR/prebuilts/cmake/linux-x86/bin/cmake"
+NINJA_TOOL="$AOSP_DIR/prebuilts/ninja/linux-x86/ninja"
+CLANG_TOOL="$AOSP_DIR/prebuilts/clang/host/linux-x86/clang-r596125/bin/clang++"
+run compiler-version 30s "$CLANG_TOOL" --version
+sha256sum "$CLANG_TOOL" > "$OUTPUT/compiler-files.sha256"
+# Keep the pre-existing ABI1/EXTENSIVE regression contract. Fixed r596125's __config defines EXTENSIVE.
+# QEMU defines FAST in directory definitions; the actual generated command is preprocessed below,
+# so a changed option order cannot silently weaken this regression.
+CXX_FLAGS="-stdlib=libc++ -D_LIBCPP_ABI_VERSION=1 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE -I\"$PARSER_INCLUDE\""
+pushd "$AOSP_DIR/external/qemu" > /dev/null
+run configure 600s bash android/rebuild.sh --task Configure --target linux_x86_64 \
+  --config release --crash none --ccache none --out "$OUTPUT/build" \
+  --cmake_option CMAKE_EXPORT_COMPILE_COMMANDS=ON \
+  --cmake_option "CMAKE_CXX_FLAGS=$CXX_FLAGS" --cmake_option USE_ANGLE_SHADER_PARSER=ON
+popd > /dev/null
+run build-targets 30s "$NINJA_TOOL" -C "$OUTPUT/build" -t targets all
+run compiler-contract 60s python3 - "$OUTPUT/build/compile_commands.json" "$OUTPUT/libcxx-macros.txt" "$OUTPUT/compiler-contract-command.json" <<'PY'
+import json, pathlib, shlex, subprocess, sys
+commands = json.loads(pathlib.Path(sys.argv[1]).read_text())
+entry = next(item for item in commands if item['file'].endswith('/host/gl/glestranslator/gles_v2/gles_v2_imp.cpp'))
+args = entry.get('arguments') or shlex.split(entry['command'])
+if '-DCONFIG_AEMU' not in args and '-DCONFIG_AEMU=1' not in args:
+    raise ValueError('GLES production unit was not configured for AEMU')
+options = []
+skip = False
+for arg in args[1:]:
+    if skip:
+        skip = False
+        continue
+    if arg in ('-o', '-MF', '-MT', '-MQ'):
+        skip = True
+    elif arg not in ('-c', '-MD', '-MMD', entry['file']):
+        options.append(arg)
+command = [args[0], *options, '-dM', '-E', '-x', 'c++', '-include', '__config', '/dev/null']
+pathlib.Path(sys.argv[3]).write_text(json.dumps(dict(directory=entry['directory'], command=command), indent=2) + '\n')
+result = subprocess.run(command, cwd=entry['directory'], text=True, stdout=subprocess.PIPE, timeout=45)
+pathlib.Path(sys.argv[2]).write_text(result.stdout)
+result.check_returncode()
+if '#define _LIBCPP_ABI_VERSION 1\n' not in result.stdout or '#define _LIBCPP_HARDENING_MODE _LIBCPP_HARDENING_MODE_EXTENSIVE\n' not in result.stdout:
+    raise ValueError('Actual integrated production command does not retain ABI1/EXTENSIVE')
+PY
+# Compile the real official integrated shared target before attempting its existing test target.
+run integrated-target-build 2400s "$CMAKE_TOOL" --build "$OUTPUT/build" --target gfxstream_backend --parallel 2
 # First prove the fixed source's zero-count defect under hardening, using the existing GLES3 fixture.
-run red-build 2400s cmake --build "$OUTPUT/build" --target OpenglRender_unittests --parallel 2
+run red-build 2400s "$CMAKE_TOOL" --build "$OUTPUT/build" --target OpenglRender_unittests --parallel 2
 STAGE=zero-attachment-red
 set +e
-timeout --signal=TERM --kill-after=10s 120s env LD_LIBRARY_PATH="$BASE_DIR" ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
+timeout --signal=TERM --kill-after=10s 120s env LD_LIBRARY_PATH="$BASE_DIR:$OUTPUT/build/lib64" ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
   xvfb-run -a "$OUTPUT/build/OpenglRender_unittests" \
   --gtest_filter=InvalidateFramebufferTest.ZeroAttachmentsPreserveColor \
   > "$OUTPUT/logs/zero-attachment-red.out" 2> "$OUTPUT/logs/zero-attachment-red.err"
@@ -276,11 +355,11 @@ printf '%s\n' "$red_exit" > "$OUTPUT/logs/zero-attachment-red.exit"
 [[ "$red_exit" == 132 || "$red_exit" == 134 ]]
 # The wrapped test's stderr marker appears in stdout; retain both original streams.
 grep -Fxq gfxstream-zero-attachment-ready "$OUTPUT/logs/zero-attachment-red.out" "$OUTPUT/logs/zero-attachment-red.err"
-run production-patch-check 30s git -C "$OUTPUT/source" apply --check "$PATCH"
-run production-patch 30s git -C "$OUTPUT/source" apply "$PATCH"
-check_sha "$OUTPUT/source/$PRODUCTION" e7864041afccb6236d70c62861e149048754e9e6c261ebd6630d31998045f008
-run green-build 2400s cmake --build "$OUTPUT/build" --target gfxstream_backend OpenglRender_unittests --parallel 2
-run gles-regression 180s env LD_LIBRARY_PATH="$BASE_DIR" ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
+run production-patch-check 30s git -C "$SOURCE_DIR" apply --check "$PATCH"
+run production-patch 30s git -C "$SOURCE_DIR" apply "$PATCH"
+check_sha "$SOURCE_DIR/$PRODUCTION" 0f2031bc4bdc13dd97d1be54c8307c99937ef9114e24c0dc04688c55b7cf8bf2
+run green-build 2400s "$CMAKE_TOOL" --build "$OUTPUT/build" --target gfxstream_backend OpenglRender_unittests --parallel 2
+run gles-regression 180s env LD_LIBRARY_PATH="$BASE_DIR:$OUTPUT/build/lib64" ANDROID_EMU_TEST_WITH_HOST_GPU=1 LIBGL_ALWAYS_SOFTWARE=1 \
   xvfb-run -a "$OUTPUT/build/OpenglRender_unittests" \
   '--gtest_filter=InvalidateFramebufferTest.*:CombinedFramebufferBlitTest/CombinedFramebufferBlit.*' \
   --gtest_output="xml:$OUTPUT/gles-regression.xml"
@@ -294,10 +373,20 @@ if actual != expected or len(cases) < 6 or any(case.find('skipped') is not None 
     raise ValueError('Required real GLES regression cases were missing, skipped or failed')
 PY
 STAGE=elf-and-loader
-cp "$OUTPUT/build/libgfxstream_backend.so" "$OUTPUT/artifact/libgfxstream_backend.so"
+cp "$OUTPUT/build/lib64/libgfxstream_backend.so" "$OUTPUT/artifact/libgfxstream_backend.so"
 readelf -h -n -d -Ws -C "$OUTPUT/artifact/libgfxstream_backend.so" > "$OUTPUT/derived-elf.txt"
 nm -DC --defined-only "$OUTPUT/artifact/libgfxstream_backend.so" > "$OUTPUT/derived-exports.txt"
-grep -Eq '[[:space:]]initLibrary$' "$OUTPUT/derived-exports.txt"
+# These are the startup ABI entries actually present in the original SDK; cf0-only set_service_ops is excluded.
+for symbol in initLibrary android_setOpenglesRenderer android_stopOpenglesRenderer \
+  stream_renderer_init stream_renderer_teardown stream_renderer_resource_create stream_renderer_resource_unref \
+  stream_renderer_context_destroy stream_renderer_submit_cmd stream_renderer_transfer_read_iov stream_renderer_transfer_write_iov \
+  stream_renderer_get_cap_set stream_renderer_fill_caps stream_renderer_resource_attach_iov stream_renderer_resource_detach_iov \
+  stream_renderer_ctx_attach_resource stream_renderer_ctx_detach_resource stream_renderer_resource_get_info stream_renderer_flush \
+  stream_renderer_create_blob stream_renderer_export_blob stream_renderer_resource_map stream_renderer_resource_unmap \
+  stream_renderer_context_create stream_renderer_create_fence stream_renderer_resource_map_info stream_renderer_vulkan_info; do
+  grep -Eq "[[:space:]]$symbol$" "$OUTPUT/base-exports.txt"
+  grep -Eq "[[:space:]]$symbol$" "$OUTPUT/derived-exports.txt"
+done
 grep -q 'std::__1::' "$OUTPUT/derived-elf.txt"
 if grep -Eq 'std::__2::|GLIBCXX_' "$OUTPUT/derived-elf.txt"; then
   echo 'Derived library has an incompatible C++ namespace or libstdc++ dependency' >&2
@@ -324,13 +413,13 @@ derived_build_id=$(readelf -n "$OUTPUT/artifact/libgfxstream_backend.so" | sed -
 [[ "$derived_build_id" =~ ^[0-9a-f]{40}$ ]] || { echo 'Require one derived SHA-1 ELF build-id' >&2; exit 1; }
 printf '%s\n' "$derived_build_id" > "$OUTPUT/artifact/build-id.txt"
 sha256sum "$OUTPUT/artifact/libgfxstream_backend.so" > "$OUTPUT/artifact/SHA256SUMS"
-git -C "$OUTPUT/source" diff --binary > "$OUTPUT/applied-source.patch"
-sha256sum "$OUTPUT/source/$PRODUCTION" "$OUTPUT/source/$TEST_SOURCE" "$OUTPUT/source/$X11_TEST_SOURCE" > "$OUTPUT/source-after.sha256"
+git -C "$SOURCE_DIR" diff --binary > "$OUTPUT/applied-source.patch"
+sha256sum "$SOURCE_DIR/$PRODUCTION" "$SOURCE_DIR/$TEST_SOURCE" "$SOURCE_DIR/$X11_TEST_SOURCE" > "$OUTPUT/source-after.sha256"
 cp "$OUTPUT/build/CMakeCache.txt" "$OUTPUT/build/compile_commands.json" "$OUTPUT/"
 cp "$PATCH" "$TEST_PATCH" "$X11_TEST_PATCH" "$OUTPUT/artifact/"
 cp -a -- "$PARSER_INCLUDE" "$OUTPUT/artifact/angle-shader-translator"
 # Retain all source/third-party licensing with the derived module, without shipping the SDK.
-find "$OUTPUT/source" "$OUTPUT/googletest" -type f \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) -not -path '*/.git/*' -print0 \
+find "$AOSP_DIR" -type d \( -name .git -o -name .repo \) -prune -o -type f \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) -print0 \
   | tar --null -T - -czf "$OUTPUT/artifact/upstream-notices.tar.gz"
 check_sha "$BASE_LIB" "$BASE_SHA"
 check_sha "$PARSER_LIB" "$PARSER_SHA"

@@ -1152,6 +1152,22 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 **许可证、署名与证据：** [固定 NOTICE](https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+/6599d0b82da42c78c5f30e73ba71aa3db907e5aa/clang-r596125/NOTICE)（blob `b051002f8a69f553700ee907ccd3c56d9a2c6c8e`），Apache-2.0 WITH LLVM-exception，并保留其中各 bundled notices；所参照 qemu wrapper 文件为 Apache-2.0。可执行文件与参考库不上传；未认定其为 Google SDK 完整私有构建来源，原失败证据及所有真实回归/Android 门保持。
 
+#### [AOSP public emulator manifest and AEMU integrated host build](https://android.googlesource.com/platform/manifest)
+
+**固定来源 / revision：** manifest `2692acc620f6563b21995540656674faeb536cdc`，QEMU `cf0f40a0aad1aa3fca68f2f89372525c8d28ca68`，AEMU `6f34f9788fd595e597f191bece8fdaceed00d20a`，gfxstream `49ee51f297118cd2e98c5f4867df556e8966562a`；其余关键公开项目见 `apps/aerove-lite/tool/fixtures/aemu-integration-sources.json`，实际checkout另保存resolved repo manifest。
+
+**用途与采用方式：** 固定源码host诊断采用官方QEMU-root ConfigureTask与集成 `gfxstream_backend` 目标，复用真实android/opengles.cpp renderer/ASG adapter及AEMU host-common，而非standalone库或自研stub。将原两个零附件修复与既有RED/GREEN和3+6真实GLES回归迁至该公开组合；保留EXTENSIVE容器硬化、libc++ABI1、原parser字节配对、实际SDK导出/加载与Android门。此公开branch构建不冒称SDK build16740729精确manifest；未通过前不称修复或验收成功。
+
+**许可证、署名与证据：** QEMU按其GPLv2及各文件许可证，所用opengles.cpp与AEMU/gfxstream构建代码按文件头Apache-2.0；ANGLE BSD-3-Clause及各第三方NOTICE不变。派生模块保留实际checkout中的许可证/版权归档与resolved来源；源码与prebuilt不随诊断归档上传。参照[官方Linux说明](https://github.com/aosp-mirror/platform_external_qemu/blob/cf0f40a0aad1aa3fca68f2f89372525c8d28ca68/android/docs/LINUX-DEV.md)、[AEMU集成build config](https://android.googlesource.com/platform/hardware/google/aemu/+/6f34f9788fd595e597f191bece8fdaceed00d20a/build-config/qemu-android/CMakeLists.txt)。
+
+#### [Official git-repo source client](https://gerrit.googlesource.com/git-repo)
+
+**固定版本 / revision：** `v2.59`，peeled commit `1afe96a7e997ce7748f066b206a85ac648f7a87c`。
+
+**用途与采用方式：** CI隔离目录内通过固定官方源码launcher运行repo init/sync/manifest，按官方local-manifest extend-project固定关键revision，避免自写多repo下载框架；保留repo签名验证与checkout身份核验，无近似版本fallback。工具源码不加入APP/SDK或随诊断分发。
+
+**许可证、署名与证据：** [固定LICENSE](https://gerrit.googlesource.com/git-repo/+/1afe96a7e997ce7748f066b206a85ac648f7a87c/LICENSE)，Apache-2.0；工具revision/版权与notice随来源记录保留。
+
 #### [Android Emulator Guest ANGLE](https://android.googlesource.com/platform/external/qemu/)
 
 **固定来源 / revision：** QEMU `cf0f40a0aad1aa3fca68f2f89372525c8d28ca68`；Android 13 Goldfish `7493b6b8d8aeed860ff2415e8327af2ed97324fe`；ANGLE `353815e0d958c63adc3425df35baf61f097d2da2`；Goldfish OpenGL `58990d35c7ace6cc89aea121378935d46d799d14`。

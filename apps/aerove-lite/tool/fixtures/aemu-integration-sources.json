@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "kind": "public-emu-main-dev-integration-inputs",
+  "googleSdkBuildManifest": false,
+  "manifest": {
+    "repository": "https://android.googlesource.com/platform/manifest",
+    "revision": "2692acc620f6563b21995540656674faeb536cdc",
+    "groups": "default,platform-linux"
+  },
+  "repoTool": {
+    "repository": "https://gerrit.googlesource.com/git-repo",
+    "tag": "v2.59",
+    "revision": "1afe96a7e997ce7748f066b206a85ac648f7a87c",
+    "license": "Apache-2.0"
+  },
+  "projects": [
+    {
+      "name": "platform/external/qemu",
+      "path": "external/qemu",
+      "revision": "cf0f40a0aad1aa3fca68f2f89372525c8d28ca68"
+    },
+    {
+      "name": "platform/hardware/google/aemu",
+      "path": "hardware/google/aemu",
+      "revision": "6f34f9788fd595e597f191bece8fdaceed00d20a"
+    },
+    {
+      "name": "platform/hardware/google/gfxstream",
+      "path": "hardware/google/gfxstream",
+      "revision": "49ee51f297118cd2e98c5f4867df556e8966562a"
+    },
+    {
+      "name": "platform/external/angle",
+      "path": "external/angle",
+      "revision": "901e32aa9923b05c3a2af846f8a28fc79c93d0be"
+    },
+    {
+      "name": "platform/external/googletest",
+      "path": "external/googletest",
+      "revision": "013ef6db94e3677b24b8e4c9fbdf1708ecea516b"
+    },
+    {
+      "name": "platform/prebuilts/android-emulator-build/common",
+      "path": "prebuilts/android-emulator-build/common",
+      "revision": "1ebd9720117e7e3c495a1e1c43e069f1727d60d5"
+    },
+    {
+      "name": "platform/prebuilts/android-emulator-build/qemu-android-deps",
+      "path": "prebuilts/android-emulator-build/qemu-android-deps",
+      "revision": "b06aee625002d0738c5576bbf437b9378229bef0"
+    },
+    {
+      "name": "platform/prebuilts/clang/host/linux-x86",
+      "path": "prebuilts/clang/host/linux-x86",
+      "revision": "6599d0b82da42c78c5f30e73ba71aa3db907e5aa"
+    },
+    {
+      "name": "platform/prebuilts/cmake/linux-x86",
+      "path": "prebuilts/cmake/linux-x86",
+      "revision": "1b2f676e865ec717ff17781425a28318db910eaf"
+    },
+    {
+      "name": "platform/prebuilts/ninja/linux-x86",
+      "path": "prebuilts/ninja/linux-x86",
+      "revision": "d738ecc92e8af6ba336de6a095ad46c2d7a117a2"
+    },
+    {
+      "name": "platform/prebuilts/python/linux-x86",
+      "path": "prebuilts/python/linux-x86",
+      "revision": "3665e3a3bd0cd0d93f6247eb596938cea48268be"
+    },
+    {
+      "name": "platform/prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+      "path": "prebuilts/gcc/linux-x86/host/x86_64-linux-glibc2.17-4.8",
+      "revision": "f58b56eac26d03223f438e985f3d6334f6590cc6"
+    }
+  ],
+  "otherProjects": "Resolved by the official manifest; repo manifest -r is saved from the actual checkout before configure. Not claimed to be SDK16740729 inputs.",
+  "gfxstreamProductionSha256": "f80e1b6083072d86602cc4c8aed4e3972180ea244d3939b611012dc89e6ed6ab",
+  "patchedProductionSha256": "0f2031bc4bdc13dd97d1be54c8307c99937ef9114e24c0dc04688c55b7cf8bf2"
+}
