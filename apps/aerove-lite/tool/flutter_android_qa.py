@@ -137,7 +137,7 @@ class Producer:
         self.child = None
         self.previous_signals = {}
         self.owner_verified = False
-        self.guest_angle_logcat_started = False
+        self.install_logcat_started = False
 
     def interrupt(self, signum, _frame):
         if self.cancelled:
@@ -146,16 +146,16 @@ class Producer:
         raise InterruptedError(f'Cancelled by signal {signum} at {self.receipt["stage"]}')
 
     @contextmanager
-    def _guest_angle_install_logcat(self, label, row):
-        if (os.environ.get('AEROVE_GUEST_ANGLE') != '1' or not self.owner_verified
-                or self.guest_angle_logcat_started or label != 'install-' + PACKAGE):
+    def _install_logcat(self, label, row):
+        if (os.environ.get('AEROVE_INSTALL_LOGCAT') != '1' or not self.owner_verified
+                or self.install_logcat_started or label != 'install-' + PACKAGE):
             yield
             return
-        self.guest_angle_logcat_started = True
+        self.install_logcat_started = True
         capture = dict(command=self.adb + ['logcat', '-b', 'all', '-v', 'threadtime'],
-                       stdout='guest-angle-install-logcat.out', stderr='guest-angle-install-logcat.err',
+                       stdout='first-app-install-logcat.out', stderr='first-app-install-logcat.err',
                        startedEpochSeconds=time.time(), status='starting', acceptanceEvidence=False)
-        row['guestAngleLogcat'] = self.receipt['guestAngleInstallLogcat'] = capture
+        row['installLogcat'] = self.receipt['installLogcat'] = capture
         with (self.args.output / capture['stdout']).open('wb') as stdout, \
                 (self.args.output / capture['stderr']).open('wb') as stderr:
             child = subprocess.Popen(capture['command'], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
@@ -177,7 +177,7 @@ class Producer:
                     capture['status'] = 'joined'
                 except BaseException as error:
                     capture.update(status='cleanup-failed', error=repr(error))
-                    self.receipt.setdefault('cleanupErrors', []).append('guest-angle-install-logcat: ' + repr(error))
+                    self.receipt.setdefault('cleanupErrors', []).append('first-app-install-logcat: ' + repr(error))
                     if not primary_failure and row.get('exit', 0) == 0:
                         raise
                 finally:
@@ -190,7 +190,7 @@ class Producer:
         self.receipt['commands'].append(row)
         out, err = self.args.output / (label + '.out'), self.args.output / (label + '.err')
         start = time.monotonic()
-        with self._guest_angle_install_logcat(label, row), out.open('wb') as stdout, err.open('wb') as stderr:
+        with self._install_logcat(label, row), out.open('wb') as stdout, err.open('wb') as stderr:
             child = subprocess.Popen(row['command'], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
             self.child = child
             try:

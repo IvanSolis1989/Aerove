@@ -205,6 +205,24 @@ jobs:
             readelf --wide --dyn-syms "$gfx" \
             > "$gfx_evidence/dynamic-symbols.txt" 2> "$gfx_evidence/symbols.stderr.txt"
         fi
+    - name: Build and install the fixed-source gfxstream host module
+      if: ${{ inputs.runtime_target == 'lite208-flutter-ui' }}
+      timeout-minutes: 75
+      run: |
+        set -euo pipefail
+        sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=10s 120s \
+          apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+        sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=10s 240s \
+          apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+          -o Acquire::https::Timeout=20 install --yes --no-install-recommends \
+          build-essential cmake ninja-build pkg-config clang-18 libc++-18-dev libc++abi-18-dev \
+          libx11-dev libxcb1-dev libgl1 libglx-mesa0 libgl1-mesa-dri libvulkan1 xvfb xauth
+        module_build="$RUNNER_TEMP/gfxstream-0884-derived-host"
+        library="$ANDROID_HOME/emulator/lib64/libgfxstream_backend.so"
+        bash apps/aerove-lite/tool/build_gfxstream_derived_host.sh "$library" "$module_build"
+        cp -- "$library" "$RUNNER_TEMP/lite-original-gfxstream-backend.so"
+        cp -- "$module_build/artifact/libgfxstream_backend.so" "$library"
+        sha256sum "$library" > "$module_build/installed-library.sha256"
     - name: Verify original run84 runtime and execute matrix with owned emulator
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
@@ -213,7 +231,8 @@ jobs:
         SHARD_INDEX: ${{ inputs.shard_index }}
         ORIGINAL_SAMPLE: ${{ inputs.sample }}
         AEROVE_EMULATOR_SIGILL_TRACE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
-        AEROVE_GUEST_ANGLE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
+        AEROVE_INSTALL_LOGCAT: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
+        AEROVE_GFXSTREAM_SOURCE_RECEIPT: ${{ inputs.runtime_target == 'lite208-flutter-ui' && format('{0}/gfxstream-0884-derived-host/build-receipt.json', runner.temp) || '' }}
       run: |
         if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite208-original-flutter-runtime"
@@ -225,6 +244,21 @@ jobs:
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase remaining --shard-index "$SHARD_INDEX" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
         else
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
+        fi
+    - name: Preserve source-built module evidence without source or build trees
+      if: ${{ always() && inputs.runtime_target == 'lite208-flutter-ui' }}
+      run: |
+        set -euo pipefail
+        source="$RUNNER_TEMP/gfxstream-0884-derived-host"
+        evidence="$RUNNER_TEMP/lite-diagnostics/gfxstream-source-build"
+        if test -d "$source"; then
+          mkdir -p "$evidence"
+          find "$source" -maxdepth 1 -type f -exec cp -- {} "$evidence/" \;
+          for name in logs artifact; do
+            if test -d "$source/$name"; then
+              cp -a -- "$source/$name" "$evidence/$name"
+            fi
+          done
         fi
     - name: Preserve original84 identity and raw owned matrix evidence
       if: always()

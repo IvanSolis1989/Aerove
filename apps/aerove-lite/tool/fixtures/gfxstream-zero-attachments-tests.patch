@@ -1,0 +1,82 @@
+diff --git a/host/tests/DefaultFramebufferBlit_unittest.cpp b/host/tests/DefaultFramebufferBlit_unittest.cpp
+--- a/host/tests/DefaultFramebufferBlit_unittest.cpp
++++ b/host/tests/DefaultFramebufferBlit_unittest.cpp
+@@ -14,1 +14,2 @@
+ #include <gtest/gtest.h>
++#include <cstdio>
+@@ -20,1 +21,2 @@
+ #include "gfxstream/host/testing/GLTestUtils.h"
++#include "gfxstream/host/testing/OpenGLTestContext.h"
+@@ -276,3 +278,72 @@
++class InvalidateFramebufferTest : public gfxstream::host::gl::GLTest {
++protected:
++    void SetUp() override {
++        gfxstream::host::gl::GLTest::SetUp();
++        GLint major = 0;
++        gl->glGetIntegerv(GL_MAJOR_VERSION, &major);
++        ASSERT_EQ(GL_NO_ERROR, gl->glGetError());
++        ASSERT_GE(major, 3);
++    }
++};
++
++TEST_F(InvalidateFramebufferTest, ZeroAttachmentsPreserveColor) {
++    gl->glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
++    gl->glClear(GL_COLOR_BUFFER_BIT);
++    GLubyte before[4] = {}, after[4] = {};
++    gl->glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, before);
++    ASSERT_EQ(GL_NO_ERROR, gl->glGetError());
++    ASSERT_EQ(255, before[0]);
++    ASSERT_EQ(0, before[1]);
++    std::fputs("gfxstream-zero-attachment-ready\n", stderr);
++    std::fflush(stderr);
++    gl->glInvalidateFramebuffer(GL_FRAMEBUFFER, 0, nullptr);
++    EXPECT_EQ(GL_NO_ERROR, gl->glGetError());
++    gl->glInvalidateSubFramebuffer(GL_FRAMEBUFFER, 0, nullptr, 0, 0, 1, 1);
++    EXPECT_EQ(GL_NO_ERROR, gl->glGetError());
++    gl->glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, after);
++    ASSERT_EQ(GL_NO_ERROR, gl->glGetError());
++    for (int i = 0; i < 4; ++i) EXPECT_EQ(before[i], after[i]);
++}
++
++TEST_F(InvalidateFramebufferTest, InvalidArgumentsRemainErrors) {
++    gl->glInvalidateFramebuffer(GL_NONE, 0, nullptr);
++    EXPECT_EQ(GL_INVALID_ENUM, gl->glGetError());
++    gl->glInvalidateFramebuffer(GL_FRAMEBUFFER, -1, nullptr);
++    EXPECT_EQ(GL_INVALID_VALUE, gl->glGetError());
++    gl->glInvalidateSubFramebuffer(GL_NONE, 0, nullptr, 0, 0, 1, 1);
++    EXPECT_EQ(GL_INVALID_ENUM, gl->glGetError());
++    gl->glInvalidateSubFramebuffer(GL_FRAMEBUFFER, -1, nullptr, 0, 0, 1, 1);
++    EXPECT_EQ(GL_INVALID_VALUE, gl->glGetError());
++    gl->glInvalidateSubFramebuffer(GL_FRAMEBUFFER, 0, nullptr, 0, 0, -1, 1);
++    EXPECT_EQ(GL_INVALID_VALUE, gl->glGetError());
++    gl->glInvalidateSubFramebuffer(GL_FRAMEBUFFER, 0, nullptr, 0, 0, 1, -1);
++    EXPECT_EQ(GL_INVALID_VALUE, gl->glGetError());
++}
++
++TEST_F(InvalidateFramebufferTest, NonEmptyAttachmentsRemainValid) {
++    const GLenum defaultColor = GL_COLOR;
++    gl->glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &defaultColor);
++    EXPECT_EQ(GL_NO_ERROR, gl->glGetError());
++    gl->glInvalidateSubFramebuffer(GL_FRAMEBUFFER, 1, &defaultColor, 0, 0, 1, 1);
++    EXPECT_EQ(GL_NO_ERROR, gl->glGetError());
++    GLuint framebuffer = 0, color = 0;
++    gl->glGenFramebuffers(1, &framebuffer);
++    gl->glGenRenderbuffers(1, &color);
++    gl->glBindRenderbuffer(GL_RENDERBUFFER, color);
++    gl->glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 1, 1);
++    gl->glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
++    gl->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, color);
++    ASSERT_EQ(GL_FRAMEBUFFER_COMPLETE, gl->glCheckFramebufferStatus(GL_FRAMEBUFFER));
++    const GLenum attachment = GL_COLOR_ATTACHMENT0;
++    gl->glInvalidateFramebuffer(GL_FRAMEBUFFER, 1, &attachment);
++    EXPECT_EQ(GL_NO_ERROR, gl->glGetError());
++    gl->glInvalidateSubFramebuffer(GL_FRAMEBUFFER, 1, &attachment, 0, 0, 1, 1);
++    EXPECT_EQ(GL_NO_ERROR, gl->glGetError());
++    gl->glBindFramebuffer(GL_FRAMEBUFFER, 0);
++    gl->glDeleteRenderbuffers(1, &color);
++    gl->glDeleteFramebuffers(1, &framebuffer);
++}
++
+ }  // namespace
+ }  // namespace host
+ }  // namespace gfxstream

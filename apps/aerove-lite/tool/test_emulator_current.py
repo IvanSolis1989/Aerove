@@ -13,6 +13,40 @@ import emulator_current as current
 SCRIPT_ASSETS = Path(__file__).resolve().parents[1] / "app/src/main/assets/scripts"
 
 
+class DerivedHostEvidenceTests(unittest.TestCase):
+    def test_only_the_tested_builder_library_and_owned_mapping_are_reported_loaded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            library = root / 'emulator/lib64/libgfxstream_backend.so'
+            library.parent.mkdir(parents=True)
+            library.write_bytes(b'derived-host-fixture-not-an-ELF')
+            build = dict(status='host-module-built-and-tested', googleOriginal=False, hostRegressionPassed=True,
+                         builderSha256=current.sha(Path(current.__file__).with_name('build_gfxstream_derived_host.sh')),
+                         derivedLibrarySha256=current.sha(library))
+            receipt = root / 'build.json'
+            maps_path = Path('/proc') / '123' / 'maps'
+            real_read = Path.read_text
+            mapping = '1000-2000 r-xp 0000 00:00 1 ' + str(library.resolve()) + '\n'
+            def read(path, *args, **kwargs):
+                return mapping if path == maps_path else real_read(path, *args, **kwargs)
+            with patch.dict(os.environ, ANDROID_HOME=str(root)), patch.object(Path, 'read_text', read):
+                receipt.write_text(json.dumps(build))
+                result = current.derived_host_evidence(receipt, 123, root)
+                self.assertTrue(result['loadedInOwnedEmulator'])
+                self.assertEqual(result['loadedLibrarySha256'], current.sha(library))
+                self.assertEqual(result['emulatorPid'], 123)
+                for change in ({'googleOriginal': True}, {'status': 'failed'}, {'hostRegressionPassed': False},
+                               {'builderSha256': '0' * 64}, {'derivedLibrarySha256': '0' * 64}):
+                    receipt.write_text(json.dumps({**build, **change}))
+                    with self.subTest(change=change), self.assertRaises(ValueError):
+                        current.derived_host_evidence(receipt, 123, root)
+                receipt.write_text(json.dumps(build))
+                mapping = '1000-2000 r-xp 0000 00:00 1 /other/libgfxstream_backend.so\n'
+                with self.assertRaises(ValueError):
+                    current.derived_host_evidence(receipt, 123, root)
+                self.assertEqual((root / 'derived-gfxstream-emulator-maps.txt').read_text(), mapping)
+
+
 class GuestAngleEvidenceTests(unittest.TestCase):
     startup = 'Selecting Vulkan device: SwiftShader Device (Subzero), Version: 1.3.0'
     guest = 'GLES: Google, ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)))'

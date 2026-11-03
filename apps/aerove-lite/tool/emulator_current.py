@@ -109,6 +109,26 @@ def guest_angle_evidence(directory, receipt, startup):
                 guestRenderer=guest, hostVulkanDevice=host)
 
 
+def derived_host_evidence(path, emulator_pid, directory):
+    """Bind a tested source-built module to this owned emulator's loaded file."""
+    build = json.loads(Path(path).read_text())
+    if (build.get('status') != 'host-module-built-and-tested' or build.get('googleOriginal') is not False
+            or build.get('hostRegressionPassed') is not True
+            or build.get('builderSha256') != sha(Path(__file__).with_name('build_gfxstream_derived_host.sh'))):
+        raise ValueError('Derived SDK module lacks this source builder and completed host regressions')
+    library = (Path(os.environ['ANDROID_HOME']) / 'emulator/lib64/libgfxstream_backend.so').resolve()
+    actual = sha(library)
+    if build.get('derivedLibrarySha256') != actual:
+        raise ValueError('Installed SDK module differs from the tested derived library')
+    mappings = (Path('/proc') / str(emulator_pid) / 'maps').read_text()
+    output = directory / 'derived-gfxstream-emulator-maps.txt'
+    output.write_text(mappings)
+    if not any(line.endswith(' ' + str(library)) for line in mappings.splitlines()):
+        raise ValueError('Owned emulator did not map the tested derived SDK module')
+    return dict(componentBuild=build, emulatorPid=emulator_pid, loadedLibrary=str(library),
+                loadedLibrarySha256=actual, emulatorMapsSha256=sha(output), loadedInOwnedEmulator=True)
+
+
 def sigill_gdb_script(pid, ready, fault):
     # GDB reads only this live Popen PID; no process search, inferior calls or patching.
     return """set pagination off
@@ -452,6 +472,9 @@ def main():
     guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
     if guest_angle and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
         raise ValueError('Guest ANGLE diagnosis is restricted to the fixed original208 representative runtime')
+    derived_host = os.environ.get('AEROVE_GFXSTREAM_SOURCE_RECEIPT')
+    if derived_host and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui' or guest_angle):
+        raise ValueError('Source-built host diagnosis requires the fixed original208 host GLES runtime')
     sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
     flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase in ('flutter-ui', 'flutter-platform', 'flutter-full') else None
     if args.phase in ('matrix', 'remaining') and not current.get('runtimeTarget'):
@@ -503,6 +526,8 @@ def main():
             if guest_angle:
                 receipt['guestGraphicsRoute'] = guest_angle_evidence(
                     directory, receipt, (directory / 'emulator.stdout.log').read_text(errors='replace'))
+            if derived_host:
+                receipt['derivedSdkHost'] = derived_host_evidence(derived_host, emulator.pid, directory)
             if forensic:
                 capture = SigillCapture(emulator, directory, receipt)
                 try:
@@ -518,6 +543,8 @@ def main():
                          rendererBackend=RENDERER_LABEL, rendererEvidence=receipt['rendererEvidence'])
             if guest_angle:
                 proof['guestGraphicsRoute'] = receipt['guestGraphicsRoute']
+            if derived_host:
+                proof['derivedSdkHost'] = receipt['derivedSdkHost']
             proof_path = directory / 'CURRENT-RENDERER-PROOF.json'
             proof_path.write_text(json.dumps(proof, indent=2) + '\n')
             environment['AEROVE_CURRENT_RENDERER_PROOF'] = str(proof_path.resolve())

@@ -273,7 +273,7 @@ class ContractTest(unittest.TestCase):
         self.assertEqual([call.kwargs for call in installs], [{'timeout': 120}, {'timeout': 120}])
 
 
-    def test_guest_angle_install_stream_joins_only_owned_child_and_preserves_primary_failure(self):
+    def test_first_app_install_stream_joins_only_owned_child_and_preserves_primary_failure(self):
         from unittest.mock import Mock, call
         import subprocess
         for primary, cleanup_fails in ((InterruptedError('cancelled install'), False),
@@ -290,7 +290,7 @@ class ContractTest(unittest.TestCase):
                     capture.wait.side_effect = [subprocess.TimeoutExpired(['adb', 'logcat'], 5), cleanup_error]
                 install_wait = Mock(return_value=0) if primary is None else Mock(side_effect=[primary, 0])
                 install = SimpleNamespace(wait=install_wait, terminate=Mock(), kill=Mock())
-                with patch.dict('os.environ', AEROVE_GUEST_ANGLE='1'), \
+                with patch.dict('os.environ', AEROVE_INSTALL_LOGCAT='1'), \
                         patch.object(qa.subprocess, 'Popen', side_effect=[capture, install]) as popen:
                     with self.assertRaises(type(primary or cleanup_error)) as caught:
                         producer.command('install-' + qa.PACKAGE,
@@ -311,7 +311,7 @@ class ContractTest(unittest.TestCase):
                 else:
                     capture.kill.assert_not_called()
                 self.assertIsNone(producer.child)
-                record = producer.receipt['guestAngleInstallLogcat']
+                record = producer.receipt['installLogcat']
                 self.assertEqual(record['pid'], 4321)
                 if cleanup_fails:
                     self.assertEqual(record['status'], 'cleanup-failed')
@@ -319,13 +319,13 @@ class ContractTest(unittest.TestCase):
                 else:
                     self.assertEqual((record['exit'], record['status']), (-15, 'joined'))
                 self.assertFalse(record['acceptanceEvidence'])
-                self.assertIs(producer.receipt['commands'][0]['guestAngleLogcat'], record)
+                self.assertIs(producer.receipt['commands'][0]['installLogcat'], record)
                 self.assertEqual(bool(producer.receipt.get('cleanupErrors')), cleanup_fails)
                 for call_row in popen.call_args_list:
                     self.assertTrue(call_row.kwargs['stdout'].closed)
                     self.assertTrue(call_row.kwargs['stderr'].closed)
 
-    def test_guest_angle_stream_is_opt_in_exact_app_install_and_never_restarted(self):
+    def test_first_app_install_stream_is_opt_in_exact_app_install_and_never_restarted(self):
         from unittest.mock import Mock
         args = SimpleNamespace(adb=Path('adb'), serial='emulator-5554', output=self.root, apk=self.apk)
         for flag, label, tail in (('0', 'install-' + qa.PACKAGE, ['install', '--no-streaming', str(self.apk)]),
@@ -334,26 +334,26 @@ class ContractTest(unittest.TestCase):
             producer = qa.Producer(args)
             producer.owner_verified = True
             child = SimpleNamespace(wait=Mock(return_value=0))
-            with self.subTest(flag=flag, label=label), patch.dict('os.environ', AEROVE_GUEST_ANGLE=flag), \
+            with self.subTest(flag=flag, label=label), patch.dict('os.environ', AEROVE_INSTALL_LOGCAT=flag), \
                     patch.object(qa.subprocess, 'Popen', return_value=child) as popen:
                 self.assertEqual(producer.command(label, producer.adb + tail, timeout=120), b'')
             popen.assert_called_once()
             self.assertEqual(popen.call_args.args[0], producer.adb + tail)
             child.wait.assert_called_once_with(timeout=120)
-            self.assertNotIn('guestAngleInstallLogcat', producer.receipt)
+            self.assertNotIn('installLogcat', producer.receipt)
         producer = qa.Producer(args)
         producer.owner_verified = True
         capture = SimpleNamespace(pid=1234, poll=Mock(return_value=None), terminate=Mock(),
                                   kill=Mock(), wait=Mock(return_value=-15))
         install = SimpleNamespace(wait=Mock(return_value=0))
-        with patch.dict('os.environ', AEROVE_GUEST_ANGLE='1'), \
+        with patch.dict('os.environ', AEROVE_INSTALL_LOGCAT='1'), \
                 patch.object(qa.subprocess, 'Popen', side_effect=[capture, install, install]) as popen:
             for _ in range(2):
                 producer.command('install-' + qa.PACKAGE,
                                  producer.adb + ['install', '--no-streaming', str(self.apk)], timeout=120)
         self.assertEqual(popen.call_count, 3)
         capture.terminate.assert_called_once_with()
-        self.assertEqual(producer.receipt['guestAngleInstallLogcat']['status'], 'joined')
+        self.assertEqual(producer.receipt['installLogcat']['status'], 'joined')
 
 if __name__ == '__main__':
     unittest.main()

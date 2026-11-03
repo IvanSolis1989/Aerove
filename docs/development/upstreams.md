@@ -1126,11 +1126,21 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 **用途与采用方式：** SwANGLE 诊断只读参照：核对 `host/include/render-utils/renderer_enums.h` 中 SwiftShader indirect 与 ANGLE/SwANGLE renderer enum 的区分；未复制源码，不认定为当前打包的 37.2.12 源码身份。
 
-固定 SDK 37.2.13 宿主 SIGILL 取证另参照同 revision 的 [gles_v30_imp.cpp](https://github.com/google/gfxstream/blob/0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp#L624)，将实际 ELF decoder/opcode/分支与零附件空 vector 访问闭合；合法空操作语义依据 [Khronos GLES 3.1 规范](https://registry.khronos.org/OpenGL/specs/es/3.1/es_spec_3.1.pdf)。公开源码不冒称 Google 完整构建身份，原故障未采到的寄存器值不冒称实测；本次复用下述官方 Guest ANGLE 路由，未手改 SDK 二进制。
+固定 SDK 37.2.13 宿主 SIGILL 取证另参照同 revision 的 [gles_v30_imp.cpp](https://github.com/google/gfxstream/blob/0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp#L624)，将实际 ELF decoder/opcode/分支与零附件空 vector 访问闭合；合法空操作语义依据 [Khronos GLES 3.1 规范](https://registry.khronos.org/OpenGL/specs/es/3.1/es_spec_3.1.pdf)。公开源码不冒称 Google 完整构建身份，原故障未采到的寄存器值不冒称实测；曾验证下述官方 Guest ANGLE 路由；后续修复采用固定源码构建，不手改 SDK 二进制。
+
+Guest ANGLE 单次实际验证在系统启动 600 秒边界失败，未进入 App，不能据此判定具体 API 不支持。后续固定源码适配只修两个 framebuffer invalidate 入口的合法零附件路径与参数错误，保留容器硬化；复用 `host/testlibs/support/` 的真实 GLES3 GLTest 与 `OpenglRender_unittests`。源码构建模块具有独立 SHA/build-id 与工具链记录，须完成真实编译、回归、原模拟器加载和 App 验证，不将其称为 Google 原库或已通过 Android 验收；原 App 与 GPU/画质参数保持原身份。
 
 beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3adef772c85eabf99c21654aefa43abece`](https://android.googlesource.com/platform/hardware/google/gfxstream/+/6be02d3adef772c85eabf99c21654aefa43abece/) 的 guest `GLESv2_enc/gl2_enc.cpp`、`iostream/include/libOpenglRender/IOStream.h`、`OpenglSystemCommon/HostConnection.cpp`/`QemuPipeStream.cpp` 与 `android-emu/aemu/base/Tracing.h`，确认 `glGenTextures encode` 包含同步协议 readback 的范围；未复制驱动、未将公共 lineage 冒认为运行 guest ELF 或 37.2.12 packaged source。现成 CI 工具的 host/native 采样仍须实际权限、时钟、窗口与符号核验，不据此宣称 App shader/GPU 根因或性能通过。
 
 **许可证、署名与证据：** Apache-2.0，固定源码文件头；[固定 renderer_enums.h](https://github.com/google/gfxstream/blob/0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9/host/include/render-utils/renderer_enums.h)。
+
+#### [GoogleTest](https://github.com/google/googletest)
+
+**固定版本 / revision：** 1.14.0，`f8d7d77c06936315286eb55f8de22cd23c188571`。
+
+**用途与采用方式：** 仅为上述 SDK host 源码回归使用相同 clang/libc++ 构建现有 GoogleTest，避免测试目标混用 libstdc++；不加入 App。保留 BSD-3-Clause 许可证与版权，随派生模块保存上游 notices。
+
+LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/libcxx/include/__config)及 [Hardening 文档](https://github.com/llvm/llvm-project/blob/llvmorg-18.1.8/libcxx/docs/Hardening.rst)，Apache-2.0 WITH LLVM-exception；实际 Ubuntu clang/libc++ 软件包版本和编译器 SHA 由构建记录，不冒称 Google 原库的编译器来源。
 
 #### [Android Emulator Guest ANGLE](https://android.googlesource.com/platform/external/qemu/)
 
