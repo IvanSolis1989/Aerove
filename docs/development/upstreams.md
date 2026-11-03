@@ -1106,9 +1106,9 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 **已核来源 / 版本边界：** GNU GDB 官方在线手册 Attach、Signals、Events In Python（2026-11-03 读取）。CI 复用 runner 已有 GDB，实际版本由同 job 的 `show version` 原始输出记录；不将手册或 Android SDK 版本当成 GDB 源码提交。
 
-**用途与采用方式：** 仅对原 #208 APK 的 owned emulator 宿主 SIGILL 诊断。复用现有 native-preflight 的 GDB 准备能力，attach owner 的原 Popen PID，通过 SignalEvent 只读记录 PC、无参数栈和映射，再 continue 并传递原 SIGILL；取消时 detach 并清理本次 sidecar。未复制 GDB 实现，未新增 APP 依赖；取证会影响时序，不作为性能或应用验收证据。
+**用途与采用方式：** 仅对原 #208 APK 的 owned emulator 宿主 SIGILL 诊断。复用现有 native-preflight 的 GDB 准备能力，attach owner 的原 Popen PID，通过 SignalEvent 只读记录 PC、无参数栈和映射，再 continue 并传递原 SIGILL。首次 continue 事件后才发布 ready；取消时仅在 owner 请求身份及实际信号发送者均匹配时，以 `queue-signal 0` 清除本次控制 SIGINT，外部 SIGINT 与原 SIGILL 继续传递。按 [Linux ptrace](https://man7.org/linux/man-pages/man2/ptrace.2.html) 的实际解除跟踪状态等待 tracer 退出及本次目标恢复，再完成 sidecar 清理。未复制 GDB 实现，未新增 APP 依赖；取证会影响时序，不作为性能或应用验收证据。
 
-**许可证、署名与证据：** GNU GDB / GPLv3+，官方手册 / GNU FDL；[Attach](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Attach.html)、[Signals](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Signals.html)、[Events In Python](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Events-In-Python.html)。
+**许可证、署名与证据：** GNU GDB / GPLv3+，官方手册 / GNU FDL；[Attach](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Attach.html)、[Signals](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Signals.html)、[Signaling](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Signaling.html)、[Events In Python](https://sourceware.org/gdb/current/onlinedocs/gdb.html/Events-In-Python.html)。
 
 同一诊断复用 runner 的 GNU Binutils `readelf` 与 `objdump`，只读记录实际 gfxstream ELF 的程序头、section、build-id、动态符号及已证 ELF 地址的代码页；版本、字节数与 SHA256 由同 job 原始输出绑定。依据 [readelf 官方手册](https://sourceware.org/binutils/docs/binutils/readelf.html)与 [objdump 官方手册](https://sourceware.org/binutils/docs/binutils/objdump.html)，只保留文本，不上传完整 SDK 或 ELF，不将公共源码符号冒充实际 stripped 库。GNU Binutils 为 GPLv3+ 工具，未复制实现或增加 APP 依赖。
 

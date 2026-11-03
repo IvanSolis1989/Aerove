@@ -129,7 +129,7 @@ def derived_host_evidence(path, emulator_pid, directory):
                 loadedLibrarySha256=actual, emulatorMapsSha256=sha(output), loadedInOwnedEmulator=True)
 
 
-def sigill_gdb_script(pid, ready, fault):
+def sigill_gdb_script(pid, ready, fault, control=None):
     # GDB reads only this live Popen PID; no process search, inferior calls or patching.
     return """set pagination off
 set confirm off
@@ -142,12 +142,14 @@ set follow-fork-mode parent
 set detach-on-fork on
 handle all nostop noprint pass
 handle SIGTRAP nostop noprint pass
+handle SIGINT stop print pass
 handle SIGILL stop print pass
 python
 import gdb, json, os, pathlib, time
 pid = %d
 ready = pathlib.Path(%r)
 fault = pathlib.Path(%r)
+control = %r
 event = [None]
 budget = [1048576]
 captures = 0
@@ -157,6 +159,30 @@ def save(path, value):
     os.replace(temporary, path)
 def stopped(value):
     event[0] = value
+
+def continued(value):
+    if not ready.exists():
+        save(ready, dict(targetPid=pid, gdbPid=os.getpid(), firstResume=True))
+
+def owner_interrupt():
+    if control is None:
+        return False
+    try:
+        request = json.loads(pathlib.Path(control['path']).read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+    if request != dict(token=control['token'], targetPid=pid, gdbPid=os.getpid()):
+        return False
+    # A request file alone cannot authenticate an independently delivered signal.
+    # Linux siginfo must show this debugger generated the inferior interrupt.
+    try:
+        signo = int(gdb.parse_and_eval('$_siginfo.si_signo'))
+        sender = int(gdb.parse_and_eval('$_siginfo._sifields._kill.si_pid'))
+    except (gdb.error, ValueError, TypeError) as error:
+        print("AEROVE_GDB_OWNER_SIGNAL_PARSE_ERROR " + str(error), flush=True)
+        return False
+    print("AEROVE_GDB_OWNER_SIGNAL " + json.dumps(dict(signo=signo, sender=sender, gdbPid=os.getpid())), flush=True)
+    return signo == 2 and sender == os.getpid()
 def emit(command):
     print("AEROVE_GDB_COMMAND " + command, flush=True)
     try:
@@ -169,10 +195,10 @@ def emit(command):
     except gdb.error as error:
         print("AEROVE_GDB_READ_ERROR " + str(error), flush=True)
 gdb.events.stop.connect(stopped)
+gdb.events.cont.connect(continued)
 try:
     gdb.execute("attach " + str(pid), to_string=True)
     assert gdb.selected_inferior().pid == pid
-    save(ready, dict(targetPid=pid, gdbPid=os.getpid()))
     while gdb.selected_inferior().pid:
         event[0] = None
         gdb.execute("continue", to_string=True)
@@ -216,9 +242,15 @@ except KeyboardInterrupt:
     print("AEROVE_GDB_OWNER_INTERRUPT", flush=True)
 finally:
     if gdb.selected_inferior().pid:
+        if owner_interrupt():
+            # Clear only the authenticated owner-control interrupt, never SIGILL.
+            gdb.execute("queue-signal 0")
+            print("AEROVE_GDB_OWNER_CONTROL_CLEARED", flush=True)
         gdb.execute("detach")
+        if control is not None:
+            save(pathlib.Path(control['detached']), dict(targetPid=pid, gdbPid=os.getpid(), detached=True))
 end
-""" % (pid, str(ready), str(fault))
+""" % (pid, str(ready), str(fault), control)
 
 
 class SigillCapture:
@@ -227,6 +259,9 @@ class SigillCapture:
         self.emulator, self.directory, self.receipt = emulator, Path(directory), receipt
         self.child = None
         self.ready, self.fault = self.directory / 'sigill-gdb-ready.json', self.directory / 'sigill-observed.json'
+        self.control = dict(path=str(self.directory / 'gdb-owner-stop.json'),
+                            detached=str(self.directory / 'gdb-owner-detached.json'),
+                            token=os.urandom(24).hex())
         self.deadline = time.monotonic() + 1500
         self.state = dict(diagnosticOnly=True, performanceEvidence=False, accepted=False,
                           targetPid=emulator.pid, commands=[], status='starting')
@@ -250,7 +285,7 @@ class SigillCapture:
                 cpu.append(fields)
         (self.directory / 'host-cpu-flags.json').write_text(json.dumps(cpu, indent=2) + '\n')
         script = self.directory / 'sigill-capture.gdb'
-        script.write_text(sigill_gdb_script(self.emulator.pid, self.ready, self.fault))
+        script.write_text(sigill_gdb_script(self.emulator.pid, self.ready, self.fault, self.control))
         command = ['sudo', '-n', '--', gdb, '-nx', '-nh', '--batch', '-x', str(script)]
         self.state['command'] = command
         with (self.directory / 'sigill-gdb.stdout.log').open('wb') as out, (self.directory / 'sigill-gdb.stderr.log').open('wb') as err:
@@ -266,11 +301,14 @@ class SigillCapture:
                 raise TimeoutError('Owned SIGILL GDB attach did not become ready in 15 seconds')
             time.sleep(.05)
         actual = json.loads(self.ready.read_text())
-        if actual['targetPid'] != self.emulator.pid or not isinstance(actual['gdbPid'], int):
+        if (actual['targetPid'] != self.emulator.pid or not isinstance(actual['gdbPid'], int)
+                or actual.get('firstResume') is not True):
             raise ValueError('GDB attached PID differs from the owned emulator')
         if proc_stat((Path('/proc') / str(self.emulator.pid) / 'stat').read_text())['starttime'] != self.state['targetStarttime']:
             raise ValueError('Owned emulator changed during GDB attach')
-        self.state.update(status='attached', gdbPid=actual['gdbPid'])
+        gdb_stat = proc_stat((Path('/proc') / str(actual['gdbPid']) / 'stat').read_text())
+        self.state.update(status='attached', gdbPid=actual['gdbPid'],
+                          gdbStarttime=gdb_stat['starttime'], firstResume=True)
         self.check()
 
     def check(self):
@@ -300,7 +338,12 @@ class SigillCapture:
                 self.child.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.state['readbackTimeout'] = True
-        for name in ('INT', 'TERM', 'KILL'):
+        if self.child.poll() is None and self.state.get('gdbPid') is not None:
+            request = dict(token=self.control['token'], targetPid=self.emulator.pid, gdbPid=self.state['gdbPid'])
+            temporary = Path(self.control['path']).with_suffix('.tmp')
+            temporary.write_text(json.dumps(request) + '\n')
+            os.replace(temporary, self.control['path'])
+        for name in ('INT', 'KILL'):
             if self.child.poll() is not None:
                 break
             command = ['sudo', '-n', '--', 'kill', '-' + name, '--', '-' + str(self.child.pid)]
@@ -323,12 +366,43 @@ class SigillCapture:
         if self.emulator.poll() is None:
             if not self.state.get('stopRequested') and self.state.get('status') != 'failed':
                 unexpected_dead = True
-            # SIGINT normally detaches via the script's finally. After forced GDB exit,
-            # resume only the original owned group before its existing TERM/KILL cleanup.
-            try:
-                os.killpg(self.emulator.pid, signal.SIGCONT)
-            except ProcessLookupError:
-                pass
+            from beta14_render_profile import proc_stat
+            target = Path('/proc') / str(self.emulator.pid)
+            deadline = time.monotonic() + 5
+            resumed = False
+            # sudo's exit is not the actual tracer detach boundary. Inspect only
+            # this recorded target and every existing thread's tracer status.
+            while self.emulator.poll() is None:
+                stat = proc_stat((target / 'stat').read_text())
+                if stat['starttime'] != self.state['targetStarttime']:
+                    raise RuntimeError('Owned target identity changed during GDB cleanup')
+                try:
+                    statuses = [path.read_text() for path in (target / 'task').glob('*/status')]
+                except FileNotFoundError:
+                    # A thread exited during enumeration; observe the current set.
+                    statuses = []
+                detached = bool(statuses) and all(re.search(r'^TracerPid:\s+0$', value, re.M) for value in statuses)
+                gdb_pid = self.state.get('gdbPid')
+                gdb_stat = Path('/proc') / str(gdb_pid) / 'stat' if gdb_pid else None
+                try:
+                    actual_tracer = proc_stat(gdb_stat.read_text()) if gdb_stat else None
+                except FileNotFoundError:
+                    actual_tracer = None
+                tracer_exited = (actual_tracer is None or actual_tracer['state'] == 'Z' or
+                                 actual_tracer['starttime'] != self.state.get('gdbStarttime'))
+                if detached and tracer_exited:
+                    if not resumed:
+                        os.killpg(self.emulator.pid, signal.SIGCONT)
+                        resumed = True
+                    if stat['state'] not in ('t', 'T'):
+                        self.state.update(tracerDetached=True, actualTracerExited=True, targetResumed=True)
+                        break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Actual GDB detach/owned target resume did not join within 5 seconds')
+                # Predicate-bounded observation, not an elapsed-time success condition.
+                time.sleep(.01)
+            if self.emulator.poll() is not None and not self.fault.exists():
+                raise RuntimeError('Owned target exited while detaching GDB')
         self.state['cleanupClosed'] = True
         if unexpected_dead:
             self.state.update(status='failed', unexpectedExitBeforeCleanup=True)

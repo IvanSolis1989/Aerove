@@ -669,15 +669,28 @@ class SigillCaptureHostTests(unittest.TestCase):
             self.root = Path(self.temp.name)
         self.receipt = {'interruptSignals': [], 'unexpectedEmulatorExit': False,
                         'cleanupRequested': False}
-        self.child = subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.readline()'],
-                                      stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+        self.child = subprocess.Popen([sys.executable, '-u', '-c',
+                                       'import sys\nfor line in sys.stdin:\n'
+                                       ' if line.strip() == \"exit\": break\n'
+                                       ' print(\"alive\", flush=True)\n'],
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=subprocess.DEVNULL, start_new_session=True)
         # LIFO: debugger must detach before the existing owner stops its target.
         self.addCleanup(self.child.stdin.close)
+        self.addCleanup(self.child.stdout.close)
         self.addCleanup(current.stop_owned, self.child)
         self.capture = current.SigillCapture(self.child, self.root, self.receipt)
         self.addCleanup(current.write_owner_receipt, self.root / 'HOST-OWNER.json', self.receipt)
         self.addCleanup(self.capture.close)
+
+    def assert_target_executes(self):
+        import selectors
+        self.child.stdin.write(b'probe\n')
+        self.child.stdin.flush()
+        with selectors.DefaultSelector() as ready:
+            ready.register(self.child.stdout, selectors.EVENT_READ)
+            self.assertTrue(ready.select(timeout=5), 'Detached owned child did not execute its pipe acknowledgment')
+            self.assertEqual(b'alive\n', self.child.stdout.readline())
 
     def logs(self):
         return '\n'.join(path.read_text(errors='replace') for path in self.root.glob('sigill-gdb.*.log'))
@@ -724,6 +737,7 @@ class SigillCaptureHostTests(unittest.TestCase):
             current.check_cancelled(self.receipt)
         self.capture.close()  # Cleanup deliberately ignores cancellation while detaching.
         self.assertIsNotNone(self.capture.child.poll(), self.logs())
+        self.assert_target_executes()
         self.assertIsNone(self.child.poll())
         from beta14_render_profile import proc_stat
         self.assertNotIn(proc_stat((Path('/proc') / str(self.child.pid) / 'stat').read_text())['state'], ('t', 'T'))
@@ -735,6 +749,27 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertEqual([signal.SIGTERM], self.receipt['interruptSignals'])
         for row in self.capture.state['commands']:
             self.assertEqual('-' + str(self.capture.child.pid), row['command'][-1])
+
+    def test_external_sigint_is_not_cleared_as_owner_control(self):
+        import signal
+        self.capture.start()
+        self.assert_target_executes()
+        # A valid request must not authenticate another process's signal.
+        request = dict(token=self.capture.control['token'], targetPid=self.child.pid,
+                       gdbPid=self.capture.state['gdbPid'])
+        Path(self.capture.control['path']).write_text(json.dumps(request) + '\n')
+        self.child.send_signal(signal.SIGINT)
+        self.assertEqual(-signal.SIGINT, self.child.wait(timeout=15), self.logs())
+        self.capture.close()
+        self.assertNotIn('AEROVE_GDB_OWNER_CONTROL_CLEARED', self.logs())
+        observed = [json.loads(line.removeprefix('AEROVE_GDB_OWNER_SIGNAL '))
+                    for line in self.logs().splitlines()
+                    if line.startswith('AEROVE_GDB_OWNER_SIGNAL ')]
+        self.assertEqual(1, len(observed), self.logs())
+        self.assertEqual(dict(signo=signal.SIGINT, sender=os.getpid(),
+                              gdbPid=self.capture.state['gdbPid']), observed[0])
+        self.assertNotEqual(observed[0]['sender'], observed[0]['gdbPid'])
+        self.assertFalse(self.capture.state['accepted'])
 
     def test_failed_attach_is_terminal_and_does_not_leave_a_stopped_target(self):
         # A real failed sudo child exercises ready/exit handling without ptracing anything.
@@ -763,6 +798,7 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertTrue(self.capture.state['unexpectedExitBeforeCleanup'])
         self.assertEqual('failed', self.capture.state['status'])
         self.capture.close()  # Already-cleaned retry must not replace the first error.
+        self.assert_target_executes()
         from beta14_render_profile import proc_stat
         self.assertNotIn(proc_stat((Path('/proc') / str(self.child.pid) / 'stat').read_text())['state'], ('t', 'T'))
         # main records the close exception in cleanupErrors and retains failure through
