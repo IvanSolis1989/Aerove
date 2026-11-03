@@ -155,6 +155,8 @@ jobs:
       run: sdkmanager --install 'build-tools;37.0.0' --channel=0
     - name: Existing API33 emulator environment with unchanged configuration
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      env:
+        RUNTIME_TARGET: ${{ inputs.runtime_target }}
       run: |
         set -euo pipefail
         sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/matrix/sdk-install"
@@ -188,6 +190,20 @@ jobs:
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt" 2>&1
         grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt"
+        if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
+          gfx="$ANDROID_HOME/emulator/lib64/libgfxstream_backend.so"
+          gfx_evidence="$RUNNER_TEMP/lite-diagnostics/gfxstream-elf"
+          mkdir -p "$gfx_evidence"
+          readelf --version > "$gfx_evidence/readelf-version.txt"
+          stat -c '%s' "$gfx" > "$gfx_evidence/bytes.txt"
+          sha256sum "$gfx" > "$gfx_evidence/sha256.txt"
+          timeout --signal=TERM --kill-after=2s 10s \
+            readelf --wide --program-headers --section-headers --notes "$gfx" \
+            > "$gfx_evidence/layout-and-build-id.txt" 2> "$gfx_evidence/layout.stderr.txt"
+          timeout --signal=TERM --kill-after=2s 10s \
+            readelf --wide --dyn-syms "$gfx" \
+            > "$gfx_evidence/dynamic-symbols.txt" 2> "$gfx_evidence/symbols.stderr.txt"
+        fi
     - name: Verify original run84 runtime and execute matrix with owned emulator
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:

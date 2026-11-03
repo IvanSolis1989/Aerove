@@ -136,6 +136,19 @@ try:
         print("AEROVE_OWNED_SIGILL_CAPTURE pid=" + str(pid), flush=True)
         for command in ("p $_siginfo", "info registers rip rsp rbp eflags", "x/16bx $pc", "x/8i $pc", "info symbol $pc", "bt 24", "info sharedlibrary", "info proc mappings"):
             emit(command)
+        try:
+            frame0 = gdb.selected_frame()
+            trap_pc = frame0.pc()
+            emit("x/256bx " + hex(trap_pc - 192))
+            emit("disassemble /r " + hex(trap_pc - 192) + "," + hex(trap_pc + 64))
+            caller = frame0.older()
+            if caller is not None:
+                caller_pc = caller.pc()
+                emit("info symbol " + hex(caller_pc))
+                emit("x/160bx " + hex(caller_pc - 128))
+                emit("disassemble /r " + hex(caller_pc - 128) + "," + hex(caller_pc + 32))
+        except gdb.error as error:
+            print("AEROVE_GDB_READ_ERROR " + str(error), flush=True)
         fault_thread = gdb.selected_thread()
         threads = [thread for thread in gdb.selected_inferior().threads() if thread != fault_thread]
         for thread in threads[:63]:
