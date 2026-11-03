@@ -1065,6 +1065,114 @@ class OriginalApk74RecheckTest(unittest.TestCase):
             self.module._original_payloads(fixture.dist, fixture.generated, self.run_id)
 
 
+class OriginalApk124RecheckTest(unittest.TestCase):
+    def setUp(self):
+        self.fixture = OriginalApkRecheckTest()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.module, self.root = self.fixture.module, self.fixture.root
+        self.run_id = 41657833826
+        self.fixed_policy = copy.deepcopy(self.module.RECHECK_POLICY_124)
+        self.policy = copy.deepcopy(self.fixed_policy)
+        self.test = self.root / self.policy['test']
+        self.test.parent.mkdir(parents=True, exist_ok=True)
+        self.baseline = self.fixture.workflow.read_text(encoding='utf-8').replace(
+            'Immutable original APK run to recheck (40488925368 only)', self.module.RECHECK_DESCRIPTION)
+        self.fixture.workflow.write_text(self.baseline, encoding='utf-8')
+        self.test.write_text('preserved listener and mode assertions\n', encoding='utf-8')
+        self.fixture.commit()
+        self.original = self.fixture.git('rev-parse', 'HEAD')
+        before = self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')
+        self.fixture.workflow.write_text(self.baseline.replace(
+            self.module.RECHECK_DESCRIPTION, self.module.RECHECK_DESCRIPTION_124), encoding='utf-8')
+        self.test.write_text('preserved listener and mode assertions\nscoped backend dependency\n', encoding='utf-8')
+        self.fixture.commit()
+        self.harness = self.fixture.git('rev-parse', 'HEAD')
+        self.policy.update(source=self.original, tree=self.fixture.git('rev-parse', self.original + '^{tree}'),
+            test_blobs=(before, self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')),
+            workflow_blob=self.fixture.git('rev-parse', f'HEAD:{self.module.WORKFLOW}'))
+        patch.object(self.module, 'RECHECK_POLICY_124', self.policy).start()
+        self.run = dict(id=self.run_id, run_number=124, run_attempt=1, head_sha=self.original,
+            path=self.module.WORKFLOW, event='workflow_dispatch', status='completed', conclusion='failure',
+            repository=dict(full_name=REPOSITORY), head_repository=dict(full_name=REPOSITORY))
+        self.producers = [dict(**pin, name=name, run_id=self.run_id, head_sha=self.original,
+            run_attempt=1, status='completed', conclusion='success') for name, pin in self.policy['producers'].items()]
+        self.artifacts = [dict(id=pin[0], name=name, size_in_bytes=pin[1], digest=pin[2], expired=False,
+            created_at=self.policy['created_at'][name], workflow_run=dict(id=self.run_id, head_sha=self.original))
+            for name, pin in self.policy['artifacts'].items()]
+
+    def inputs(self):
+        return self.module.recheck_inputs(self.root, self.fixture.git('rev-parse', 'HEAD'), self.run_id)
+
+    def original_build(self):
+        with patch.object(self.module, '_api_object', return_value=self.run), \
+                patch.object(self.module, '_api_items', side_effect=[self.producers, self.artifacts]):
+            return self.module.original_recheck_build(REPOSITORY, self.run_id)
+
+    def test_fixed124_is_separate_from_legacy_policies_and_unknown_runs(self):
+        self.assertEqual(self.fixed_policy['source'], '7c3d7e62dc250abf567ab69fa8a6b7feef9aa561')
+        self.assertEqual(self.fixed_policy['test'], 'apps/aerove/test/providers/setup_action_test.dart')
+        self.assertEqual(self.fixed_policy['test_blobs'],
+            ('486d971944ca88b18e8ec2220aa23ab355603eba', '5c38127e76ef7b524ec96bc5954b1cf9b3260e78'))
+        self.assertEqual(self.fixed_policy['tree'], '42e85a0220405f110f319b01718a1863266f0cab')
+        self.assertEqual(self.fixed_policy['version'], '0.12.0-beta.2+2026102324')
+        self.assertEqual(self.fixed_policy['signer'], '0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60')
+        self.assertEqual(self.fixed_policy['workflow_blob'], 'c78b35a6767b674934271da8d1ab6261fae92951')
+        self.assertEqual(self.fixed_policy['payloads'], {
+            'Aerove-android-arm64.apk': (66670636, 'd785230f7718b468fd2d04188b350b931da189f454a2ed3f1cb66845c6d12571'),
+            'BUILD_INFO.json': (650, 'a8c0bdec3480a3ff66b737dcda9110f81b247830bad0e9d167a94483382536d7'),
+            'SHA256SUMS': (173, 'dd39829cb70f47cd378883abd39e7a5ebcb0a28de7c6976a47a5d77352643ff6'),
+            'xclash-generated.patch': (0, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+            'xclash-verified-tree.txt': (41, '1a96d8401fa921ac0e18a5d9ef0da6566e954a2cabffda6e3e5da6ea8a34038b'),
+        })
+        self.assertEqual(self.fixed_policy['artifacts']['Aerove-android-arm64'],
+            (13240503684, 64886669, 'sha256:ea3cbdf0f546fd4cb55685e9ae7ca0a148c416472d1d42273f634d80df05f87d'))
+        self.assertEqual(self.fixed_policy['artifacts']['xclash-generated'],
+            (13240159145, 341, 'sha256:8a03b7505d074097c03a919b85f42a41298f3ffd6bbb630e979264c91b231532'))
+        self.assertNotEqual(self.module._recheck_policy(self.module.RECHECK_RUN)['test'], self.policy['test'])
+        self.assertEqual(self.module._recheck_policy(self.module.RECHECK_RUN_74)['run_number'], 74)
+        with patch.object(self.module, '_api_object') as api:
+            for run in (41641815730, 41616785628, 41657833827):
+                with self.subTest(run=run), self.assertRaises(self.module.ArtifactError):
+                    self.module.recheck_plan(root=self.root, repository=REPOSITORY, source=self.harness, build_run=run)
+            api.assert_not_called()
+
+    def test_only_exact_fixture_fix_and_description_are_admitted(self):
+        self.assertEqual({row['path'] for row in self.inputs()}, {self.policy['test'], self.module.WORKFLOW})
+        accepted = self.fixture.workflow.read_text(encoding='utf-8')
+        for old, new in [('preserved-apk', 'changed-apk'), ('preserved-verify', 'bypass-verify'),
+                         ('name: fixture', 'name: changed'), ('fail-fast: false', 'fail-fast: true')]:
+            with self.subTest(workflow=old), self.assertRaises(self.module.ArtifactError):
+                self.module._workflow_inputs_unchanged(self.baseline, accepted.replace(old, new), build_run=self.run_id)
+        for path in (self.policy['test'], 'apps/aerove/lib/main.dart', 'packages/aerove_client/lib/common/task.dart',
+                     'apps/aerove/pubspec.lock', 'apps/aerove/assets/logo.png', 'apps/aerove/test/unreviewed_test.dart'):
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('unreviewed delta\n', encoding='utf-8')
+            self.fixture.commit()
+            with self.subTest(path=path), self.assertRaises(self.module.ArtifactError):
+                self.inputs()
+            self.fixture.git('reset', '--hard', self.harness)
+
+    def test_original_failure_and_exact_successful_producers_remain_required(self):
+        self.assertEqual(self.original_build()['build_conclusion'], 'failure')
+        for key, value in [('conclusion', 'success'), ('run_attempt', 2), ('head_sha', 'a' * 40),
+                           ('status', 'in_progress'), ('id', 41641815730)]:
+            with patch.dict(self.run, {key: value}), self.subTest(key=key), self.assertRaises(self.module.ArtifactError):
+                self.original_build()
+        for row, changes in [(self.producers[0], dict(id=1)), (self.producers[1], dict(conclusion='failure')),
+                             (self.artifacts[0], dict(created_at='2026-11-03T15:03:21Z')),
+                             (self.artifacts[0], dict(digest='sha256:' + 'a' * 64)),
+                             (self.artifacts[1], dict(workflow_run=dict(id=41641815730, head_sha=self.original)))]:
+            with patch.dict(row, changes), self.subTest(changes=changes), self.assertRaises(self.module.ArtifactError):
+                self.original_build()
+
+    test_all_verification_jobs_required_and_apk_must_be_skipped = (
+        OriginalApk74RecheckTest.test_promotion_request_and_all_verification_jobs_must_succeed_without_building)
+    test_explicit_selection_requires_unchanged_recheck_receipt = (
+        OriginalApk74RecheckTest.test_explicit_selection_requires_its_own_unchanged_receipt)
+
+
 class OriginalSignerOutputTest(unittest.TestCase):
     def setUp(self):
         self.module = importlib.import_module('tool.aerove_artifact')
