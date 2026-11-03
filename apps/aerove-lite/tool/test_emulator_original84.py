@@ -88,7 +88,7 @@ class Original84Tests(unittest.TestCase):
         self.proof['packages']['app-release-androidTest.apk'].update(version='0.1.0-beta.26',version_code=26,version_attributes_declared=True)
         self.write()
         with mock.patch.dict(os.environ, {'AEROVE_ORIGINAL_RUNTIME_PROOF':str(self.path)},clear=True), \
-                mock.patch.object(original,'flutter201_payload',return_value=derived):
+                mock.patch.object(original,'flutter_payload',return_value=derived):
             result = original.verify_original_runtime(self.runtime)
             self.assertEqual(result['identity'],pin['identity'])
             self.assertEqual(result['harnessIdentity'],self.harness)
@@ -98,6 +98,31 @@ class Original84Tests(unittest.TestCase):
             self.write()
             with self.assertRaisesRegex(ValueError,'signer proof'):
                 original.verify_original_runtime(self.runtime)
+
+    def test_flutter208_fixed_source_artifact_and_successful_named_producer_before_fetch(self):
+        pin = original.runtime_spec('lite208-flutter-ui')
+        self.assertEqual(pin['identity'], dict(sourceRevision='dd63b430693cb8dd0f6b4661dd3af5ecfec590bf',
+            sourceTree='1caa377bff8d80767db07f09cbae16289c2abf7e', workflowRun='41616785628',runNumber=208,runAttempt=1))
+        self.assertEqual((pin['artifact'],pin['zipBytes'],pin['producerJob']), (13223733344,59036356,125863869775))
+        row = dict(id=pin['artifact'],name=pin['artifactName'],expired=False,digest='sha256:'+pin['zipSha256'],
+                   size_in_bytes=pin['zipBytes'],workflow_run=pin['workflowRun'])
+        run = dict(id=41616785628,head_sha=pin['identity']['sourceRevision'],run_number=208,run_attempt=1,
+                   status='completed',conclusion='failure')
+        job = dict(id=125863869775,run_id=41616785628,head_sha=pin['identity']['sourceRevision'],run_attempt=1,
+                   name='build (x86_64) / package',status='completed',conclusion='success')
+        def api(route):
+            return job if '/jobs/' in route else row if '/artifacts/' in route else run
+        with mock.patch.object(original.release,'_gh_json',side_effect=api), \
+                mock.patch.object(original.artifacts,'fetch',side_effect=RuntimeError('safe fixed-fetch boundary')) as fetch:
+            for key,value in (('name','build (arm64-v8a) / package'),('head_sha','a'*40),('run_attempt',2),('conclusion','failure')):
+                old=job[key]; job[key]=value
+                with self.subTest(changed=key), self.assertRaisesRegex(ValueError,'producer'):
+                    original.prepare(self.root/'fixed208',self.root/'evidence208',target='lite208-flutter-ui')
+                job[key]=old
+            fetch.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError,'safe fixed-fetch'):
+                original.prepare(self.root/'fixed208',self.root/'evidence208',target='lite208-flutter-ui')
+            fetch.assert_called_once_with(pin['artifactName'],self.root/'fixed208',pin['identity'],runtime=True,original208=True)
 
     def test_legacy_native_driver_still_requires_boolean_false_not_zero(self):
         self.proof['packages']['app-release-androidTest.apk']['version_attributes_declared']=0
@@ -151,14 +176,14 @@ class Original84Tests(unittest.TestCase):
             return props if command[1]=='show' else pin['identity']['sourceTree'] if command[2]=='HEAD^{tree}' else pin['identity']['sourceRevision']
         with mock.patch.object(original,'LITE201_FLUTTER_UI',pin),mock.patch.object(original,'ORIGINAL201_SOURCE',source_root), \
                 mock.patch.object(original.subprocess,'check_output',side_effect=git):
-            result=original.flutter201_payload(runtime)
+            result=original.flutter_payload(runtime)
             self.assertEqual(result['apks']['app-release.apk'],info['apk_sha256'])
             self.assertEqual(result['product']['versionCode'],'26')
             version.write_bytes(props.replace(b'versionCode=26',b'versionCode=27'))
-            with self.assertRaisesRegex(ValueError,'original Git bytes'):original.flutter201_payload(runtime)
+            with self.assertRaisesRegex(ValueError,'original Git bytes'):original.flutter_payload(runtime)
             version.write_bytes(props)
             (runtime/'apks/app-release.apk').write_bytes(b'changed original bytes')
-            with self.assertRaises(original.release.product_source.ProjectionError):original.flutter201_payload(runtime)
+            with self.assertRaises(original.release.product_source.ProjectionError):original.flutter_payload(runtime)
 
     def test_flutter201_actual_versioned_driver_readback_does_not_relax_legacy_null_versions(self):
         # Original runtime artifact 13172267167, archive SHA 025cfb5b...45eca3.
@@ -171,7 +196,7 @@ class Original84Tests(unittest.TestCase):
         def inspect(target, text=badging):
             def run(command,**kwargs):
                 return subprocess.CompletedProcess(command,0,xml if 'xmltree' in command else signature if 'verify' in command else text,'')
-            with mock.patch.object(original,'flutter201_payload',return_value=derived), \
+            with mock.patch.object(original,'flutter_payload',return_value=derived), \
                     mock.patch.dict(os.environ,ANDROID_HOME=str(self.root)), \
                     mock.patch.object(original.subprocess,'run',side_effect=run), \
                     mock.patch.object(original,'verify_identity',return_value={}):

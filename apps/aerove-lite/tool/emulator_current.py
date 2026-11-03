@@ -116,12 +116,16 @@ def guard_flutter_phase(phase, sample=None, runtime=None):
     if (phase == 'flutter-ui' and sample is None and neutral
             and not any(os.environ.get(key) for key in conflicts)
             and os.environ.get('AEROVE_BETA14_PROFILE') != '1'):
-        from emulator_original84 import LITE201_FLUTTER_UI
+        from emulator_original84 import LITE201_FLUTTER_UI, LITE208_FLUTTER_UI
         from lite_release import _json
         try:
             proof = _json(neutral)
-            required = dict(runtimeTarget='lite201-flutter-ui', diagnosticOriginalRuntime=True,
-                originalAppIdentity=LITE201_FLUTTER_UI['identity'], harnessIdentity=artifacts.identity(),
+            target = proof.get('runtimeTarget')
+            pin = {'lite201-flutter-ui': LITE201_FLUTTER_UI, 'lite208-flutter-ui': LITE208_FLUTTER_UI}.get(target)
+            if pin is None:
+                raise ValueError('Unknown fixed Flutter UI original')
+            required = dict(runtimeTarget=target, diagnosticOriginalRuntime=True,
+                originalAppIdentity=pin['identity'], harnessIdentity=artifacts.identity(),
                 diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
             if (all(proof.get(key) == value for key,value in required.items())
                     and all(type(proof.get(key)) is bool for key in ('diagnosticOriginalRuntime', 'diagnosticOnly',
@@ -198,8 +202,8 @@ def main():
         raise ValueError('Current owner requires fresh, unmixed renderer proof')
     guard_flutter_phase(args.phase, args.sample)
     current = verify_current_runtime(args.runtime_directory)
-    if current.get('runtimeTarget') == 'lite201-flutter-ui' and args.phase != 'flutter-ui':
-        raise ValueError('Fixed Flutter201 diagnosis permits only the representative flutter-ui phase')
+    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') and args.phase != 'flutter-ui':
+        raise ValueError('Fixed original Flutter diagnosis permits only the representative flutter-ui phase')
     sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
     flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase in ('flutter-ui', 'flutter-platform', 'flutter-full') else None
     if args.phase in ('matrix', 'remaining') and not current.get('runtimeTarget'):
@@ -210,7 +214,7 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
-    if current.get('runtimeTarget') == 'lite201-flutter-ui':
+    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui'):
         receipt.update(originalAppIdentity=current['originalAppIdentity'], harnessIdentity=current['harnessIdentity'],
                        diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
     if args.phase == 'flutter-ui':

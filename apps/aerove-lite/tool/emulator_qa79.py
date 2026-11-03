@@ -42,7 +42,12 @@ def renderer_evidence(output):
 
 def crash_database():
     import pwd
-    return Path('/tmp') / ('android-' + pwd.getpwuid(os.getuid()).pw_name) / 'emu-crash-37.2.12.db'
+    sdk = Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ['ANDROID_HOME'])
+    properties = (sdk / 'emulator/source.properties').read_text()
+    revision = re.search(r'(?m)^Pkg\.Revision\s*=\s*(\d+\.\d+\.\d+)\s*$', properties)
+    if revision is None:
+        raise ValueError('Installed SDK metadata has no emulator revision')
+    return Path('/tmp') / ('android-' + pwd.getpwuid(os.getuid()).pw_name) / ('emu-crash-' + revision[1] + '.db')
 
 
 def crash_inventory():

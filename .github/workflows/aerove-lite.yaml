@@ -75,7 +75,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite125_test_only:
@@ -118,6 +118,17 @@ jobs:
     with:
       exclusive_mode: true
       runtime_target: beta14
+  diagnostic_lite208_flutter_ui:
+    name: Lite208 original Flutter representative UI (diagnostic only)
+    needs: diagnostic_guard
+    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite208-flutter-ui') }}
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/aerove-lite-qa84.yaml
+    with:
+      exclusive_mode: true
+      runtime_target: lite208-flutter-ui
   diagnostic_lite201_flutter_ui:
     name: Lite201 original Flutter representative UI (diagnostic only)
     needs: diagnostic_guard
@@ -1257,10 +1268,10 @@ jobs:
         avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
         printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/flutter-ui/avd-config.ini"
-        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip'
-        emulator_archive_sha256='b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1'
-        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16428233.XXXXXX")"
-        emulator_archive="$emulator_stage/emulator-linux_x64-16428233.zip"
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
+        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
         printf 'url=%s\nsize=349654171\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
         curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
           --output "$emulator_archive" "$emulator_archive_url" \
@@ -1276,7 +1287,7 @@ jobs:
         fi
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
-        grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
+        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
     - name: Inspect the same production APK through its real Flutter launcher
       run: python3 apps/aerove-lite/tool/emulator_current.py flutter-ui --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
     - name: Preserve representative Flutter UI evidence without asserting full acceptance
@@ -1396,10 +1407,10 @@ jobs:
         avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
         printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
-        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip'
-        emulator_archive_sha256='b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1'
-        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16428233.XXXXXX")"
-        emulator_archive="$emulator_stage/emulator-linux_x64-16428233.zip"
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
+        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
         printf 'url=%s\nsize=349654171\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
         curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
           --output "$emulator_archive" "$emulator_archive_url" \
@@ -1415,7 +1426,7 @@ jobs:
         fi
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
-        grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
+        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
     - name: Real API 33 ${{ matrix.phase }} verification
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
@@ -1502,7 +1513,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

@@ -34,6 +34,30 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(ci.os.environ['GITHUB_SHA'],'f'*40)
             self.assertEqual(ci.os.environ['GITHUB_RUN_ID'],'900')
 
+    def test_only_fixed208_archive_and_unmixed_target_can_reach_download(self):
+        import emulator_original84 as original
+        import lite_release
+        pin = original.LITE208_FLUTTER_UI
+        row = dict(id=13223733344, name='AEROVE-Lite-runtime-contract-attempt-1', expired=False,
+            digest='sha256:ed79d9defd6874504e60f33939238e2bd79a28bb87b090dce043d2c953f91a76',
+            size_in_bytes=59036356, workflow_run=copy.deepcopy(pin['workflowRun']))
+        with tempfile.TemporaryDirectory() as temp, \
+                mock.patch.dict(ci.os.environ, GITHUB_REPOSITORY='IvanSolis1989/Aerove',GITHUB_SHA='f'*40,GITHUB_RUN_ID='900'), \
+                mock.patch.object(ci,'_gh_json',return_value={'artifacts':[row]}), \
+                mock.patch.object(lite_release,'_gh_binary',side_effect=RuntimeError('safe pinned download boundary')) as download:
+            for key,value in (('id',13172267167), ('digest','sha256:'+'a'*64), ('size_in_bytes',59034507)):
+                old=row[key]; row[key]=value
+                with self.subTest(changed=key), self.assertRaises(ci.PromotionError):
+                    ci.fetch(pin['artifactName'],Path(temp)/'runtime',pin['identity'],runtime=True,original208=True)
+                row[key]=old
+            with self.assertRaises(ci.PromotionError):
+                ci.fetch(pin['artifactName'],Path(temp)/'runtime',pin['identity'],runtime=True,original201=True,original208=True)
+            download.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError,'safe pinned download'):
+                ci.fetch(pin['artifactName'],Path(temp)/'runtime',pin['identity'],runtime=True,original208=True)
+            self.assertEqual(ci.os.environ['GITHUB_SHA'],'f'*40)
+            self.assertEqual(ci.os.environ['GITHUB_RUN_ID'],'900')
+
     def test_actual_file_roundtrip_rejects_changed_content_identity_and_extras(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);(root/'lib.so').write_bytes(b'actual fixture ELF bytes')

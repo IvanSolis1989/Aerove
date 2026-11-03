@@ -25,7 +25,7 @@ permissions:
   actions: read
 jobs:
   android-qa:
-    name: ${{ inputs.runtime_target == 'lite201-flutter-ui' && 'original run201 Flutter representative UI (diagnostic only)' || inputs.runtime_target == 'lite158-frame-sample' && 'original run158 single frame trace (diagnostic only)' || inputs.runtime_target == 'lite141-prebuilt-shards' && format('original run141 remaining shard {0}/8', inputs.shard_index) || inputs.runtime_target == 'beta14' && 'diagnostic original run107 beta14 profile (matrix)' || inputs.runtime_target == 'lite94' && 'diagnostic original run94 (matrix)' || 'original run84 (matrix)' }}
+    name: ${{ inputs.runtime_target == 'lite208-flutter-ui' && 'original run208 Flutter representative UI (diagnostic only)' || inputs.runtime_target == 'lite201-flutter-ui' && 'original run201 Flutter representative UI (diagnostic only)' || inputs.runtime_target == 'lite158-frame-sample' && 'original run158 single frame trace (diagnostic only)' || inputs.runtime_target == 'lite141-prebuilt-shards' && format('original run141 remaining shard {0}/8', inputs.shard_index) || inputs.runtime_target == 'beta14' && 'diagnostic original run107 beta14 profile (matrix)' || inputs.runtime_target == 'lite94' && 'diagnostic original run94 (matrix)' || 'original run84 (matrix)' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -42,7 +42,7 @@ jobs:
         SAMPLE: ${{ inputs.sample }}
       run: |
         test "$EXCLUSIVE" = true
-        case "$RUNTIME_TARGET" in original84|lite94|beta14|lite141-prebuilt-shards|lite158-frame-sample|lite201-flutter-ui) ;; *) echo 'Unknown immutable runtime target' >&2; exit 2 ;; esac
+        case "$RUNTIME_TARGET" in original84|lite94|beta14|lite141-prebuilt-shards|lite158-frame-sample|lite201-flutter-ui|lite208-flutter-ui) ;; *) echo 'Unknown immutable runtime target' >&2; exit 2 ;; esac
         if [[ "$RUNTIME_TARGET" == lite158-frame-sample ]]; then
           [[ "$SAMPLE" == solid ]] || { echo 'Lite158 requires its one fixed solid source-frame sample.' >&2; exit 2; }
         else
@@ -65,8 +65,17 @@ jobs:
         persist-credentials: false
         sparse-checkout: apps/aerove-lite/version.properties
         sparse-checkout-cone-mode: false
-    - name: Verify fixed Flutter201 admission with canonical Linux fixture bytes
-      if: ${{ inputs.runtime_target == 'lite201-flutter-ui' }}
+    - name: Read fixed original Flutter208 product identity without changing harness identity
+      if: ${{ inputs.runtime_target == 'lite208-flutter-ui' }}
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        ref: dd63b430693cb8dd0f6b4661dd3af5ecfec590bf
+        path: .ci-original-lite208-source
+        persist-credentials: false
+        sparse-checkout: apps/aerove-lite/version.properties
+        sparse-checkout-cone-mode: false
+    - name: Verify fixed original Flutter admission with canonical Linux fixture bytes
+      if: ${{ inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui' }}
       working-directory: apps/aerove-lite/tool
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: python3 -B -m unittest -v test_emulator_original84 test_emulator_current test_ci_artifacts test_prebuilt_android_runtime test_flutter_android_qa test_verify_apk test_android_acceptance
@@ -115,8 +124,8 @@ jobs:
         packages: platform-tools
         log-accepted-android-sdk-licenses: false
         cmdline-tools-version: '16111833'
-    - name: Flutter201 original production APK inspection tools
-      if: ${{ inputs.runtime_target == 'lite201-flutter-ui' }}
+    - name: Fixed original Flutter production APK inspection tools
+      if: ${{ inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui' }}
       run: sdkmanager --install 'build-tools;37.0.0' --channel=0
     - name: Existing API33 emulator environment with unchanged configuration
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
@@ -133,10 +142,10 @@ jobs:
         avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
         printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/matrix/avd-config.ini"
-        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16428233.zip'
-        emulator_archive_sha256='b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1'
-        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16428233.XXXXXX")"
-        emulator_archive="$emulator_stage/emulator-linux_x64-16428233.zip"
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
+        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
         printf 'url=%s\nsize=349654171\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
         curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
           --output "$emulator_archive" "$emulator_archive_url" \
@@ -152,7 +161,7 @@ jobs:
         fi
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt" 2>&1
-        grep -E '37\.2\.12\.0.*16428233' "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt"
+        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt"
     - name: Verify original run84 runtime and execute matrix with owned emulator
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
@@ -161,7 +170,9 @@ jobs:
         SHARD_INDEX: ${{ inputs.shard_index }}
         ORIGINAL_SAMPLE: ${{ inputs.sample }}
       run: |
-        if [[ "$RUNTIME_TARGET" == lite201-flutter-ui ]]; then
+        if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
+          python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite208-original-flutter-runtime"
+        elif [[ "$RUNTIME_TARGET" == lite201-flutter-ui ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite201-original-flutter-runtime"
         elif [[ "$RUNTIME_TARGET" == lite158-frame-sample ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --sample "$ORIGINAL_SAMPLE" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
@@ -174,6 +185,6 @@ jobs:
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: ${{ inputs.runtime_target == 'lite201-flutter-ui' && format('AEROVE-Lite-original201-flutter-ui-attempt-{0}', github.run_attempt) || inputs.runtime_target == 'lite158-frame-sample' && format('AEROVE-Lite-original158-frame-sample-attempt-{0}', github.run_attempt) || inputs.runtime_target == 'lite141-prebuilt-shards' && format('AEROVE-Lite-original141-shard-{0}-of-8-attempt-{1}', inputs.shard_index, github.run_attempt) || inputs.runtime_target == 'beta14' && format('AEROVE-Lite-beta14-profile-matrix-{0}', github.run_attempt) || inputs.runtime_target == 'lite94' && format('AEROVE-Lite-diagnostic94-matrix-{0}', github.run_attempt) || format('AEROVE-Lite-QA84-matrix-{0}', github.run_attempt) }}
-        path: ${{ (inputs.runtime_target == 'lite141-prebuilt-shards' || inputs.runtime_target == 'lite158-frame-sample' || inputs.runtime_target == 'lite201-flutter-ui') && format('{0}/lite-diagnostics/', runner.temp) || format('{0}/lite-diagnostics/matrix/', runner.temp) }}
+        name: ${{ inputs.runtime_target == 'lite208-flutter-ui' && format('AEROVE-Lite-original208-flutter-ui-attempt-{0}', github.run_attempt) || inputs.runtime_target == 'lite201-flutter-ui' && format('AEROVE-Lite-original201-flutter-ui-attempt-{0}', github.run_attempt) || inputs.runtime_target == 'lite158-frame-sample' && format('AEROVE-Lite-original158-frame-sample-attempt-{0}', github.run_attempt) || inputs.runtime_target == 'lite141-prebuilt-shards' && format('AEROVE-Lite-original141-shard-{0}-of-8-attempt-{1}', inputs.shard_index, github.run_attempt) || inputs.runtime_target == 'beta14' && format('AEROVE-Lite-beta14-profile-matrix-{0}', github.run_attempt) || inputs.runtime_target == 'lite94' && format('AEROVE-Lite-diagnostic94-matrix-{0}', github.run_attempt) || format('AEROVE-Lite-QA84-matrix-{0}', github.run_attempt) }}
+        path: ${{ (inputs.runtime_target == 'lite141-prebuilt-shards' || inputs.runtime_target == 'lite158-frame-sample' || inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui') && format('{0}/lite-diagnostics/', runner.temp) || format('{0}/lite-diagnostics/matrix/', runner.temp) }}
         if-no-files-found: error

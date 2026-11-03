@@ -925,7 +925,7 @@ Lite 端口释放探针另只读核对 `1.54.0` / tag `tokio-1.54.0` / commit [`
 
 **用途与采用方式：** Lite CI 在 Android emulator 上运行 API 33 应用/仪器验收。按固定 SHA 引用。
 
-当前 Flutter Android 环境另参考该固定提交的 [SDK installer](https://github.com/ReactiveCircus/android-emulator-runner/blob/a421e43855164a8197daf9d8d40fe71c6996bb0d/src/sdk-installer.ts#L49-L69)，在其他 SDK 组件安装后整体安装固定 emulator build，保留现有 AVD 与 renderer。Google [官方历史归档](https://developer.android.com/studio/emulator_archive)的 37.2.12 Linux build `16428233` 为 `349654171` 字节、SHA256 `b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1`；安装核验原 archive 与实际二进制版本，不改写 `package.xml`。仅参考该固定归档安装方法，不复制 action 的其他运行策略或引入新依赖。
+当前 Flutter Android 环境另参考该固定提交的 [SDK installer](https://github.com/ReactiveCircus/android-emulator-runner/blob/a421e43855164a8197daf9d8d40fe71c6996bb0d/src/sdk-installer.ts#L49-L69)，在其他 SDK 组件安装后整体安装固定 emulator build，保留现有 AVD 与 renderer。Google [官方历史归档](https://developer.android.com/studio/emulator_archive)的 37.2.13 Linux build `16740729` 为 `349658551` 字节、SHA256 `cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd`；[官方发行说明](https://developer.android.com/studio/releases/emulator)记录其 GLES 宿主资源释放修复。原 run208 使用的 37.2.12/build16428233 SIGILL 终态保留，补丁是否消除该退出仍须同一原包实际复验；不把发行说明当作本项目已修复证据。安装核验原 archive 与实际二进制版本，不改写 `package.xml`，不改变 API33、SwANGLE、分辨率或画质。仅参考该固定归档安装方法，不复制 action 的其他运行策略或引入新依赖。
 
 **许可证、署名与证据：** Apache-2.0；[固定提交 LICENSE](https://github.com/ReactiveCircus/android-emulator-runner/blob/a421e43855164a8197daf9d8d40fe71c6996bb0d/LICENSE)
 

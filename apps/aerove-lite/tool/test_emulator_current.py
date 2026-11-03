@@ -472,39 +472,41 @@ class CurrentCancellationTests(unittest.TestCase):
 
 
 class FlutterPhaseBoundaryTests(unittest.TestCase):
-    def test_only_fixed201_representative_proof_admits_flutter_ui(self):
+    def test_only_fixed_original_representative_proof_admits_flutter_ui(self):
         import emulator_original84 as original
         harness = dict(sourceRevision='f'*40, sourceTree='e'*40, workflowRun='900', runNumber=202, runAttempt=2)
-        proof = dict(runtimeTarget='lite201-flutter-ui', diagnosticOriginalRuntime=True,
-            originalAppIdentity=original.LITE201_FLUTTER_UI['identity'], harnessIdentity=harness,
-            diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
-        with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / 'proof.json'
-            path.write_text(json.dumps(proof))
-            with patch.dict(os.environ, {'AEROVE_ORIGINAL_RUNTIME_PROOF':str(path)}, clear=True), \
-                    patch.object(current.artifacts, 'identity', return_value=harness):
-                current.guard_flutter_phase('flutter-ui', runtime=proof)
-                for phase in ('flutter-platform','flutter-full'):
-                    with self.subTest(phase=phase), self.assertRaises(ValueError):
-                        current.guard_flutter_phase(phase, runtime=proof)
-                for key,value in (('runtimeTarget','lite158-frame-sample'), ('accepted',True),
-                                  ('representativeOnly',1), ('harnessIdentity',dict(harness,runAttempt=1))):
-                    changed = dict(proof, **{key:value})
-                    path.write_text(json.dumps(changed))
-                    with self.subTest(changed=key), self.assertRaises(ValueError):
-                        current.guard_flutter_phase('flutter-ui', runtime=changed)
+        for target,pin in (('lite201-flutter-ui',original.LITE201_FLUTTER_UI), ('lite208-flutter-ui',original.LITE208_FLUTTER_UI)):
+            proof = dict(runtimeTarget=target, diagnosticOriginalRuntime=True,
+                originalAppIdentity=pin['identity'], harnessIdentity=harness,
+                diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
+            with tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / 'proof.json'
                 path.write_text(json.dumps(proof))
-                with patch.dict(os.environ, AEROVE_ORIGINAL_SAMPLE='solid'), self.assertRaises(ValueError):
+                with patch.dict(os.environ, {'AEROVE_ORIGINAL_RUNTIME_PROOF':str(path)}, clear=True), \
+                        patch.object(current.artifacts, 'identity', return_value=harness):
                     current.guard_flutter_phase('flutter-ui', runtime=proof)
+                    for phase in ('flutter-platform','flutter-full'):
+                        with self.subTest(phase=phase), self.assertRaises(ValueError):
+                            current.guard_flutter_phase(phase, runtime=proof)
+                    for key,value in (('runtimeTarget','lite158-frame-sample'), ('accepted',True),
+                                      ('representativeOnly',1), ('harnessIdentity',dict(harness,runAttempt=1))):
+                        changed = dict(proof, **{key:value})
+                        path.write_text(json.dumps(changed))
+                        with self.subTest(changed=key), self.assertRaises(ValueError):
+                            current.guard_flutter_phase('flutter-ui', runtime=changed)
+                    path.write_text(json.dumps(proof))
+                    with patch.dict(os.environ, AEROVE_ORIGINAL_SAMPLE='solid'), self.assertRaises(ValueError):
+                        current.guard_flutter_phase('flutter-ui', runtime=proof)
 
-    def test_fixed201_cannot_enter_old_matrix_owner(self):
-        with patch.object(current.sys, 'platform', 'linux'), \
-                patch.object(current.sys, 'argv', ['owner','matrix','--runtime-directory','runtime']), \
-                patch.object(current, 'verify_current_runtime', return_value={'runtimeTarget':'lite201-flutter-ui'}), \
-                patch.object(current.subprocess, 'Popen') as spawn:
-            with self.assertRaisesRegex(ValueError, 'only the representative'):
-                current.main()
-            spawn.assert_not_called()
+    def test_fixed_original_flutter_cannot_enter_old_matrix_owner(self):
+        for target in ('lite201-flutter-ui','lite208-flutter-ui'):
+            with patch.object(current.sys, 'platform', 'linux'), \
+                    patch.object(current.sys, 'argv', ['owner','matrix','--runtime-directory','runtime']), \
+                    patch.object(current, 'verify_current_runtime', return_value={'runtimeTarget':target}), \
+                    patch.object(current.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(ValueError, 'only the representative'):
+                    current.main()
+                spawn.assert_not_called()
 
     def test_original_optins_are_rejected_before_runtime_lookup_or_spawn(self):
         flags = ('AEROVE_ORIGINAL84_PROOF', 'AEROVE_ORIGINAL_RUNTIME_PROOF',

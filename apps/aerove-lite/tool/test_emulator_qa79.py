@@ -15,6 +15,25 @@ def child(code):
 
 
 class OwnerTests(unittest.TestCase):
+    def test_crash_database_uses_the_installed_emulator_revision(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sdk = Path(temp)
+            (sdk / 'emulator').mkdir()
+            properties = sdk / 'emulator/source.properties'
+            fake_pwd = mock.Mock()
+            fake_pwd.getpwuid.return_value.pw_name = 'runner'
+            with mock.patch.dict(os.environ, ANDROID_HOME='/wrong-sdk', ANDROID_SDK_ROOT=str(sdk)), \
+                    mock.patch.dict(sys.modules, pwd=fake_pwd), \
+                    mock.patch.object(qa.os, 'getuid', create=True, return_value=1000):
+                for revision in ('37.2.12', '37.2.13'):
+                    with self.subTest(revision=revision):
+                        properties.write_text('Pkg.Revision=' + revision + '\nPkg.Path=emulator\n')
+                        self.assertEqual(Path('/tmp/android-runner') / ('emu-crash-' + revision + '.db'),
+                                         qa.crash_database())
+                properties.write_text('Pkg.Path=emulator\n')
+                with self.assertRaisesRegex(ValueError, 'emulator revision'):
+                    qa.crash_database()
+
     def test_renderer_metadata_requires_actual_angle_and_swiftshader_startup_evidence(self):
         with self.assertRaisesRegex(ValueError, 'not confirmed'):
             qa.renderer_evidence('Graphics Adapter Android Emulator OpenGL ES Translator (Google SwiftShader)')
