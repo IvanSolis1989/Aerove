@@ -50,6 +50,9 @@ Future<SetupState> setupState(Ref ref, int? profileId) async {
   final profileLastUpdateDate = profile?.lastUpdateDate?.millisecondsSinceEpoch;
   final profileType = profile?.type ?? ProfileType.file;
   final extendType = profile?.extendType ?? ExtendType.standard;
+  final native = profile?.overrides.nativeProfileUuid == null
+      ? null
+      : profile!.overrides;
   final overrides = profileType == ProfileType.custom
       ? ref.watch(
           patchClashConfigProvider.select(
@@ -60,10 +63,32 @@ Future<SetupState> setupState(Ref ref, int? profileId) async {
       : ref.watch(
           patchClashConfigProvider.select(
             (state) => ProfileOverrides(
-              dns: state.dns,
-              dnsOverrideKeys: state.dnsOverrideKeys.intersection(
-                DnsOverrideKey.normalProfileKeys,
-              ),
+              nativeProfileUuid: native?.nativeProfileUuid,
+              nativeResourceInputs: native?.nativeResourceInputs ?? const {},
+              proxyProviders: native?.proxyProviders ?? const {},
+              hosts: native?.hosts ?? const {},
+              dns: native == null
+                  ? state.dns
+                  : Dns.fromJson(
+                      mergeDnsOverride(
+                        Map<String, dynamic>.from(
+                          jsonDecode(jsonEncode(state.dns)) as Map,
+                        ),
+                        native.dns.overrideJson(
+                          native.dnsOverrideKeys,
+                          keepEmpty: true,
+                        ),
+                      ),
+                    ).copyWith(
+                      generatedDefaultKeys: state.dns.generatedDefaultKeys
+                          .difference(native.dnsOverrideKeys),
+                    ),
+              dnsOverrideKeys: {
+                ...state.dnsOverrideKeys.intersection(
+                  DnsOverrideKey.normalProfileKeys,
+                ),
+                ...?native?.dnsOverrideKeys,
+              },
               tun: state.tunOverride,
               tunOverrideKeys: state.tunOverrideKeys,
             ),
@@ -80,11 +105,64 @@ Future<SetupState> setupState(Ref ref, int? profileId) async {
   Script? script;
   if (profileId != null) {
     if (profileType == ProfileType.custom) {
-      rules = await database.rulesDao.queryProfileRules(profileId).get();
+      final ownRules = await database.rulesDao
+          .queryProfileRules(profileId)
+          .get();
+      rules = ownRules
+          .where((rule) => !overrides.preRuleIds.contains(rule.id))
+          .toList();
+      if (extendType == ExtendType.standard && overrides.inheritGlobalRules) {
+        addedRules = (await database.rulesDao.queryAddedRules(profileId).get())
+            .where(
+              (rule) =>
+                  rule.profileId == null ||
+                  overrides.preRuleIds.contains(rule.id),
+            )
+            .toList();
+      }
+      if (extendType == ExtendType.script &&
+          overrides.applyExtensionToCustom &&
+          scriptId != null) {
+        script = await database.scriptsDao.get(scriptId).getSingleOrNull();
+      }
       proxyGroups = await database.proxyGroupsDao.query(profileId).get();
       clashProviders = await database.clashProvidersDao.query().get();
       profileProviders = allProfileProviders;
-      appProxies = await database.customProxiesDao.query().get();
+      final scope = profile?.overrides.scopedCustomProxyIds;
+      final allProxies = await database.customProxiesDao.query().get();
+      appProxies = scope == null
+          ? availableCustomProxiesForProfile(
+              ref.read(profilesProvider),
+              allProxies,
+              null,
+            )
+          : [
+              for (final id in scope)
+                allProxies.firstWhere(
+                  (proxy) => proxy.id == id,
+                  orElse: () => throw StateError(
+                    'profile.overrides.scopedCustomProxyIds: linked node is missing',
+                  ),
+                ),
+            ];
+      if (overrides.proxyAliases.isNotEmpty) {
+        final names = {
+          for (final proxy in appProxies)
+            proxy.name: overrides.proxyAliases[proxy.id] ?? proxy.name,
+        };
+        appProxies = [
+          for (final proxy in appProxies)
+            proxy.copyWith(
+              definition: {
+                ...proxy.definition,
+                'name': overrides.proxyAliases[proxy.id] ?? proxy.name,
+                for (final key in ['dialer-proxy', 'connect-via'])
+                  if (proxy.definition[key] case final String target)
+                    key: names[target] ?? target,
+              },
+            ),
+        ];
+      }
       proxyDialers = {
         for (final dialer
             in await database.proxyDialersDao.query(profileId).get())
@@ -113,7 +191,9 @@ Future<SetupState> setupState(Ref ref, int? profileId) async {
     script: script,
     overrides: overrides,
     matchTarget:
-        profileType != ProfileType.custom && extendType == ExtendType.standard
+        (profileType != ProfileType.custom ||
+                overrides.applyExtensionToCustom) &&
+            extendType == ExtendType.standard
         ? profile?.matchTarget
         : null,
   );

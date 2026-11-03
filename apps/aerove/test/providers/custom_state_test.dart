@@ -161,6 +161,67 @@ void main() {
     expect(_invalidGroupIds(container), isEmpty);
   });
 
+  test(
+    'rule targets from the real provider must be declared by a group',
+    () async {
+      const nodes = [
+        CustomProxy(
+          id: 1,
+          definition: {
+            'name': 'Home',
+            'type': 'socks5',
+            'server': '127.0.0.1',
+            'port': 1080,
+          },
+        ),
+        CustomProxy(
+          id: 2,
+          definition: {
+            'name': 'Spare',
+            'type': 'socks5',
+            'server': '127.0.0.1',
+            'port': 1081,
+          },
+        ),
+      ];
+      final container = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(
+            () => TestProfiles([
+              Profile.custom(label: 'Mine').copyWith(id: profileId),
+            ]),
+          ),
+          clashProvidersProvider.overrideWith(() => _TestClashProviders([])),
+          profileRulesProvider.overrideWith2((_) => _TestProfileRules()),
+          customProxiesProvider.overrideWith(() => _TestCustomProxies(nodes)),
+          proxyDialersProvider.overrideWith2((_) => _TestProxyDialers()),
+          proxyGroupsProvider.overrideWith2(
+            (_) => _TestProxyGroups([
+              proxyGroup.copyWith(name: 'G', proxies: ['Home'], use: const []),
+            ]),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.listen(customProfileDataProvider(profileId), (_, _) {});
+      await _loadSources(container);
+
+      final data = container.read(customProfileDataProvider(profileId))!;
+      expect(customRuleIssues(Rule.parse('MATCH,Home', id: 1), data), isEmpty);
+      expect(customRuleIssues(Rule.parse('MATCH,Spare', id: 2), data), [
+        const CustomIssue.missingTarget('Spare'),
+      ]);
+      expect(
+        appProxiesPayload(
+          nodes,
+          dialers: const {},
+          groups: data.proxyGroups,
+        ).map((proxy) => proxy['name']).toList(),
+        ['Home'],
+      );
+    },
+  );
+
   test('an app proxy is a valid member and a subscription profile a valid '
       'provider, a custom profile is neither', () async {
     final container = ProviderContainer(
@@ -239,6 +300,7 @@ void main() {
         CustomProxy(id: id, definition: {'name': name, 'type': 'socks5'});
     final container = ProviderContainer(
       overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
         customProxiesProvider.overrideWith(
           () => _TestCustomProxies([
             proxy(1, 'Same'),

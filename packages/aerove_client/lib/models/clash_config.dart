@@ -42,6 +42,7 @@ const xclashForeignNameservers = [
   'https://dns.google/dns-query',
 ];
 const xclashDefaultDns = Dns(
+  generatedDefaultKeys: xclashDefaultDnsOverrideKeys,
   enable: true,
   ipv6: true,
   fakeIpRange6: 'fdfe:dcba:9876::1/64',
@@ -1348,6 +1349,9 @@ abstract class FallbackFilter with _$FallbackFilter {
 @freezed
 abstract class Dns with _$Dns {
   const factory Dns({
+    @Default({})
+    @JsonKey(includeFromJson: false, includeToJson: false)
+    Set<DnsOverrideKey> generatedDefaultKeys,
     @Default(false) bool enable,
     @Default('') String listen,
     @Default(0) @JsonKey(name: 'listen-routing-mark') int listenRoutingMark,
@@ -1408,9 +1412,41 @@ abstract class Dns with _$Dns {
     FallbackFilter fallbackFilter,
   }) = _Dns;
 
-  factory Dns.fromJson(Map<String, Object?> json) => _$DnsFromJson(json);
+  factory Dns.fromJson(Map<String, Object?> json) =>
+      _$DnsFromJson(json).copyWith(
+        generatedDefaultKeys: json.containsKey(generatedDefaultsJsonKey)
+            ? _readGeneratedDefaults(json[generatedDefaultsJsonKey])
+            : const {},
+      );
+
+  static const generatedDefaultsJsonKey = '__aerove_dns_defaults';
+
+  static Set<DnsOverrideKey> _readGeneratedDefaults(Object? value) {
+    if (value is! List ||
+        value.any((key) => !['ipv6', 'fake-ip-range6'].contains(key)) ||
+        value.toSet().length != value.length) {
+      throw AtomicDecodeException(
+        'dns.__aerove_dns_defaults: invalid stored constructor provenance',
+        value,
+      );
+    }
+    return {
+      for (final key in xclashDefaultDnsOverrideKeys)
+        if (value.contains(key.path)) key,
+    };
+  }
+
+  static Map<String, Object?> storageJson(Dns value) => {
+    ...value.toJson(),
+    generatedDefaultsJsonKey: [
+      for (final key in value.generatedDefaultKeys) key.path,
+    ],
+  };
 
   factory Dns.safeDnsFromJson(Map<String, Object?> json) {
+    final storedOrigin = json.containsKey(generatedDefaultsJsonKey)
+        ? _readGeneratedDefaults(json[generatedDefaultsJsonKey])
+        : const <DnsOverrideKey>{};
     return decodeSalvaging(
       'dns config',
       json,
@@ -1418,6 +1454,15 @@ abstract class Dns with _$Dns {
         'ipv6': xclashDefaultDns.ipv6,
         'fake-ip-range6': xclashDefaultDns.fakeIpRange6,
         ...value,
+        generatedDefaultsJsonKey: [
+          for (final key in {
+            ...storedOrigin,
+            if (!value.containsKey('ipv6')) DnsOverrideKey.ipv6,
+            if (!value.containsKey('fake-ip-range6'))
+              DnsOverrideKey.fakeIpRange6,
+          })
+            key.path,
+        ],
       }),
     );
   }
@@ -1474,6 +1519,8 @@ Map<String, Object?> _withLegacyDnsOverrideKeys(Map<String, Object?> json) {
 }
 
 extension DnsOverrideExt on Dns {
+  Dns withExplicitDnsKey(DnsOverrideKey key) =>
+      copyWith(generatedDefaultKeys: generatedDefaultKeys.difference({key}));
   List<String> reservedFakeIpRanges(Set<DnsOverrideKey> keys) {
     if (!ipv6 ||
         !keys.contains(DnsOverrideKey.ipv6) ||
@@ -1488,7 +1535,7 @@ extension DnsOverrideExt on Dns {
 
   // toJson leaves nested models as objects; the fragment is read as plain maps.
   Map<String, Object?> get _json {
-    final json = toJson();
+    final json = toJson()..remove(Dns.generatedDefaultsJsonKey);
     json[DnsOverrideKey.fallbackFilterSection] = fallbackFilter.toJson();
     json[DnsOverrideKey.nameserverPolicy.path] = _splitPolicyServers(
       nameserverPolicy,
@@ -1529,7 +1576,12 @@ extension DnsOverrideExt on Dns {
     for (final policy in _policyKeys) {
       json[policy.path] = _joinPolicyServers(json[policy.path]);
     }
-    return (dns: Dns.fromJson(json), keys: keys);
+    return (
+      dns: Dns.fromJson(
+        json,
+      ).copyWith(generatedDefaultKeys: generatedDefaultKeys.difference(keys)),
+      keys: keys,
+    );
   }
 }
 
@@ -1805,7 +1857,25 @@ Map<String, Object?> _withLegacyTunOverride(Map<String, Object?> json) {
 @freezed
 abstract class ProfileOverrides with _$ProfileOverrides {
   const factory ProfileOverrides({
-    @Default(xclashDefaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
+    @Default({}) Map<String, List<String>> hosts,
+    List<int>? scopedCustomProxyIds,
+    @Default({}) Set<int> ownedCustomProxyIds,
+    @Default(false) bool applyExtensionToCustom,
+    @Default({}) Map<String, int> ruleProviderBindings,
+    @Default({}) Map<int, List<int>> filterBindings,
+    @Default({}) Map<int, List<String>> filterManualMembers,
+    @Default({}) Map<int, Map<String, dynamic>> iconBindings,
+    @Default({}) Map<String, dynamic> baseConfig,
+    @Default({}) Map<String, Map<String, dynamic>> nativeResourceInputs,
+    String? nativeProfileUuid,
+    @Default({}) Map<String, Map<String, dynamic>> sourceProxyProviders,
+    @Default({}) Map<String, Map<String, dynamic>> sourceRuleProviders,
+    @Default({}) Set<int> preRuleIds,
+    @Default(false) bool inheritGlobalRules,
+    @Default({}) Map<int, String> proxyAliases,
+    @Default(xclashDefaultDns)
+    @JsonKey(fromJson: Dns.safeDnsFromJson, toJson: Dns.storageJson)
+    Dns dns,
     @Default(xclashDefaultDnsOverrideKeys)
     @JsonKey(name: _dnsOverrideKeysJsonKey, fromJson: _dnsOverrideKeysFromJson)
     Set<DnsOverrideKey> dnsOverrideKeys,
@@ -1890,6 +1960,8 @@ abstract class ProxyProviderOptions with _$ProxyProviderOptions {
     /// Where the filters list shows the exclude filters among the filters,
     /// which no config carries, as `ProxyProviderFiltersSliver` writes it.
     List<String>? memberLayout,
+    Map<String, dynamic>? sourceDefinition,
+    @JsonKey(includeIfNull: false) Set<String>? editedFields,
   }) = _ProxyProviderOptions;
 
   factory ProxyProviderOptions.fromJson(Map<String, Object?> json) =>
@@ -1897,9 +1969,77 @@ abstract class ProxyProviderOptions with _$ProxyProviderOptions {
 }
 
 extension ProxyProviderOptionsExt on ProxyProviderOptions {
+  Map<String, Object?> get nativeEditableValues => {
+    'filter': filter,
+    'exclude-filter': excludeFilter,
+    'health-check.url': healthCheck.url,
+    'health-check.interval': healthCheck.interval,
+    'health-check.timeout': healthCheck.timeout,
+    'health-check.lazy': healthCheck.lazy,
+    'health-check.expected-status': healthCheck.expectedStatus,
+    'override.additional-prefix': proxyOverride.additionalPrefix,
+    'override.additional-suffix': proxyOverride.additionalSuffix,
+    'override.udp': proxyOverride.udp,
+    'override.skip-cert-verify': proxyOverride.skipCertVerify,
+    'override.ip-version': proxyOverride.ipVersion?.value,
+  };
+
+  ProxyProviderOptions withNativeEditsSince(ProxyProviderOptions? previous) {
+    if (sourceDefinition == null || editedFields == null) return this;
+    final before = previous?.nativeEditableValues;
+    return copyWith(
+      editedFields: {
+        ...?previous?.editedFields,
+        ...editedFields!,
+        for (final entry in nativeEditableValues.entries)
+          if (before == null || before[entry.key] != entry.value) entry.key,
+      },
+    );
+  }
+
+  Map<String, dynamic> applyNativeEdits(Map<String, dynamic> current) {
+    final result = Map<String, dynamic>.from(current);
+    final values = nativeEditableValues;
+    for (final path in editedFields ?? values.keys.toSet()) {
+      if (!values.containsKey(path))
+        throw FormatException(
+          'proxy provider editedFields: unknown field $path',
+        );
+      final parts = path.split('.');
+      final value = values[path];
+      if (parts.length == 1) {
+        if (value == null) {
+          result.remove(path);
+        } else {
+          result[path] = value;
+        }
+      } else {
+        final old = result[parts[0]];
+        if (old != null && old is! Map)
+          throw FormatException('proxy provider ${parts[0]}: expected mapping');
+        final nested = <String, dynamic>{
+          if (old is Map) ...Map<String, dynamic>.from(old),
+        };
+        if (value == null) {
+          nested.remove(parts[1]);
+        } else {
+          nested[parts[1]] = value;
+        }
+        if (nested.isEmpty) {
+          result.remove(parts[0]);
+        } else {
+          result[parts[0]] = nested;
+        }
+      }
+    }
+    return result;
+  }
+
   /// A health check without a url never runs, so one always carries a url.
   /// A text option added but left empty stays in the form and out of here.
   Map<String, Object?> get definition {
+    if (sourceDefinition != null && editedFields != null)
+      return applyNativeEdits(sourceDefinition!);
     String? text(String? value) => value?.isNotEmpty == true ? value : null;
     final healthCheck = this.healthCheck.copyWith(
       url: text(this.healthCheck.url),
@@ -1909,6 +2049,57 @@ extension ProxyProviderOptionsExt on ProxyProviderOptions {
       additionalPrefix: text(this.proxyOverride.additionalPrefix),
       additionalSuffix: text(this.proxyOverride.additionalSuffix),
     );
+    final definition = <String, Object?>{...?sourceDefinition};
+    final originalHealth = sourceDefinition?['health-check'];
+    final originalOverride = sourceDefinition?['override'];
+    final health = <String, Object?>{
+      if (originalHealth is Map) ...Map<String, Object?>.from(originalHealth),
+    };
+    final override = <String, Object?>{
+      if (originalOverride is Map)
+        ...Map<String, Object?>.from(originalOverride),
+    };
+    void edit(Map<String, Object?> target, String key, Object? value) {
+      if (value == null) {
+        target.remove(key);
+      } else {
+        target[key] = value;
+      }
+    }
+
+    for (final entry in {
+      'url': healthCheck.url,
+      'interval': healthCheck.interval,
+      'timeout': healthCheck.timeout,
+      'lazy': healthCheck.lazy,
+      'expected-status': healthCheck.expectedStatus,
+    }.entries) {
+      edit(health, entry.key, entry.value);
+    }
+    for (final entry in {
+      'additional-prefix': proxyOverride.additionalPrefix,
+      'additional-suffix': proxyOverride.additionalSuffix,
+      'udp': proxyOverride.udp,
+      'skip-cert-verify': proxyOverride.skipCertVerify,
+      'ip-version': proxyOverride.ipVersion?.value,
+    }.entries) {
+      edit(override, entry.key, entry.value);
+    }
+    edit(definition, 'filter', filter);
+    edit(definition, 'exclude-filter', excludeFilter);
+    if (sourceDefinition != null) {
+      if (health.isEmpty) {
+        definition.remove('health-check');
+      } else {
+        definition['health-check'] = health;
+      }
+      if (override.isEmpty) {
+        definition.remove('override');
+      } else {
+        definition['override'] = override;
+      }
+      return definition;
+    }
     return {
       if (healthCheck != const ProviderHealthCheck())
         'health-check': {
@@ -2287,7 +2478,9 @@ abstract class PatchClashConfig with _$PatchClashConfig {
     @Default(true) @JsonKey(name: 'unified-delay') bool unifiedDelay,
     @Default(true) @JsonKey(name: 'tcp-concurrent') bool tcpConcurrent,
     @Default(defaultTun) @JsonKey(fromJson: Tun.safeFormJson) Tun tun,
-    @Default(xclashDefaultDns) @JsonKey(fromJson: Dns.safeDnsFromJson) Dns dns,
+    @Default(xclashDefaultDns)
+    @JsonKey(fromJson: Dns.safeDnsFromJson, toJson: Dns.storageJson)
+    Dns dns,
     @Default(xclashDefaultDnsOverrideKeys)
     @JsonKey(name: _dnsOverrideKeysJsonKey, fromJson: _dnsOverrideKeysFromJson)
     Set<DnsOverrideKey> dnsOverrideKeys,

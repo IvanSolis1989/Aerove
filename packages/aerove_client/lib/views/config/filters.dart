@@ -213,6 +213,7 @@ class _FilterFormState extends State<_FilterForm> {
       return;
     }
     final filter = Filter(
+      id: widget.filter?.id ?? snowflake.id,
       label: _labelController.text.trim(),
       regex: _regexController.text.trim(),
     );

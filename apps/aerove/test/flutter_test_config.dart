@@ -7,10 +7,13 @@ import 'package:fl_clash/core/service.dart';
 import 'package:fl_clash/product.dart';
 
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
-  ClientProduct.configure(
-    product: standardProduct,
-    backendCoreId: 'mihomo',
-    backendFactory: () => Platform.isAndroid ? CoreLib() : CoreService(),
-  );
+  const suiteProduct = bool.fromEnvironment('AEROVE_TEST_SUITE_PRODUCT');
+  if (!suiteProduct) {
+    ClientProduct.configure(
+      product: standardProduct,
+      backendCoreId: 'mihomo',
+      backendFactory: () => Platform.isAndroid ? CoreLib() : CoreService(),
+    );
+  }
   await testMain();
 }

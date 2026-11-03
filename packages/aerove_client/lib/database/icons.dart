@@ -95,6 +95,8 @@ class IconSets extends Table {
 
   DateTimeColumn get lastUpdateTime => dateTime().nullable()();
 
+  IntColumn get lastUpdateTimeMillis => integer().nullable()();
+
   IntColumn get order => integer().nullable()();
 
   @override
@@ -129,7 +131,9 @@ extension RawIconSetExt on RawIconSet {
       name: name,
       url: url,
       icons: icons,
-      lastUpdateTime: lastUpdateTime,
+      lastUpdateTime: lastUpdateTimeMillis == null
+          ? lastUpdateTime
+          : DateTime.fromMillisecondsSinceEpoch(lastUpdateTimeMillis!),
       order: order,
     );
   }
@@ -143,6 +147,7 @@ extension IconSetsCompanionExt on IconSet {
       url: url,
       icons: icons,
       lastUpdateTime: Value(lastUpdateTime),
+      lastUpdateTimeMillis: Value(lastUpdateTime?.millisecondsSinceEpoch),
       order: Value(order ?? this.order),
     );
   }

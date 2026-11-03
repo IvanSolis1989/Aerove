@@ -400,8 +400,8 @@ void main() {
     );
     await sql.customStatement(
       'CREATE TRIGGER reject_profile_commit '
-      'AFTER UPDATE OF last_update_date ON profiles '
-      'WHEN NEW.last_update_date != OLD.last_update_date '
+      'AFTER UPDATE OF last_update_date_millis ON profiles '
+      'WHEN NEW.last_update_date_millis != OLD.last_update_date_millis '
       'BEGIN INSERT INTO cancel_child VALUES (1); END',
     );
     await expectLater(
@@ -475,10 +475,8 @@ void main() {
         scriptId: 42,
         matchTarget: 'later target',
         overrides: profile.overrides.copyWith(
-          proxyProviders: {
-            'later-provider': const ProxyProviderOptions(
-              filter: 'later-filter',
-            ),
+          hosts: {
+            'later.example': ['192.0.2.118'],
           },
         ),
       );

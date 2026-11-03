@@ -1,4 +1,5 @@
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/product.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -419,15 +420,17 @@ class GeneralView extends ConsumerWidget {
             .read(networkSettingProvider.notifier)
             .update((state) => state.copyWith(appendSystemDns: value)),
       ),
-      _clashToggle(
-        title: (l) => l.geodataLoader,
-        select: (state) => state.geodataLoader == GeodataLoader.memconservative,
-        update: (state, value) => state.copyWith(
-          geodataLoader: value
-              ? GeodataLoader.memconservative
-              : GeodataLoader.standard,
+      if (ClientProduct.current.coreCapabilities.geoDataLoaderSelection)
+        _clashToggle(
+          title: (l) => l.geodataLoader,
+          select: (state) =>
+              state.geodataLoader == GeodataLoader.memconservative,
+          update: (state, value) => state.copyWith(
+            geodataLoader: value
+                ? GeodataLoader.memconservative
+                : GeodataLoader.standard,
+          ),
         ),
-      ),
     ];
   }
 

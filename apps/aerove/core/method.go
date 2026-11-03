@@ -201,6 +201,8 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	updateConfigMethod:             withMessage(updateConfig),
 	validateProxiesMethod:          withArguments(handleValidateProxies),
 	validateFiltersMethod:          withArguments(handleValidateFilters),
+	matchFiltersMethod:             withFallible(handleMatchFilters),
+	cancelFilterMatchMethod:        withFallible(handleCancelFilterMatch),
 	convertProxiesMethod:           withFallible(handleConvertProxies),
 	encodeShareLinksMethod:         withArguments(handleEncodeShareLinks),
 	decodeShareLinksMethod:         withArguments(handleDecodeShareLinks),

@@ -54,7 +54,7 @@ class Database extends _$Database {
   Database([QueryExecutor? executor]) : super(executor ?? _openConnection());
 
   @override
-  int get schemaVersion => 21;
+  int get schemaVersion => 22;
 
   static LazyDatabase _openConnection() {
     return LazyDatabase(() async {
@@ -115,8 +115,16 @@ class Database extends _$Database {
             customProxies.emptyOptions,
           );
         }
-        if (from < 21) {
+        if (from < 22) {
           await _createTableIfMissing(m, ipQualities);
+          await _addColumnIfMissing(m, profiles, profiles.lastUpdateDateMillis);
+          await _addColumnIfMissing(m, scripts, scripts.lastUpdateTimeMillis);
+          await _addColumnIfMissing(m, iconSets, iconSets.lastUpdateTimeMillis);
+          await _addColumnIfMissing(
+            m,
+            clashProviders,
+            clashProviders.sourceDefinition,
+          );
         }
       }),
       beforeOpen: (_) => customStatement('PRAGMA foreign_keys = ON'),

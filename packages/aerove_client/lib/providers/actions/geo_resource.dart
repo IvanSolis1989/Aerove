@@ -52,9 +52,13 @@ class GeoResourceAction extends _$GeoResourceAction {
     _manualUpdates[geoResource] = announceSuccess;
     final operation = _startUpdating(geoResource);
     try {
-      final message = await _core.updateGeoData(geoResource.name);
-      if (message.isNotEmpty) {
-        throw MessageException(message);
+      if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+        await ref
+            .read(setupActionProvider.notifier)
+            .updateMeowGeo(geoResource.configKey);
+      } else {
+        final message = await _core.updateGeoData(geoResource.name);
+        if (message.isNotEmpty) throw MessageException(message);
       }
     } catch (_) {
       if (previous != null) {

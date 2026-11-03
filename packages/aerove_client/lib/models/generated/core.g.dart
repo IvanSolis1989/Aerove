@@ -10,6 +10,7 @@ _SetupParams _$SetupParamsFromJson(Map<String, dynamic> json) => _SetupParams(
   selectedMap: Map<String, String>.from(json['selected-map'] as Map),
   testUrl: json['test-url'] as String,
   skipCertVerify: json['skip-cert-verify'] as bool? ?? false,
+  dataSourceProof: json['data-source-proof'] as Map<String, dynamic>?,
   base: json['base'] == null
       ? null
       : SetupBase.fromJson(json['base'] as Map<String, dynamic>),
@@ -23,6 +24,7 @@ Map<String, dynamic> _$SetupParamsToJson(_SetupParams instance) =>
       'selected-map': instance.selectedMap,
       'test-url': instance.testUrl,
       'skip-cert-verify': instance.skipCertVerify,
+      'data-source-proof': ?instance.dataSourceProof,
       'base': ?instance.base,
       'applied': ?instance.applied,
     };
@@ -93,6 +95,7 @@ Map<String, dynamic> _$ProfileBaseToJson(_ProfileBase instance) =>
 
 _UpdateParams _$UpdateParamsFromJson(Map<String, dynamic> json) =>
     _UpdateParams(
+      dataSourceProof: json['data-source-proof'] as Map<String, dynamic>?,
       tun: Tun.fromJson(json['tun'] as Map<String, dynamic>),
       mixedPort: (json['mixed-port'] as num).toInt(),
       allowLan: json['allow-lan'] as bool,
@@ -127,6 +130,7 @@ _UpdateParams _$UpdateParamsFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$UpdateParamsToJson(_UpdateParams instance) =>
     <String, dynamic>{
+      'data-source-proof': ?instance.dataSourceProof,
       'tun': _tunCoreJson(instance.tun),
       'mixed-port': instance.mixedPort,
       'allow-lan': instance.allowLan,
@@ -189,6 +193,13 @@ _VpnOptions _$VpnOptionsFromJson(Map<String, dynamic> json) => _VpnOptions(
           ?.map((e) => e as String)
           .toList() ??
       const [],
+  rawRouteAddress: (json['rawRouteAddress'] as List<dynamic>?)
+      ?.map((e) => e as String)
+      .toList(),
+  rawRouteExcludeAddress: (json['rawRouteExcludeAddress'] as List<dynamic>?)
+      ?.map((e) => e as String)
+      .toList(),
+  bypassPrivateRoute: json['bypassPrivateRoute'] as bool?,
   mtu: (json['mtu'] as num?)?.toInt() ?? 0,
   congestionController: json['congestionController'] as String? ?? '',
 );
@@ -205,6 +216,9 @@ Map<String, dynamic> _$VpnOptionsToJson(_VpnOptions instance) =>
       'bypassDomain': instance.bypassDomain,
       'stack': instance.stack,
       'routeAddress': instance.routeAddress,
+      'rawRouteAddress': ?instance.rawRouteAddress,
+      'rawRouteExcludeAddress': ?instance.rawRouteExcludeAddress,
+      'bypassPrivateRoute': ?instance.bypassPrivateRoute,
       'mtu': instance.mtu,
       'congestionController': instance.congestionController,
     };
@@ -533,3 +547,114 @@ _ProxiesData _$ProxiesDataFromJson(Map<String, dynamic> json) => _ProxiesData(
 
 Map<String, dynamic> _$ProxiesDataToJson(_ProxiesData instance) =>
     <String, dynamic>{'proxies': instance.proxies, 'all': instance.all};
+
+MeowGeoUpdateRequest _$MeowGeoUpdateRequestFromJson(
+  Map<String, dynamic> json,
+) => MeowGeoUpdateRequest(
+  schemaVersion: (json['schemaVersion'] as num?)?.toInt() ?? 1,
+  transactionId: json['transactionId'] as String,
+  type: json['type'] as String,
+  source: MeowGeoSource.fromJson(json['source'] as Map<String, dynamic>),
+  setupParams: SetupParams.fromJson(
+    json['setupParams'] as Map<String, dynamic>,
+  ),
+  $type: json['operation'] as String?,
+);
+
+Map<String, dynamic> _$MeowGeoUpdateRequestToJson(
+  MeowGeoUpdateRequest instance,
+) => <String, dynamic>{
+  'schemaVersion': instance.schemaVersion,
+  'transactionId': instance.transactionId,
+  'type': instance.type,
+  'source': instance.source,
+  'setupParams': instance.setupParams,
+  'operation': instance.$type,
+};
+
+MeowGeoAdmissionRequest _$MeowGeoAdmissionRequestFromJson(
+  Map<String, dynamic> json,
+) => MeowGeoAdmissionRequest(
+  schemaVersion: (json['schemaVersion'] as num?)?.toInt() ?? 1,
+  transactionId: json['transactionId'] as String,
+  $type: json['operation'] as String?,
+);
+
+Map<String, dynamic> _$MeowGeoAdmissionRequestToJson(
+  MeowGeoAdmissionRequest instance,
+) => <String, dynamic>{
+  'schemaVersion': instance.schemaVersion,
+  'transactionId': instance.transactionId,
+  'operation': instance.$type,
+};
+
+MeowGeoStatusRequest _$MeowGeoStatusRequestFromJson(
+  Map<String, dynamic> json,
+) => MeowGeoStatusRequest(
+  schemaVersion: (json['schemaVersion'] as num?)?.toInt() ?? 1,
+  transactionId: json['transactionId'] as String,
+  $type: json['operation'] as String?,
+);
+
+Map<String, dynamic> _$MeowGeoStatusRequestToJson(
+  MeowGeoStatusRequest instance,
+) => <String, dynamic>{
+  'schemaVersion': instance.schemaVersion,
+  'transactionId': instance.transactionId,
+  'operation': instance.$type,
+};
+
+MeowGeoAbortRequest _$MeowGeoAbortRequestFromJson(Map<String, dynamic> json) =>
+    MeowGeoAbortRequest(
+      schemaVersion: (json['schemaVersion'] as num?)?.toInt() ?? 1,
+      transactionId: json['transactionId'] as String,
+      $type: json['operation'] as String?,
+    );
+
+Map<String, dynamic> _$MeowGeoAbortRequestToJson(
+  MeowGeoAbortRequest instance,
+) => <String, dynamic>{
+  'schemaVersion': instance.schemaVersion,
+  'transactionId': instance.transactionId,
+  'operation': instance.$type,
+};
+
+_MeowGeoSource _$MeowGeoSourceFromJson(Map<String, dynamic> json) =>
+    _MeowGeoSource(
+      path: json['path'] as String,
+      sha256: json['sha256'] as String,
+      bytes: (json['bytes'] as num).toInt(),
+    );
+
+Map<String, dynamic> _$MeowGeoSourceToJson(_MeowGeoSource instance) =>
+    <String, dynamic>{
+      'path': instance.path,
+      'sha256': instance.sha256,
+      'bytes': instance.bytes,
+    };
+
+_MeowGeoReply _$MeowGeoReplyFromJson(Map<String, dynamic> json) =>
+    _MeowGeoReply(
+      schemaVersion: (json['schemaVersion'] as num).toInt(),
+      transactionId: json['transactionId'] as String,
+      state: json['state'] as String,
+      active: json['active'] as bool,
+      applied: json['applied'] == null
+          ? null
+          : SetupRecord.fromJson(json['applied'] as Map<String, dynamic>),
+      producerSha256: json['producerSha256'] as String?,
+      compiledSha256: json['compiledSha256'] as String?,
+      message: json['message'] as String?,
+    );
+
+Map<String, dynamic> _$MeowGeoReplyToJson(_MeowGeoReply instance) =>
+    <String, dynamic>{
+      'schemaVersion': instance.schemaVersion,
+      'transactionId': instance.transactionId,
+      'state': instance.state,
+      'active': instance.active,
+      'applied': ?instance.applied,
+      'producerSha256': ?instance.producerSha256,
+      'compiledSha256': ?instance.compiledSha256,
+      'message': ?instance.message,
+    };

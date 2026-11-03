@@ -19,6 +19,8 @@ class Profiles extends Table {
 
   DateTimeColumn get lastUpdateDate => dateTime().nullable()();
 
+  IntColumn get lastUpdateDateMillis => integer().nullable()();
+
   TextColumn get extendType => textEnum<ExtendType>()();
 
   IntColumn get scriptId => integer().nullable()();
@@ -169,7 +171,9 @@ extension RawProfilExt on RawProfile {
       currentGroupName: currentGroupName,
       url: url,
       ageSecretKey: ageSecretKey ?? '',
-      lastUpdateDate: lastUpdateDate,
+      lastUpdateDate: lastUpdateDateMillis == null
+          ? lastUpdateDate
+          : DateTime.fromMillisecondsSinceEpoch(lastUpdateDateMillis!),
       autoUpdateDuration: Duration(milliseconds: autoUpdateDurationMillis),
       subscriptionInfo: subscriptionInfo,
       autoUpdate: autoUpdate,
@@ -194,6 +198,7 @@ extension ProfilesCompanionExt on Profile {
       url: url,
       ageSecretKey: Value(ageSecretKey.isEmpty ? null : ageSecretKey),
       lastUpdateDate: Value(lastUpdateDate),
+      lastUpdateDateMillis: Value(lastUpdateDate?.millisecondsSinceEpoch),
       autoUpdateDurationMillis: autoUpdateDuration.inMilliseconds,
       subscriptionInfo: Value(subscriptionInfo),
       autoUpdate: autoUpdate,

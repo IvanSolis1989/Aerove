@@ -12,6 +12,244 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 
+/// Applies only persisted user edits before the existing single script evaluation.
+String nativeProxyProviderScriptInput(
+  String configJson,
+  ProfileOverrides overrides,
+) {
+  if (!overrides.proxyProviders.values.any(
+    (value) => value.sourceDefinition != null,
+  ))
+    return configJson;
+  final decoded = jsonDecode(configJson);
+  if (decoded is! Map<String, dynamic>)
+    throw const FormatException('profile: expected mapping');
+  _applyNativeProxyProviderEdits(decoded, overrides);
+  return jsonEncode(decoded);
+}
+
+void _applyNativeProxyProviderEdits(Map config, ProfileOverrides overrides) {
+  final providers = config['proxy-providers'];
+  if (providers == null) return;
+  if (providers is! Map)
+    throw const FormatException('proxy-providers: expected mapping');
+  for (final entry in overrides.proxyProviders.entries) {
+    if (entry.value.sourceDefinition == null ||
+        !providers.containsKey(entry.key))
+      continue;
+    final current = providers[entry.key];
+    if (current is! Map)
+      throw FormatException('proxy-providers.${entry.key}: expected mapping');
+    providers[entry.key] = entry.value.applyNativeEdits(
+      Map<String, dynamic>.from(current),
+    );
+  }
+}
+
+const _meowUnsupportedDnsPaths = {
+  'listen-routing-mark',
+  'prefer-h3',
+  'respect-rules',
+  'ipv6',
+  'ipv6-timeout',
+  'cache-algorithm',
+  'cache-max-size',
+  'fake-ip-range6',
+  'fake-ip-ttl',
+  'fallback-lazy-query',
+  'proxy-server-nameserver-policy',
+  'direct-nameserver',
+  'direct-nameserver-follow-policy',
+  'fallback-filter.geosite',
+};
+
+void _validateMeowSourceDns(Map config) {
+  final dns = config['dns'];
+  if (dns == null) return;
+  if (dns is! Map)
+    throw const FormatException('\$.dns: expected source DNS mapping');
+  if (dns.containsKey(Dns.generatedDefaultsJsonKey))
+    throw const FormatException(
+      '\$.dns.__aerove_dns_defaults: reserved stored constructor provenance',
+    );
+  for (final path in _meowUnsupportedDnsPaths) {
+    final parts = path.split('.');
+    final present = parts.length == 1
+        ? dns.containsKey(path)
+        : dns[parts[0]] is Map && (dns[parts[0]] as Map).containsKey(parts[1]);
+    if (present)
+      throw FormatException(
+        '\$.dns.$path: explicit source field has no fixed Meow DNS consumer',
+      );
+  }
+}
+
+String meowDnsScriptInput(String configJson, {ProfileOverrides? overrides}) {
+  final decoded = jsonDecode(configJson);
+  if (decoded is! Map)
+    throw const FormatException(
+      'profile: expected source configuration mapping',
+    );
+  _validateMeowSourceDns(decoded);
+  if (overrides != null)
+    _meowDnsOverrideKeys(overrides.dns, overrides.dnsOverrideKeys);
+  return configJson;
+}
+
+Set<DnsOverrideKey> _meowDnsOverrideKeys(Dns dns, Set<DnsOverrideKey> keys) {
+  final result = <DnsOverrideKey>{};
+  for (final key in keys) {
+    if (!_meowUnsupportedDnsPaths.contains(key.path)) {
+      result.add(key);
+      continue;
+    }
+    final generated =
+        dns.generatedDefaultKeys.contains(key) &&
+        switch (key) {
+          DnsOverrideKey.ipv6 => dns.ipv6 == xclashDefaultDns.ipv6,
+          DnsOverrideKey.fakeIpRange6 =>
+            dns.fakeIpRange6 == xclashDefaultDns.fakeIpRange6,
+          _ => false,
+        };
+    if (!generated)
+      throw FormatException(
+        '\$.dns.${key.path}: explicit typed value has no fixed Meow DNS consumer',
+      );
+  }
+  return result;
+}
+
+/// Projects the typed global producer; explicit profile declarations use separate strict validation.
+Map<String, String> meowGlobalGeoDownloadUrls(PatchClashConfig patch) {
+  final urls = Map<String, String>.from(patch.geoXUrl.raw);
+  if (urls['geoip'] != null &&
+      urls['geoip'] != defaultGeoXUrl[GeoResource.GEOIP]) {
+    throw const FormatException(
+      '\$.geox-url.geoip: fixed Meow has no geoip.dat download-source consumer',
+    );
+  }
+  urls.remove('geoip');
+  return urls;
+}
+
+void _applyMeowGeodata(Map config, PatchClashConfig patch) {
+  const originKey = 'aerove-geo-origin';
+  if (config.containsKey(originKey))
+    throw const FormatException(
+      '\$.aerove-geo-origin: reserved Task producer metadata',
+    );
+  Map<String, dynamic> mapping(Object? value, String path) {
+    if (value == null) return {};
+    if (value is! Map || value.keys.any((key) => key is! String))
+      throw FormatException('$path: expected mapping');
+    return Map<String, dynamic>.from(value);
+  }
+
+  final geo = mapping(config['geodata'], r'$.geodata');
+  final urls = mapping(geo['url'], r'$.geodata.url');
+  final rootUrls = mapping(config['geox-url'], r'$.geox-url');
+  final explicitAuto =
+      config.containsKey('geo-auto-update') || geo.containsKey('auto-update');
+  final explicitInterval =
+      config.containsKey('geo-update-interval') ||
+      geo.containsKey('auto-update-interval');
+  final explicitUrls = <String, String>{};
+  for (final key in rootUrls.keys) {
+    if (!['mmdb', 'asn', 'geosite'].contains(key))
+      throw FormatException(
+        '\$.geox-url.$key: fixed Meow accepts mmdb/asn/geosite download sources',
+      );
+  }
+  final patchUrls = meowGlobalGeoDownloadUrls(patch);
+  Object? resolve(
+    String sourcePath,
+    Object? root,
+    bool rootPresent,
+    String nestedPath,
+    Object? nested,
+    bool nestedPresent,
+    Object? fallback,
+  ) {
+    if (rootPresent && nestedPresent && root != nested)
+      throw FormatException('$sourcePath conflicts with $nestedPath');
+    final source = rootPresent ? root : nested;
+    return rootPresent || nestedPresent ? source : fallback;
+  }
+
+  final auto = resolve(
+    r'$.geo-auto-update',
+    config['geo-auto-update'],
+    config.containsKey('geo-auto-update'),
+    r'$.geodata.auto-update',
+    geo['auto-update'],
+    geo.containsKey('auto-update'),
+    patch.geoAutoUpdate,
+  );
+  if (auto is! bool)
+    throw const FormatException('\$.geodata.auto-update: expected Boolean');
+  final interval = resolve(
+    r'$.geo-update-interval',
+    config['geo-update-interval'],
+    config.containsKey('geo-update-interval'),
+    r'$.geodata.auto-update-interval',
+    geo['auto-update-interval'],
+    geo.containsKey('auto-update-interval'),
+    patch.geoUpdateInterval,
+  );
+  if (interval is! int || interval < 1 || interval > 87600)
+    throw const FormatException(
+      '\$.geodata.auto-update-interval: expected 1..87600 hours',
+    );
+  geo['auto-update'] = auto;
+  geo['auto-update-interval'] = interval;
+  for (final key in ['mmdb', 'asn', 'geosite']) {
+    final declared = resolve(
+      '\$.geox-url.$key',
+      rootUrls[key],
+      rootUrls.containsKey(key),
+      '\$.geodata.url.$key',
+      urls[key],
+      urls.containsKey(key),
+      patchUrls[key],
+    );
+    final alias = key == 'asn' ? 'asn-mmdb-download-url' : '$key-download-url';
+    final topPresent = config.containsKey(alias);
+    final top = config[alias];
+    if (topPresent &&
+        (rootUrls.containsKey(key) || urls.containsKey(key)) &&
+        declared != top)
+      throw FormatException('\$.$alias conflicts with \$.geodata.url.$key');
+    final value = topPresent ? top : declared;
+    if (value == null &&
+        (topPresent || rootUrls.containsKey(key) || urls.containsKey(key)))
+      throw FormatException(
+        '\$.geodata.url.$key: explicit null URL is not supported',
+      );
+    if (value != null) {
+      if (value is! String || value.isEmpty)
+        throw FormatException('\$.geodata.url.$key: expected nonempty URL');
+      urls[key] = value;
+      if (topPresent ||
+          rootUrls.containsKey(key) ||
+          (geo['url'] is Map && (geo['url'] as Map).containsKey(key)))
+        explicitUrls[key] = value;
+    }
+  }
+  geo['url'] = urls;
+  config['geodata'] = geo;
+  config[originKey] = {
+    'schema': 1,
+    'source': {
+      if (explicitAuto) 'auto-update': auto,
+      if (explicitInterval) 'auto-update-interval': interval,
+      if (explicitUrls.isNotEmpty) 'url': explicitUrls,
+    },
+  };
+  config.remove('geo-auto-update');
+  config.remove('geo-update-interval');
+  config.remove('geox-url');
+}
+
 Future<T> decodeJSONTask<T>(String data) async {
   return compute<String, T>(_decodeJSON, data);
 }
@@ -98,7 +336,75 @@ ClashConfig _buildClashConfig(Map<String, dynamic> configMap) {
 
 typedef ConfigCounts = ({int groups, int proxies, int rules});
 
-typedef RealProfile = ({String yaml, String md5, ConfigCounts counts});
+class ProfileSelectionBinding {
+  ProfileSelectionBinding(this.profileId, Map<String, String> selectedMap)
+    : selectedMap = Map.unmodifiable(selectedMap);
+
+  final int profileId;
+  final Map<String, String> selectedMap;
+}
+
+class ProfileSelectionPolicy {
+  const ProfileSelectionPolicy({
+    required this.sourceStoreSelected,
+    required this.requestedStoreSelected,
+    required this.binding,
+  });
+
+  final bool? sourceStoreSelected;
+  final bool? requestedStoreSelected;
+  final ProfileSelectionBinding? binding;
+
+  SetupParams consumeSql(SetupParams params, {required int? profileId}) {
+    final actual = binding;
+    final proof = params.dataSourceProof;
+    if (actual == null ||
+        actual.profileId != profileId ||
+        proof == null ||
+        proof['schema'] != 2 ||
+        proof['tables'] is! Map ||
+        (proof['tables'] as Map)['profiles'] is! Map) {
+      throw StateError(
+        'Profile selection requires its shared SQL source proof',
+      );
+    }
+    if (!mapEquals(actual.selectedMap, params.selectedMap)) {
+      throw StateError(
+        'Profile SQL selection changed while compiling its policy',
+      );
+    }
+    return params.copyWith(selectedMap: actual.selectedMap);
+  }
+}
+
+bool? _sourceStoreSelected(Map config, {required bool meow}) {
+  if (!config.containsKey('profile')) return null;
+  final profile = config['profile'];
+  if (profile is! Map) {
+    throw const FormatException('\$.profile: expected mapping');
+  }
+  if (meow) {
+    for (final key in profile.keys) {
+      if (key != 'store-selected') {
+        throw FormatException(
+          '\$.profile.$key: no shared SQL selection policy',
+        );
+      }
+    }
+  }
+  if (profile.containsKey('store-selected') &&
+      profile['store-selected'] is! bool) {
+    throw const FormatException('\$.profile.store-selected: expected Boolean');
+  }
+  return profile['store-selected'] as bool?;
+}
+
+typedef RealProfile = ({
+  String yaml,
+  String md5,
+  ConfigCounts counts,
+  ProfileSelectionPolicy selectionPolicy,
+});
 
 /// Counts what the Core was handed, not what the profile file declares.
 ConfigCounts configCountsOf(Map<Object?, Object?> config) {
@@ -187,10 +493,20 @@ String setupInputsDigest(SetupInputsState state, {String coreId = 'mihomo'}) {
 Future<RealProfile> makeRealProfileTask(
   MakeRealProfileState data, {
   String coreId = 'mihomo',
-}) => compute(_makeRealProfileTask, (data: data, coreId: coreId));
+  ProfileSelectionBinding? selectionBinding,
+}) => compute(_makeRealProfileTask, (
+  data: data,
+  coreId: coreId,
+  selectionBinding: selectionBinding,
+));
 
 Future<RealProfile> _makeRealProfileTask(
-  ({MakeRealProfileState data, String coreId}) payload,
+  ({
+    MakeRealProfileState data,
+    String coreId,
+    ProfileSelectionBinding? selectionBinding,
+  })
+  payload,
 ) async {
   final data = payload.data;
   final capabilities = CoreCapabilities.forCore(payload.coreId);
@@ -198,7 +514,82 @@ Future<RealProfile> _makeRealProfileTask(
     final text? => decodeScriptResult(text),
     null => Map.from(data.rawConfig),
   };
+  final sourceStoreSelected = _sourceStoreSelected(
+    data.rawConfig,
+    meow: capabilities.androidHostTun,
+  );
+  final requestedStoreSelected = _sourceStoreSelected(
+    rawConfig,
+    meow: capabilities.androidHostTun,
+  );
+  final selectionBinding = payload.selectionBinding;
+  if (selectionBinding != null &&
+      selectionBinding.profileId != data.profileId) {
+    throw const FormatException(
+      '\$.profile.store-selected: SQL profile identity differs',
+    );
+  }
+  if (capabilities.androidHostTun &&
+      selectionBinding == null &&
+      (sourceStoreSelected == true || requestedStoreSelected == true)) {
+    throw const FormatException(
+      '\$.profile.store-selected: shared SQL selection consumer is required',
+    );
+  }
+  final selectionPolicy = ProfileSelectionPolicy(
+    sourceStoreSelected: sourceStoreSelected,
+    requestedStoreSelected: requestedStoreSelected,
+    binding: selectionBinding,
+  );
+  if (capabilities.androidHostTun) {
+    _validateMeowSourceDns(data.rawConfig);
+    _validateMeowSourceDns(rawConfig);
+  }
+  bool emptyText(Object? value) => value == null || value == '';
+  bool zero(Object? value) => value == null || value == 0;
+  bool emptyList(Object? value) =>
+      value == null || value is List && value.isEmpty;
+  bool disabledMap(Object? value) =>
+      value == null ||
+      value is Map &&
+          (value.isEmpty || value.length == 1 && value['enable'] == false);
+  void mihomoInactive(
+    String key,
+    Object value,
+    bool Function(Object?) inactive,
+  ) {
+    if (!capabilities.androidHostTun) {
+      rawConfig[key] = value;
+      return;
+    }
+    if (rawConfig.containsKey(key) && !inactive(rawConfig[key]))
+      throw FormatException(
+        '\$.$key: source field has no verified Android host consumer',
+      );
+    if (!inactive(value))
+      throw FormatException(
+        '\$.$key: active client setting needs its Android host consumer',
+      );
+    rawConfig.remove(key);
+  }
+
+  final unsupportedSourceKeys = [
+    if (!capabilities.globalTcpKeepAliveTuning) ...[
+      'keep-alive-interval',
+      'keep-alive-idle',
+      'disable-keep-alive',
+    ],
+    if (!capabilities.geoDataLoaderSelection) 'geodata-loader',
+  ];
+  for (final key in unsupportedSourceKeys) {
+    if (rawConfig.containsKey(key))
+      throw FormatException(
+        '\$.$key: explicit source policy has no fixed Meow configuration consumer',
+      );
+  }
   final realPatchConfig = data.realPatchConfig;
+  if (capabilities.androidHostTun)
+    _applyMeowGeodata(rawConfig, realPatchConfig);
   final tunOverrides = data.overrides.tun.overrideJson(
     data.overrides.tunOverrideKeys,
   );
@@ -262,47 +653,66 @@ Future<RealProfile> _makeRealProfileTask(
   rawConfig['secret'] = realPatchConfig.secret;
   // mihomo serves the unix and pipe controllers without a secret, and the unix
   // one unlinks whatever sits at its path before opening it to everyone.
-  rawConfig['external-controller-tls'] = '';
-  rawConfig['external-controller-unix'] = '';
-  rawConfig['external-controller-pipe'] = '';
+  mihomoInactive('external-controller-tls', '', emptyText);
+  mihomoInactive('external-controller-unix', '', emptyText);
+  mihomoInactive('external-controller-pipe', '', emptyText);
   final iptables = rawConfig['iptables'];
-  if (iptables is Map) {
+  if (!capabilities.androidHostTun && iptables is Map) {
     final inboundInterface = iptables['inbound-interface'];
     if (inboundInterface is String && inboundInterface.contains(' ')) {
-      rawConfig['iptables'] = {'enable': false};
+      mihomoInactive('iptables', {'enable': false}, disabledMap);
     }
   }
-  rawConfig['external-ui'] = '';
+  mihomoInactive('external-ui', '', emptyText);
   switch (realPatchConfig.interfaceNameMode) {
     case InterfaceNameMode.clear:
-      rawConfig['interface-name'] = '';
+      mihomoInactive('interface-name', '', emptyText);
     case InterfaceNameMode.follow:
       break;
     case InterfaceNameMode.custom:
-      rawConfig['interface-name'] = realPatchConfig.interfaceName;
+      mihomoInactive(
+        'interface-name',
+        realPatchConfig.interfaceName,
+        emptyText,
+      );
   }
-  rawConfig['external-ui-url'] = '';
+  mihomoInactive('external-ui-url', '', emptyText);
   rawConfig['tcp-concurrent'] = realPatchConfig.tcpConcurrent;
   rawConfig['unified-delay'] = realPatchConfig.unifiedDelay;
   rawConfig['ipv6'] = realPatchConfig.ipv6;
   rawConfig['log-level'] = realPatchConfig.logLevel.name;
   rawConfig['port'] = 0;
   rawConfig['socks-port'] = 0;
-  rawConfig['keep-alive-interval'] = realPatchConfig.keepAliveInterval;
-  rawConfig['keep-alive-idle'] = realPatchConfig.keepAliveIdle;
-  rawConfig['disable-keep-alive'] = realPatchConfig.disableKeepAlive;
-  rawConfig['routing-mark'] = realPatchConfig.routingMark;
+  if (capabilities.globalTcpKeepAliveTuning) {
+    rawConfig['keep-alive-interval'] = realPatchConfig.keepAliveInterval;
+    rawConfig['keep-alive-idle'] = realPatchConfig.keepAliveIdle;
+    rawConfig['disable-keep-alive'] = realPatchConfig.disableKeepAlive;
+  } else {
+    if (realPatchConfig.keepAliveInterval != 30)
+      throw const FormatException(
+        '\$.keep-alive-interval: fixed Meow does not support global TCP keepalive tuning',
+      );
+    if (realPatchConfig.keepAliveIdle != 15)
+      throw const FormatException(
+        '\$.keep-alive-idle: fixed Meow does not support global TCP keepalive tuning',
+      );
+    if (realPatchConfig.disableKeepAlive)
+      throw const FormatException(
+        '\$.disable-keep-alive: fixed Meow does not support global TCP keepalive tuning',
+      );
+  }
+  mihomoInactive('routing-mark', realPatchConfig.routingMark, zero);
   rawConfig['mixed-port'] = realPatchConfig.mixedPort;
   rawConfig['port'] = realPatchConfig.port;
   rawConfig['socks-port'] = realPatchConfig.socksPort;
-  rawConfig['redir-port'] = realPatchConfig.redirPort;
-  rawConfig['tproxy-port'] = realPatchConfig.tproxyPort;
+  mihomoInactive('redir-port', realPatchConfig.redirPort, zero);
+  mihomoInactive('tproxy-port', realPatchConfig.tproxyPort, zero);
   rawConfig['find-process-mode'] = realPatchConfig.findProcessMode.name;
   rawConfig['allow-lan'] = realPatchConfig.allowLan;
   // The app owns local inbound authentication; a profile-provided
   // skip-auth-prefixes could silently exempt loopback and defeat it.
   rawConfig['authentication'] = data.authentication;
-  rawConfig['skip-auth-prefixes'] = [];
+  mihomoInactive('skip-auth-prefixes', [], emptyList);
   rawConfig['mode'] = realPatchConfig.mode.name;
   if (capabilities.androidHostTun) {
     if (sourceTun != null) rawConfig['tun'] = sourceTun;
@@ -329,9 +739,17 @@ Future<RealProfile> _makeRealProfileTask(
     }
     rawConfig['tun'] = tun;
   }
-  rawConfig['geodata-loader'] = realPatchConfig.geodataLoader.name;
-  rawConfig['geo-auto-update'] = realPatchConfig.geoAutoUpdate;
-  rawConfig['geo-update-interval'] = realPatchConfig.geoUpdateInterval;
+  if (capabilities.geoDataLoaderSelection) {
+    rawConfig['geodata-loader'] = realPatchConfig.geodataLoader.name;
+  } else if (realPatchConfig.geodataLoader != GeodataLoader.memconservative) {
+    throw const FormatException(
+      '\$.geodata-loader: fixed Meow does not support loader selection',
+    );
+  }
+  if (!capabilities.androidHostTun) {
+    rawConfig['geo-auto-update'] = realPatchConfig.geoAutoUpdate;
+    rawConfig['geo-update-interval'] = realPatchConfig.geoUpdateInterval;
+  }
   final snifferOverride = overrides.sniffer.overrideJson(
     overrides.snifferOverrideKeys,
   );
@@ -351,7 +769,9 @@ Future<RealProfile> _makeRealProfileTask(
       }
     }
   }
-  if (rawConfig['profile'] == null) {
+  if (capabilities.androidHostTun) {
+    rawConfig.remove('profile');
+  } else if (rawConfig['profile'] == null) {
     rawConfig['profile'] = {};
   }
   void injectUnconfinedProviders(
@@ -368,18 +788,91 @@ Future<RealProfile> _makeRealProfileTask(
     };
   }
 
+  if (data.rawConfigJson == null) {
+    _applyNativeProxyProviderEdits(rawConfig, overrides);
+  }
+  String resourcePath(Map<String, dynamic> item) {
+    final relative = item['file'];
+    if (relative is! String ||
+        !RegExp(
+          r'^profiles/providers/[1-9][0-9]*/(?:rules|proxies)/[0-9a-f]{32}$',
+        ).hasMatch(relative))
+      throw StateError(
+        'nativeResourceInputs.file: invalid private resource path',
+      );
+    return join(dirname(profilesPath), relative);
+  }
+
+  final nativeInputs = overrides.nativeResourceInputs;
+  if (nativeInputs['\$.__migration-input-index'] case final index?)
+    rawConfig['aerove-native-resource-manifest'] = resourcePath(index);
+  final pathReplacements = <String, String>{};
+  for (final entry in nativeInputs.entries) {
+    final record = entry.value['nativeRecord'];
+    if (record is Map &&
+        record['kind'] == 'private-file' &&
+        record['localPath'] is String) {
+      final original = record['localPath'] as String;
+      final target = resourcePath(entry.value);
+      if (pathReplacements.containsKey(original) &&
+          pathReplacements[original] != target)
+        throw StateError(
+          'nativeResourceInputs.private-file: ambiguous original private path',
+        );
+      pathReplacements[original] = target;
+    }
+  }
+  dynamic replacePrivate(dynamic value) => switch (value) {
+    Map() => {
+      for (final entry in value.entries)
+        entry.key:
+            ['tls-cert', 'tls-key', 'ca'].contains(entry.key) &&
+                entry.value is String
+            ? pathReplacements[entry.value] ?? entry.value
+            : replacePrivate(entry.value),
+    },
+    List() => value.map(replacePrivate).toList(),
+    _ => value,
+  };
+  if (rawConfig['proxies'] is List)
+    rawConfig['proxies'] = replacePrivate(rawConfig['proxies']);
+  for (final field in ['mmdb', 'asn-mmdb', 'geosite']) {
+    final item = nativeInputs['\$.$field'];
+    if (item == null) continue;
+    final record = item['nativeRecord'];
+    final sourceUrl = record is Map ? record['url'] : null;
+    final urlKey = field == 'asn-mmdb' ? 'asn' : field;
+    final currentUrl = capabilities.androidHostTun
+        ? (rawConfig['geodata'] as Map)['url'][urlKey]
+        : rawConfig['$field-download-url'] ??
+              realPatchConfig.geoXUrl.raw[urlKey];
+    if (sourceUrl != null && currentUrl != null)
+      rawConfig['$field-download-url'] = currentUrl;
+    if (sourceUrl != null && sourceUrl != currentUrl) continue;
+    if (sourceUrl == null &&
+        record is Map &&
+        rawConfig[field] != record['localPath'])
+      continue;
+    rawConfig[field] = resourcePath(item);
+  }
+
   confineProviders('proxy-providers', proxiesProviderDirectoryName);
   confineProviders('rule-providers', rulesProviderDirectoryName);
   injectUnconfinedProviders('proxy-providers', data.injectedProxyProviders);
   injectUnconfinedProviders('rule-providers', data.injectedRuleProviders);
-  rawConfig['profile']['store-selected'] = false;
-  rawConfig['geox-url'] = realPatchConfig.geoXUrl.raw;
+  if (!capabilities.androidHostTun)
+    rawConfig['profile']['store-selected'] = false;
+  if (!capabilities.androidHostTun)
+    rawConfig['geox-url'] = realPatchConfig.geoXUrl.raw;
   rawConfig['global-ua'] = realPatchConfig.globalUa ?? defaultUA;
   if (rawConfig['hosts'] == null) {
     rawConfig['hosts'] = {};
   }
   for (final host in realPatchConfig.hosts.entries) {
     rawConfig['hosts'][host.key] = host.value.splitByMultipleSeparators;
+  }
+  for (final host in overrides.hosts.entries) {
+    rawConfig['hosts'][host.key] = host.value;
   }
   var rawDns = rawConfig['dns'] is Map
       ? Map<String, dynamic>.from(rawConfig['dns'] as Map)
@@ -395,7 +888,9 @@ Future<RealProfile> _makeRealProfileTask(
   rawDns = mergeDnsOverride(
     rawDns,
     overrides.dns.overrideJson(
-      overrides.dnsOverrideKeys,
+      capabilities.androidHostTun
+          ? _meowDnsOverrideKeys(overrides.dns, overrides.dnsOverrideKeys)
+          : overrides.dnsOverrideKeys,
       keepEmpty: data.keepEmptyDnsOverrides,
     ),
   );
@@ -416,15 +911,21 @@ Future<RealProfile> _makeRealProfileTask(
     }
   }
   if (data.safeMode) {
+    if (capabilities.androidHostTun &&
+        rawConfig.containsKey('listeners') &&
+        !emptyList(rawConfig['listeners']))
+      throw const FormatException(
+        '\$.listeners: source listener policy conflicts with client safe mode',
+      );
     rawConfig['listeners'] = [];
-    rawConfig['tunnels'] = [];
-    rawConfig['ss-config'] = '';
-    rawConfig['vmess-config'] = '';
-    rawConfig['tuic-server'] = {'enable': false};
-    rawConfig['iptables'] = {'enable': false};
+    mihomoInactive('tunnels', [], emptyList);
+    mihomoInactive('ss-config', '', emptyText);
+    mihomoInactive('vmess-config', '', emptyText);
+    mihomoInactive('tuic-server', {'enable': false}, disabledMap);
+    mihomoInactive('iptables', {'enable': false}, disabledMap);
     rawConfig['dns']['listen'] = '';
     final rawNtp = rawConfig['ntp'];
-    if (rawNtp is Map) {
+    if (!capabilities.androidHostTun && rawNtp is Map) {
       rawConfig['ntp'] = {
         ...Map<String, dynamic>.from(rawNtp),
         NtpOverrideKey.writeToSystem.path: false,
@@ -477,7 +978,12 @@ Future<RealProfile> _makeRealProfileTask(
   }
   rawConfig['rules'] = rules;
   final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
-  return (yaml: yaml, md5: yaml.toMd5(), counts: configCountsOf(rawConfig));
+  return (
+    yaml: yaml,
+    md5: yaml.toMd5(),
+    counts: configCountsOf(rawConfig),
+    selectionPolicy: selectionPolicy,
+  );
 }
 
 typedef ShakingStoreArgs = ({

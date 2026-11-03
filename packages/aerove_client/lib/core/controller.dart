@@ -159,6 +159,21 @@ class CoreController {
     return _interface.validateFilters(filters);
   }
 
+  Future<List<int>> matchFilters(
+    String requestId,
+    List<String> patterns,
+    List<String> names, {
+    int timeoutMillis = 10000,
+  }) => _interface.matchFilters(
+    requestId,
+    patterns,
+    names,
+    timeoutMillis: timeoutMillis,
+  );
+
+  Future<bool> cancelFilterMatch(String requestId) =>
+      _interface.cancelFilterMatch(requestId);
+
   Future<List<String>> encodeShareLinks(List<Map<String, dynamic>> proxies) {
     if (proxies.isEmpty) {
       return Future.value(const []);
@@ -323,6 +338,9 @@ class CoreController {
   ) async {
     return _interface.getExternalProvider(externalProviderName);
   }
+
+  Future<MeowGeoReply> updateGeoPrepared(MeowGeoRequest request) =>
+      _interface.updateGeoPrepared(request);
 
   Future<String> updateGeoData(String type) {
     return _interface.updateGeoData(type);

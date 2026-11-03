@@ -18,6 +18,7 @@ typedef BuiltProfile = ({
   String md5,
   ConfigCounts counts,
   SetupBase? base,
+  ProfileSelectionPolicy? selectionPolicy,
 });
 
 class _RunRequest {
@@ -44,7 +45,35 @@ class SetupAction extends _$SetupAction {
   }
 
   Timer? _runtimeTimer;
+  final _builderFilterRequests = <String, CoreController>{};
   int _runtimeRevision = 0;
+  int _geoRevision = 0;
+  String? _lastGeoGlobal;
+  ({CoreController core, String transactionId})? _geoTransaction;
+
+  void _cancelGeoRequest() {
+    _geoRevision++;
+    final previous = _geoTransaction;
+    _geoTransaction = null;
+    if (previous != null) {
+      unawaited(
+        previous.core
+            .updateGeoPrepared(
+              MeowGeoRequest.abort(transactionId: previous.transactionId),
+            )
+            .then<void>(
+              (_) {},
+              onError: (Object error) {
+                commonPrint.log(
+                  'Geo cancellation status: ${compactError(error)}',
+                  logLevel: LogLevel.warning,
+                );
+              },
+            ),
+      );
+    }
+  }
+
   final _setupScheduler = SerialTaskScheduler();
   final _listenerScheduler = SerialTaskScheduler();
   final _updateScheduler = SerialTaskScheduler();
@@ -68,6 +97,22 @@ class SetupAction extends _$SetupAction {
   @override
   void build() {
     ref.onDispose(_stopRuntimeTicker);
+    ref.onDispose(_cancelGeoRequest);
+    ref.listen(currentProfileIdProvider, (_, _) => _cancelGeoRequest());
+    ref.listen(coreHandlerProvider, (_, _) => _cancelGeoRequest());
+    ref.listen(coreStatusProvider, (_, next) {
+      if (next != CoreStatus.connected) _cancelGeoRequest();
+    });
+    ref.onDispose(
+      () => unawaited(
+        _cancelBuilderFilters().catchError((Object _) {
+          commonPrint.log(
+            'Builder filter cancellation did not join',
+            logLevel: LogLevel.warning,
+          );
+        }),
+      ),
+    );
     ref.onDispose(() => _finishLanEnable(false));
     ref.listen(updateParamsProvider, (_, _) => _finishLanEnable(false));
     ref.listen(currentProfileIdProvider, (_, _) => _finishLanEnable(false));
@@ -353,6 +398,15 @@ class SetupAction extends _$SetupAction {
       return Future.value(true);
     }
     final request = _claim(running, initialize: running && initialize);
+    if (!running)
+      unawaited(
+        _cancelBuilderFilters().catchError((Object _) {
+          commonPrint.log(
+            'Builder filter cancellation did not join',
+            logLevel: LogLevel.warning,
+          );
+        }),
+      );
     return running ? _start(request) : _stop(request);
   }
 
@@ -620,14 +674,96 @@ class SetupAction extends _$SetupAction {
             : _restartCoreAfterAuthorization();
       }
       final networkSetting = ref.read(networkSettingProvider);
+      Map<String, dynamic>? sourceProof;
+      Config? sourceConfig;
+      final sourceFilterIds = {
+        for (final ids
+            in ref
+                    .read(currentProfileProvider)
+                    ?.overrides
+                    .filterBindings
+                    .values ??
+                <List<int>>[])
+          ...ids,
+      };
+      if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+        await waitForDatabaseWrites();
+        debouncer.cancel(FunctionTag.savePreferences);
+        final storage = await preferences.sharedPreferences;
+        if (storage == null)
+          throw StateError('Shared data storage is unavailable');
+        sourceConfig = ref.read(configProvider);
+        sourceProof = await nativeLiteBusinessSource(
+          database,
+          Directory(await appPath.homeDirPath),
+          storage,
+          sourceConfig,
+        );
+        if (nativeLiteJsonHash(
+              nativeLiteRuntimeConfig(sourceConfig!.toJson(), sourceFilterIds),
+            ) !=
+            nativeLiteJsonHash(
+              nativeLiteRuntimeConfig(
+                ref.read(configProvider).toJson(),
+                sourceFilterIds,
+              ),
+            )) {
+          throw StateError(
+            'Shared configuration changed before the live update',
+          );
+        }
+      }
+      final update = _effectivePatchConfig(patchConfig).toUpdateParams(
+        coreId: ClientProduct.current.expectedCoreId,
+        authentication: networkSetting.authentication.credentials,
+        skipCertVerify: !ref.read(appSettingProvider).checkCertificate,
+      );
+      final meow = ClientProduct.current.expectedCoreId == 'meow-rs';
+      final wire = meow
+          ? update.copyWith(geoXUrl: meowGlobalGeoDownloadUrls(patchConfig))
+          : update;
+      final geoGlobal = meow
+          ? nativeLiteJsonHash({
+              'auto-update': wire.geoAutoUpdate,
+              'interval': wire.geoUpdateInterval,
+              'url': wire.geoXUrl,
+            })
+          : null;
+      if (meow) _cancelGeoRequest();
       final message = await _core.updateConfig(
-        _effectivePatchConfig(patchConfig).toUpdateParams(
-          coreId: ClientProduct.current.expectedCoreId,
-          authentication: networkSetting.authentication.credentials,
-          skipCertVerify: !ref.read(appSettingProvider).checkCertificate,
-        ),
+        wire.copyWith(dataSourceProof: sourceProof),
       );
       if (message.isNotEmpty) throw MessageException(message);
+      if (sourceConfig != null &&
+          nativeLiteJsonHash(
+                nativeLiteRuntimeConfig(sourceConfig.toJson(), sourceFilterIds),
+              ) !=
+              nativeLiteJsonHash(
+                nativeLiteRuntimeConfig(
+                  ref.read(configProvider).toJson(),
+                  sourceFilterIds,
+                ),
+              )) {
+        final storage = await preferences.sharedPreferences;
+        if (storage != null)
+          await nativeLiteBusinessSource(
+            database,
+            Directory(await appPath.homeDirPath),
+            storage,
+            ref.read(configProvider),
+          );
+        throw StateError('Shared configuration changed during the live update');
+      }
+      if (meow &&
+          geoGlobal != _lastGeoGlobal &&
+          ref.read(coreStatusProvider) == CoreStatus.connected) {
+        await updateMeowGeo(
+          'automatic',
+          isCurrent: () =>
+              ref.mounted && params == ref.read(updateParamsProvider),
+        );
+      }
+      _lastGeoGlobal = geoGlobal;
       return true;
     });
     if (receipt != null && identical(receipt, _lanEnableReceipt)) {
@@ -688,7 +824,10 @@ class SetupAction extends _$SetupAction {
 
   Future<bool> _inputsApplied() async {
     final applied = _appliedInputs;
-    return applied != null && applied == await _currentInputs();
+    if (applied == null) return false;
+    final (state, patch, network, params) = applied;
+    return (state, patch, network, params.copyWith(dataSourceProof: null)) ==
+        await _currentInputs();
   }
 
   Future<_SetupInputs?> _currentInputs() async {
@@ -748,19 +887,33 @@ class SetupAction extends _$SetupAction {
 
   /// Go records a setup only when it applies one, so inputs that moved without
   /// moving the YAML reach it here, or every reopen would rebuild the profile.
-  Future<void> _refreshRecord(_SetupInputs inputs, BuiltProfile profile) async {
+  Future<bool> _refreshRecord(
+    _SetupInputs inputs,
+    BuiltProfile profile, {
+    bool Function()? isCurrent,
+  }) async {
     final record = await _setupRecord(inputs, profile);
-    if (record == null) {
-      return;
-    }
+    if (record == null || (isCurrent != null && !isCurrent())) return false;
     final (_, _, _, params) = inputs;
+    final effective = ClientProduct.current.expectedCoreId == 'meow-rs'
+        ? params.copyWith(selectedMap: Map.of(ref.read(selectedMapProvider)))
+        : params;
     try {
-      await _core.refreshAppliedSetup(params.copyWith(applied: record));
+      final admitted = ClientProduct.current.expectedCoreId == 'meow-rs'
+          ? profile.selectionPolicy!.consumeSql(
+              effective,
+              profileId: inputs.$1.profileId,
+            )
+          : effective;
+      return await _core.refreshAppliedSetup(
+        admitted.copyWith(applied: record),
+      );
     } catch (e) {
       commonPrint.log(
         'refreshAppliedSetup ===> ${compactError(e)}',
         logLevel: coreFailureLogLevel(e),
       );
+      return false;
     }
   }
 
@@ -798,6 +951,80 @@ class SetupAction extends _$SetupAction {
     return result != _SetupTaskResult.failed;
   }
 
+  Future<bool> refreshSelectionMetadata({
+    required int profileId,
+    required String groupName,
+    required String proxyName,
+    required bool Function() isCurrent,
+  }) async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs') return false;
+    bool current() =>
+        ref.mounted &&
+        isCurrent() &&
+        ref.read(coreStatusProvider) == CoreStatus.connected &&
+        ref.read(currentProfileProvider)?.id == profileId &&
+        ref.read(currentProfileProvider)?.selectedMap[groupName] == proxyName;
+    if (!current()) return false;
+    final result = await _setupScheduler.run(
+      () => _setupConfig(
+        silence: true,
+        metadataOnly: true,
+        metadataIsCurrent: current,
+      ),
+    );
+    return result == _SetupTaskResult.completed;
+  }
+
+  /// Runs Geo requests through the same profile and JS producer as setup.
+  Future<void> updateMeowGeo(String type, {bool Function()? isCurrent}) async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs') {
+      throw StateError('The Geo producer is only available for Meow');
+    }
+    final revision = _geoRevision;
+    final owner = _core;
+    final profileId = ref.read(currentProfileIdProvider);
+    final transactionId = uuidV4;
+    bool current() =>
+        ref.mounted &&
+        revision == _geoRevision &&
+        identical(owner, _core) &&
+        ref.read(coreStatusProvider) == CoreStatus.connected &&
+        ref.read(currentProfileIdProvider) == profileId &&
+        (isCurrent?.call() ?? true);
+    await _setupScheduler.run(() async {
+      if (!current()) throw UpdateCancelledException();
+      _geoTransaction = (core: owner, transactionId: transactionId);
+      try {
+        if (type == 'automatic') {
+          final admission = await owner.updateGeoPrepared(
+            MeowGeoRequest.admit(transactionId: transactionId),
+          );
+          if (!current()) throw UpdateCancelledException();
+          if (admission.state == 'skipped') return;
+          if (admission.state != 'needs-source') {
+            throw StateError(
+              admission.message ?? 'Geo maintenance admission failed',
+            );
+          }
+        }
+        final result = await _setupConfig(
+          silence: true,
+          geoType: type,
+          geoTransactionId: transactionId,
+          metadataIsCurrent: current,
+        );
+        if (result != _SetupTaskResult.completed) {
+          throw StateError(
+            'Geo transaction did not confirm the generated profile',
+          );
+        }
+      } finally {
+        if (_geoTransaction?.transactionId == transactionId)
+          _geoTransaction = null;
+      }
+    });
+  }
+
   Future<_SetupTaskResult> _runSetup({
     bool silence = false,
     bool force = false,
@@ -833,13 +1060,80 @@ class SetupAction extends _$SetupAction {
   }
 
   /// With a base, [BuiltProfile.yaml] is only the overlay the Core applies.
+  Future<void> _cancelBuilderFilters() async {
+    final pending = _builderFilterRequests.entries.toList();
+    final joined = await Future.wait([
+      for (final entry in pending) entry.value.cancelFilterMatch(entry.key),
+    ]);
+    if (joined.any((value) => !value))
+      throw StateError('Builder filter cancellation did not join');
+  }
+
+  Future<List<ProxyGroup>> _resolveLibraryGroups(SetupState state) async {
+    final overrides = state.overrides;
+    if (overrides.filterBindings.isEmpty && overrides.iconBindings.isEmpty)
+      return state.proxyGroups;
+    final filters = ref.read(appSettingProvider).filters;
+    final icons = await database.iconSetsDao.query().get();
+    final names = state.appProxies.map((proxy) => proxy.name).toList();
+    final groups = <ProxyGroup>[];
+    for (var group in state.proxyGroups) {
+      if (overrides.filterBindings[group.id] case final bindings?) {
+        final patterns = <String>[];
+        for (final id in bindings) {
+          final matched = filters.where((filter) => filter.id == id).toList();
+          if (matched.length != 1)
+            throw StateError(
+              'profile.overrides.filterBindings: linked filter is missing or ambiguous',
+            );
+          patterns.add(matched.single.regex);
+        }
+        final id = 'builder:${snowflake.id}';
+        final core = _core;
+        _builderFilterRequests[id] = core;
+        try {
+          final matched = await core.matchFilters(id, patterns, names);
+          group = group.copyWith(
+            proxies: {
+              ...?overrides.filterManualMembers[group.id],
+              for (final index in matched)
+                if (names[index] != group.name) names[index],
+            }.toList(),
+          );
+        } finally {
+          _builderFilterRequests.remove(id);
+        }
+      }
+      if (overrides.iconBindings[group.id] case final binding?) {
+        final sets = icons.where((set) => set.id == binding['set']).toList();
+        if (sets.length != 1 ||
+            sets.single.icons
+                    .where((icon) => icon.url == binding['url'])
+                    .length !=
+                1)
+          throw StateError(
+            'profile.overrides.iconBindings: linked icon is missing or ambiguous',
+          );
+        group = group.copyWith(icon: binding['url'] as String);
+      }
+      groups.add(group);
+    }
+    return groups;
+  }
+
   Future<BuiltProfile> getProfile({
     required SetupState setupState,
     required PatchClashConfig patchConfig,
   }) async {
     final profileId = setupState.profileId;
     if (profileId == null) {
-      return (yaml: '', md5: '', counts: configCountsOf(const {}), base: null);
+      return (
+        yaml: '',
+        md5: '',
+        counts: configCountsOf(const {}),
+        base: null,
+        selectionPolicy: null,
+      );
     }
     final defaultUA = globalState.packageInfo.ua;
     final networkSetting = ref.read(
@@ -854,42 +1148,90 @@ class SetupAction extends _$SetupAction {
     final appendSystemDns = networkSetting.appendSystemDns;
     final isCustom = setupState.profileType == ProfileType.custom;
     final scriptContent =
-        !isCustom && setupState.extendType == ExtendType.script
+        (!isCustom || setupState.overrides.applyExtensionToCustom) &&
+            setupState.extendType == ExtendType.script
         ? await setupState.script?.content
         : null;
     final hasScript = scriptContent?.isNotEmpty == true;
     final profileBase = !isCustom && !hasScript
         ? await _core.getProfileBase(profileId)
         : null;
+    final resolvedGroups = isCustom
+        ? await _resolveLibraryGroups(setupState)
+        : <ProxyGroup>[];
     final rawConfig = isCustom
         ? <String, dynamic>{
+            ...setupState.overrides.baseConfig,
+            'proxy-groups': [
+              for (final group in resolvedGroups) group.definition,
+            ],
+            'rules': [for (final rule in setupState.rules) rule.rawValue],
+            'proxy-providers': setupState.overrides.sourceProxyProviders,
+            'rule-providers': {
+              for (final entry
+                  in setupState.overrides.sourceRuleProviders.entries)
+                entry.key: entry.value,
+            },
             'proxies': appProxiesPayload(
               setupState.appProxies,
               dialers: setupState.proxyDialers,
-              groups: setupState.proxyGroups,
+              groups: resolvedGroups,
             ),
           }
         : profileBase?.base.config ?? const <String, dynamic>{};
-    final proxyGroups = isCustom ? setupState.proxyGroups : <ProxyGroup>[];
+    final proxyGroups = resolvedGroups;
     final rules = isCustom ? setupState.rules : <Rule>[];
-    final scriptOutput = hasScript
-        ? await handleEvaluate(
-            scriptContent!,
-            await _core.getConfigJson(profileId),
-          )
-        : null;
     final directory = await appPath.profilesPath;
     final injected = await _resolveInjectedProviders(
       setupState,
       proxyGroups: proxyGroups,
       rules: rules,
     );
+    if (isCustom) {
+      rawConfig['proxy-providers'] = {
+        ...injected.proxies,
+        ...setupState.overrides.sourceProxyProviders,
+      };
+      rawConfig['rule-providers'] = {
+        ...injected.rules,
+        for (final entry in setupState.overrides.sourceRuleProviders.entries)
+          entry.key: entry.value,
+      };
+    }
+    final scriptOutput = hasScript
+        ? await handleEvaluate(
+            scriptContent!,
+            isCustom
+                ? nativeProxyProviderScriptInput(
+                    ClientProduct.current.expectedCoreId == 'meow-rs'
+                        ? meowDnsScriptInput(
+                            jsonEncode(rawConfig),
+                            overrides: setupState.overrides,
+                          )
+                        : jsonEncode(rawConfig),
+                    setupState.overrides,
+                  )
+                : nativeProxyProviderScriptInput(
+                    ClientProduct.current.expectedCoreId == 'meow-rs'
+                        ? meowDnsScriptInput(
+                            await _core.getConfigJson(profileId),
+                            overrides: setupState.overrides,
+                          )
+                        : await _core.getConfigJson(profileId),
+                    setupState.overrides,
+                  ),
+          )
+        : null;
     final res = await makeRealProfileTask(
       MakeRealProfileState(
-        rules: rules,
-        proxyGroups: proxyGroups,
-        injectedProxyProviders: injected.proxies,
-        injectedRuleProviders: injected.rules,
+        rules: const [],
+        proxyGroups: const [],
+        injectedProxyProviders: isCustom && hasScript
+            ? const {}
+            : injected.proxies,
+        injectedRuleProviders: isCustom && hasScript
+            ? const {}
+            : injected.rules,
         profilesPath: directory,
         profileId: profileId,
         rawConfig: rawConfig,
@@ -910,9 +1252,23 @@ class SetupAction extends _$SetupAction {
         safeMode: ref.read(safeModeProvider),
       ),
       coreId: ClientProduct.current.expectedCoreId,
+      selectionBinding:
+          ClientProduct.current.expectedCoreId == 'meow-rs' &&
+              ref.read(profileProvider(profileId)) != null
+          ? ProfileSelectionBinding(
+              profileId,
+              ref.read(profileProvider(profileId))!.selectedMap,
+            )
+          : null,
     );
     if (profileBase == null) {
-      return (yaml: res.yaml, md5: res.md5, counts: res.counts, base: null);
+      return (
+        yaml: res.yaml,
+        md5: res.md5,
+        counts: res.counts,
+        base: null,
+        selectionPolicy: res.selectionPolicy,
+      );
     }
     final (:base, :path) = profileBase;
     return (
@@ -924,6 +1280,7 @@ class SetupAction extends _$SetupAction {
         rules: res.counts.rules + base.rules,
       ),
       base: SetupBase(path: path, overlay: res.yaml),
+      selectionPolicy: res.selectionPolicy,
     );
   }
 
@@ -940,6 +1297,7 @@ class SetupAction extends _$SetupAction {
     };
     final usedRuleProviders = <String>{
       for (final rule in rules) ...rule.ruleSets,
+      ...setupState.overrides.ruleProviderBindings.keys,
       if (setupState.profileType == ProfileType.custom)
         ...setupState.overrides.ruleSets,
     };
@@ -966,13 +1324,21 @@ class SetupAction extends _$SetupAction {
     );
     final ruleProviders = <String, dynamic>{};
     for (final provider in setupState.clashProviders) {
-      if (!usedRuleProviders.contains(provider.label)) {
+      final aliases = [
+        for (final entry in setupState.overrides.ruleProviderBindings.entries)
+          if (entry.value == provider.id) entry.key,
+      ];
+      if (aliases.isEmpty &&
+          setupState.overrides.sourceRuleProviders.containsKey(provider.label))
+        continue;
+      if (!usedRuleProviders.contains(provider.label) &&
+          !aliases.any(usedRuleProviders.contains)) {
         continue;
       }
       final prepared = await clashProvidersAction.prepare(provider);
-      ruleProviders[prepared.label] = prepared.definition(
-        await prepared.corePath,
-      );
+      for (final label in aliases.isEmpty ? [prepared.label] : aliases) {
+        ruleProviders[label] = prepared.definition(await prepared.corePath);
+      }
     }
     return (proxies: proxies, rules: ruleProviders);
   }
@@ -1079,23 +1445,84 @@ class SetupAction extends _$SetupAction {
     bool silence = false,
     Future<void> Function()? preloadInvoke,
     FutureOr Function()? onUpdated,
+    bool metadataOnly = false,
+    String? geoType,
+    String? geoTransactionId,
+    bool Function()? metadataIsCurrent,
   }) async {
-    var profile = ref.read(currentProfileProvider) ?? recoverMissingProfile();
+    final producerOnly = metadataOnly || geoType != null;
+    var profile = ref.read(currentProfileProvider);
+    if (producerOnly &&
+        (profile == null || !(metadataIsCurrent?.call() ?? false)))
+      return _SetupTaskResult.failed;
+    profile ??= recoverMissingProfile();
     // A refresh failure is surfaced by safeRun; setup keeps the old profile.
-    final nextProfile = await globalState.safeRun(
-      () => profile?.checkAndUpdateAndCopy(
-        validate: (path, key) => _core.validateProfile(path, key),
-      ),
-    );
+    final nextProfile = producerOnly
+        ? null
+        : await globalState.safeRun(
+            () => profile?.checkAndUpdateAndCopy(
+              validate: (path, key) => _core.validateProfile(path, key),
+            ),
+          );
     if (nextProfile != null) {
       profile = nextProfile;
       ref.read(profilesProvider.notifier).put(nextProfile);
     }
     commonPrint.log('setup ===> ${profile?.realLabel}');
     final patchConfig = ref.read(patchClashConfigProvider);
-    final shouldContinueSetup = await requestAdmin(patchConfig.tun.enable);
+    final shouldContinueSetup =
+        producerOnly || await requestAdmin(patchConfig.tun.enable);
     if (!shouldContinueSetup) {
       return _SetupTaskResult.handoffToCoreRestart;
+    }
+    final bindSharedSource = ClientProduct.current.expectedCoreId == 'meow-rs';
+    Map<String, dynamic>? dataSourceProof;
+    Config? businessConfig;
+    var businessFilterIds = <int>{};
+
+    if (bindSharedSource) {
+      final dependencies = await ref.read(
+        setupStateProvider(profile?.id).future,
+      );
+      if (dependencies.profileType == ProfileType.custom) {
+        await _resolveInjectedProviders(
+          dependencies,
+          proxyGroups: dependencies.proxyGroups,
+          rules: dependencies.rules,
+        );
+        ref.invalidate(setupStateProvider(profile?.id));
+      }
+      await waitForDatabaseWrites();
+
+      businessConfig = ref.read(configProvider);
+      businessFilterIds = {
+        for (final ids
+            in ref
+                    .read(currentProfileProvider)
+                    ?.overrides
+                    .filterBindings
+                    .values ??
+                <List<int>>[])
+          ...ids,
+      };
+      if (businessConfig!.patchClashConfig != patchConfig)
+        throw StateError(
+          'Shared core settings changed while preparing dependencies',
+        );
+      if (businessConfig.currentProfileId != profile?.id)
+        throw StateError(
+          'Shared profile selection changed while preparing the runtime',
+        );
+      debouncer.cancel(FunctionTag.savePreferences);
+      final storage = await preferences.sharedPreferences;
+      if (storage == null)
+        throw StateError('Shared data storage is unavailable');
+      dataSourceProof = await nativeLiteBusinessSource(
+        database,
+        Directory(await appPath.homeDirPath),
+        storage,
+        businessConfig,
+      );
     }
     final realPatchConfig = _effectivePatchConfig(patchConfig);
     final networkSetting = ref.read(networkSettingProvider);
@@ -1106,28 +1533,171 @@ class SetupAction extends _$SetupAction {
       return getProfile(setupState: state, patchConfig: realPatchConfig);
     }, title: 'build profile');
     final profileFailed = realProfile == null;
-    final setupParams = _setupParams.copyWith(base: realProfile?.base);
+    if (bindSharedSource) {
+      await waitForDatabaseWrites();
+      final storage = await preferences.sharedPreferences;
+      final readBack = storage == null
+          ? null
+          : await nativeLiteBusinessSource(
+              database,
+              Directory(await appPath.homeDirPath),
+              storage,
+              null,
+            );
+      if (nativeLiteJsonHash(
+                nativeLiteRuntimeConfig(
+                  businessConfig!.toJson(),
+                  businessFilterIds,
+                ),
+              ) !=
+              nativeLiteJsonHash(
+                nativeLiteRuntimeConfig(
+                  ref.read(configProvider).toJson(),
+                  businessFilterIds,
+                ),
+              ) ||
+          jsonEncode(readBack) != jsonEncode(dataSourceProof)) {
+        throw StateError(
+          'Shared configuration changed while preparing the runtime',
+        );
+      }
+    }
+    var setupParams = _setupParams.copyWith(
+      base: realProfile?.base,
+      dataSourceProof: dataSourceProof,
+    );
+    if (bindSharedSource && realProfile != null) {
+      setupParams = realProfile.selectionPolicy!.consumeSql(
+        setupParams,
+        profileId: profile?.id,
+      );
+    }
     final inputs = switch (setupState) {
       final state? when !profileFailed => (
         state,
         realPatchConfig,
         networkSetting,
-        _appliedParams,
+        _appliedParams.copyWith(dataSourceProof: dataSourceProof),
       ),
       _ => null,
     };
     final yamlString = realProfile?.yaml ?? '';
     final yamlMd5 = realProfile?.md5 ?? '';
-    if (realProfile != null && yamlMd5 == globalState.lastConfigMd5 && !force) {
-      if (inputs != null && inputs != _appliedInputs) {
-        await _refreshRecord(inputs, realProfile);
+    if (producerOnly && !(metadataIsCurrent?.call() ?? false))
+      return _SetupTaskResult.failed;
+    if (geoType != null) {
+      if (!bindSharedSource ||
+          realProfile == null ||
+          inputs == null ||
+          geoTransactionId == null) {
+        return _SetupTaskResult.failed;
       }
-      _appliedInputs = inputs;
+      final record = await _setupRecord(inputs, realProfile);
+      if (record == null || !(metadataIsCurrent?.call() ?? false))
+        return _SetupTaskResult.failed;
+      final body = realProfile.base == null
+          ? realProfile.yaml
+          : await _core.buildProfile(realProfile.base!);
+      if (!(metadataIsCurrent?.call() ?? false)) return _SetupTaskResult.failed;
+      await waitForDatabaseWrites();
+      final storage = await preferences.sharedPreferences;
+      final actualProof = storage == null
+          ? null
+          : await nativeLiteBusinessSource(
+              database,
+              Directory(await appPath.homeDirPath),
+              storage,
+              null,
+            );
+      if (jsonEncode(actualProof) != jsonEncode(dataSourceProof)) {
+        throw StateError(
+          'Shared source changed while rendering the Geo producer body',
+        );
+      }
+      final source = await compute(nativeLiteWriteGeoSource, (
+        home: await appPath.homeDirPath,
+        transactionId: geoTransactionId,
+        body: body,
+      ));
+      final owner = _core;
+      try {
+        if (!(metadataIsCurrent?.call() ?? false))
+          return _SetupTaskResult.failed;
+        MeowGeoReply reply;
+        try {
+          reply = await owner.updateGeoPrepared(
+            MeowGeoRequest.update(
+              transactionId: geoTransactionId,
+              type: geoType,
+              source: source,
+              setupParams: setupParams.copyWith(applied: record),
+            ),
+          );
+        } catch (_) {
+          // A lost observer is not evidence that the Core rolled back.
+          reply = await owner.updateGeoPrepared(
+            MeowGeoRequest.status(transactionId: geoTransactionId),
+          );
+        }
+        if (reply.state != 'committed' ||
+            !reply.active ||
+            reply.applied != record ||
+            reply.producerSha256 != source.sha256 ||
+            reply.compiledSha256 == null) {
+          throw StateError(
+            reply.message ?? 'Geo transaction has no matching applied receipt',
+          );
+        }
+        if (!(metadataIsCurrent?.call() ?? false))
+          return _SetupTaskResult.failed;
+        final finalStorage = await preferences.sharedPreferences;
+        final finalProof = finalStorage == null
+            ? null
+            : await nativeLiteBusinessSource(
+                database,
+                Directory(await appPath.homeDirPath),
+                finalStorage,
+                null,
+              );
+        if (jsonEncode(finalProof) != jsonEncode(dataSourceProof) ||
+            !(metadataIsCurrent?.call() ?? false)) {
+          return _SetupTaskResult.failed;
+        }
+        _appliedInputs = inputs;
+        globalState.lastConfigMd5 = yamlMd5;
+        _publishAppliedCounts(realProfile.counts);
+        return _SetupTaskResult.completed;
+      } finally {
+        await File(
+          source.path,
+        ).delete().catchError((Object _) => File(source.path));
+      }
+    }
+    if (realProfile != null && yamlMd5 == globalState.lastConfigMd5 && !force) {
+      var refreshed = true;
+      if (inputs != null && (metadataOnly || inputs != _appliedInputs))
+        refreshed = await _refreshRecord(
+          inputs,
+          realProfile,
+          isCurrent: metadataOnly ? metadataIsCurrent : null,
+        );
+      if (metadataOnly && !(metadataIsCurrent?.call() ?? false))
+        return _SetupTaskResult.failed;
+      if (!bindSharedSource || refreshed) _appliedInputs = inputs;
+      if ((metadataOnly || bindSharedSource) && !refreshed)
+        return _SetupTaskResult.failed;
       _publishAppliedCounts(realProfile.counts);
       if (preloadInvoke != null) {
         await _runSurfaced(preloadInvoke);
       }
       return _SetupTaskResult.completed;
+    }
+    if (metadataOnly) {
+      commonPrint.log(
+        'Selection metadata was not renewed because the actual generated YAML changed',
+        logLevel: LogLevel.warning,
+      );
+      return _SetupTaskResult.failed;
     }
     // Go answers a config it rejects by running its built-in default, which
     // has no proxies, so until this push succeeds no applied config is known.

@@ -553,47 +553,139 @@ Map<String, dynamic> _$ProfileTunToJson(_ProfileTun instance) =>
       'exclude-dst-port': instance.excludeDstPort,
     };
 
-_ProfileOverrides _$ProfileOverridesFromJson(Map<String, dynamic> json) =>
-    _ProfileOverrides(
-      dns: json['dns'] == null
-          ? xclashDefaultDns
-          : Dns.safeDnsFromJson(json['dns'] as Map<String, Object?>),
-      dnsOverrideKeys: json['dns-override-keys'] == null
-          ? xclashDefaultDnsOverrideKeys
-          : _dnsOverrideKeysFromJson(json['dns-override-keys'] as List),
-      ntp: json['ntp'] == null
-          ? defaultNtp
-          : Ntp.safeNtpFromJson(json['ntp'] as Map<String, Object?>),
-      ntpOverrideKeys: json['ntp-override-keys'] == null
-          ? const {}
-          : _ntpOverrideKeysFromJson(json['ntp-override-keys'] as List),
-      sniffer: json['sniffer'] == null
-          ? defaultSniffer
-          : Sniffer.safeSnifferFromJson(
-              json['sniffer'] as Map<String, Object?>,
-            ),
-      snifferOverrideKeys: json['sniffer-override-keys'] == null
-          ? const {}
-          : _snifferOverrideKeysFromJson(json['sniffer-override-keys'] as List),
-      tun: json['tun'] == null
-          ? defaultProfileTun
-          : ProfileTun.safeFromJson(json['tun'] as Map<String, Object?>),
-      tunOverrideKeys: json['tun-override-keys'] == null
-          ? const {}
-          : _tunOverrideKeysFromJson(json['tun-override-keys'] as List),
-      proxyProviders:
-          (json['proxy-providers'] as Map<String, dynamic>?)?.map(
-            (k, e) => MapEntry(
-              k,
-              ProxyProviderOptions.fromJson(e as Map<String, dynamic>),
-            ),
-          ) ??
-          const {},
-    );
+_ProfileOverrides _$ProfileOverridesFromJson(
+  Map<String, dynamic> json,
+) => _ProfileOverrides(
+  hosts:
+      (json['hosts'] as Map<String, dynamic>?)?.map(
+        (k, e) =>
+            MapEntry(k, (e as List<dynamic>).map((e) => e as String).toList()),
+      ) ??
+      const {},
+  scopedCustomProxyIds: (json['scopedCustomProxyIds'] as List<dynamic>?)
+      ?.map((e) => (e as num).toInt())
+      .toList(),
+  ownedCustomProxyIds:
+      (json['ownedCustomProxyIds'] as List<dynamic>?)
+          ?.map((e) => (e as num).toInt())
+          .toSet() ??
+      const {},
+  applyExtensionToCustom: json['applyExtensionToCustom'] as bool? ?? false,
+  ruleProviderBindings:
+      (json['ruleProviderBindings'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(k, (e as num).toInt()),
+      ) ??
+      const {},
+  filterBindings:
+      (json['filterBindings'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(
+          int.parse(k),
+          (e as List<dynamic>).map((e) => (e as num).toInt()).toList(),
+        ),
+      ) ??
+      const {},
+  filterManualMembers:
+      (json['filterManualMembers'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(
+          int.parse(k),
+          (e as List<dynamic>).map((e) => e as String).toList(),
+        ),
+      ) ??
+      const {},
+  iconBindings:
+      (json['iconBindings'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(int.parse(k), e as Map<String, dynamic>),
+      ) ??
+      const {},
+  baseConfig: json['baseConfig'] as Map<String, dynamic>? ?? const {},
+  nativeResourceInputs:
+      (json['nativeResourceInputs'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(k, e as Map<String, dynamic>),
+      ) ??
+      const {},
+  nativeProfileUuid: json['nativeProfileUuid'] as String?,
+  sourceProxyProviders:
+      (json['sourceProxyProviders'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(k, e as Map<String, dynamic>),
+      ) ??
+      const {},
+  sourceRuleProviders:
+      (json['sourceRuleProviders'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(k, e as Map<String, dynamic>),
+      ) ??
+      const {},
+  preRuleIds:
+      (json['preRuleIds'] as List<dynamic>?)
+          ?.map((e) => (e as num).toInt())
+          .toSet() ??
+      const {},
+  inheritGlobalRules: json['inheritGlobalRules'] as bool? ?? false,
+  proxyAliases:
+      (json['proxyAliases'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(int.parse(k), e as String),
+      ) ??
+      const {},
+  dns: json['dns'] == null
+      ? xclashDefaultDns
+      : Dns.safeDnsFromJson(json['dns'] as Map<String, Object?>),
+  dnsOverrideKeys: json['dns-override-keys'] == null
+      ? xclashDefaultDnsOverrideKeys
+      : _dnsOverrideKeysFromJson(json['dns-override-keys'] as List),
+  ntp: json['ntp'] == null
+      ? defaultNtp
+      : Ntp.safeNtpFromJson(json['ntp'] as Map<String, Object?>),
+  ntpOverrideKeys: json['ntp-override-keys'] == null
+      ? const {}
+      : _ntpOverrideKeysFromJson(json['ntp-override-keys'] as List),
+  sniffer: json['sniffer'] == null
+      ? defaultSniffer
+      : Sniffer.safeSnifferFromJson(json['sniffer'] as Map<String, Object?>),
+  snifferOverrideKeys: json['sniffer-override-keys'] == null
+      ? const {}
+      : _snifferOverrideKeysFromJson(json['sniffer-override-keys'] as List),
+  tun: json['tun'] == null
+      ? defaultProfileTun
+      : ProfileTun.safeFromJson(json['tun'] as Map<String, Object?>),
+  tunOverrideKeys: json['tun-override-keys'] == null
+      ? const {}
+      : _tunOverrideKeysFromJson(json['tun-override-keys'] as List),
+  proxyProviders:
+      (json['proxy-providers'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(
+          k,
+          ProxyProviderOptions.fromJson(e as Map<String, dynamic>),
+        ),
+      ) ??
+      const {},
+);
 
 Map<String, dynamic> _$ProfileOverridesToJson(_ProfileOverrides instance) =>
     <String, dynamic>{
-      'dns': instance.dns,
+      'hosts': instance.hosts,
+      'scopedCustomProxyIds': instance.scopedCustomProxyIds,
+      'ownedCustomProxyIds': instance.ownedCustomProxyIds.toList(),
+      'applyExtensionToCustom': instance.applyExtensionToCustom,
+      'ruleProviderBindings': instance.ruleProviderBindings,
+      'filterBindings': instance.filterBindings.map(
+        (k, e) => MapEntry(k.toString(), e),
+      ),
+      'filterManualMembers': instance.filterManualMembers.map(
+        (k, e) => MapEntry(k.toString(), e),
+      ),
+      'iconBindings': instance.iconBindings.map(
+        (k, e) => MapEntry(k.toString(), e),
+      ),
+      'baseConfig': instance.baseConfig,
+      'nativeResourceInputs': instance.nativeResourceInputs,
+      'nativeProfileUuid': instance.nativeProfileUuid,
+      'sourceProxyProviders': instance.sourceProxyProviders,
+      'sourceRuleProviders': instance.sourceRuleProviders,
+      'preRuleIds': instance.preRuleIds.toList(),
+      'inheritGlobalRules': instance.inheritGlobalRules,
+      'proxyAliases': instance.proxyAliases.map(
+        (k, e) => MapEntry(k.toString(), e),
+      ),
+      'dns': Dns.storageJson(instance.dns),
       'dns-override-keys': instance.dnsOverrideKeys
           .map((e) => _$DnsOverrideKeyEnumMap[e]!)
           .toList(),
@@ -749,6 +841,10 @@ _ProxyProviderOptions _$ProxyProviderOptionsFromJson(
   memberLayout: (json['memberLayout'] as List<dynamic>?)
       ?.map((e) => e as String)
       .toList(),
+  sourceDefinition: json['sourceDefinition'] as Map<String, dynamic>?,
+  editedFields: (json['editedFields'] as List<dynamic>?)
+      ?.map((e) => e as String)
+      .toSet(),
 );
 
 Map<String, dynamic> _$ProxyProviderOptionsToJson(
@@ -759,6 +855,8 @@ Map<String, dynamic> _$ProxyProviderOptionsToJson(
   'exclude-filter': instance.excludeFilter,
   'override': instance.proxyOverride,
   'memberLayout': instance.memberLayout,
+  'sourceDefinition': instance.sourceDefinition,
+  'editedFields': ?instance.editedFields?.toList(),
 };
 
 _Rule _$RuleFromJson(Map<String, dynamic> json) => _Rule(
@@ -958,7 +1056,7 @@ Map<String, dynamic> _$PatchClashConfigToJson(_PatchClashConfig instance) =>
       'unified-delay': instance.unifiedDelay,
       'tcp-concurrent': instance.tcpConcurrent,
       'tun': instance.tun,
-      'dns': instance.dns,
+      'dns': Dns.storageJson(instance.dns),
       'dns-override-keys': instance.dnsOverrideKeys
           .map((e) => _$DnsOverrideKeyEnumMap[e]!)
           .toList(),

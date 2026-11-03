@@ -16,7 +16,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$SetupParams {
 
-@JsonKey(name: 'selected-map') Map<String, String> get selectedMap;@JsonKey(name: 'test-url') String get testUrl;@JsonKey(name: 'skip-cert-verify') bool get skipCertVerify;@JsonKey(includeIfNull: false) SetupBase? get base;@JsonKey(includeIfNull: false) SetupRecord? get applied;
+@JsonKey(name: 'selected-map') Map<String, String> get selectedMap;@JsonKey(name: 'test-url') String get testUrl;@JsonKey(name: 'skip-cert-verify') bool get skipCertVerify;@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? get dataSourceProof;@JsonKey(includeIfNull: false) SetupBase? get base;@JsonKey(includeIfNull: false) SetupRecord? get applied;
 /// Create a copy of SetupParams
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -30,20 +30,20 @@ $SetupParamsCopyWith<SetupParams> get copyWith => _$SetupParamsCopyWithImpl<Setu
 @override
 bool operator ==(Object other) {
   final _this = this as SetupParams;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _this.selectedMap)&&(identical(other.testUrl, _this.testUrl) || other.testUrl == _this.testUrl)&&(identical(other.skipCertVerify, _this.skipCertVerify) || other.skipCertVerify == _this.skipCertVerify)&&(identical(other.base, _this.base) || other.base == _this.base)&&(identical(other.applied, _this.applied) || other.applied == _this.applied));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _this.selectedMap)&&(identical(other.testUrl, _this.testUrl) || other.testUrl == _this.testUrl)&&(identical(other.skipCertVerify, _this.skipCertVerify) || other.skipCertVerify == _this.skipCertVerify)&&const DeepCollectionEquality().equals(other.dataSourceProof, _this.dataSourceProof)&&(identical(other.base, _this.base) || other.base == _this.base)&&(identical(other.applied, _this.applied) || other.applied == _this.applied));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as SetupParams;
-  return Object.hash(runtimeType,const DeepCollectionEquality().hash(_this.selectedMap),_this.testUrl,_this.skipCertVerify,_this.base,_this.applied);
+  return Object.hash(runtimeType,const DeepCollectionEquality().hash(_this.selectedMap),_this.testUrl,_this.skipCertVerify,const DeepCollectionEquality().hash(_this.dataSourceProof),_this.base,_this.applied);
 }
 
 @override
 String toString() {
   final _this = this as SetupParams;
-  return 'SetupParams(selectedMap: ${_this.selectedMap}, testUrl: ${_this.testUrl}, skipCertVerify: ${_this.skipCertVerify}, base: ${_this.base}, applied: ${_this.applied})';
+  return 'SetupParams(selectedMap: ${_this.selectedMap}, testUrl: ${_this.testUrl}, skipCertVerify: ${_this.skipCertVerify}, dataSourceProof: ${_this.dataSourceProof}, base: ${_this.base}, applied: ${_this.applied})';
 }
 
 
@@ -54,7 +54,7 @@ abstract mixin class $SetupParamsCopyWith<$Res>  {
   factory $SetupParamsCopyWith(SetupParams value, $Res Function(SetupParams) _then) = _$SetupParamsCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(includeIfNull: false) SetupBase? base,@JsonKey(includeIfNull: false) SetupRecord? applied
+@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? dataSourceProof,@JsonKey(includeIfNull: false) SetupBase? base,@JsonKey(includeIfNull: false) SetupRecord? applied
 });
 
 
@@ -71,12 +71,13 @@ class _$SetupParamsCopyWithImpl<$Res>
 
 /// Create a copy of SetupParams
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? base = freezed,Object? applied = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? dataSourceProof = freezed,Object? base = freezed,Object? applied = freezed,}) {
   return _then(SetupParams(
 selectedMap: null == selectedMap ? _self.selectedMap : selectedMap // ignore: cast_nullable_to_non_nullable
 as Map<String, String>,testUrl: null == testUrl ? _self.testUrl : testUrl // ignore: cast_nullable_to_non_nullable
 as String,skipCertVerify: null == skipCertVerify ? _self.skipCertVerify : skipCertVerify // ignore: cast_nullable_to_non_nullable
-as bool,base: freezed == base ? _self.base : base // ignore: cast_nullable_to_non_nullable
+as bool,dataSourceProof: freezed == dataSourceProof ? _self.dataSourceProof : dataSourceProof // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,base: freezed == base ? _self.base : base // ignore: cast_nullable_to_non_nullable
 as SetupBase?,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
 as SetupRecord?,
   ));
@@ -187,10 +188,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SetupParams() when $default != null:
-return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,_that.applied);case _:
+return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.dataSourceProof,_that.base,_that.applied);case _:
   return orElse();
 
 }
@@ -208,10 +209,10 @@ return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)  $default,) {final _that = this;
 switch (_that) {
 case _SetupParams():
-return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,_that.applied);case _:
+return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.dataSourceProof,_that.base,_that.applied);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -228,10 +229,10 @@ return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'selected-map')  Map<String, String> selectedMap, @JsonKey(name: 'test-url')  String testUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify, @JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(includeIfNull: false)  SetupBase? base, @JsonKey(includeIfNull: false)  SetupRecord? applied)?  $default,) {final _that = this;
 switch (_that) {
 case _SetupParams() when $default != null:
-return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,_that.applied);case _:
+return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.dataSourceProof,_that.base,_that.applied);case _:
   return null;
 
 }
@@ -243,7 +244,7 @@ return $default(_that.selectedMap,_that.testUrl,_that.skipCertVerify,_that.base,
 @JsonSerializable()
 
 class _SetupParams implements SetupParams {
-  const _SetupParams({@JsonKey(name: 'selected-map') required  Map<String, String> selectedMap, @JsonKey(name: 'test-url') required this.testUrl, @JsonKey(name: 'skip-cert-verify') this.skipCertVerify = false, @JsonKey(includeIfNull: false) this.base, @JsonKey(includeIfNull: false) this.applied}): _selectedMap = selectedMap;
+  const _SetupParams({@JsonKey(name: 'selected-map') required  Map<String, String> selectedMap, @JsonKey(name: 'test-url') required this.testUrl, @JsonKey(name: 'skip-cert-verify') this.skipCertVerify = false, @JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(includeIfNull: false) this.base, @JsonKey(includeIfNull: false) this.applied}): _selectedMap = selectedMap,_dataSourceProof = dataSourceProof;
   factory _SetupParams.fromJson(Map<String, dynamic> json) => _$SetupParamsFromJson(json);
 
  final  Map<String, String> _selectedMap;
@@ -255,6 +256,15 @@ class _SetupParams implements SetupParams {
 
 @override@JsonKey(name: 'test-url') final  String testUrl;
 @override@JsonKey(name: 'skip-cert-verify') final  bool skipCertVerify;
+ final  Map<String, dynamic>? _dataSourceProof;
+@override@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? get dataSourceProof {
+  final value = _dataSourceProof;
+  if (value == null) return null;
+  if (_dataSourceProof is EqualUnmodifiableMapView) return _dataSourceProof;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableMapView(value);
+}
+
 @override@JsonKey(includeIfNull: false) final  SetupBase? base;
 @override@JsonKey(includeIfNull: false) final  SetupRecord? applied;
 
@@ -271,18 +281,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _selectedMap)&&(identical(other.testUrl, testUrl) || other.testUrl == testUrl)&&(identical(other.skipCertVerify, skipCertVerify) || other.skipCertVerify == skipCertVerify)&&(identical(other.base, base) || other.base == base)&&(identical(other.applied, applied) || other.applied == applied));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SetupParams&&const DeepCollectionEquality().equals(other.selectedMap, _selectedMap)&&(identical(other.testUrl, testUrl) || other.testUrl == testUrl)&&(identical(other.skipCertVerify, skipCertVerify) || other.skipCertVerify == skipCertVerify)&&const DeepCollectionEquality().equals(other.dataSourceProof, _dataSourceProof)&&(identical(other.base, base) || other.base == base)&&(identical(other.applied, applied) || other.applied == applied));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_selectedMap),testUrl,skipCertVerify,base,applied);
+    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_selectedMap),testUrl,skipCertVerify,const DeepCollectionEquality().hash(_dataSourceProof),base,applied);
 }
 
 @override
 String toString() {
-    return 'SetupParams(selectedMap: $selectedMap, testUrl: $testUrl, skipCertVerify: $skipCertVerify, base: $base, applied: $applied)';
+    return 'SetupParams(selectedMap: $selectedMap, testUrl: $testUrl, skipCertVerify: $skipCertVerify, dataSourceProof: $dataSourceProof, base: $base, applied: $applied)';
 }
 
 
@@ -293,7 +303,7 @@ abstract mixin class _$SetupParamsCopyWith<$Res> implements $SetupParamsCopyWith
   factory _$SetupParamsCopyWith(_SetupParams value, $Res Function(_SetupParams) _then) = __$SetupParamsCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(includeIfNull: false) SetupBase? base,@JsonKey(includeIfNull: false) SetupRecord? applied
+@JsonKey(name: 'selected-map') Map<String, String> selectedMap,@JsonKey(name: 'test-url') String testUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify,@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? dataSourceProof,@JsonKey(includeIfNull: false) SetupBase? base,@JsonKey(includeIfNull: false) SetupRecord? applied
 });
 
 
@@ -310,12 +320,13 @@ class __$SetupParamsCopyWithImpl<$Res>
 
 /// Create a copy of SetupParams
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? base = freezed,Object? applied = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? selectedMap = null,Object? testUrl = null,Object? skipCertVerify = null,Object? dataSourceProof = freezed,Object? base = freezed,Object? applied = freezed,}) {
   return _then(_SetupParams(
 selectedMap: null == selectedMap ? _self._selectedMap : selectedMap // ignore: cast_nullable_to_non_nullable
 as Map<String, String>,testUrl: null == testUrl ? _self.testUrl : testUrl // ignore: cast_nullable_to_non_nullable
 as String,skipCertVerify: null == skipCertVerify ? _self.skipCertVerify : skipCertVerify // ignore: cast_nullable_to_non_nullable
-as bool,base: freezed == base ? _self.base : base // ignore: cast_nullable_to_non_nullable
+as bool,dataSourceProof: freezed == dataSourceProof ? _self._dataSourceProof : dataSourceProof // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,base: freezed == base ? _self.base : base // ignore: cast_nullable_to_non_nullable
 as SetupBase?,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
 as SetupRecord?,
   ));
@@ -1504,7 +1515,7 @@ as int,
 /// @nodoc
 mixin _$UpdateParams {
 
-@JsonKey(toJson: _tunCoreJson) Tun get tun;@JsonKey(name: 'mixed-port') int get mixedPort;@JsonKey(name: 'allow-lan') bool get allowLan;@JsonKey(name: 'find-process-mode') FindProcessMode get findProcessMode; Mode get mode;@JsonKey(name: 'log-level') LogLevel get logLevel; bool get ipv6;@JsonKey(name: 'tcp-concurrent') bool get tcpConcurrent;@JsonKey(name: 'external-controller') ExternalControllerStatus get externalController; String get secret;@JsonKey(name: 'unified-delay') bool get unifiedDelay; List<String> get authentication;@JsonKey(name: 'geo-auto-update') bool get geoAutoUpdate;@JsonKey(name: 'geo-update-interval') int get geoUpdateInterval;@JsonKey(name: 'geox-url') Map<String, String> get geoXUrl;@JsonKey(name: 'skip-cert-verify') bool get skipCertVerify;
+@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? get dataSourceProof;@JsonKey(toJson: _tunCoreJson) Tun get tun;@JsonKey(name: 'mixed-port') int get mixedPort;@JsonKey(name: 'allow-lan') bool get allowLan;@JsonKey(name: 'find-process-mode') FindProcessMode get findProcessMode; Mode get mode;@JsonKey(name: 'log-level') LogLevel get logLevel; bool get ipv6;@JsonKey(name: 'tcp-concurrent') bool get tcpConcurrent;@JsonKey(name: 'external-controller') ExternalControllerStatus get externalController; String get secret;@JsonKey(name: 'unified-delay') bool get unifiedDelay; List<String> get authentication;@JsonKey(name: 'geo-auto-update') bool get geoAutoUpdate;@JsonKey(name: 'geo-update-interval') int get geoUpdateInterval;@JsonKey(name: 'geox-url') Map<String, String> get geoXUrl;@JsonKey(name: 'skip-cert-verify') bool get skipCertVerify;
 /// Create a copy of UpdateParams
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1518,20 +1529,20 @@ $UpdateParamsCopyWith<UpdateParams> get copyWith => _$UpdateParamsCopyWithImpl<U
 @override
 bool operator ==(Object other) {
   final _this = this as UpdateParams;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is UpdateParams&&(identical(other.tun, _this.tun) || other.tun == _this.tun)&&(identical(other.mixedPort, _this.mixedPort) || other.mixedPort == _this.mixedPort)&&(identical(other.allowLan, _this.allowLan) || other.allowLan == _this.allowLan)&&(identical(other.findProcessMode, _this.findProcessMode) || other.findProcessMode == _this.findProcessMode)&&(identical(other.mode, _this.mode) || other.mode == _this.mode)&&(identical(other.logLevel, _this.logLevel) || other.logLevel == _this.logLevel)&&(identical(other.ipv6, _this.ipv6) || other.ipv6 == _this.ipv6)&&(identical(other.tcpConcurrent, _this.tcpConcurrent) || other.tcpConcurrent == _this.tcpConcurrent)&&(identical(other.externalController, _this.externalController) || other.externalController == _this.externalController)&&(identical(other.secret, _this.secret) || other.secret == _this.secret)&&(identical(other.unifiedDelay, _this.unifiedDelay) || other.unifiedDelay == _this.unifiedDelay)&&const DeepCollectionEquality().equals(other.authentication, _this.authentication)&&(identical(other.geoAutoUpdate, _this.geoAutoUpdate) || other.geoAutoUpdate == _this.geoAutoUpdate)&&(identical(other.geoUpdateInterval, _this.geoUpdateInterval) || other.geoUpdateInterval == _this.geoUpdateInterval)&&const DeepCollectionEquality().equals(other.geoXUrl, _this.geoXUrl)&&(identical(other.skipCertVerify, _this.skipCertVerify) || other.skipCertVerify == _this.skipCertVerify));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is UpdateParams&&const DeepCollectionEquality().equals(other.dataSourceProof, _this.dataSourceProof)&&(identical(other.tun, _this.tun) || other.tun == _this.tun)&&(identical(other.mixedPort, _this.mixedPort) || other.mixedPort == _this.mixedPort)&&(identical(other.allowLan, _this.allowLan) || other.allowLan == _this.allowLan)&&(identical(other.findProcessMode, _this.findProcessMode) || other.findProcessMode == _this.findProcessMode)&&(identical(other.mode, _this.mode) || other.mode == _this.mode)&&(identical(other.logLevel, _this.logLevel) || other.logLevel == _this.logLevel)&&(identical(other.ipv6, _this.ipv6) || other.ipv6 == _this.ipv6)&&(identical(other.tcpConcurrent, _this.tcpConcurrent) || other.tcpConcurrent == _this.tcpConcurrent)&&(identical(other.externalController, _this.externalController) || other.externalController == _this.externalController)&&(identical(other.secret, _this.secret) || other.secret == _this.secret)&&(identical(other.unifiedDelay, _this.unifiedDelay) || other.unifiedDelay == _this.unifiedDelay)&&const DeepCollectionEquality().equals(other.authentication, _this.authentication)&&(identical(other.geoAutoUpdate, _this.geoAutoUpdate) || other.geoAutoUpdate == _this.geoAutoUpdate)&&(identical(other.geoUpdateInterval, _this.geoUpdateInterval) || other.geoUpdateInterval == _this.geoUpdateInterval)&&const DeepCollectionEquality().equals(other.geoXUrl, _this.geoXUrl)&&(identical(other.skipCertVerify, _this.skipCertVerify) || other.skipCertVerify == _this.skipCertVerify));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as UpdateParams;
-  return Object.hash(runtimeType,_this.tun,_this.mixedPort,_this.allowLan,_this.findProcessMode,_this.mode,_this.logLevel,_this.ipv6,_this.tcpConcurrent,_this.externalController,_this.secret,_this.unifiedDelay,const DeepCollectionEquality().hash(_this.authentication),_this.geoAutoUpdate,_this.geoUpdateInterval,const DeepCollectionEquality().hash(_this.geoXUrl),_this.skipCertVerify);
+  return Object.hash(runtimeType,const DeepCollectionEquality().hash(_this.dataSourceProof),_this.tun,_this.mixedPort,_this.allowLan,_this.findProcessMode,_this.mode,_this.logLevel,_this.ipv6,_this.tcpConcurrent,_this.externalController,_this.secret,_this.unifiedDelay,const DeepCollectionEquality().hash(_this.authentication),_this.geoAutoUpdate,_this.geoUpdateInterval,const DeepCollectionEquality().hash(_this.geoXUrl),_this.skipCertVerify);
 }
 
 @override
 String toString() {
   final _this = this as UpdateParams;
-  return 'UpdateParams(tun: ${_this.tun}, mixedPort: ${_this.mixedPort}, allowLan: ${_this.allowLan}, findProcessMode: ${_this.findProcessMode}, mode: ${_this.mode}, logLevel: ${_this.logLevel}, ipv6: ${_this.ipv6}, tcpConcurrent: ${_this.tcpConcurrent}, externalController: ${_this.externalController}, secret: ${_this.secret}, unifiedDelay: ${_this.unifiedDelay}, authentication: ${_this.authentication}, geoAutoUpdate: ${_this.geoAutoUpdate}, geoUpdateInterval: ${_this.geoUpdateInterval}, geoXUrl: ${_this.geoXUrl}, skipCertVerify: ${_this.skipCertVerify})';
+  return 'UpdateParams(dataSourceProof: ${_this.dataSourceProof}, tun: ${_this.tun}, mixedPort: ${_this.mixedPort}, allowLan: ${_this.allowLan}, findProcessMode: ${_this.findProcessMode}, mode: ${_this.mode}, logLevel: ${_this.logLevel}, ipv6: ${_this.ipv6}, tcpConcurrent: ${_this.tcpConcurrent}, externalController: ${_this.externalController}, secret: ${_this.secret}, unifiedDelay: ${_this.unifiedDelay}, authentication: ${_this.authentication}, geoAutoUpdate: ${_this.geoAutoUpdate}, geoUpdateInterval: ${_this.geoUpdateInterval}, geoXUrl: ${_this.geoXUrl}, skipCertVerify: ${_this.skipCertVerify})';
 }
 
 
@@ -1542,7 +1553,7 @@ abstract mixin class $UpdateParamsCopyWith<$Res>  {
   factory $UpdateParamsCopyWith(UpdateParams value, $Res Function(UpdateParams) _then) = _$UpdateParamsCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(toJson: _tunCoreJson) Tun tun,@JsonKey(name: 'mixed-port') int mixedPort,@JsonKey(name: 'allow-lan') bool allowLan,@JsonKey(name: 'find-process-mode') FindProcessMode findProcessMode, Mode mode,@JsonKey(name: 'log-level') LogLevel logLevel, bool ipv6,@JsonKey(name: 'tcp-concurrent') bool tcpConcurrent,@JsonKey(name: 'external-controller') ExternalControllerStatus externalController, String secret,@JsonKey(name: 'unified-delay') bool unifiedDelay, List<String> authentication,@JsonKey(name: 'geo-auto-update') bool geoAutoUpdate,@JsonKey(name: 'geo-update-interval') int geoUpdateInterval,@JsonKey(name: 'geox-url') Map<String, String> geoXUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify
+@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? dataSourceProof,@JsonKey(toJson: _tunCoreJson) Tun tun,@JsonKey(name: 'mixed-port') int mixedPort,@JsonKey(name: 'allow-lan') bool allowLan,@JsonKey(name: 'find-process-mode') FindProcessMode findProcessMode, Mode mode,@JsonKey(name: 'log-level') LogLevel logLevel, bool ipv6,@JsonKey(name: 'tcp-concurrent') bool tcpConcurrent,@JsonKey(name: 'external-controller') ExternalControllerStatus externalController, String secret,@JsonKey(name: 'unified-delay') bool unifiedDelay, List<String> authentication,@JsonKey(name: 'geo-auto-update') bool geoAutoUpdate,@JsonKey(name: 'geo-update-interval') int geoUpdateInterval,@JsonKey(name: 'geox-url') Map<String, String> geoXUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify
 });
 
 
@@ -1559,9 +1570,10 @@ class _$UpdateParamsCopyWithImpl<$Res>
 
 /// Create a copy of UpdateParams
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? tun = null,Object? mixedPort = null,Object? allowLan = null,Object? findProcessMode = null,Object? mode = null,Object? logLevel = null,Object? ipv6 = null,Object? tcpConcurrent = null,Object? externalController = null,Object? secret = null,Object? unifiedDelay = null,Object? authentication = null,Object? geoAutoUpdate = null,Object? geoUpdateInterval = null,Object? geoXUrl = null,Object? skipCertVerify = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? dataSourceProof = freezed,Object? tun = null,Object? mixedPort = null,Object? allowLan = null,Object? findProcessMode = null,Object? mode = null,Object? logLevel = null,Object? ipv6 = null,Object? tcpConcurrent = null,Object? externalController = null,Object? secret = null,Object? unifiedDelay = null,Object? authentication = null,Object? geoAutoUpdate = null,Object? geoUpdateInterval = null,Object? geoXUrl = null,Object? skipCertVerify = null,}) {
   return _then(UpdateParams(
-tun: null == tun ? _self.tun : tun // ignore: cast_nullable_to_non_nullable
+dataSourceProof: freezed == dataSourceProof ? _self.dataSourceProof : dataSourceProof // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,tun: null == tun ? _self.tun : tun // ignore: cast_nullable_to_non_nullable
 as Tun,mixedPort: null == mixedPort ? _self.mixedPort : mixedPort // ignore: cast_nullable_to_non_nullable
 as int,allowLan: null == allowLan ? _self.allowLan : allowLan // ignore: cast_nullable_to_non_nullable
 as bool,findProcessMode: null == findProcessMode ? _self.findProcessMode : findProcessMode // ignore: cast_nullable_to_non_nullable
@@ -1671,10 +1683,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(toJson: _tunCoreJson)  Tun tun, @JsonKey(name: 'mixed-port')  int mixedPort, @JsonKey(name: 'allow-lan')  bool allowLan, @JsonKey(name: 'find-process-mode')  FindProcessMode findProcessMode,  Mode mode, @JsonKey(name: 'log-level')  LogLevel logLevel,  bool ipv6, @JsonKey(name: 'tcp-concurrent')  bool tcpConcurrent, @JsonKey(name: 'external-controller')  ExternalControllerStatus externalController,  String secret, @JsonKey(name: 'unified-delay')  bool unifiedDelay,  List<String> authentication, @JsonKey(name: 'geo-auto-update')  bool geoAutoUpdate, @JsonKey(name: 'geo-update-interval')  int geoUpdateInterval, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(toJson: _tunCoreJson)  Tun tun, @JsonKey(name: 'mixed-port')  int mixedPort, @JsonKey(name: 'allow-lan')  bool allowLan, @JsonKey(name: 'find-process-mode')  FindProcessMode findProcessMode,  Mode mode, @JsonKey(name: 'log-level')  LogLevel logLevel,  bool ipv6, @JsonKey(name: 'tcp-concurrent')  bool tcpConcurrent, @JsonKey(name: 'external-controller')  ExternalControllerStatus externalController,  String secret, @JsonKey(name: 'unified-delay')  bool unifiedDelay,  List<String> authentication, @JsonKey(name: 'geo-auto-update')  bool geoAutoUpdate, @JsonKey(name: 'geo-update-interval')  int geoUpdateInterval, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _UpdateParams() when $default != null:
-return $default(_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_that.mode,_that.logLevel,_that.ipv6,_that.tcpConcurrent,_that.externalController,_that.secret,_that.unifiedDelay,_that.authentication,_that.geoAutoUpdate,_that.geoUpdateInterval,_that.geoXUrl,_that.skipCertVerify);case _:
+return $default(_that.dataSourceProof,_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_that.mode,_that.logLevel,_that.ipv6,_that.tcpConcurrent,_that.externalController,_that.secret,_that.unifiedDelay,_that.authentication,_that.geoAutoUpdate,_that.geoUpdateInterval,_that.geoXUrl,_that.skipCertVerify);case _:
   return orElse();
 
 }
@@ -1692,10 +1704,10 @@ return $default(_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(toJson: _tunCoreJson)  Tun tun, @JsonKey(name: 'mixed-port')  int mixedPort, @JsonKey(name: 'allow-lan')  bool allowLan, @JsonKey(name: 'find-process-mode')  FindProcessMode findProcessMode,  Mode mode, @JsonKey(name: 'log-level')  LogLevel logLevel,  bool ipv6, @JsonKey(name: 'tcp-concurrent')  bool tcpConcurrent, @JsonKey(name: 'external-controller')  ExternalControllerStatus externalController,  String secret, @JsonKey(name: 'unified-delay')  bool unifiedDelay,  List<String> authentication, @JsonKey(name: 'geo-auto-update')  bool geoAutoUpdate, @JsonKey(name: 'geo-update-interval')  int geoUpdateInterval, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(toJson: _tunCoreJson)  Tun tun, @JsonKey(name: 'mixed-port')  int mixedPort, @JsonKey(name: 'allow-lan')  bool allowLan, @JsonKey(name: 'find-process-mode')  FindProcessMode findProcessMode,  Mode mode, @JsonKey(name: 'log-level')  LogLevel logLevel,  bool ipv6, @JsonKey(name: 'tcp-concurrent')  bool tcpConcurrent, @JsonKey(name: 'external-controller')  ExternalControllerStatus externalController,  String secret, @JsonKey(name: 'unified-delay')  bool unifiedDelay,  List<String> authentication, @JsonKey(name: 'geo-auto-update')  bool geoAutoUpdate, @JsonKey(name: 'geo-update-interval')  int geoUpdateInterval, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify)  $default,) {final _that = this;
 switch (_that) {
 case _UpdateParams():
-return $default(_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_that.mode,_that.logLevel,_that.ipv6,_that.tcpConcurrent,_that.externalController,_that.secret,_that.unifiedDelay,_that.authentication,_that.geoAutoUpdate,_that.geoUpdateInterval,_that.geoXUrl,_that.skipCertVerify);case _:
+return $default(_that.dataSourceProof,_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_that.mode,_that.logLevel,_that.ipv6,_that.tcpConcurrent,_that.externalController,_that.secret,_that.unifiedDelay,_that.authentication,_that.geoAutoUpdate,_that.geoUpdateInterval,_that.geoXUrl,_that.skipCertVerify);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -1712,10 +1724,10 @@ return $default(_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(toJson: _tunCoreJson)  Tun tun, @JsonKey(name: 'mixed-port')  int mixedPort, @JsonKey(name: 'allow-lan')  bool allowLan, @JsonKey(name: 'find-process-mode')  FindProcessMode findProcessMode,  Mode mode, @JsonKey(name: 'log-level')  LogLevel logLevel,  bool ipv6, @JsonKey(name: 'tcp-concurrent')  bool tcpConcurrent, @JsonKey(name: 'external-controller')  ExternalControllerStatus externalController,  String secret, @JsonKey(name: 'unified-delay')  bool unifiedDelay,  List<String> authentication, @JsonKey(name: 'geo-auto-update')  bool geoAutoUpdate, @JsonKey(name: 'geo-update-interval')  int geoUpdateInterval, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(toJson: _tunCoreJson)  Tun tun, @JsonKey(name: 'mixed-port')  int mixedPort, @JsonKey(name: 'allow-lan')  bool allowLan, @JsonKey(name: 'find-process-mode')  FindProcessMode findProcessMode,  Mode mode, @JsonKey(name: 'log-level')  LogLevel logLevel,  bool ipv6, @JsonKey(name: 'tcp-concurrent')  bool tcpConcurrent, @JsonKey(name: 'external-controller')  ExternalControllerStatus externalController,  String secret, @JsonKey(name: 'unified-delay')  bool unifiedDelay,  List<String> authentication, @JsonKey(name: 'geo-auto-update')  bool geoAutoUpdate, @JsonKey(name: 'geo-update-interval')  int geoUpdateInterval, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl, @JsonKey(name: 'skip-cert-verify')  bool skipCertVerify)?  $default,) {final _that = this;
 switch (_that) {
 case _UpdateParams() when $default != null:
-return $default(_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_that.mode,_that.logLevel,_that.ipv6,_that.tcpConcurrent,_that.externalController,_that.secret,_that.unifiedDelay,_that.authentication,_that.geoAutoUpdate,_that.geoUpdateInterval,_that.geoXUrl,_that.skipCertVerify);case _:
+return $default(_that.dataSourceProof,_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_that.mode,_that.logLevel,_that.ipv6,_that.tcpConcurrent,_that.externalController,_that.secret,_that.unifiedDelay,_that.authentication,_that.geoAutoUpdate,_that.geoUpdateInterval,_that.geoXUrl,_that.skipCertVerify);case _:
   return null;
 
 }
@@ -1727,8 +1739,17 @@ return $default(_that.tun,_that.mixedPort,_that.allowLan,_that.findProcessMode,_
 @JsonSerializable()
 
 class _UpdateParams implements UpdateParams {
-  const _UpdateParams({@JsonKey(toJson: _tunCoreJson) required this.tun, @JsonKey(name: 'mixed-port') required this.mixedPort, @JsonKey(name: 'allow-lan') required this.allowLan, @JsonKey(name: 'find-process-mode') required this.findProcessMode, required this.mode, @JsonKey(name: 'log-level') required this.logLevel, required this.ipv6, @JsonKey(name: 'tcp-concurrent') required this.tcpConcurrent, @JsonKey(name: 'external-controller') required this.externalController, this.secret = '', @JsonKey(name: 'unified-delay') required this.unifiedDelay,  List<String> authentication = const [], @JsonKey(name: 'geo-auto-update') this.geoAutoUpdate = false, @JsonKey(name: 'geo-update-interval') this.geoUpdateInterval = 24, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl = const {}, @JsonKey(name: 'skip-cert-verify') this.skipCertVerify = false}): _authentication = authentication,_geoXUrl = geoXUrl;
+  const _UpdateParams({@JsonKey(name: 'data-source-proof', includeIfNull: false)  Map<String, dynamic>? dataSourceProof, @JsonKey(toJson: _tunCoreJson) required this.tun, @JsonKey(name: 'mixed-port') required this.mixedPort, @JsonKey(name: 'allow-lan') required this.allowLan, @JsonKey(name: 'find-process-mode') required this.findProcessMode, required this.mode, @JsonKey(name: 'log-level') required this.logLevel, required this.ipv6, @JsonKey(name: 'tcp-concurrent') required this.tcpConcurrent, @JsonKey(name: 'external-controller') required this.externalController, this.secret = '', @JsonKey(name: 'unified-delay') required this.unifiedDelay,  List<String> authentication = const [], @JsonKey(name: 'geo-auto-update') this.geoAutoUpdate = false, @JsonKey(name: 'geo-update-interval') this.geoUpdateInterval = 24, @JsonKey(name: 'geox-url')  Map<String, String> geoXUrl = const {}, @JsonKey(name: 'skip-cert-verify') this.skipCertVerify = false}): _dataSourceProof = dataSourceProof,_authentication = authentication,_geoXUrl = geoXUrl;
   factory _UpdateParams.fromJson(Map<String, dynamic> json) => _$UpdateParamsFromJson(json);
+
+ final  Map<String, dynamic>? _dataSourceProof;
+@override@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? get dataSourceProof {
+  final value = _dataSourceProof;
+  if (value == null) return null;
+  if (_dataSourceProof is EqualUnmodifiableMapView) return _dataSourceProof;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableMapView(value);
+}
 
 @override@JsonKey(toJson: _tunCoreJson) final  Tun tun;
 @override@JsonKey(name: 'mixed-port') final  int mixedPort;
@@ -1772,18 +1793,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _UpdateParams&&(identical(other.tun, tun) || other.tun == tun)&&(identical(other.mixedPort, mixedPort) || other.mixedPort == mixedPort)&&(identical(other.allowLan, allowLan) || other.allowLan == allowLan)&&(identical(other.findProcessMode, findProcessMode) || other.findProcessMode == findProcessMode)&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.logLevel, logLevel) || other.logLevel == logLevel)&&(identical(other.ipv6, ipv6) || other.ipv6 == ipv6)&&(identical(other.tcpConcurrent, tcpConcurrent) || other.tcpConcurrent == tcpConcurrent)&&(identical(other.externalController, externalController) || other.externalController == externalController)&&(identical(other.secret, secret) || other.secret == secret)&&(identical(other.unifiedDelay, unifiedDelay) || other.unifiedDelay == unifiedDelay)&&const DeepCollectionEquality().equals(other.authentication, _authentication)&&(identical(other.geoAutoUpdate, geoAutoUpdate) || other.geoAutoUpdate == geoAutoUpdate)&&(identical(other.geoUpdateInterval, geoUpdateInterval) || other.geoUpdateInterval == geoUpdateInterval)&&const DeepCollectionEquality().equals(other.geoXUrl, _geoXUrl)&&(identical(other.skipCertVerify, skipCertVerify) || other.skipCertVerify == skipCertVerify));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _UpdateParams&&const DeepCollectionEquality().equals(other.dataSourceProof, _dataSourceProof)&&(identical(other.tun, tun) || other.tun == tun)&&(identical(other.mixedPort, mixedPort) || other.mixedPort == mixedPort)&&(identical(other.allowLan, allowLan) || other.allowLan == allowLan)&&(identical(other.findProcessMode, findProcessMode) || other.findProcessMode == findProcessMode)&&(identical(other.mode, mode) || other.mode == mode)&&(identical(other.logLevel, logLevel) || other.logLevel == logLevel)&&(identical(other.ipv6, ipv6) || other.ipv6 == ipv6)&&(identical(other.tcpConcurrent, tcpConcurrent) || other.tcpConcurrent == tcpConcurrent)&&(identical(other.externalController, externalController) || other.externalController == externalController)&&(identical(other.secret, secret) || other.secret == secret)&&(identical(other.unifiedDelay, unifiedDelay) || other.unifiedDelay == unifiedDelay)&&const DeepCollectionEquality().equals(other.authentication, _authentication)&&(identical(other.geoAutoUpdate, geoAutoUpdate) || other.geoAutoUpdate == geoAutoUpdate)&&(identical(other.geoUpdateInterval, geoUpdateInterval) || other.geoUpdateInterval == geoUpdateInterval)&&const DeepCollectionEquality().equals(other.geoXUrl, _geoXUrl)&&(identical(other.skipCertVerify, skipCertVerify) || other.skipCertVerify == skipCertVerify));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,tun,mixedPort,allowLan,findProcessMode,mode,logLevel,ipv6,tcpConcurrent,externalController,secret,unifiedDelay,const DeepCollectionEquality().hash(_authentication),geoAutoUpdate,geoUpdateInterval,const DeepCollectionEquality().hash(_geoXUrl),skipCertVerify);
+    return Object.hash(runtimeType,const DeepCollectionEquality().hash(_dataSourceProof),tun,mixedPort,allowLan,findProcessMode,mode,logLevel,ipv6,tcpConcurrent,externalController,secret,unifiedDelay,const DeepCollectionEquality().hash(_authentication),geoAutoUpdate,geoUpdateInterval,const DeepCollectionEquality().hash(_geoXUrl),skipCertVerify);
 }
 
 @override
 String toString() {
-    return 'UpdateParams(tun: $tun, mixedPort: $mixedPort, allowLan: $allowLan, findProcessMode: $findProcessMode, mode: $mode, logLevel: $logLevel, ipv6: $ipv6, tcpConcurrent: $tcpConcurrent, externalController: $externalController, secret: $secret, unifiedDelay: $unifiedDelay, authentication: $authentication, geoAutoUpdate: $geoAutoUpdate, geoUpdateInterval: $geoUpdateInterval, geoXUrl: $geoXUrl, skipCertVerify: $skipCertVerify)';
+    return 'UpdateParams(dataSourceProof: $dataSourceProof, tun: $tun, mixedPort: $mixedPort, allowLan: $allowLan, findProcessMode: $findProcessMode, mode: $mode, logLevel: $logLevel, ipv6: $ipv6, tcpConcurrent: $tcpConcurrent, externalController: $externalController, secret: $secret, unifiedDelay: $unifiedDelay, authentication: $authentication, geoAutoUpdate: $geoAutoUpdate, geoUpdateInterval: $geoUpdateInterval, geoXUrl: $geoXUrl, skipCertVerify: $skipCertVerify)';
 }
 
 
@@ -1794,7 +1815,7 @@ abstract mixin class _$UpdateParamsCopyWith<$Res> implements $UpdateParamsCopyWi
   factory _$UpdateParamsCopyWith(_UpdateParams value, $Res Function(_UpdateParams) _then) = __$UpdateParamsCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(toJson: _tunCoreJson) Tun tun,@JsonKey(name: 'mixed-port') int mixedPort,@JsonKey(name: 'allow-lan') bool allowLan,@JsonKey(name: 'find-process-mode') FindProcessMode findProcessMode, Mode mode,@JsonKey(name: 'log-level') LogLevel logLevel, bool ipv6,@JsonKey(name: 'tcp-concurrent') bool tcpConcurrent,@JsonKey(name: 'external-controller') ExternalControllerStatus externalController, String secret,@JsonKey(name: 'unified-delay') bool unifiedDelay, List<String> authentication,@JsonKey(name: 'geo-auto-update') bool geoAutoUpdate,@JsonKey(name: 'geo-update-interval') int geoUpdateInterval,@JsonKey(name: 'geox-url') Map<String, String> geoXUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify
+@JsonKey(name: 'data-source-proof', includeIfNull: false) Map<String, dynamic>? dataSourceProof,@JsonKey(toJson: _tunCoreJson) Tun tun,@JsonKey(name: 'mixed-port') int mixedPort,@JsonKey(name: 'allow-lan') bool allowLan,@JsonKey(name: 'find-process-mode') FindProcessMode findProcessMode, Mode mode,@JsonKey(name: 'log-level') LogLevel logLevel, bool ipv6,@JsonKey(name: 'tcp-concurrent') bool tcpConcurrent,@JsonKey(name: 'external-controller') ExternalControllerStatus externalController, String secret,@JsonKey(name: 'unified-delay') bool unifiedDelay, List<String> authentication,@JsonKey(name: 'geo-auto-update') bool geoAutoUpdate,@JsonKey(name: 'geo-update-interval') int geoUpdateInterval,@JsonKey(name: 'geox-url') Map<String, String> geoXUrl,@JsonKey(name: 'skip-cert-verify') bool skipCertVerify
 });
 
 
@@ -1811,9 +1832,10 @@ class __$UpdateParamsCopyWithImpl<$Res>
 
 /// Create a copy of UpdateParams
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? tun = null,Object? mixedPort = null,Object? allowLan = null,Object? findProcessMode = null,Object? mode = null,Object? logLevel = null,Object? ipv6 = null,Object? tcpConcurrent = null,Object? externalController = null,Object? secret = null,Object? unifiedDelay = null,Object? authentication = null,Object? geoAutoUpdate = null,Object? geoUpdateInterval = null,Object? geoXUrl = null,Object? skipCertVerify = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? dataSourceProof = freezed,Object? tun = null,Object? mixedPort = null,Object? allowLan = null,Object? findProcessMode = null,Object? mode = null,Object? logLevel = null,Object? ipv6 = null,Object? tcpConcurrent = null,Object? externalController = null,Object? secret = null,Object? unifiedDelay = null,Object? authentication = null,Object? geoAutoUpdate = null,Object? geoUpdateInterval = null,Object? geoXUrl = null,Object? skipCertVerify = null,}) {
   return _then(_UpdateParams(
-tun: null == tun ? _self.tun : tun // ignore: cast_nullable_to_non_nullable
+dataSourceProof: freezed == dataSourceProof ? _self._dataSourceProof : dataSourceProof // ignore: cast_nullable_to_non_nullable
+as Map<String, dynamic>?,tun: null == tun ? _self.tun : tun // ignore: cast_nullable_to_non_nullable
 as Tun,mixedPort: null == mixedPort ? _self.mixedPort : mixedPort // ignore: cast_nullable_to_non_nullable
 as int,allowLan: null == allowLan ? _self.allowLan : allowLan // ignore: cast_nullable_to_non_nullable
 as bool,findProcessMode: null == findProcessMode ? _self.findProcessMode : findProcessMode // ignore: cast_nullable_to_non_nullable
@@ -1849,7 +1871,7 @@ $TunCopyWith<$Res> get tun {
 /// @nodoc
 mixin _$VpnOptions {
 
- bool get enable; int get port; bool get ipv6; bool get dnsHijacking; AccessControlProps get accessControlProps; bool get allowBypass; bool get systemProxy; List<String> get bypassDomain; String get stack; List<String> get routeAddress; int get mtu; String get congestionController;
+ bool get enable; int get port; bool get ipv6; bool get dnsHijacking; AccessControlProps get accessControlProps; bool get allowBypass; bool get systemProxy; List<String> get bypassDomain; String get stack; List<String> get routeAddress;@JsonKey(includeIfNull: false) List<String>? get rawRouteAddress;@JsonKey(includeIfNull: false) List<String>? get rawRouteExcludeAddress;@JsonKey(includeIfNull: false) bool? get bypassPrivateRoute; int get mtu; String get congestionController;
 /// Create a copy of VpnOptions
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1863,20 +1885,20 @@ $VpnOptionsCopyWith<VpnOptions> get copyWith => _$VpnOptionsCopyWithImpl<VpnOpti
 @override
 bool operator ==(Object other) {
   final _this = this as VpnOptions;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is VpnOptions&&(identical(other.enable, _this.enable) || other.enable == _this.enable)&&(identical(other.port, _this.port) || other.port == _this.port)&&(identical(other.ipv6, _this.ipv6) || other.ipv6 == _this.ipv6)&&(identical(other.dnsHijacking, _this.dnsHijacking) || other.dnsHijacking == _this.dnsHijacking)&&(identical(other.accessControlProps, _this.accessControlProps) || other.accessControlProps == _this.accessControlProps)&&(identical(other.allowBypass, _this.allowBypass) || other.allowBypass == _this.allowBypass)&&(identical(other.systemProxy, _this.systemProxy) || other.systemProxy == _this.systemProxy)&&const DeepCollectionEquality().equals(other.bypassDomain, _this.bypassDomain)&&(identical(other.stack, _this.stack) || other.stack == _this.stack)&&const DeepCollectionEquality().equals(other.routeAddress, _this.routeAddress)&&(identical(other.mtu, _this.mtu) || other.mtu == _this.mtu)&&(identical(other.congestionController, _this.congestionController) || other.congestionController == _this.congestionController));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is VpnOptions&&(identical(other.enable, _this.enable) || other.enable == _this.enable)&&(identical(other.port, _this.port) || other.port == _this.port)&&(identical(other.ipv6, _this.ipv6) || other.ipv6 == _this.ipv6)&&(identical(other.dnsHijacking, _this.dnsHijacking) || other.dnsHijacking == _this.dnsHijacking)&&(identical(other.accessControlProps, _this.accessControlProps) || other.accessControlProps == _this.accessControlProps)&&(identical(other.allowBypass, _this.allowBypass) || other.allowBypass == _this.allowBypass)&&(identical(other.systemProxy, _this.systemProxy) || other.systemProxy == _this.systemProxy)&&const DeepCollectionEquality().equals(other.bypassDomain, _this.bypassDomain)&&(identical(other.stack, _this.stack) || other.stack == _this.stack)&&const DeepCollectionEquality().equals(other.routeAddress, _this.routeAddress)&&const DeepCollectionEquality().equals(other.rawRouteAddress, _this.rawRouteAddress)&&const DeepCollectionEquality().equals(other.rawRouteExcludeAddress, _this.rawRouteExcludeAddress)&&(identical(other.bypassPrivateRoute, _this.bypassPrivateRoute) || other.bypassPrivateRoute == _this.bypassPrivateRoute)&&(identical(other.mtu, _this.mtu) || other.mtu == _this.mtu)&&(identical(other.congestionController, _this.congestionController) || other.congestionController == _this.congestionController));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as VpnOptions;
-  return Object.hash(runtimeType,_this.enable,_this.port,_this.ipv6,_this.dnsHijacking,_this.accessControlProps,_this.allowBypass,_this.systemProxy,const DeepCollectionEquality().hash(_this.bypassDomain),_this.stack,const DeepCollectionEquality().hash(_this.routeAddress),_this.mtu,_this.congestionController);
+  return Object.hash(runtimeType,_this.enable,_this.port,_this.ipv6,_this.dnsHijacking,_this.accessControlProps,_this.allowBypass,_this.systemProxy,const DeepCollectionEquality().hash(_this.bypassDomain),_this.stack,const DeepCollectionEquality().hash(_this.routeAddress),const DeepCollectionEquality().hash(_this.rawRouteAddress),const DeepCollectionEquality().hash(_this.rawRouteExcludeAddress),_this.bypassPrivateRoute,_this.mtu,_this.congestionController);
 }
 
 @override
 String toString() {
   final _this = this as VpnOptions;
-  return 'VpnOptions(enable: ${_this.enable}, port: ${_this.port}, ipv6: ${_this.ipv6}, dnsHijacking: ${_this.dnsHijacking}, accessControlProps: ${_this.accessControlProps}, allowBypass: ${_this.allowBypass}, systemProxy: ${_this.systemProxy}, bypassDomain: ${_this.bypassDomain}, stack: ${_this.stack}, routeAddress: ${_this.routeAddress}, mtu: ${_this.mtu}, congestionController: ${_this.congestionController})';
+  return 'VpnOptions(enable: ${_this.enable}, port: ${_this.port}, ipv6: ${_this.ipv6}, dnsHijacking: ${_this.dnsHijacking}, accessControlProps: ${_this.accessControlProps}, allowBypass: ${_this.allowBypass}, systemProxy: ${_this.systemProxy}, bypassDomain: ${_this.bypassDomain}, stack: ${_this.stack}, routeAddress: ${_this.routeAddress}, rawRouteAddress: ${_this.rawRouteAddress}, rawRouteExcludeAddress: ${_this.rawRouteExcludeAddress}, bypassPrivateRoute: ${_this.bypassPrivateRoute}, mtu: ${_this.mtu}, congestionController: ${_this.congestionController})';
 }
 
 
@@ -1887,7 +1909,7 @@ abstract mixin class $VpnOptionsCopyWith<$Res>  {
   factory $VpnOptionsCopyWith(VpnOptions value, $Res Function(VpnOptions) _then) = _$VpnOptionsCopyWithImpl;
 @useResult
 $Res call({
- bool enable, int port, bool ipv6, bool dnsHijacking, AccessControlProps accessControlProps, bool allowBypass, bool systemProxy, List<String> bypassDomain, String stack, List<String> routeAddress, int mtu, String congestionController
+ bool enable, int port, bool ipv6, bool dnsHijacking, AccessControlProps accessControlProps, bool allowBypass, bool systemProxy, List<String> bypassDomain, String stack, List<String> routeAddress,@JsonKey(includeIfNull: false) List<String>? rawRouteAddress,@JsonKey(includeIfNull: false) List<String>? rawRouteExcludeAddress,@JsonKey(includeIfNull: false) bool? bypassPrivateRoute, int mtu, String congestionController
 });
 
 
@@ -1904,7 +1926,7 @@ class _$VpnOptionsCopyWithImpl<$Res>
 
 /// Create a copy of VpnOptions
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? enable = null,Object? port = null,Object? ipv6 = null,Object? dnsHijacking = null,Object? accessControlProps = null,Object? allowBypass = null,Object? systemProxy = null,Object? bypassDomain = null,Object? stack = null,Object? routeAddress = null,Object? mtu = null,Object? congestionController = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? enable = null,Object? port = null,Object? ipv6 = null,Object? dnsHijacking = null,Object? accessControlProps = null,Object? allowBypass = null,Object? systemProxy = null,Object? bypassDomain = null,Object? stack = null,Object? routeAddress = null,Object? rawRouteAddress = freezed,Object? rawRouteExcludeAddress = freezed,Object? bypassPrivateRoute = freezed,Object? mtu = null,Object? congestionController = null,}) {
   return _then(VpnOptions(
 enable: null == enable ? _self.enable : enable // ignore: cast_nullable_to_non_nullable
 as bool,port: null == port ? _self.port : port // ignore: cast_nullable_to_non_nullable
@@ -1916,7 +1938,10 @@ as bool,systemProxy: null == systemProxy ? _self.systemProxy : systemProxy // ig
 as bool,bypassDomain: null == bypassDomain ? _self.bypassDomain : bypassDomain // ignore: cast_nullable_to_non_nullable
 as List<String>,stack: null == stack ? _self.stack : stack // ignore: cast_nullable_to_non_nullable
 as String,routeAddress: null == routeAddress ? _self.routeAddress : routeAddress // ignore: cast_nullable_to_non_nullable
-as List<String>,mtu: null == mtu ? _self.mtu : mtu // ignore: cast_nullable_to_non_nullable
+as List<String>,rawRouteAddress: freezed == rawRouteAddress ? _self.rawRouteAddress : rawRouteAddress // ignore: cast_nullable_to_non_nullable
+as List<String>?,rawRouteExcludeAddress: freezed == rawRouteExcludeAddress ? _self.rawRouteExcludeAddress : rawRouteExcludeAddress // ignore: cast_nullable_to_non_nullable
+as List<String>?,bypassPrivateRoute: freezed == bypassPrivateRoute ? _self.bypassPrivateRoute : bypassPrivateRoute // ignore: cast_nullable_to_non_nullable
+as bool?,mtu: null == mtu ? _self.mtu : mtu // ignore: cast_nullable_to_non_nullable
 as int,congestionController: null == congestionController ? _self.congestionController : congestionController // ignore: cast_nullable_to_non_nullable
 as String,
   ));
@@ -2012,10 +2037,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( bool enable,  int port,  bool ipv6,  bool dnsHijacking,  AccessControlProps accessControlProps,  bool allowBypass,  bool systemProxy,  List<String> bypassDomain,  String stack,  List<String> routeAddress,  int mtu,  String congestionController)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( bool enable,  int port,  bool ipv6,  bool dnsHijacking,  AccessControlProps accessControlProps,  bool allowBypass,  bool systemProxy,  List<String> bypassDomain,  String stack,  List<String> routeAddress, @JsonKey(includeIfNull: false)  List<String>? rawRouteAddress, @JsonKey(includeIfNull: false)  List<String>? rawRouteExcludeAddress, @JsonKey(includeIfNull: false)  bool? bypassPrivateRoute,  int mtu,  String congestionController)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _VpnOptions() when $default != null:
-return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.accessControlProps,_that.allowBypass,_that.systemProxy,_that.bypassDomain,_that.stack,_that.routeAddress,_that.mtu,_that.congestionController);case _:
+return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.accessControlProps,_that.allowBypass,_that.systemProxy,_that.bypassDomain,_that.stack,_that.routeAddress,_that.rawRouteAddress,_that.rawRouteExcludeAddress,_that.bypassPrivateRoute,_that.mtu,_that.congestionController);case _:
   return orElse();
 
 }
@@ -2033,10 +2058,10 @@ return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.acce
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( bool enable,  int port,  bool ipv6,  bool dnsHijacking,  AccessControlProps accessControlProps,  bool allowBypass,  bool systemProxy,  List<String> bypassDomain,  String stack,  List<String> routeAddress,  int mtu,  String congestionController)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( bool enable,  int port,  bool ipv6,  bool dnsHijacking,  AccessControlProps accessControlProps,  bool allowBypass,  bool systemProxy,  List<String> bypassDomain,  String stack,  List<String> routeAddress, @JsonKey(includeIfNull: false)  List<String>? rawRouteAddress, @JsonKey(includeIfNull: false)  List<String>? rawRouteExcludeAddress, @JsonKey(includeIfNull: false)  bool? bypassPrivateRoute,  int mtu,  String congestionController)  $default,) {final _that = this;
 switch (_that) {
 case _VpnOptions():
-return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.accessControlProps,_that.allowBypass,_that.systemProxy,_that.bypassDomain,_that.stack,_that.routeAddress,_that.mtu,_that.congestionController);case _:
+return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.accessControlProps,_that.allowBypass,_that.systemProxy,_that.bypassDomain,_that.stack,_that.routeAddress,_that.rawRouteAddress,_that.rawRouteExcludeAddress,_that.bypassPrivateRoute,_that.mtu,_that.congestionController);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -2053,10 +2078,10 @@ return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.acce
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( bool enable,  int port,  bool ipv6,  bool dnsHijacking,  AccessControlProps accessControlProps,  bool allowBypass,  bool systemProxy,  List<String> bypassDomain,  String stack,  List<String> routeAddress,  int mtu,  String congestionController)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( bool enable,  int port,  bool ipv6,  bool dnsHijacking,  AccessControlProps accessControlProps,  bool allowBypass,  bool systemProxy,  List<String> bypassDomain,  String stack,  List<String> routeAddress, @JsonKey(includeIfNull: false)  List<String>? rawRouteAddress, @JsonKey(includeIfNull: false)  List<String>? rawRouteExcludeAddress, @JsonKey(includeIfNull: false)  bool? bypassPrivateRoute,  int mtu,  String congestionController)?  $default,) {final _that = this;
 switch (_that) {
 case _VpnOptions() when $default != null:
-return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.accessControlProps,_that.allowBypass,_that.systemProxy,_that.bypassDomain,_that.stack,_that.routeAddress,_that.mtu,_that.congestionController);case _:
+return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.accessControlProps,_that.allowBypass,_that.systemProxy,_that.bypassDomain,_that.stack,_that.routeAddress,_that.rawRouteAddress,_that.rawRouteExcludeAddress,_that.bypassPrivateRoute,_that.mtu,_that.congestionController);case _:
   return null;
 
 }
@@ -2068,7 +2093,7 @@ return $default(_that.enable,_that.port,_that.ipv6,_that.dnsHijacking,_that.acce
 @JsonSerializable()
 
 class _VpnOptions implements VpnOptions {
-  const _VpnOptions({required this.enable, required this.port, required this.ipv6, required this.dnsHijacking, required this.accessControlProps, required this.allowBypass, required this.systemProxy, required  List<String> bypassDomain, required this.stack,  List<String> routeAddress = const [], this.mtu = 0, this.congestionController = ''}): _bypassDomain = bypassDomain,_routeAddress = routeAddress;
+  const _VpnOptions({required this.enable, required this.port, required this.ipv6, required this.dnsHijacking, required this.accessControlProps, required this.allowBypass, required this.systemProxy, required  List<String> bypassDomain, required this.stack,  List<String> routeAddress = const [], @JsonKey(includeIfNull: false)  List<String>? rawRouteAddress, @JsonKey(includeIfNull: false)  List<String>? rawRouteExcludeAddress, @JsonKey(includeIfNull: false) this.bypassPrivateRoute, this.mtu = 0, this.congestionController = ''}): _bypassDomain = bypassDomain,_routeAddress = routeAddress,_rawRouteAddress = rawRouteAddress,_rawRouteExcludeAddress = rawRouteExcludeAddress;
   factory _VpnOptions.fromJson(Map<String, dynamic> json) => _$VpnOptionsFromJson(json);
 
 @override final  bool enable;
@@ -2093,6 +2118,25 @@ class _VpnOptions implements VpnOptions {
   return EqualUnmodifiableListView(_routeAddress);
 }
 
+ final  List<String>? _rawRouteAddress;
+@override@JsonKey(includeIfNull: false) List<String>? get rawRouteAddress {
+  final value = _rawRouteAddress;
+  if (value == null) return null;
+  if (_rawRouteAddress is EqualUnmodifiableListView) return _rawRouteAddress;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(value);
+}
+
+ final  List<String>? _rawRouteExcludeAddress;
+@override@JsonKey(includeIfNull: false) List<String>? get rawRouteExcludeAddress {
+  final value = _rawRouteExcludeAddress;
+  if (value == null) return null;
+  if (_rawRouteExcludeAddress is EqualUnmodifiableListView) return _rawRouteExcludeAddress;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableListView(value);
+}
+
+@override@JsonKey(includeIfNull: false) final  bool? bypassPrivateRoute;
 @override@JsonKey() final  int mtu;
 @override@JsonKey() final  String congestionController;
 
@@ -2109,18 +2153,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _VpnOptions&&(identical(other.enable, enable) || other.enable == enable)&&(identical(other.port, port) || other.port == port)&&(identical(other.ipv6, ipv6) || other.ipv6 == ipv6)&&(identical(other.dnsHijacking, dnsHijacking) || other.dnsHijacking == dnsHijacking)&&(identical(other.accessControlProps, accessControlProps) || other.accessControlProps == accessControlProps)&&(identical(other.allowBypass, allowBypass) || other.allowBypass == allowBypass)&&(identical(other.systemProxy, systemProxy) || other.systemProxy == systemProxy)&&const DeepCollectionEquality().equals(other.bypassDomain, _bypassDomain)&&(identical(other.stack, stack) || other.stack == stack)&&const DeepCollectionEquality().equals(other.routeAddress, _routeAddress)&&(identical(other.mtu, mtu) || other.mtu == mtu)&&(identical(other.congestionController, congestionController) || other.congestionController == congestionController));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _VpnOptions&&(identical(other.enable, enable) || other.enable == enable)&&(identical(other.port, port) || other.port == port)&&(identical(other.ipv6, ipv6) || other.ipv6 == ipv6)&&(identical(other.dnsHijacking, dnsHijacking) || other.dnsHijacking == dnsHijacking)&&(identical(other.accessControlProps, accessControlProps) || other.accessControlProps == accessControlProps)&&(identical(other.allowBypass, allowBypass) || other.allowBypass == allowBypass)&&(identical(other.systemProxy, systemProxy) || other.systemProxy == systemProxy)&&const DeepCollectionEquality().equals(other.bypassDomain, _bypassDomain)&&(identical(other.stack, stack) || other.stack == stack)&&const DeepCollectionEquality().equals(other.routeAddress, _routeAddress)&&const DeepCollectionEquality().equals(other.rawRouteAddress, _rawRouteAddress)&&const DeepCollectionEquality().equals(other.rawRouteExcludeAddress, _rawRouteExcludeAddress)&&(identical(other.bypassPrivateRoute, bypassPrivateRoute) || other.bypassPrivateRoute == bypassPrivateRoute)&&(identical(other.mtu, mtu) || other.mtu == mtu)&&(identical(other.congestionController, congestionController) || other.congestionController == congestionController));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,enable,port,ipv6,dnsHijacking,accessControlProps,allowBypass,systemProxy,const DeepCollectionEquality().hash(_bypassDomain),stack,const DeepCollectionEquality().hash(_routeAddress),mtu,congestionController);
+    return Object.hash(runtimeType,enable,port,ipv6,dnsHijacking,accessControlProps,allowBypass,systemProxy,const DeepCollectionEquality().hash(_bypassDomain),stack,const DeepCollectionEquality().hash(_routeAddress),const DeepCollectionEquality().hash(_rawRouteAddress),const DeepCollectionEquality().hash(_rawRouteExcludeAddress),bypassPrivateRoute,mtu,congestionController);
 }
 
 @override
 String toString() {
-    return 'VpnOptions(enable: $enable, port: $port, ipv6: $ipv6, dnsHijacking: $dnsHijacking, accessControlProps: $accessControlProps, allowBypass: $allowBypass, systemProxy: $systemProxy, bypassDomain: $bypassDomain, stack: $stack, routeAddress: $routeAddress, mtu: $mtu, congestionController: $congestionController)';
+    return 'VpnOptions(enable: $enable, port: $port, ipv6: $ipv6, dnsHijacking: $dnsHijacking, accessControlProps: $accessControlProps, allowBypass: $allowBypass, systemProxy: $systemProxy, bypassDomain: $bypassDomain, stack: $stack, routeAddress: $routeAddress, rawRouteAddress: $rawRouteAddress, rawRouteExcludeAddress: $rawRouteExcludeAddress, bypassPrivateRoute: $bypassPrivateRoute, mtu: $mtu, congestionController: $congestionController)';
 }
 
 
@@ -2131,7 +2175,7 @@ abstract mixin class _$VpnOptionsCopyWith<$Res> implements $VpnOptionsCopyWith<$
   factory _$VpnOptionsCopyWith(_VpnOptions value, $Res Function(_VpnOptions) _then) = __$VpnOptionsCopyWithImpl;
 @override @useResult
 $Res call({
- bool enable, int port, bool ipv6, bool dnsHijacking, AccessControlProps accessControlProps, bool allowBypass, bool systemProxy, List<String> bypassDomain, String stack, List<String> routeAddress, int mtu, String congestionController
+ bool enable, int port, bool ipv6, bool dnsHijacking, AccessControlProps accessControlProps, bool allowBypass, bool systemProxy, List<String> bypassDomain, String stack, List<String> routeAddress,@JsonKey(includeIfNull: false) List<String>? rawRouteAddress,@JsonKey(includeIfNull: false) List<String>? rawRouteExcludeAddress,@JsonKey(includeIfNull: false) bool? bypassPrivateRoute, int mtu, String congestionController
 });
 
 
@@ -2148,7 +2192,7 @@ class __$VpnOptionsCopyWithImpl<$Res>
 
 /// Create a copy of VpnOptions
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? enable = null,Object? port = null,Object? ipv6 = null,Object? dnsHijacking = null,Object? accessControlProps = null,Object? allowBypass = null,Object? systemProxy = null,Object? bypassDomain = null,Object? stack = null,Object? routeAddress = null,Object? mtu = null,Object? congestionController = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? enable = null,Object? port = null,Object? ipv6 = null,Object? dnsHijacking = null,Object? accessControlProps = null,Object? allowBypass = null,Object? systemProxy = null,Object? bypassDomain = null,Object? stack = null,Object? routeAddress = null,Object? rawRouteAddress = freezed,Object? rawRouteExcludeAddress = freezed,Object? bypassPrivateRoute = freezed,Object? mtu = null,Object? congestionController = null,}) {
   return _then(_VpnOptions(
 enable: null == enable ? _self.enable : enable // ignore: cast_nullable_to_non_nullable
 as bool,port: null == port ? _self.port : port // ignore: cast_nullable_to_non_nullable
@@ -2160,7 +2204,10 @@ as bool,systemProxy: null == systemProxy ? _self.systemProxy : systemProxy // ig
 as bool,bypassDomain: null == bypassDomain ? _self._bypassDomain : bypassDomain // ignore: cast_nullable_to_non_nullable
 as List<String>,stack: null == stack ? _self.stack : stack // ignore: cast_nullable_to_non_nullable
 as String,routeAddress: null == routeAddress ? _self._routeAddress : routeAddress // ignore: cast_nullable_to_non_nullable
-as List<String>,mtu: null == mtu ? _self.mtu : mtu // ignore: cast_nullable_to_non_nullable
+as List<String>,rawRouteAddress: freezed == rawRouteAddress ? _self._rawRouteAddress : rawRouteAddress // ignore: cast_nullable_to_non_nullable
+as List<String>?,rawRouteExcludeAddress: freezed == rawRouteExcludeAddress ? _self._rawRouteExcludeAddress : rawRouteExcludeAddress // ignore: cast_nullable_to_non_nullable
+as List<String>?,bypassPrivateRoute: freezed == bypassPrivateRoute ? _self.bypassPrivateRoute : bypassPrivateRoute // ignore: cast_nullable_to_non_nullable
+as bool?,mtu: null == mtu ? _self.mtu : mtu // ignore: cast_nullable_to_non_nullable
 as int,congestionController: null == congestionController ? _self.congestionController : congestionController // ignore: cast_nullable_to_non_nullable
 as String,
   ));
@@ -7300,6 +7347,1172 @@ as List<String>,
 }
 
 
+}
+
+MeowGeoRequest _$MeowGeoRequestFromJson(
+  Map<String, dynamic> json
+) {
+        switch (json['operation']) {
+                  case 'update':
+          return MeowGeoUpdateRequest.fromJson(
+            json
+          );
+                case 'admit':
+          return MeowGeoAdmissionRequest.fromJson(
+            json
+          );
+                case 'status':
+          return MeowGeoStatusRequest.fromJson(
+            json
+          );
+                case 'abort':
+          return MeowGeoAbortRequest.fromJson(
+            json
+          );
+        
+          default:
+            throw CheckedFromJsonException(
+  json,
+  'operation',
+  'MeowGeoRequest',
+  'Invalid union type "${json['operation']}"!'
+);
+        }
+      
+}
+
+/// @nodoc
+mixin _$MeowGeoRequest {
+
+ int get schemaVersion; String get transactionId;
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MeowGeoRequestCopyWith<MeowGeoRequest> get copyWith => _$MeowGeoRequestCopyWithImpl<MeowGeoRequest>(this as MeowGeoRequest, _$identity);
+
+  /// Serializes this MeowGeoRequest to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as MeowGeoRequest;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is MeowGeoRequest&&(identical(other.schemaVersion, _this.schemaVersion) || other.schemaVersion == _this.schemaVersion)&&(identical(other.transactionId, _this.transactionId) || other.transactionId == _this.transactionId));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as MeowGeoRequest;
+  return Object.hash(runtimeType,_this.schemaVersion,_this.transactionId);
+}
+
+@override
+String toString() {
+  final _this = this as MeowGeoRequest;
+  return 'MeowGeoRequest(schemaVersion: ${_this.schemaVersion}, transactionId: ${_this.transactionId})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MeowGeoRequestCopyWith<$Res>  {
+  factory $MeowGeoRequestCopyWith(MeowGeoRequest value, $Res Function(MeowGeoRequest) _then) = _$MeowGeoRequestCopyWithImpl;
+@useResult
+$Res call({
+ int schemaVersion, String transactionId
+});
+
+
+
+
+}
+/// @nodoc
+class _$MeowGeoRequestCopyWithImpl<$Res>
+    implements $MeowGeoRequestCopyWith<$Res> {
+  _$MeowGeoRequestCopyWithImpl(this._self, this._then);
+
+  final MeowGeoRequest _self;
+  final $Res Function(MeowGeoRequest) _then;
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? schemaVersion = null,Object? transactionId = null,}) {
+  return _then(_self.copyWith(
+schemaVersion: null == schemaVersion ? _self.schemaVersion : schemaVersion // ignore: cast_nullable_to_non_nullable
+as int,transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [MeowGeoRequest].
+extension MeowGeoRequestPatterns on MeowGeoRequest {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( MeowGeoUpdateRequest value)?  update,TResult Function( MeowGeoAdmissionRequest value)?  admit,TResult Function( MeowGeoStatusRequest value)?  status,TResult Function( MeowGeoAbortRequest value)?  abort,required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case MeowGeoUpdateRequest() when update != null:
+return update(_that);case MeowGeoAdmissionRequest() when admit != null:
+return admit(_that);case MeowGeoStatusRequest() when status != null:
+return status(_that);case MeowGeoAbortRequest() when abort != null:
+return abort(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( MeowGeoUpdateRequest value)  update,required TResult Function( MeowGeoAdmissionRequest value)  admit,required TResult Function( MeowGeoStatusRequest value)  status,required TResult Function( MeowGeoAbortRequest value)  abort,}){
+final _that = this;
+switch (_that) {
+case MeowGeoUpdateRequest():
+return update(_that);case MeowGeoAdmissionRequest():
+return admit(_that);case MeowGeoStatusRequest():
+return status(_that);case MeowGeoAbortRequest():
+return abort(_that);}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( MeowGeoUpdateRequest value)?  update,TResult? Function( MeowGeoAdmissionRequest value)?  admit,TResult? Function( MeowGeoStatusRequest value)?  status,TResult? Function( MeowGeoAbortRequest value)?  abort,}){
+final _that = this;
+switch (_that) {
+case MeowGeoUpdateRequest() when update != null:
+return update(_that);case MeowGeoAdmissionRequest() when admit != null:
+return admit(_that);case MeowGeoStatusRequest() when status != null:
+return status(_that);case MeowGeoAbortRequest() when abort != null:
+return abort(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( int schemaVersion,  String transactionId,  String type,  MeowGeoSource source,  SetupParams setupParams)?  update,TResult Function( int schemaVersion,  String transactionId)?  admit,TResult Function( int schemaVersion,  String transactionId)?  status,TResult Function( int schemaVersion,  String transactionId)?  abort,required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case MeowGeoUpdateRequest() when update != null:
+return update(_that.schemaVersion,_that.transactionId,_that.type,_that.source,_that.setupParams);case MeowGeoAdmissionRequest() when admit != null:
+return admit(_that.schemaVersion,_that.transactionId);case MeowGeoStatusRequest() when status != null:
+return status(_that.schemaVersion,_that.transactionId);case MeowGeoAbortRequest() when abort != null:
+return abort(_that.schemaVersion,_that.transactionId);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( int schemaVersion,  String transactionId,  String type,  MeowGeoSource source,  SetupParams setupParams)  update,required TResult Function( int schemaVersion,  String transactionId)  admit,required TResult Function( int schemaVersion,  String transactionId)  status,required TResult Function( int schemaVersion,  String transactionId)  abort,}) {final _that = this;
+switch (_that) {
+case MeowGeoUpdateRequest():
+return update(_that.schemaVersion,_that.transactionId,_that.type,_that.source,_that.setupParams);case MeowGeoAdmissionRequest():
+return admit(_that.schemaVersion,_that.transactionId);case MeowGeoStatusRequest():
+return status(_that.schemaVersion,_that.transactionId);case MeowGeoAbortRequest():
+return abort(_that.schemaVersion,_that.transactionId);}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( int schemaVersion,  String transactionId,  String type,  MeowGeoSource source,  SetupParams setupParams)?  update,TResult? Function( int schemaVersion,  String transactionId)?  admit,TResult? Function( int schemaVersion,  String transactionId)?  status,TResult? Function( int schemaVersion,  String transactionId)?  abort,}) {final _that = this;
+switch (_that) {
+case MeowGeoUpdateRequest() when update != null:
+return update(_that.schemaVersion,_that.transactionId,_that.type,_that.source,_that.setupParams);case MeowGeoAdmissionRequest() when admit != null:
+return admit(_that.schemaVersion,_that.transactionId);case MeowGeoStatusRequest() when status != null:
+return status(_that.schemaVersion,_that.transactionId);case MeowGeoAbortRequest() when abort != null:
+return abort(_that.schemaVersion,_that.transactionId);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class MeowGeoUpdateRequest implements MeowGeoRequest {
+  const MeowGeoUpdateRequest({this.schemaVersion = 1, required this.transactionId, required this.type, required this.source, required this.setupParams,  String? $type}): $type = $type ?? 'update';
+  factory MeowGeoUpdateRequest.fromJson(Map<String, dynamic> json) => _$MeowGeoUpdateRequestFromJson(json);
+
+@override@JsonKey() final  int schemaVersion;
+@override final  String transactionId;
+ final  String type;
+ final  MeowGeoSource source;
+ final  SetupParams setupParams;
+
+@JsonKey(name: 'operation')
+final String $type;
+
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MeowGeoUpdateRequestCopyWith<MeowGeoUpdateRequest> get copyWith => _$MeowGeoUpdateRequestCopyWithImpl<MeowGeoUpdateRequest>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$MeowGeoUpdateRequestToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MeowGeoUpdateRequest&&(identical(other.schemaVersion, schemaVersion) || other.schemaVersion == schemaVersion)&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId)&&(identical(other.type, type) || other.type == type)&&(identical(other.source, source) || other.source == source)&&(identical(other.setupParams, setupParams) || other.setupParams == setupParams));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,schemaVersion,transactionId,type,source,setupParams);
+}
+
+@override
+String toString() {
+    return 'MeowGeoRequest.update(schemaVersion: $schemaVersion, transactionId: $transactionId, type: $type, source: $source, setupParams: $setupParams)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MeowGeoUpdateRequestCopyWith<$Res> implements $MeowGeoRequestCopyWith<$Res> {
+  factory $MeowGeoUpdateRequestCopyWith(MeowGeoUpdateRequest value, $Res Function(MeowGeoUpdateRequest) _then) = _$MeowGeoUpdateRequestCopyWithImpl;
+@override @useResult
+$Res call({
+ int schemaVersion, String transactionId, String type, MeowGeoSource source, SetupParams setupParams
+});
+
+
+$MeowGeoSourceCopyWith<$Res> get source;$SetupParamsCopyWith<$Res> get setupParams;
+
+}
+/// @nodoc
+class _$MeowGeoUpdateRequestCopyWithImpl<$Res>
+    implements $MeowGeoUpdateRequestCopyWith<$Res> {
+  _$MeowGeoUpdateRequestCopyWithImpl(this._self, this._then);
+
+  final MeowGeoUpdateRequest _self;
+  final $Res Function(MeowGeoUpdateRequest) _then;
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? schemaVersion = null,Object? transactionId = null,Object? type = null,Object? source = null,Object? setupParams = null,}) {
+  return _then(MeowGeoUpdateRequest(
+schemaVersion: null == schemaVersion ? _self.schemaVersion : schemaVersion // ignore: cast_nullable_to_non_nullable
+as int,transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
+as String,type: null == type ? _self.type : type // ignore: cast_nullable_to_non_nullable
+as String,source: null == source ? _self.source : source // ignore: cast_nullable_to_non_nullable
+as MeowGeoSource,setupParams: null == setupParams ? _self.setupParams : setupParams // ignore: cast_nullable_to_non_nullable
+as SetupParams,
+  ));
+}
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$MeowGeoSourceCopyWith<$Res> get source {
+  
+  return $MeowGeoSourceCopyWith<$Res>(_self.source, (value) {
+    return _then(_self.copyWith(source: value));
+  });
+}/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SetupParamsCopyWith<$Res> get setupParams {
+  
+  return $SetupParamsCopyWith<$Res>(_self.setupParams, (value) {
+    return _then(_self.copyWith(setupParams: value));
+  });
+}
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class MeowGeoAdmissionRequest implements MeowGeoRequest {
+  const MeowGeoAdmissionRequest({this.schemaVersion = 1, required this.transactionId,  String? $type}): $type = $type ?? 'admit';
+  factory MeowGeoAdmissionRequest.fromJson(Map<String, dynamic> json) => _$MeowGeoAdmissionRequestFromJson(json);
+
+@override@JsonKey() final  int schemaVersion;
+@override final  String transactionId;
+
+@JsonKey(name: 'operation')
+final String $type;
+
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MeowGeoAdmissionRequestCopyWith<MeowGeoAdmissionRequest> get copyWith => _$MeowGeoAdmissionRequestCopyWithImpl<MeowGeoAdmissionRequest>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$MeowGeoAdmissionRequestToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MeowGeoAdmissionRequest&&(identical(other.schemaVersion, schemaVersion) || other.schemaVersion == schemaVersion)&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,schemaVersion,transactionId);
+}
+
+@override
+String toString() {
+    return 'MeowGeoRequest.admit(schemaVersion: $schemaVersion, transactionId: $transactionId)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MeowGeoAdmissionRequestCopyWith<$Res> implements $MeowGeoRequestCopyWith<$Res> {
+  factory $MeowGeoAdmissionRequestCopyWith(MeowGeoAdmissionRequest value, $Res Function(MeowGeoAdmissionRequest) _then) = _$MeowGeoAdmissionRequestCopyWithImpl;
+@override @useResult
+$Res call({
+ int schemaVersion, String transactionId
+});
+
+
+
+
+}
+/// @nodoc
+class _$MeowGeoAdmissionRequestCopyWithImpl<$Res>
+    implements $MeowGeoAdmissionRequestCopyWith<$Res> {
+  _$MeowGeoAdmissionRequestCopyWithImpl(this._self, this._then);
+
+  final MeowGeoAdmissionRequest _self;
+  final $Res Function(MeowGeoAdmissionRequest) _then;
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? schemaVersion = null,Object? transactionId = null,}) {
+  return _then(MeowGeoAdmissionRequest(
+schemaVersion: null == schemaVersion ? _self.schemaVersion : schemaVersion // ignore: cast_nullable_to_non_nullable
+as int,transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class MeowGeoStatusRequest implements MeowGeoRequest {
+  const MeowGeoStatusRequest({this.schemaVersion = 1, required this.transactionId,  String? $type}): $type = $type ?? 'status';
+  factory MeowGeoStatusRequest.fromJson(Map<String, dynamic> json) => _$MeowGeoStatusRequestFromJson(json);
+
+@override@JsonKey() final  int schemaVersion;
+@override final  String transactionId;
+
+@JsonKey(name: 'operation')
+final String $type;
+
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MeowGeoStatusRequestCopyWith<MeowGeoStatusRequest> get copyWith => _$MeowGeoStatusRequestCopyWithImpl<MeowGeoStatusRequest>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$MeowGeoStatusRequestToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MeowGeoStatusRequest&&(identical(other.schemaVersion, schemaVersion) || other.schemaVersion == schemaVersion)&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,schemaVersion,transactionId);
+}
+
+@override
+String toString() {
+    return 'MeowGeoRequest.status(schemaVersion: $schemaVersion, transactionId: $transactionId)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MeowGeoStatusRequestCopyWith<$Res> implements $MeowGeoRequestCopyWith<$Res> {
+  factory $MeowGeoStatusRequestCopyWith(MeowGeoStatusRequest value, $Res Function(MeowGeoStatusRequest) _then) = _$MeowGeoStatusRequestCopyWithImpl;
+@override @useResult
+$Res call({
+ int schemaVersion, String transactionId
+});
+
+
+
+
+}
+/// @nodoc
+class _$MeowGeoStatusRequestCopyWithImpl<$Res>
+    implements $MeowGeoStatusRequestCopyWith<$Res> {
+  _$MeowGeoStatusRequestCopyWithImpl(this._self, this._then);
+
+  final MeowGeoStatusRequest _self;
+  final $Res Function(MeowGeoStatusRequest) _then;
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? schemaVersion = null,Object? transactionId = null,}) {
+  return _then(MeowGeoStatusRequest(
+schemaVersion: null == schemaVersion ? _self.schemaVersion : schemaVersion // ignore: cast_nullable_to_non_nullable
+as int,transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class MeowGeoAbortRequest implements MeowGeoRequest {
+  const MeowGeoAbortRequest({this.schemaVersion = 1, required this.transactionId,  String? $type}): $type = $type ?? 'abort';
+  factory MeowGeoAbortRequest.fromJson(Map<String, dynamic> json) => _$MeowGeoAbortRequestFromJson(json);
+
+@override@JsonKey() final  int schemaVersion;
+@override final  String transactionId;
+
+@JsonKey(name: 'operation')
+final String $type;
+
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MeowGeoAbortRequestCopyWith<MeowGeoAbortRequest> get copyWith => _$MeowGeoAbortRequestCopyWithImpl<MeowGeoAbortRequest>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$MeowGeoAbortRequestToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is MeowGeoAbortRequest&&(identical(other.schemaVersion, schemaVersion) || other.schemaVersion == schemaVersion)&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,schemaVersion,transactionId);
+}
+
+@override
+String toString() {
+    return 'MeowGeoRequest.abort(schemaVersion: $schemaVersion, transactionId: $transactionId)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MeowGeoAbortRequestCopyWith<$Res> implements $MeowGeoRequestCopyWith<$Res> {
+  factory $MeowGeoAbortRequestCopyWith(MeowGeoAbortRequest value, $Res Function(MeowGeoAbortRequest) _then) = _$MeowGeoAbortRequestCopyWithImpl;
+@override @useResult
+$Res call({
+ int schemaVersion, String transactionId
+});
+
+
+
+
+}
+/// @nodoc
+class _$MeowGeoAbortRequestCopyWithImpl<$Res>
+    implements $MeowGeoAbortRequestCopyWith<$Res> {
+  _$MeowGeoAbortRequestCopyWithImpl(this._self, this._then);
+
+  final MeowGeoAbortRequest _self;
+  final $Res Function(MeowGeoAbortRequest) _then;
+
+/// Create a copy of MeowGeoRequest
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? schemaVersion = null,Object? transactionId = null,}) {
+  return _then(MeowGeoAbortRequest(
+schemaVersion: null == schemaVersion ? _self.schemaVersion : schemaVersion // ignore: cast_nullable_to_non_nullable
+as int,transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
+as String,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$MeowGeoSource {
+
+ String get path; String get sha256; int get bytes;
+/// Create a copy of MeowGeoSource
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MeowGeoSourceCopyWith<MeowGeoSource> get copyWith => _$MeowGeoSourceCopyWithImpl<MeowGeoSource>(this as MeowGeoSource, _$identity);
+
+  /// Serializes this MeowGeoSource to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as MeowGeoSource;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is MeowGeoSource&&(identical(other.path, _this.path) || other.path == _this.path)&&(identical(other.sha256, _this.sha256) || other.sha256 == _this.sha256)&&(identical(other.bytes, _this.bytes) || other.bytes == _this.bytes));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as MeowGeoSource;
+  return Object.hash(runtimeType,_this.path,_this.sha256,_this.bytes);
+}
+
+@override
+String toString() {
+  final _this = this as MeowGeoSource;
+  return 'MeowGeoSource(path: ${_this.path}, sha256: ${_this.sha256}, bytes: ${_this.bytes})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MeowGeoSourceCopyWith<$Res>  {
+  factory $MeowGeoSourceCopyWith(MeowGeoSource value, $Res Function(MeowGeoSource) _then) = _$MeowGeoSourceCopyWithImpl;
+@useResult
+$Res call({
+ String path, String sha256, int bytes
+});
+
+
+
+
+}
+/// @nodoc
+class _$MeowGeoSourceCopyWithImpl<$Res>
+    implements $MeowGeoSourceCopyWith<$Res> {
+  _$MeowGeoSourceCopyWithImpl(this._self, this._then);
+
+  final MeowGeoSource _self;
+  final $Res Function(MeowGeoSource) _then;
+
+/// Create a copy of MeowGeoSource
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? path = null,Object? sha256 = null,Object? bytes = null,}) {
+  return _then(MeowGeoSource(
+path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
+as String,sha256: null == sha256 ? _self.sha256 : sha256 // ignore: cast_nullable_to_non_nullable
+as String,bytes: null == bytes ? _self.bytes : bytes // ignore: cast_nullable_to_non_nullable
+as int,
+  ));
+}
+
+}
+
+
+/// Adds pattern-matching-related methods to [MeowGeoSource].
+extension MeowGeoSourcePatterns on MeowGeoSource {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _MeowGeoSource value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _MeowGeoSource() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _MeowGeoSource value)  $default,){
+final _that = this;
+switch (_that) {
+case _MeowGeoSource():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _MeowGeoSource value)?  $default,){
+final _that = this;
+switch (_that) {
+case _MeowGeoSource() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String path,  String sha256,  int bytes)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _MeowGeoSource() when $default != null:
+return $default(_that.path,_that.sha256,_that.bytes);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String path,  String sha256,  int bytes)  $default,) {final _that = this;
+switch (_that) {
+case _MeowGeoSource():
+return $default(_that.path,_that.sha256,_that.bytes);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String path,  String sha256,  int bytes)?  $default,) {final _that = this;
+switch (_that) {
+case _MeowGeoSource() when $default != null:
+return $default(_that.path,_that.sha256,_that.bytes);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _MeowGeoSource implements MeowGeoSource {
+  const _MeowGeoSource({required this.path, required this.sha256, required this.bytes});
+  factory _MeowGeoSource.fromJson(Map<String, dynamic> json) => _$MeowGeoSourceFromJson(json);
+
+@override final  String path;
+@override final  String sha256;
+@override final  int bytes;
+
+/// Create a copy of MeowGeoSource
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$MeowGeoSourceCopyWith<_MeowGeoSource> get copyWith => __$MeowGeoSourceCopyWithImpl<_MeowGeoSource>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$MeowGeoSourceToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _MeowGeoSource&&(identical(other.path, path) || other.path == path)&&(identical(other.sha256, sha256) || other.sha256 == sha256)&&(identical(other.bytes, bytes) || other.bytes == bytes));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,path,sha256,bytes);
+}
+
+@override
+String toString() {
+    return 'MeowGeoSource(path: $path, sha256: $sha256, bytes: $bytes)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$MeowGeoSourceCopyWith<$Res> implements $MeowGeoSourceCopyWith<$Res> {
+  factory _$MeowGeoSourceCopyWith(_MeowGeoSource value, $Res Function(_MeowGeoSource) _then) = __$MeowGeoSourceCopyWithImpl;
+@override @useResult
+$Res call({
+ String path, String sha256, int bytes
+});
+
+
+
+
+}
+/// @nodoc
+class __$MeowGeoSourceCopyWithImpl<$Res>
+    implements _$MeowGeoSourceCopyWith<$Res> {
+  __$MeowGeoSourceCopyWithImpl(this._self, this._then);
+
+  final _MeowGeoSource _self;
+  final $Res Function(_MeowGeoSource) _then;
+
+/// Create a copy of MeowGeoSource
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? path = null,Object? sha256 = null,Object? bytes = null,}) {
+  return _then(_MeowGeoSource(
+path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
+as String,sha256: null == sha256 ? _self.sha256 : sha256 // ignore: cast_nullable_to_non_nullable
+as String,bytes: null == bytes ? _self.bytes : bytes // ignore: cast_nullable_to_non_nullable
+as int,
+  ));
+}
+
+
+}
+
+
+/// @nodoc
+mixin _$MeowGeoReply {
+
+ int get schemaVersion; String get transactionId; String get state; bool get active;@JsonKey(includeIfNull: false) SetupRecord? get applied;@JsonKey(includeIfNull: false) String? get producerSha256;@JsonKey(includeIfNull: false) String? get compiledSha256;@JsonKey(includeIfNull: false) String? get message;
+/// Create a copy of MeowGeoReply
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$MeowGeoReplyCopyWith<MeowGeoReply> get copyWith => _$MeowGeoReplyCopyWithImpl<MeowGeoReply>(this as MeowGeoReply, _$identity);
+
+  /// Serializes this MeowGeoReply to a JSON map.
+  Map<String, dynamic> toJson();
+
+
+@override
+bool operator ==(Object other) {
+  final _this = this as MeowGeoReply;
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is MeowGeoReply&&(identical(other.schemaVersion, _this.schemaVersion) || other.schemaVersion == _this.schemaVersion)&&(identical(other.transactionId, _this.transactionId) || other.transactionId == _this.transactionId)&&(identical(other.state, _this.state) || other.state == _this.state)&&(identical(other.active, _this.active) || other.active == _this.active)&&(identical(other.applied, _this.applied) || other.applied == _this.applied)&&(identical(other.producerSha256, _this.producerSha256) || other.producerSha256 == _this.producerSha256)&&(identical(other.compiledSha256, _this.compiledSha256) || other.compiledSha256 == _this.compiledSha256)&&(identical(other.message, _this.message) || other.message == _this.message));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+  final _this = this as MeowGeoReply;
+  return Object.hash(runtimeType,_this.schemaVersion,_this.transactionId,_this.state,_this.active,_this.applied,_this.producerSha256,_this.compiledSha256,_this.message);
+}
+
+@override
+String toString() {
+  final _this = this as MeowGeoReply;
+  return 'MeowGeoReply(schemaVersion: ${_this.schemaVersion}, transactionId: ${_this.transactionId}, state: ${_this.state}, active: ${_this.active}, applied: ${_this.applied}, producerSha256: ${_this.producerSha256}, compiledSha256: ${_this.compiledSha256}, message: ${_this.message})';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $MeowGeoReplyCopyWith<$Res>  {
+  factory $MeowGeoReplyCopyWith(MeowGeoReply value, $Res Function(MeowGeoReply) _then) = _$MeowGeoReplyCopyWithImpl;
+@useResult
+$Res call({
+ int schemaVersion, String transactionId, String state, bool active,@JsonKey(includeIfNull: false) SetupRecord? applied,@JsonKey(includeIfNull: false) String? producerSha256,@JsonKey(includeIfNull: false) String? compiledSha256,@JsonKey(includeIfNull: false) String? message
+});
+
+
+$SetupRecordCopyWith<$Res>? get applied;
+
+}
+/// @nodoc
+class _$MeowGeoReplyCopyWithImpl<$Res>
+    implements $MeowGeoReplyCopyWith<$Res> {
+  _$MeowGeoReplyCopyWithImpl(this._self, this._then);
+
+  final MeowGeoReply _self;
+  final $Res Function(MeowGeoReply) _then;
+
+/// Create a copy of MeowGeoReply
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') @override $Res call({Object? schemaVersion = null,Object? transactionId = null,Object? state = null,Object? active = null,Object? applied = freezed,Object? producerSha256 = freezed,Object? compiledSha256 = freezed,Object? message = freezed,}) {
+  return _then(MeowGeoReply(
+schemaVersion: null == schemaVersion ? _self.schemaVersion : schemaVersion // ignore: cast_nullable_to_non_nullable
+as int,transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
+as String,state: null == state ? _self.state : state // ignore: cast_nullable_to_non_nullable
+as String,active: null == active ? _self.active : active // ignore: cast_nullable_to_non_nullable
+as bool,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
+as SetupRecord?,producerSha256: freezed == producerSha256 ? _self.producerSha256 : producerSha256 // ignore: cast_nullable_to_non_nullable
+as String?,compiledSha256: freezed == compiledSha256 ? _self.compiledSha256 : compiledSha256 // ignore: cast_nullable_to_non_nullable
+as String?,message: freezed == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String?,
+  ));
+}
+/// Create a copy of MeowGeoReply
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SetupRecordCopyWith<$Res>? get applied {
+    if (_self.applied == null) {
+    return null;
+  }
+
+  return $SetupRecordCopyWith<$Res>(_self.applied!, (value) {
+    return _then(_self.copyWith(applied: value));
+  });
+}
+}
+
+
+/// Adds pattern-matching-related methods to [MeowGeoReply].
+extension MeowGeoReplyPatterns on MeowGeoReply {
+/// A variant of `map` that fallback to returning `orElse`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>(TResult Function( _MeowGeoReply value)?  $default,{required TResult orElse(),}){
+final _that = this;
+switch (_that) {
+case _MeowGeoReply() when $default != null:
+return $default(_that);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// Callbacks receives the raw object, upcasted.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case final Subclass2 value:
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult map<TResult extends Object?>(TResult Function( _MeowGeoReply value)  $default,){
+final _that = this;
+switch (_that) {
+case _MeowGeoReply():
+return $default(_that);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `map` that fallback to returning `null`.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case final Subclass value:
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>(TResult? Function( _MeowGeoReply value)?  $default,){
+final _that = this;
+switch (_that) {
+case _MeowGeoReply() when $default != null:
+return $default(_that);case _:
+  return null;
+
+}
+}
+/// A variant of `when` that fallback to an `orElse` callback.
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return orElse();
+/// }
+/// ```
+
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int schemaVersion,  String transactionId,  String state,  bool active, @JsonKey(includeIfNull: false)  SetupRecord? applied, @JsonKey(includeIfNull: false)  String? producerSha256, @JsonKey(includeIfNull: false)  String? compiledSha256, @JsonKey(includeIfNull: false)  String? message)?  $default,{required TResult orElse(),}) {final _that = this;
+switch (_that) {
+case _MeowGeoReply() when $default != null:
+return $default(_that.schemaVersion,_that.transactionId,_that.state,_that.active,_that.applied,_that.producerSha256,_that.compiledSha256,_that.message);case _:
+  return orElse();
+
+}
+}
+/// A `switch`-like method, using callbacks.
+///
+/// As opposed to `map`, this offers destructuring.
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case Subclass2(:final field2):
+///     return ...;
+/// }
+/// ```
+
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int schemaVersion,  String transactionId,  String state,  bool active, @JsonKey(includeIfNull: false)  SetupRecord? applied, @JsonKey(includeIfNull: false)  String? producerSha256, @JsonKey(includeIfNull: false)  String? compiledSha256, @JsonKey(includeIfNull: false)  String? message)  $default,) {final _that = this;
+switch (_that) {
+case _MeowGeoReply():
+return $default(_that.schemaVersion,_that.transactionId,_that.state,_that.active,_that.applied,_that.producerSha256,_that.compiledSha256,_that.message);case _:
+  throw StateError('Unexpected subclass');
+
+}
+}
+/// A variant of `when` that fallback to returning `null`
+///
+/// It is equivalent to doing:
+/// ```dart
+/// switch (sealedClass) {
+///   case Subclass(:final field):
+///     return ...;
+///   case _:
+///     return null;
+/// }
+/// ```
+
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int schemaVersion,  String transactionId,  String state,  bool active, @JsonKey(includeIfNull: false)  SetupRecord? applied, @JsonKey(includeIfNull: false)  String? producerSha256, @JsonKey(includeIfNull: false)  String? compiledSha256, @JsonKey(includeIfNull: false)  String? message)?  $default,) {final _that = this;
+switch (_that) {
+case _MeowGeoReply() when $default != null:
+return $default(_that.schemaVersion,_that.transactionId,_that.state,_that.active,_that.applied,_that.producerSha256,_that.compiledSha256,_that.message);case _:
+  return null;
+
+}
+}
+
+}
+
+/// @nodoc
+@JsonSerializable()
+
+class _MeowGeoReply implements MeowGeoReply {
+  const _MeowGeoReply({required this.schemaVersion, required this.transactionId, required this.state, required this.active, @JsonKey(includeIfNull: false) this.applied, @JsonKey(includeIfNull: false) this.producerSha256, @JsonKey(includeIfNull: false) this.compiledSha256, @JsonKey(includeIfNull: false) this.message});
+  factory _MeowGeoReply.fromJson(Map<String, dynamic> json) => _$MeowGeoReplyFromJson(json);
+
+@override final  int schemaVersion;
+@override final  String transactionId;
+@override final  String state;
+@override final  bool active;
+@override@JsonKey(includeIfNull: false) final  SetupRecord? applied;
+@override@JsonKey(includeIfNull: false) final  String? producerSha256;
+@override@JsonKey(includeIfNull: false) final  String? compiledSha256;
+@override@JsonKey(includeIfNull: false) final  String? message;
+
+/// Create a copy of MeowGeoReply
+/// with the given fields replaced by the non-null parameter values.
+@override @JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+_$MeowGeoReplyCopyWith<_MeowGeoReply> get copyWith => __$MeowGeoReplyCopyWithImpl<_MeowGeoReply>(this, _$identity);
+
+@override
+Map<String, dynamic> toJson() {
+  return _$MeowGeoReplyToJson(this, );
+}
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _MeowGeoReply&&(identical(other.schemaVersion, schemaVersion) || other.schemaVersion == schemaVersion)&&(identical(other.transactionId, transactionId) || other.transactionId == transactionId)&&(identical(other.state, state) || other.state == state)&&(identical(other.active, active) || other.active == active)&&(identical(other.applied, applied) || other.applied == applied)&&(identical(other.producerSha256, producerSha256) || other.producerSha256 == producerSha256)&&(identical(other.compiledSha256, compiledSha256) || other.compiledSha256 == compiledSha256)&&(identical(other.message, message) || other.message == message));
+}
+
+@JsonKey(includeFromJson: false, includeToJson: false)
+@override
+int get hashCode {
+    return Object.hash(runtimeType,schemaVersion,transactionId,state,active,applied,producerSha256,compiledSha256,message);
+}
+
+@override
+String toString() {
+    return 'MeowGeoReply(schemaVersion: $schemaVersion, transactionId: $transactionId, state: $state, active: $active, applied: $applied, producerSha256: $producerSha256, compiledSha256: $compiledSha256, message: $message)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class _$MeowGeoReplyCopyWith<$Res> implements $MeowGeoReplyCopyWith<$Res> {
+  factory _$MeowGeoReplyCopyWith(_MeowGeoReply value, $Res Function(_MeowGeoReply) _then) = __$MeowGeoReplyCopyWithImpl;
+@override @useResult
+$Res call({
+ int schemaVersion, String transactionId, String state, bool active,@JsonKey(includeIfNull: false) SetupRecord? applied,@JsonKey(includeIfNull: false) String? producerSha256,@JsonKey(includeIfNull: false) String? compiledSha256,@JsonKey(includeIfNull: false) String? message
+});
+
+
+@override $SetupRecordCopyWith<$Res>? get applied;
+
+}
+/// @nodoc
+class __$MeowGeoReplyCopyWithImpl<$Res>
+    implements _$MeowGeoReplyCopyWith<$Res> {
+  __$MeowGeoReplyCopyWithImpl(this._self, this._then);
+
+  final _MeowGeoReply _self;
+  final $Res Function(_MeowGeoReply) _then;
+
+/// Create a copy of MeowGeoReply
+/// with the given fields replaced by the non-null parameter values.
+@override @pragma('vm:prefer-inline') $Res call({Object? schemaVersion = null,Object? transactionId = null,Object? state = null,Object? active = null,Object? applied = freezed,Object? producerSha256 = freezed,Object? compiledSha256 = freezed,Object? message = freezed,}) {
+  return _then(_MeowGeoReply(
+schemaVersion: null == schemaVersion ? _self.schemaVersion : schemaVersion // ignore: cast_nullable_to_non_nullable
+as int,transactionId: null == transactionId ? _self.transactionId : transactionId // ignore: cast_nullable_to_non_nullable
+as String,state: null == state ? _self.state : state // ignore: cast_nullable_to_non_nullable
+as String,active: null == active ? _self.active : active // ignore: cast_nullable_to_non_nullable
+as bool,applied: freezed == applied ? _self.applied : applied // ignore: cast_nullable_to_non_nullable
+as SetupRecord?,producerSha256: freezed == producerSha256 ? _self.producerSha256 : producerSha256 // ignore: cast_nullable_to_non_nullable
+as String?,compiledSha256: freezed == compiledSha256 ? _self.compiledSha256 : compiledSha256 // ignore: cast_nullable_to_non_nullable
+as String?,message: freezed == message ? _self.message : message // ignore: cast_nullable_to_non_nullable
+as String?,
+  ));
+}
+
+/// Create a copy of MeowGeoReply
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SetupRecordCopyWith<$Res>? get applied {
+    if (_self.applied == null) {
+    return null;
+  }
+
+  return $SetupRecordCopyWith<$Res>(_self.applied!, (value) {
+    return _then(_self.copyWith(applied: value));
+  });
+}
 }
 
 // dart format on

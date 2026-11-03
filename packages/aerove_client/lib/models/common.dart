@@ -816,6 +816,7 @@ extension ScriptExt on Script {
 abstract class ClashProvider with _$ClashProvider {
   const factory ClashProvider({
     required int id,
+    Map<String, dynamic>? sourceDefinition,
     required String label,
     @Default('') String url,
     @Default(RuleProviderBehavior.classical) RuleProviderBehavior behavior,
@@ -862,6 +863,23 @@ extension ClashProviderExt on ClashProvider {
   }
 
   Map<String, dynamic> definition(String path) {
+    if (sourceDefinition != null) {
+      final source = {
+        ...sourceDefinition!,
+        'type': url.isEmpty ? 'file' : 'http',
+        'path': isCompiled && path.endsWith('.mrs')
+            ? path.substring(0, path.length - 4)
+            : path,
+        'behavior': behavior.name,
+        'format': format.name,
+      };
+      if (url.isEmpty) {
+        source.remove('url');
+      } else {
+        source['url'] = url;
+      }
+      return source;
+    }
     return {
       'type': 'file',
       'path': path,

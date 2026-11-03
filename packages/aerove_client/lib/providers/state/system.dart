@@ -9,13 +9,16 @@ UpdateParams updateParams(Ref ref) {
     appSettingProvider.select((state) => state.checkCertificate),
   );
   return ref.watch(
-    patchClashConfigProvider.select(
-      (state) => state.toUpdateParams(
+    patchClashConfigProvider.select((state) {
+      final params = state.toUpdateParams(
         coreId: ClientProduct.current.expectedCoreId,
         authentication: authentication.credentials,
         skipCertVerify: !checkCertificate,
-      ),
-    ),
+      );
+      return ClientProduct.current.expectedCoreId == 'meow-rs'
+          ? params.copyWith(geoXUrl: meowGlobalGeoDownloadUrls(state))
+          : params;
+    }),
   );
 }
 
@@ -266,6 +269,7 @@ Future<VpnOptions> vpnOptions(Ref ref) async {
       (state) => (
         bypassDomain: state.bypassDomain,
         authenticated: state.authentication.credentials.isNotEmpty,
+        bypassPrivateRoute: state.bypassPrivateRoute,
       ),
     ),
   );
@@ -292,6 +296,15 @@ Future<VpnOptions> vpnOptions(Ref ref) async {
     allowBypass: vpnSetting.allowBypass,
     bypassDomain: networkSetting.bypassDomain,
     routeAddress: await routeAddress,
+    rawRouteAddress: ClientProduct.current.expectedCoreId == 'meow-rs'
+        ? tun.routeAddress
+        : null,
+    rawRouteExcludeAddress: ClientProduct.current.expectedCoreId == 'meow-rs'
+        ? tun.routeExcludeAddress
+        : null,
+    bypassPrivateRoute: ClientProduct.current.expectedCoreId == 'meow-rs'
+        ? networkSetting.bypassPrivateRoute
+        : null,
     mtu: tun.mtu,
     congestionController: tun.congestionController,
   );
