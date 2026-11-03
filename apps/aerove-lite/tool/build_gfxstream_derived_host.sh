@@ -14,7 +14,7 @@ OUTPUT=$(realpath -m -- "$2")
 [[ -f "$BASE_LIB" && ! -e "$OUTPUT" ]] || { echo 'Require an existing base library and a new output directory' >&2; exit 2; }
 BASE_DIR=$(dirname -- "$BASE_LIB")
 case "$OUTPUT/" in "$BASE_DIR/"*) echo 'Output must be outside the original SDK library directory' >&2; exit 2 ;; esac
-for tool in git cmake ninja clang-18 clang++-18 pkg-config readelf nm sha256sum python3 timeout xvfb-run ldd strip cmp; do
+for tool in git cmake ninja clang-18 clang++-18 pkg-config readelf nm sha256sum python3 timeout xvfb-run ldd cmp; do
   command -v "$tool" >/dev/null || { echo "Missing build dependency: $tool" >&2; exit 2; }
 done
 SOURCE=0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9
@@ -34,6 +34,8 @@ PARSER_LIB="$BASE_DIR/libshadertranslator.so"
 PARSER_GIT_BLOB=3b3174adf5d912a37780b69876f0de449bdc2be4
 PARSER_SHA=a8832f3f2d8f900b77d2e894b659c71ef5093afd514543bba3b398baa450804e
 PARSER_REFERENCE_BLOB=bf6f43c6b36c4c4b2651ac9e74db4b58035af270
+PARSER_OBJCOPY_REVISION=6599d0b82da42c78c5f30e73ba71aa3db907e5aa
+PARSER_OBJCOPY_BLOB=e97fdf72793217f6114f85fbdeafd30c71e65463
 check_sha() { printf '%s  %s\n' "$2" "$1" | sha256sum --check --status; }
 check_sha "$BASE_LIB" "$BASE_SHA"
 [[ $(readelf -n "$BASE_LIB" | sed -n 's/.*Build ID: //p') == "$BASE_BUILD_ID" ]]
@@ -42,17 +44,25 @@ check_sha "$TEST_PATCH" 4e33b60eaf701019e67514aeedbf976e0b7591bf76518ca918aaf1d2
 check_sha "$X11_TEST_PATCH" 0e061d4f2bea1de57416600a7552e0f487c44e6606f2b68054d3078d7ffd0a43
 check_sha "$PARSER_HEADER" 979138ea0b60d23ee604b065743ebd9a2a32fbe76bee4e68081e3c73975b673a
 check_sha "$PARSER_INCLUDE/LICENSE" 54aff7276217df9f6b5181613999d208c9e40d2b1d51bf55217837e6871a4a63
-check_sha "$PARSER_SOURCE" 59b65df675b2374c6a63aaca88cd7e2228c2ac314f29fd7131ac0c62cc6e64d0
+check_sha "$PARSER_SOURCE" 305f8d997b9e94f311824b9601f151d51048e1af697b2964fcb81f6af0601346
 mkdir -- "$OUTPUT"
 mkdir -- "$OUTPUT/logs" "$OUTPUT/artifact"
 STAGE=identity
 STATUS=failed
 BUILDER_SCRIPT=$(realpath -e -- "$0")
-export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT PARSER_HEADER PARSER_SOURCE PARSER_LIB PARSER_GIT_BLOB PARSER_SHA PARSER_REFERENCE_BLOB
+export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT PARSER_HEADER PARSER_SOURCE PARSER_LIB PARSER_GIT_BLOB PARSER_SHA PARSER_REFERENCE_BLOB PARSER_OBJCOPY_REVISION PARSER_OBJCOPY_BLOB
 finish() {
   local code=$?
   trap - EXIT
   set +e
+  # Retain reference ELF and debuglink evidence even when acquisition or pairing fails.
+  for parser_item in unstripped.so libshadertranslator.so build/debug_info/libshadertranslator.so.debug; do
+    parser_label=${parser_item##*/}
+    if [[ -f "$OUTPUT/reference/$parser_item" ]]; then
+      timeout --kill-after=5s 30s readelf -h -n -S -l -d -Ws -C "$OUTPUT/reference/$parser_item" > "$OUTPUT/parser-reference-$parser_label.elf.txt" 2> "$OUTPUT/parser-reference-$parser_label.elf.err"
+      timeout --kill-after=5s 30s readelf -p .gnu_debuglink -x .gnu_debuglink "$OUTPUT/reference/$parser_item" > "$OUTPUT/parser-reference-$parser_label.debuglink.txt" 2> "$OUTPUT/parser-reference-$parser_label.debuglink.err"
+    fi
+  done
   export STAGE STATUS
   # Small factual receipt only; absence of a completed stage is not Android acceptance.
   python3 - "$code" <<'PY'
@@ -63,6 +73,23 @@ def digest(path):
     if not path.is_file(): return None
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+# Input, output, debug sidecar and tool identities survive a failed transform/cmp.
+def reference_identity(relative):
+    path = root / 'reference' / relative
+    if not path.is_file(): return None
+    blob = hashlib.sha1(f'blob {path.stat().st_size}\0'.encode())
+    with path.open('rb') as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b''):
+            blob.update(block)
+    return dict(path=relative, bytes=path.stat().st_size, sha256=digest(path), gitBlob=blob.hexdigest())
+(root / 'parser-reference-readback.json').write_text(json.dumps(dict(
+    stage=os.environ['STAGE'], exitCode=int(sys.argv[1]),
+    reference=reference_identity('unstripped.so'),
+    result=reference_identity('libshadertranslator.so'),
+    debug=reference_identity('build/debug_info/libshadertranslator.so.debug'),
+    tool=reference_identity('llvm-objcopy'),
+    requiredToolRevision=os.environ['PARSER_OBJCOPY_REVISION'],
+    requiredToolGitBlob=os.environ['PARSER_OBJCOPY_BLOB']), indent=2) + '\n')
 library = root / 'artifact/libgfxstream_backend.so'
 receipt = dict(schema=1, kind='source-derived-sdk-host-module', status=os.environ['STATUS'],
     stage=os.environ['STAGE'], exitCode=int(sys.argv[1]), googleOriginal=False,
@@ -108,8 +135,9 @@ nm -D --defined-only "$PARSER_LIB" > "$OUTPUT/original-sdk-parser-exports.txt"
 for symbol in STInitialize STFinalize STGenerateResources STCompileAndResolve STFreeShaderResolveState STCopyVariable STCopyInterfaceBlock STDestroyVariable STDestroyInterfaceBlock; do
   grep -Eq "[[:space:]][TW][[:space:]]$symbol$" "$OUTPUT/original-sdk-parser-exports.txt"
 done
-# One deterministic byte-equality witness; this does not identify Google's strip tool.
-# Reference binaries remain under reference/, outside all uploaded artifact paths.
+# One fixed official debug-split recipe; never alter or execute the SDK parser.
+# All downloaded binaries and the debug sidecar remain outside uploaded artifact paths.
+readelf -p .gnu_debuglink -x .gnu_debuglink "$PARSER_LIB" > "$OUTPUT/original-sdk-parser-debuglink.txt" 2> "$OUTPUT/original-sdk-parser-debuglink.err"
 STAGE=parser-strip-reference
 mkdir -- "$OUTPUT/reference"
 run parser-reference-fetch 120s python3 - "$OUTPUT/reference/unstripped.so" <<'PY'
@@ -120,35 +148,60 @@ with urllib.request.urlopen(url, timeout=60) as response:
 pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(b"".join(encoded.split()), validate=True))
 PY
 [[ $(git hash-object --no-filters "$OUTPUT/reference/unstripped.so") == "$PARSER_REFERENCE_BLOB" ]] || { echo 'Official parser reference blob differs' >&2; exit 1; }
-STRIP_TOOL=$(realpath -e -- "$(command -v strip)")
-printf '%s\n' "$STRIP_TOOL" > "$OUTPUT/parser-strip-tool.path"
-"$STRIP_TOOL" --version > "$OUTPUT/parser-strip-tool.version"
-grep -q '^GNU strip ' "$OUTPUT/parser-strip-tool.version"
-sha256sum "$STRIP_TOOL" > "$OUTPUT/parser-strip-tool.sha256"
-cp -- "$OUTPUT/reference/unstripped.so" "$OUTPUT/reference/stripped.so"
-# Exactly one GNU strip invocation, with default flags, on the reference copy only.
-run parser-strip 30s "$STRIP_TOOL" "$OUTPUT/reference/stripped.so"
+run parser-objcopy-fetch 120s python3 - "$OUTPUT/reference/llvm-objcopy" <<'PY'
+import base64, pathlib, sys, urllib.request
+url = 'https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+/6599d0b82da42c78c5f30e73ba71aa3db907e5aa/clang-r596125/bin/llvm-objcopy?format=TEXT'
+with urllib.request.urlopen(url, timeout=60) as response:
+    encoded = response.read()
+pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(b"".join(encoded.split()), validate=True))
+PY
+STAGE=parser-objcopy-identity
+OBJCOPY_TOOL="$OUTPUT/reference/llvm-objcopy"
+[[ $(git hash-object --no-filters "$OBJCOPY_TOOL") == "$PARSER_OBJCOPY_BLOB" ]] || { echo 'Official LLVM objcopy blob differs' >&2; exit 1; }
+printf '%s\n' "$OBJCOPY_TOOL" > "$OUTPUT/parser-objcopy-tool.path"
+printf '%s\n' "$PARSER_OBJCOPY_REVISION" > "$OUTPUT/parser-objcopy-tool.revision"
+git hash-object --no-filters "$OBJCOPY_TOOL" > "$OUTPUT/parser-objcopy-tool.git-blob"
+sha256sum "$OBJCOPY_TOOL" > "$OUTPUT/parser-objcopy-tool.sha256"
+# Static ELF readback includes the interpreter and NEEDED entries before execution.
+run parser-objcopy-elf 30s readelf -h -l -d -W "$OBJCOPY_TOOL"
+chmod 755 -- "$OBJCOPY_TOOL"
+# Missing runtime dependencies fail here with their original loader stderr; no install/fallback.
+run parser-objcopy-version 30s "$OBJCOPY_TOOL" --version
+cp -- "$OUTPUT/reference/unstripped.so" "$OUTPUT/reference/libshadertranslator.so"
+# Preserve the official wrapper's basename, debug filename, order and arguments exactly.
+pushd "$OUTPUT/reference" > /dev/null
+mkdir -p build/debug_info
+run parser-debug-keep 30s "$OBJCOPY_TOOL" --only-keep-debug libshadertranslator.so build/debug_info/libshadertranslator.so.debug
+run parser-debug-strip 30s "$OBJCOPY_TOOL" --strip-unneeded libshadertranslator.so
+run parser-debug-link 30s "$OBJCOPY_TOOL" --add-gnu-debuglink=build/debug_info/libshadertranslator.so.debug libshadertranslator.so
+popd > /dev/null
 STAGE=parser-strip-equality
-cmp -- "$OUTPUT/reference/stripped.so" "$PARSER_LIB"
-check_sha "$OUTPUT/reference/stripped.so" "$PARSER_SHA"
-[[ $(git hash-object --no-filters "$OUTPUT/reference/stripped.so") == "$PARSER_GIT_BLOB" ]]
+run parser-strip-cmp 30s cmp -- "$OUTPUT/reference/libshadertranslator.so" "$PARSER_LIB"
+check_sha "$OUTPUT/reference/libshadertranslator.so" "$PARSER_SHA"
+[[ $(git hash-object --no-filters "$OUTPUT/reference/libshadertranslator.so") == "$PARSER_GIT_BLOB" ]]
 python3 - "$OUTPUT" <<'PY'
 import hashlib, json, os, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 reference = root / 'reference/unstripped.so'
-stripped = root / 'reference/stripped.so'
+stripped = root / 'reference/libshadertranslator.so'
 original = pathlib.Path(os.environ['PARSER_LIB'])
+
 def digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 # Written only after cmp and both fixed identity checks have succeeded.
-witness = dict(kind='exact-byte-equality-after-one-gnu-strip',
+witness = dict(kind='exact-byte-equality-after-fixed-official-llvm-debug-split',
     googlePackagingToolIdentified=False,
     reference=dict(revision='1ebd9720117e7e3c495a1e1c43e069f1727d60d5',
         gitBlob=os.environ['PARSER_REFERENCE_BLOB'], bytes=reference.stat().st_size, sha256=digest(reference)),
-    tool=dict(path=(root / 'parser-strip-tool.path').read_text().strip(),
-        version=(root / 'parser-strip-tool.version').read_text(),
-        sha256=digest(pathlib.Path((root / 'parser-strip-tool.path').read_text().strip())), flags=[]),
+    tool=dict(repository='https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86',
+        revision=os.environ['PARSER_OBJCOPY_REVISION'], path='clang-r596125/bin/llvm-objcopy',
+        gitBlob=os.environ['PARSER_OBJCOPY_BLOB'], sha256=digest(root / 'reference/llvm-objcopy'),
+        version=(root / 'logs/parser-objcopy-version.out').read_text(),
+        recipeRevision='cf0f40a0aad1aa3fca68f2f89372525c8d28ca68',
+        arguments=[['--only-keep-debug', 'libshadertranslator.so', 'build/debug_info/libshadertranslator.so.debug'],
+            ['--strip-unneeded', 'libshadertranslator.so'],
+            ['--add-gnu-debuglink=build/debug_info/libshadertranslator.so.debug', 'libshadertranslator.so']]),
     result=dict(bytes=stripped.stat().st_size, sha256=digest(stripped), gitBlob=os.environ['PARSER_GIT_BLOB']),
     originalSdk=dict(bytes=original.stat().st_size, sha256=digest(original), gitBlob=os.environ['PARSER_GIT_BLOB']))
 (root / 'parser-strip-witness.json').write_text(json.dumps(witness, indent=2) + '\n')

@@ -25,8 +25,39 @@
     "path": "SDK/emulator/lib64/libshadertranslator.so",
     "gitBlob": "3b3174adf5d912a37780b69876f0de449bdc2be4",
     "sha256": "a8832f3f2d8f900b77d2e894b659c71ef5093afd514543bba3b398baa450804e",
-    "pairingRequirement": "One GNU strip default invocation on the pinned unstripped reference copy must cmp equal to original SDK bytes and match both fixed identities",
+    "pairingRequirement": "One fixed official qemu Linux x86_64 debug-split recipe using the pinned official LLVM objcopy on the pinned unstripped reference copy must cmp equal to original SDK bytes and match both fixed identities",
     "witnessReceipt": "parser-strip-witness.json generated only after successful equality checks",
-    "googlePackagingToolIdentified": false
+    "googlePackagingToolIdentified": false,
+    "failureReadback": "parser-reference-readback.json and parser-reference-*.elf.txt are retained on failure as well as success"
+  },
+  "debugSplitTool": {
+    "repository": "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86",
+    "revision": "6599d0b82da42c78c5f30e73ba71aa3db907e5aa",
+    "path": "clang-r596125/bin/llvm-objcopy",
+    "gitBlob": "e97fdf72793217f6114f85fbdeafd30c71e65463",
+    "gitMode": "100755",
+    "version": "22.0.2 (based on r596125)",
+    "license": {
+      "path": "clang-r596125/NOTICE",
+      "gitBlob": "b051002f8a69f553700ee907ccd3c56d9a2c6c8e",
+      "spdx": "Apache-2.0 WITH LLVM-exception",
+      "bundledNotices": "Retained in the fixed upstream NOTICE"
+    },
+    "recipe": {
+      "repository": "https://android.googlesource.com/platform/external/qemu",
+      "revision": "cf0f40a0aad1aa3fca68f2f89372525c8d28ca68",
+      "path": "android/scripts/unix/gen-android-sdk-toolchain.sh",
+      "function": "gen_dbg_splitter",
+      "targetBasename": "libshadertranslator.so",
+      "debugFile": "build/debug_info/libshadertranslator.so.debug",
+      "steps": [
+        "--only-keep-debug",
+        "--strip-unneeded",
+        "--add-gnu-debuglink"
+      ]
+    },
+    "runtimeDependencies": "Not assumed; ELF interpreter/NEEDED and bounded --version execution are recorded in CI. No fallback or automatic dependency installation.",
+    "binaryDownloadedDuringSourcePreparation": false,
+    "builderAcquisition": "Fixed Gitiles TEXT URL, base64 decode and Git blob verification; CI reference directory only; never uploaded or installed into SDK"
   }
 }
