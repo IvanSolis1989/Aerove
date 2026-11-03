@@ -137,7 +137,8 @@ set -e
 printf '%s\n' "$red_exit" > "$OUTPUT/logs/zero-attachment-red.exit"
 # A failed driver/context initialization, timeout or arbitrary exit is not the expected RED.
 [[ "$red_exit" == 132 || "$red_exit" == 134 ]]
-grep -Fxq gfxstream-zero-attachment-ready "$OUTPUT/logs/zero-attachment-red.err"
+# The wrapped test's stderr marker appears in stdout; retain both original streams.
+grep -Fxq gfxstream-zero-attachment-ready "$OUTPUT/logs/zero-attachment-red.out" "$OUTPUT/logs/zero-attachment-red.err"
 run production-patch-check 30s git -C "$OUTPUT/source" apply --check "$PATCH"
 run production-patch 30s git -C "$OUTPUT/source" apply "$PATCH"
 check_sha "$OUTPUT/source/$PRODUCTION" e7864041afccb6236d70c62861e149048754e9e6c261ebd6630d31998045f008
