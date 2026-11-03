@@ -3,6 +3,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -10,6 +11,49 @@ from unittest.mock import patch
 import emulator_current as current
 
 SCRIPT_ASSETS = Path(__file__).resolve().parents[1] / "app/src/main/assets/scripts"
+
+
+class GuestAngleEvidenceTests(unittest.TestCase):
+    startup = 'Selecting Vulkan device: SwiftShader Device (Subzero), Version: 1.3.0'
+    guest = 'GLES: Google, ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)))'
+
+    def outputs(self, *, boot='angle\n', hardware='angle\n', guest=None, library_exit=0):
+        return [subprocess.CompletedProcess([], 0, boot, ''),
+                subprocess.CompletedProcess([], 0, hardware, ''),
+                subprocess.CompletedProcess([], library_exit, 'original image libraries\n', 'missing' if library_exit else ''),
+                subprocess.CompletedProcess([], 0, self.guest if guest is None else guest, '')]
+
+    def test_guest_and_host_actual_routes_are_both_required(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs()):
+                value = current.guest_angle_evidence(directory, {}, self.startup)
+            self.assertEqual(value['route'], 'guest-angle-vulkan')
+            self.assertEqual(value['guestRenderer'], [self.guest])
+            self.assertEqual(value['hostVulkanDevice'], [self.startup])
+            self.assertEqual((directory / 'guest-angle-boot-egl.out').read_text(), 'angle\n')
+            for outputs, startup in ((self.outputs(boot='emulation\n'), self.startup),
+                                     (self.outputs(hardware='emulation\n'), self.startup),
+                                     (self.outputs(guest='GLES: ANGLE OpenGL ES'), self.startup),
+                                     (self.outputs(), 'Graphics Adapter ANGLE SwiftShader')):
+                with self.subTest(startup=startup, outputs=outputs), \
+                        patch.object(current.subprocess, 'run', side_effect=outputs), \
+                        self.assertRaises(ValueError):
+                    current.guest_angle_evidence(directory, {}, startup)
+
+    def test_missing_original_image_library_retains_failure_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs(library_exit=1)), \
+                    self.assertRaises(subprocess.CalledProcessError):
+                current.guest_angle_evidence(directory, {}, self.startup)
+            self.assertEqual((directory / 'guest-angle-libraries.err').read_text(), 'missing')
+
+    def test_owner_cancellation_does_not_start_more_adb_reads(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(current.subprocess, 'run') as adb, \
+                self.assertRaises(InterruptedError):
+            current.guest_angle_evidence(Path(temporary), {'interruptSignals': [15]}, self.startup)
+        adb.assert_not_called()
 
 
 class CurrentOwnerTests(unittest.TestCase):

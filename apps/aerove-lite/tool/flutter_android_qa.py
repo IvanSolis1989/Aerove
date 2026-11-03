@@ -4,6 +4,7 @@ The emulator_current owner remains responsible for emulator lifetime and host re
 Only this explicit suite is selected; legacy Compose suites retain their separate scope.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -136,12 +137,51 @@ class Producer:
         self.child = None
         self.previous_signals = {}
         self.owner_verified = False
+        self.guest_angle_logcat_started = False
 
     def interrupt(self, signum, _frame):
         if self.cancelled:
             return
         self.cancelled = True
         raise InterruptedError(f'Cancelled by signal {signum} at {self.receipt["stage"]}')
+
+    @contextmanager
+    def _guest_angle_install_logcat(self, label, row):
+        if (os.environ.get('AEROVE_GUEST_ANGLE') != '1' or not self.owner_verified
+                or self.guest_angle_logcat_started or label != 'install-' + PACKAGE):
+            yield
+            return
+        self.guest_angle_logcat_started = True
+        capture = dict(command=self.adb + ['logcat', '-b', 'all', '-v', 'threadtime'],
+                       stdout='guest-angle-install-logcat.out', stderr='guest-angle-install-logcat.err',
+                       startedEpochSeconds=time.time(), status='starting', acceptanceEvidence=False)
+        row['guestAngleLogcat'] = self.receipt['guestAngleInstallLogcat'] = capture
+        with (self.args.output / capture['stdout']).open('wb') as stdout, \
+                (self.args.output / capture['stderr']).open('wb') as stderr:
+            child = subprocess.Popen(capture['command'], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+            capture.update(pid=child.pid, status='capturing')
+            try:
+                yield
+            finally:
+                primary_failure = sys.exc_info()[0] is not None
+                try:
+                    capture['terminationRequested'] = child.poll() is None
+                    if capture['terminationRequested']:
+                        child.terminate()
+                    try:
+                        capture['exit'] = child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        capture['killRequested'] = True
+                        child.kill()
+                        capture['exit'] = child.wait(timeout=5)
+                    capture['status'] = 'joined'
+                except BaseException as error:
+                    capture.update(status='cleanup-failed', error=repr(error))
+                    self.receipt.setdefault('cleanupErrors', []).append('guest-angle-install-logcat: ' + repr(error))
+                    if not primary_failure and row.get('exit', 0) == 0:
+                        raise
+                finally:
+                    capture['endedEpochSeconds'] = time.time()
 
     def command(self, label, command, timeout=30, check=True, cancelling=False, termination_timeout=5):
         if self.cancelled and not cancelling:
@@ -150,7 +190,7 @@ class Producer:
         self.receipt['commands'].append(row)
         out, err = self.args.output / (label + '.out'), self.args.output / (label + '.err')
         start = time.monotonic()
-        with out.open('wb') as stdout, err.open('wb') as stderr:
+        with self._guest_angle_install_logcat(label, row), out.open('wb') as stdout, err.open('wb') as stderr:
             child = subprocess.Popen(row['command'], stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
             self.child = child
             try:

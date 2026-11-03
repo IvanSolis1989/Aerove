@@ -1126,9 +1126,19 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 **用途与采用方式：** SwANGLE 诊断只读参照：核对 `host/include/render-utils/renderer_enums.h` 中 SwiftShader indirect 与 ANGLE/SwANGLE renderer enum 的区分；未复制源码，不认定为当前打包的 37.2.12 源码身份。
 
+固定 SDK 37.2.13 宿主 SIGILL 取证另参照同 revision 的 [gles_v30_imp.cpp](https://github.com/google/gfxstream/blob/0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9/host/gl/glestranslator/gles_v2/gles_v30_imp.cpp#L624)，将实际 ELF decoder/opcode/分支与零附件空 vector 访问闭合；合法空操作语义依据 [Khronos GLES 3.1 规范](https://registry.khronos.org/OpenGL/specs/es/3.1/es_spec_3.1.pdf)。公开源码不冒称 Google 完整构建身份，原故障未采到的寄存器值不冒称实测；本次复用下述官方 Guest ANGLE 路由，未手改 SDK 二进制。
+
 beta14 原包独立采样诊断另只读参照官方 AOSP 镜像固定 [`6be02d3adef772c85eabf99c21654aefa43abece`](https://android.googlesource.com/platform/hardware/google/gfxstream/+/6be02d3adef772c85eabf99c21654aefa43abece/) 的 guest `GLESv2_enc/gl2_enc.cpp`、`iostream/include/libOpenglRender/IOStream.h`、`OpenglSystemCommon/HostConnection.cpp`/`QemuPipeStream.cpp` 与 `android-emu/aemu/base/Tracing.h`，确认 `glGenTextures encode` 包含同步协议 readback 的范围；未复制驱动、未将公共 lineage 冒认为运行 guest ELF 或 37.2.12 packaged source。现成 CI 工具的 host/native 采样仍须实际权限、时钟、窗口与符号核验，不据此宣称 App shader/GPU 根因或性能通过。
 
 **许可证、署名与证据：** Apache-2.0，固定源码文件头；[固定 renderer_enums.h](https://github.com/google/gfxstream/blob/0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9/host/include/render-utils/renderer_enums.h)。
+
+#### [Android Emulator Guest ANGLE](https://android.googlesource.com/platform/external/qemu/)
+
+**固定来源 / revision：** QEMU `cf0f40a0aad1aa3fca68f2f89372525c8d28ca68`；Android 13 Goldfish `7493b6b8d8aeed860ff2415e8327af2ed97324fe`；ANGLE `353815e0d958c63adc3425df35baf61f097d2da2`；Goldfish OpenGL `58990d35c7ace6cc89aea121378935d46d799d14`。
+
+**用途与采用方式：** 固定原208代表诊断复用 SDK 已有 `GuestAngle,Vulkan`，保持 API33、`-gpu swangle`、Impeller GLES、分辨率和全部材质质量。参照 [QEMU boot 属性](https://android.googlesource.com/platform/external/qemu/+/cf0f40a0aad1aa3fca68f2f89372525c8d28ca68/android/android-emu/android/userspace-boot-properties.cpp#329)、[Goldfish ANGLE 打包与 Vulkan HAL](https://android.googlesource.com/device/generic/goldfish/+/7493b6b8d8aeed860ff2415e8327af2ed97324fe/vendor.mk#78)、[init EGL 属性](https://android.googlesource.com/device/generic/goldfish/+/7493b6b8d8aeed860ff2415e8327af2ed97324fe/init.ranchu.rc#85)、[ANGLE Vulkan framebuffer](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/src/libANGLE/renderer/vulkan/FramebufferVk.cpp#358)及 [vulkan.ranchu](https://android.googlesource.com/device/generic/goldfish-opengl/+/58990d35c7ace6cc89aea121378935d46d799d14/system/vulkan/Android.mk)，将合法零附件调用交给现有 guest ANGLE Vulkan 后端，避开宿主 GLES translator 的空 vector 路径。未复制或侧载驱动；公开源码不是 Google SDK 37.2.13 的完整构建 manifest。必须读回同次 boot 的 EGL 属性、原镜像库、实际 ANGLE/Vulkan/SwiftShader renderer 和 App Impeller GLES；不能仅凭开关或宿主 ANGLE 字符串宣称路由生效、性能或验收通过。
+
+**许可证、署名与证据：** 所引 QEMU 文件 GPLv2，Goldfish 配置与 OpenGL HAL Apache-2.0，ANGLE BSD-3-Clause；保留原 SDK 各组件 NOTICE，无新增 APP 依赖或第三方二进制分发。
 
 #### [google/swiftshader](https://github.com/google/swiftshader)
 

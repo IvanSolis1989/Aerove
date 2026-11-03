@@ -153,7 +153,7 @@ jobs:
     - name: Fixed original Flutter production APK inspection tools
       if: ${{ inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui' }}
       run: sdkmanager --install 'build-tools;37.0.0' --channel=0
-    - name: Existing API33 emulator environment with unchanged configuration
+    - name: Existing API33 emulator environment and fixed SDK
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
         RUNTIME_TARGET: ${{ inputs.runtime_target }}
@@ -191,6 +191,7 @@ jobs:
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt" 2>&1
         grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/matrix/emulator-version.txt"
         if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
+          "$ANDROID_HOME/emulator/emulator" -help-feature > "$sdk_install_dir/emulator-help-feature.txt" 2>&1
           gfx="$ANDROID_HOME/emulator/lib64/libgfxstream_backend.so"
           gfx_evidence="$RUNNER_TEMP/lite-diagnostics/gfxstream-elf"
           mkdir -p "$gfx_evidence"
@@ -212,6 +213,7 @@ jobs:
         SHARD_INDEX: ${{ inputs.shard_index }}
         ORIGINAL_SAMPLE: ${{ inputs.sample }}
         AEROVE_EMULATOR_SIGILL_TRACE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
+        AEROVE_GUEST_ANGLE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
       run: |
         if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite208-original-flutter-runtime"

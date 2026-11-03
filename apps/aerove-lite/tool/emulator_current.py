@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -75,6 +76,37 @@ def write_owner_receipt(path, receipt):
 def check_cancelled(receipt):
     if receipt.get('interruptSignals'):
         raise InterruptedError('Owner cancellation observed during runtime')
+
+
+def guest_angle_evidence(directory, receipt, startup):
+    """Confirm the original image actually selected guest ANGLE over Vulkan."""
+    outputs = {}
+    commands = (
+        ('boot-egl', ['getprop', 'ro.boot.hardwareegl']),
+        ('hardware-egl', ['getprop', 'ro.hardware.egl']),
+        ('libraries', ['ls', '-l', '/vendor/lib64/egl/libEGL_angle.so',
+                       '/vendor/lib64/egl/libGLESv2_angle.so', '/vendor/lib64/hw/vulkan.ranchu.so']),
+        ('surfaceflinger', ['dumpsys', 'SurfaceFlinger']),
+    )
+    for name, arguments in commands:
+        check_cancelled(receipt)
+        result = subprocess.run(['adb', '-s', 'emulator-5554', 'shell', *arguments],
+                                capture_output=True, text=True, timeout=15)
+        (directory / ('guest-angle-' + name + '.out')).write_text(result.stdout)
+        (directory / ('guest-angle-' + name + '.err')).write_text(result.stderr)
+        result.check_returncode()
+        outputs[name] = result.stdout
+    check_cancelled(receipt)
+    if any(outputs[name].strip() != 'angle' for name in ('boot-egl', 'hardware-egl')):
+        raise ValueError('Guest ANGLE was requested but the booted EGL driver is not angle')
+    guest = [line for line in outputs['surfaceflinger'].splitlines()
+             if re.search(r'\bGLES:', line) and all(word in line.upper() for word in ('ANGLE', 'VULKAN', 'SWIFTSHADER'))]
+    host = [line for line in startup.splitlines()
+            if 'Selecting Vulkan device:' in line and 'SWIFTSHADER' in line.upper()]
+    if not guest or not host:
+        raise ValueError('Guest ANGLE Vulkan and the host SwiftShader device were not both observed')
+    return dict(route='guest-angle-vulkan', bootEgl='angle', hardwareEgl='angle',
+                guestRenderer=guest, hostVulkanDevice=host)
 
 
 def sigill_gdb_script(pid, ready, fault):
@@ -417,6 +449,9 @@ def main():
     forensic = os.environ.get('AEROVE_EMULATOR_SIGILL_TRACE') == '1'
     if forensic and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
         raise ValueError('SIGILL capture is restricted to the fixed original208 representative diagnosis')
+    guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
+    if guest_angle and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
+        raise ValueError('Guest ANGLE diagnosis is restricted to the fixed original208 representative runtime')
     sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
     flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase in ('flutter-ui', 'flutter-platform', 'flutter-full') else None
     if args.phase in ('matrix', 'remaining') and not current.get('runtimeTarget'):
@@ -426,6 +461,8 @@ def main():
     directory = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics' / args.phase
     directory.mkdir(parents=True, exist_ok=True)
     emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']
+    if guest_angle:
+        emulator_command.extend(['-feature', 'GuestAngle,Vulkan'])
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
     if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui'):
         receipt.update(originalAppIdentity=current['originalAppIdentity'], harnessIdentity=current['harnessIdentity'],
@@ -463,6 +500,9 @@ def main():
             check_cancelled(receipt)
             wait_ready(emulator, directory, receipt, check_cancelled)
             check_cancelled(receipt)
+            if guest_angle:
+                receipt['guestGraphicsRoute'] = guest_angle_evidence(
+                    directory, receipt, (directory / 'emulator.stdout.log').read_text(errors='replace'))
             if forensic:
                 capture = SigillCapture(emulator, directory, receipt)
                 try:
@@ -476,6 +516,8 @@ def main():
                          runtimeDirectory=str(args.runtime_directory.resolve()),
                          deviceSerial='emulator-5554', gpuBackend=GPU_BACKEND,
                          rendererBackend=RENDERER_LABEL, rendererEvidence=receipt['rendererEvidence'])
+            if guest_angle:
+                proof['guestGraphicsRoute'] = receipt['guestGraphicsRoute']
             proof_path = directory / 'CURRENT-RENDERER-PROOF.json'
             proof_path.write_text(json.dumps(proof, indent=2) + '\n')
             environment['AEROVE_CURRENT_RENDERER_PROOF'] = str(proof_path.resolve())
