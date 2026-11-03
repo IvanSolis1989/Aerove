@@ -8,16 +8,25 @@
     "gitBlob": "5b65385968d2d3288489068ce6c8e18719a1cc1d",
     "sha256": "979138ea0b60d23ee604b065743ebd9a2a32fbe76bee4e68081e3c73975b673a"
   },
-  "pairedOriginalSdkLibrary": {
-    "path": "ANGLE/linux-x86_64/lib/libshadertranslator.so",
-    "gitBlob": "bf6f43c6b36c4c4b2651ac9e74db4b58035af270",
-    "binaryDownloaded": false
-  },
   "license": {
     "path": "ANGLE/LICENSE",
     "spdx": "BSD-3-Clause",
     "copyright": "2018 The ANGLE Project Authors",
     "bytes": 1675,
     "sha256": "54aff7276217df9f6b5181613999d208c9e40d2b1d51bf55217837e6871a4a63"
+  },
+  "unstrippedReferenceLibrary": {
+    "path": "ANGLE/linux-x86_64/lib/libshadertranslator.so",
+    "gitBlob": "bf6f43c6b36c4c4b2651ac9e74db4b58035af270",
+    "binaryDownloadedDuringSourcePreparation": false,
+    "builderAcquisition": "Fixed Gitiles TEXT URL, base64 decode; CI reference directory only"
+  },
+  "pairedOriginalSdkLibrary": {
+    "path": "SDK/emulator/lib64/libshadertranslator.so",
+    "gitBlob": "3b3174adf5d912a37780b69876f0de449bdc2be4",
+    "sha256": "a8832f3f2d8f900b77d2e894b659c71ef5093afd514543bba3b398baa450804e",
+    "pairingRequirement": "One GNU strip default invocation on the pinned unstripped reference copy must cmp equal to original SDK bytes and match both fixed identities",
+    "witnessReceipt": "parser-strip-witness.json generated only after successful equality checks",
+    "googlePackagingToolIdentified": false
   }
 }

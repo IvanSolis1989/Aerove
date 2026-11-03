@@ -14,7 +14,7 @@ OUTPUT=$(realpath -m -- "$2")
 [[ -f "$BASE_LIB" && ! -e "$OUTPUT" ]] || { echo 'Require an existing base library and a new output directory' >&2; exit 2; }
 BASE_DIR=$(dirname -- "$BASE_LIB")
 case "$OUTPUT/" in "$BASE_DIR/"*) echo 'Output must be outside the original SDK library directory' >&2; exit 2 ;; esac
-for tool in git cmake ninja clang-18 clang++-18 pkg-config readelf nm sha256sum python3 timeout xvfb-run ldd; do
+for tool in git cmake ninja clang-18 clang++-18 pkg-config readelf nm sha256sum python3 timeout xvfb-run ldd strip cmp; do
   command -v "$tool" >/dev/null || { echo "Missing build dependency: $tool" >&2; exit 2; }
 done
 SOURCE=0884d2d224bfe2e46cbb13b71d68d7c66e2f7dc9
@@ -31,7 +31,9 @@ PARSER_INCLUDE="$SCRIPT_DIR/fixtures/angle-shader-translator"
 PARSER_HEADER="$PARSER_INCLUDE/ShaderTranslator.h"
 PARSER_SOURCE="$PARSER_INCLUDE/SOURCE.json"
 PARSER_LIB="$BASE_DIR/libshadertranslator.so"
-PARSER_GIT_BLOB=bf6f43c6b36c4c4b2651ac9e74db4b58035af270
+PARSER_GIT_BLOB=3b3174adf5d912a37780b69876f0de449bdc2be4
+PARSER_SHA=a8832f3f2d8f900b77d2e894b659c71ef5093afd514543bba3b398baa450804e
+PARSER_REFERENCE_BLOB=bf6f43c6b36c4c4b2651ac9e74db4b58035af270
 check_sha() { printf '%s  %s\n' "$2" "$1" | sha256sum --check --status; }
 check_sha "$BASE_LIB" "$BASE_SHA"
 [[ $(readelf -n "$BASE_LIB" | sed -n 's/.*Build ID: //p') == "$BASE_BUILD_ID" ]]
@@ -40,13 +42,13 @@ check_sha "$TEST_PATCH" 4e33b60eaf701019e67514aeedbf976e0b7591bf76518ca918aaf1d2
 check_sha "$X11_TEST_PATCH" 0e061d4f2bea1de57416600a7552e0f487c44e6606f2b68054d3078d7ffd0a43
 check_sha "$PARSER_HEADER" 979138ea0b60d23ee604b065743ebd9a2a32fbe76bee4e68081e3c73975b673a
 check_sha "$PARSER_INCLUDE/LICENSE" 54aff7276217df9f6b5181613999d208c9e40d2b1d51bf55217837e6871a4a63
-check_sha "$PARSER_SOURCE" a4e12b6243fa04768a630f350ac7cffb9bd6d387da5cefc8335febaef95a6dba
+check_sha "$PARSER_SOURCE" 59b65df675b2374c6a63aaca88cd7e2228c2ac314f29fd7131ac0c62cc6e64d0
 mkdir -- "$OUTPUT"
 mkdir -- "$OUTPUT/logs" "$OUTPUT/artifact"
 STAGE=identity
 STATUS=failed
 BUILDER_SCRIPT=$(realpath -e -- "$0")
-export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT PARSER_HEADER PARSER_SOURCE PARSER_LIB PARSER_GIT_BLOB
+export OUTPUT BASE_LIB BASE_SHA BASE_BUILD_ID SOURCE GTEST PATCH TEST_PATCH X11_TEST_PATCH BUILDER_SCRIPT PARSER_HEADER PARSER_SOURCE PARSER_LIB PARSER_GIT_BLOB PARSER_SHA PARSER_REFERENCE_BLOB
 finish() {
   local code=$?
   trap - EXIT
@@ -72,6 +74,8 @@ receipt = dict(schema=1, kind='source-derived-sdk-host-module', status=os.enviro
     angleShaderParser=dict(enabled=True, source=json.loads(pathlib.Path(os.environ['PARSER_SOURCE']).read_text()),
         headerSha256=digest(os.environ['PARSER_HEADER']), librarySha256=digest(os.environ['PARSER_LIB']),
         requiredLibraryGitBlob=os.environ['PARSER_GIT_BLOB'],
+        referenceGitBlob=os.environ['PARSER_REFERENCE_BLOB'],
+        stripWitness=json.loads((root / 'parser-strip-witness.json').read_text()) if (root / 'parser-strip-witness.json').is_file() else None,
         actualLibraryGitBlob=(root / 'parser-git-blob.txt').read_text().strip() if (root / 'parser-git-blob.txt').is_file() else None),
     patches={pathlib.Path(os.environ[k]).name:digest(os.environ[k]) for k in ('PATCH','TEST_PATCH','X11_TEST_PATCH')},
     derivedLibrarySha256=digest(library),
@@ -96,13 +100,59 @@ run() {
 STAGE=parser-preflight
 [[ -f "$PARSER_LIB" ]] || { echo 'Pinned SDK shader translator library is missing' >&2; exit 1; }
 git hash-object --no-filters "$PARSER_LIB" > "$OUTPUT/parser-git-blob.txt"
-[[ $(cat "$OUTPUT/parser-git-blob.txt") == "$PARSER_GIT_BLOB" ]] || { echo 'SDK shader translator does not match the fixed official header; refusing an unpaired C API' >&2; exit 1; }
+[[ $(cat "$OUTPUT/parser-git-blob.txt") == "$PARSER_GIT_BLOB" ]] || { echo 'SDK shader translator differs from the fixed original SDK library' >&2; exit 1; }
+check_sha "$PARSER_LIB" "$PARSER_SHA"
 sha256sum "$PARSER_LIB" > "$OUTPUT/original-sdk-parser.sha256"
-readelf -h -n -d -Ws -C "$PARSER_LIB" > "$OUTPUT/original-sdk-parser-elf.txt"
+readelf -h -n -S -l -d -Ws -C "$PARSER_LIB" > "$OUTPUT/original-sdk-parser-elf.txt"
 nm -D --defined-only "$PARSER_LIB" > "$OUTPUT/original-sdk-parser-exports.txt"
 for symbol in STInitialize STFinalize STGenerateResources STCompileAndResolve STFreeShaderResolveState STCopyVariable STCopyInterfaceBlock STDestroyVariable STDestroyInterfaceBlock; do
   grep -Eq "[[:space:]][TW][[:space:]]$symbol$" "$OUTPUT/original-sdk-parser-exports.txt"
 done
+# One deterministic byte-equality witness; this does not identify Google's strip tool.
+# Reference binaries remain under reference/, outside all uploaded artifact paths.
+STAGE=parser-strip-reference
+mkdir -- "$OUTPUT/reference"
+run parser-reference-fetch 120s python3 - "$OUTPUT/reference/unstripped.so" <<'PY'
+import base64, pathlib, sys, urllib.request
+url = 'https://android.googlesource.com/platform/prebuilts/android-emulator-build/common/+/1ebd9720117e7e3c495a1e1c43e069f1727d60d5/ANGLE/linux-x86_64/lib/libshadertranslator.so?format=TEXT'
+with urllib.request.urlopen(url, timeout=60) as response:
+    encoded = response.read()
+pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(b"".join(encoded.split()), validate=True))
+PY
+[[ $(git hash-object --no-filters "$OUTPUT/reference/unstripped.so") == "$PARSER_REFERENCE_BLOB" ]] || { echo 'Official parser reference blob differs' >&2; exit 1; }
+STRIP_TOOL=$(realpath -e -- "$(command -v strip)")
+printf '%s\n' "$STRIP_TOOL" > "$OUTPUT/parser-strip-tool.path"
+"$STRIP_TOOL" --version > "$OUTPUT/parser-strip-tool.version"
+grep -q '^GNU strip ' "$OUTPUT/parser-strip-tool.version"
+sha256sum "$STRIP_TOOL" > "$OUTPUT/parser-strip-tool.sha256"
+cp -- "$OUTPUT/reference/unstripped.so" "$OUTPUT/reference/stripped.so"
+# Exactly one GNU strip invocation, with default flags, on the reference copy only.
+run parser-strip 30s "$STRIP_TOOL" "$OUTPUT/reference/stripped.so"
+STAGE=parser-strip-equality
+cmp -- "$OUTPUT/reference/stripped.so" "$PARSER_LIB"
+check_sha "$OUTPUT/reference/stripped.so" "$PARSER_SHA"
+[[ $(git hash-object --no-filters "$OUTPUT/reference/stripped.so") == "$PARSER_GIT_BLOB" ]]
+python3 - "$OUTPUT" <<'PY'
+import hashlib, json, os, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+reference = root / 'reference/unstripped.so'
+stripped = root / 'reference/stripped.so'
+original = pathlib.Path(os.environ['PARSER_LIB'])
+def digest(path):
+    with path.open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+# Written only after cmp and both fixed identity checks have succeeded.
+witness = dict(kind='exact-byte-equality-after-one-gnu-strip',
+    googlePackagingToolIdentified=False,
+    reference=dict(revision='1ebd9720117e7e3c495a1e1c43e069f1727d60d5',
+        gitBlob=os.environ['PARSER_REFERENCE_BLOB'], bytes=reference.stat().st_size, sha256=digest(reference)),
+    tool=dict(path=(root / 'parser-strip-tool.path').read_text().strip(),
+        version=(root / 'parser-strip-tool.version').read_text(),
+        sha256=digest(pathlib.Path((root / 'parser-strip-tool.path').read_text().strip())), flags=[]),
+    result=dict(bytes=stripped.stat().st_size, sha256=digest(stripped), gitBlob=os.environ['PARSER_GIT_BLOB']),
+    originalSdk=dict(bytes=original.stat().st_size, sha256=digest(original), gitBlob=os.environ['PARSER_GIT_BLOB']))
+(root / 'parser-strip-witness.json').write_text(json.dumps(witness, indent=2) + '\n')
+PY
 run parser-loader 30s env LD_LIBRARY_PATH="$BASE_DIR" ldd -r "$PARSER_LIB"
 if grep -Eq 'undefined symbol:|not found' "$OUTPUT/logs/parser-loader.out" "$OUTPUT/logs/parser-loader.err"; then
   echo 'Original SDK shader translator has unresolved runtime dependencies' >&2
@@ -230,6 +280,7 @@ cp -a -- "$PARSER_INCLUDE" "$OUTPUT/artifact/angle-shader-translator"
 find "$OUTPUT/source" "$OUTPUT/googletest" -type f \( -iname 'license*' -o -iname 'copying*' -o -iname 'notice*' \) -not -path '*/.git/*' -print0 \
   | tar --null -T - -czf "$OUTPUT/artifact/upstream-notices.tar.gz"
 check_sha "$BASE_LIB" "$BASE_SHA"
+check_sha "$PARSER_LIB" "$PARSER_SHA"
 [[ $(git hash-object --no-filters "$PARSER_LIB") == "$PARSER_GIT_BLOB" ]]
 STAGE=host-module-built-and-tested
 STATUS=host-module-built-and-tested
