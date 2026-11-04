@@ -51,9 +51,10 @@ class GuestAngleEvidenceTests(unittest.TestCase):
     startup = 'Selecting Vulkan device: SwiftShader Device (Subzero), Version: 1.3.0'
     guest = 'GLES: Google, ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)))'
 
-    def outputs(self, *, boot='angle\n', hardware='angle\n', guest=None, library_exit=0):
+    def outputs(self, *, boot='angle\n', hardware='angle\n', overrides='supportsHostQueryReset\n', guest=None, library_exit=0):
         return [subprocess.CompletedProcess([], 0, boot, ''),
                 subprocess.CompletedProcess([], 0, hardware, ''),
+                subprocess.CompletedProcess([], 0, overrides, ''),
                 subprocess.CompletedProcess([], library_exit, 'original image libraries\n', 'missing' if library_exit else ''),
                 subprocess.CompletedProcess([], 0, self.guest if guest is None else guest, '')]
 
@@ -63,11 +64,14 @@ class GuestAngleEvidenceTests(unittest.TestCase):
             with patch.object(current.subprocess, 'run', side_effect=self.outputs()):
                 value = current.guest_angle_evidence(directory, {}, self.startup)
             self.assertEqual(value['route'], 'guest-angle-vulkan')
+            self.assertEqual(value['angleFeatureOverridesDisabled'], 'supportsHostQueryReset')
             self.assertEqual(value['guestRenderer'], [self.guest])
             self.assertEqual(value['hostVulkanDevice'], [self.startup])
             self.assertEqual((directory / 'guest-angle-boot-egl.out').read_text(), 'angle\n')
             for outputs, startup in ((self.outputs(boot='emulation\n'), self.startup),
                                      (self.outputs(hardware='emulation\n'), self.startup),
+                                     (self.outputs(overrides='\n'), self.startup),
+                                     (self.outputs(overrides='someOtherFeature\n'), self.startup),
                                      (self.outputs(guest='GLES: ANGLE OpenGL ES'), self.startup),
                                      (self.outputs(), 'Graphics Adapter ANGLE SwiftShader')):
                 with self.subTest(startup=startup, outputs=outputs), \

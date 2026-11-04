@@ -21,7 +21,7 @@ def keyguard_ready(text):
 
 
 def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_logcat=False,
-               debug_guest_vulkan=False):
+               debug_guest_vulkan=False, disable_guest_host_query_reset=False):
     started = time.monotonic()
     deadline = started + 600
     report = dict(schema=1, ownerPid=receipt['ownerPid'], emulatorPid=emulator.pid,
@@ -30,10 +30,14 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
     boot_shell_ready = False
     initial_logcat = False
     deadline_logcat = False
-    debug_vulkan_attempted = False
+    guest_setup_attempted = False
     if debug_guest_vulkan:
         report['guestVulkanDebug'] = dict(property='debug.vulkan.enable_callback',
                                         requestedValue='true', propertyReadbackVerified=False)
+    if disable_guest_host_query_reset:
+        report['guestHostQueryResetCompat'] = dict(
+            property='debug.angle.feature_overrides_disabled',
+            requestedValue='supportsHostQueryReset', propertyReadbackVerified=False)
     if capture_guest_logcat:
         report['guestLogcat'] = []
 
@@ -93,27 +97,34 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
             return ''
         if result.returncode:
             raise RuntimeError('Bootstrap adb command failed: ' + ' '.join(arguments))
-        if capture_guest_logcat and boot_probe and not debug_guest_vulkan:
+        if capture_guest_logcat and boot_probe and not (debug_guest_vulkan or disable_guest_host_query_reset):
             boot_shell_ready = True
             if not initial_logcat:
                 initial_logcat = True
                 guest_logcat('initial')
         return result.stdout
 
-    def debug_boot_probe():
-        nonlocal debug_vulkan_attempted, boot_shell_ready, initial_logcat
+    def guest_boot_probe():
+        nonlocal guest_setup_attempted, boot_shell_ready, initial_logcat
         # Run outside command(): property commands cannot recursively trigger this setup.
         value = command(['getprop', 'sys.boot_completed'], boot_probe=True)
         if report['commands'][-1].get('returnCode') == 0:
-            if not debug_vulkan_attempted:
-                debug_vulkan_attempted = True
-                if command(['getprop', 'ro.debuggable']).strip() != '1':
-                    raise ValueError('Guest Vulkan callback diagnosis requires ro.debuggable=1')
-                command(['setprop', 'debug.vulkan.enable_callback', 'true'])
-                if command(['getprop', 'debug.vulkan.enable_callback']).strip() != 'true':
-                    raise ValueError('Guest Vulkan callback property readback differs from true')
-                # This proves the property only; a real loader log must prove callback installation.
-                report['guestVulkanDebug']['propertyReadbackVerified'] = True
+            if not guest_setup_attempted:
+                guest_setup_attempted = True
+                if debug_guest_vulkan:
+                    if command(['getprop', 'ro.debuggable']).strip() != '1':
+                        raise ValueError('Guest Vulkan callback diagnosis requires ro.debuggable=1')
+                    command(['setprop', 'debug.vulkan.enable_callback', 'true'])
+                    if command(['getprop', 'debug.vulkan.enable_callback']).strip() != 'true':
+                        raise ValueError('Guest Vulkan callback property readback differs from true')
+                    # This proves the property only; a real loader log must prove callback installation.
+                    report['guestVulkanDebug']['propertyReadbackVerified'] = True
+                if disable_guest_host_query_reset:
+                    command(['setprop', 'debug.angle.feature_overrides_disabled', 'supportsHostQueryReset'])
+                    if command(['getprop', 'debug.angle.feature_overrides_disabled']).strip() != 'supportsHostQueryReset':
+                        raise ValueError('Guest ANGLE feature override readback differs from supportsHostQueryReset')
+                    # Property readback does not prove a running renderer consumed the override.
+                    report['guestHostQueryResetCompat']['propertyReadbackVerified'] = True
             if capture_guest_logcat:
                 boot_shell_ready = True
                 if not initial_logcat:
@@ -142,7 +153,7 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
                 guest_logcat('before-deadline')
 
     try:
-        while (debug_boot_probe() if debug_guest_vulkan else
+        while (guest_boot_probe() if debug_guest_vulkan or disable_guest_host_query_reset else
                command(['getprop', 'sys.boot_completed'], boot_probe=True)).strip() != '1':
             pause()
         # WindowManager performs dismissal, without synchronous injected input.

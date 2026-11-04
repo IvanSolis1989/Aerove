@@ -84,6 +84,7 @@ def guest_angle_evidence(directory, receipt, startup):
     commands = (
         ('boot-egl', ['getprop', 'ro.boot.hardwareegl']),
         ('hardware-egl', ['getprop', 'ro.hardware.egl']),
+        ('angle-overrides-disabled', ['getprop', 'debug.angle.feature_overrides_disabled']),
         ('libraries', ['ls', '-l', '/vendor/lib64/egl/libEGL_angle.so',
                        '/vendor/lib64/egl/libGLESv2_angle.so', '/vendor/lib64/hw/vulkan.ranchu.so']),
         ('surfaceflinger', ['dumpsys', 'SurfaceFlinger']),
@@ -99,6 +100,8 @@ def guest_angle_evidence(directory, receipt, startup):
     check_cancelled(receipt)
     if any(outputs[name].strip() != 'angle' for name in ('boot-egl', 'hardware-egl')):
         raise ValueError('Guest ANGLE was requested but the booted EGL driver is not angle')
+    if outputs['angle-overrides-disabled'].strip() != 'supportsHostQueryReset':
+        raise ValueError('Guest ANGLE host-query-reset compatibility override changed during boot')
     guest = [line for line in outputs['surfaceflinger'].splitlines()
              if re.search(r'\bGLES:', line) and all(word in line.upper() for word in ('ANGLE', 'VULKAN', 'SWIFTSHADER'))]
     host = [line for line in startup.splitlines()
@@ -106,6 +109,7 @@ def guest_angle_evidence(directory, receipt, startup):
     if not guest or not host:
         raise ValueError('Guest ANGLE Vulkan and the host SwiftShader device were not both observed')
     return dict(route='guest-angle-vulkan', bootEgl='angle', hardwareEgl='angle',
+                angleFeatureOverridesDisabled=outputs['angle-overrides-disabled'].strip(),
                 guestRenderer=guest, hostVulkanDevice=host)
 
 
@@ -641,6 +645,7 @@ def main():
             check_cancelled(receipt)
             if guest_angle:
                 wait_ready(emulator, directory, receipt, check_cancelled, capture_guest_logcat=True,
+                           disable_guest_host_query_reset=True,
                            debug_guest_vulkan=current.get('runtimeTarget') == 'lite208-flutter-ui')
             else:
                 wait_ready(emulator, directory, receipt, check_cancelled)

@@ -116,7 +116,8 @@ class GuestLogcatTests(unittest.TestCase):
         self.emulator.poll.return_value = None
         self.receipt = dict(ownerPid=456, interruptSignals=[])
 
-    def exercise(self, respond, cancel=None, *, debug_guest_vulkan=False):
+    def exercise(self, respond, cancel=None, *, debug_guest_vulkan=False,
+                 disable_guest_host_query_reset=False, capture_guest_logcat=True):
         def run(arguments, **options):
             self.calls.append((arguments, options, self.now))
             return respond(arguments, options)
@@ -129,7 +130,8 @@ class GuestLogcatTests(unittest.TestCase):
                 patch.object(bootstrap.time, 'monotonic', side_effect=lambda: self.now), \
                 patch.object(bootstrap.time, 'sleep', side_effect=sleep):
             bootstrap.wait_ready(self.emulator, self.directory, self.receipt, cancel or check,
-                                 capture_guest_logcat=True, debug_guest_vulkan=debug_guest_vulkan)
+                                 capture_guest_logcat=capture_guest_logcat, debug_guest_vulkan=debug_guest_vulkan,
+                                 disable_guest_host_query_reset=disable_guest_host_query_reset)
 
     def report(self):
         return json.loads((self.directory / 'BOOTSTRAP.json').read_text())
@@ -323,6 +325,118 @@ class GuestLogcatTests(unittest.TestCase):
         self.assertEqual([], self.report()['failureDiagnostics'])
         self.assertEqual(600, self.report()['elapsedSeconds'])
         self.assertFalse(self.report()['ready'])
+
+
+    def test_host_query_reset_compat_without_debug_or_capture_sets_once_after_successful_probe(self):
+        probes = 0
+        def respond(arguments, options):
+            nonlocal probes
+            command = arguments[4:]
+            if command == ['getprop', 'sys.boot_completed']:
+                probes += 1
+                return self.result(arguments, '1' if probes == 3 else '', code=1 if probes == 1 else 0)
+            if command == ['getprop', 'debug.angle.feature_overrides_disabled']:
+                return self.result(arguments, 'supportsHostQueryReset\n')
+            if command == ['dumpsys', 'window', 'policy']:
+                return self.result(arguments, READY)
+            return self.result(arguments)
+        self.exercise(respond, disable_guest_host_query_reset=True, capture_guest_logcat=False)
+        report = self.report()
+        self.assertTrue(report['ready'])
+        self.assertEqual([
+            ['getprop', 'sys.boot_completed'], ['getprop', 'sys.boot_completed'],
+            ['setprop', 'debug.angle.feature_overrides_disabled', 'supportsHostQueryReset'],
+            ['getprop', 'debug.angle.feature_overrides_disabled'],
+            ['getprop', 'sys.boot_completed'], ['wm', 'dismiss-keyguard'], ['dumpsys', 'window', 'policy'],
+        ], [args[4:] for args, _, _ in self.calls])
+        self.assertTrue(report['guestHostQueryResetCompat']['propertyReadbackVerified'])
+        self.assertNotIn('guestVulkanDebug', report)
+        self.assertNotIn('guestLogcat', report)
+        self.assertTrue(all(options['timeout'] <= min(10, 600 - at) for _, options, at in self.calls))
+
+    def test_host_query_reset_compat_and_callback_both_precede_initial_capture(self):
+        def respond(arguments, options):
+            command = arguments[4:]
+            values = {'sys.boot_completed': '1', 'ro.debuggable': '1',
+                      'debug.vulkan.enable_callback': 'true',
+                      'debug.angle.feature_overrides_disabled': 'supportsHostQueryReset'}
+            if command[0] == 'getprop':
+                return self.result(arguments, values[command[1]])
+            if command == ['dumpsys', 'window', 'policy']:
+                return self.result(arguments, READY)
+            return self.result(arguments)
+        self.exercise(respond, debug_guest_vulkan=True, disable_guest_host_query_reset=True)
+        report = self.report()
+        self.assertTrue(report['ready'])
+        self.assertEqual([
+            ['getprop', 'sys.boot_completed'], ['getprop', 'ro.debuggable'],
+            ['setprop', 'debug.vulkan.enable_callback', 'true'], ['getprop', 'debug.vulkan.enable_callback'],
+            ['setprop', 'debug.angle.feature_overrides_disabled', 'supportsHostQueryReset'],
+            ['getprop', 'debug.angle.feature_overrides_disabled'],
+            ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash', '-d', '-v', 'threadtime'],
+            ['wm', 'dismiss-keyguard'], ['dumpsys', 'window', 'policy'],
+        ], [args[4:] for args, _, _ in self.calls])
+        self.assertTrue(report['guestVulkanDebug']['propertyReadbackVerified'])
+        self.assertTrue(report['guestHostQueryResetCompat']['propertyReadbackVerified'])
+        self.assertEqual(['initial'], [row['window'] for row in report['guestLogcat']])
+
+    def test_host_query_reset_property_failure_keeps_raw_evidence_and_cannot_accept(self):
+        for set_code, readback in [(7, 'supportsHostQueryReset'), (0, ''),
+                                   (0, 'supportsHostQueryReset:otherFeature')]:
+            with self.subTest(set_code=set_code, readback=readback):
+                self.calls.clear()
+                def respond(arguments, options):
+                    command = arguments[4:]
+                    if command == ['setprop', 'debug.angle.feature_overrides_disabled', 'supportsHostQueryReset']:
+                        return self.result(arguments, code=set_code, stderr='fixture denied' if set_code else '')
+                    if command == ['getprop', 'debug.angle.feature_overrides_disabled']:
+                        return self.result(arguments, readback)
+                    return self.result(arguments)
+                with self.assertRaises(RuntimeError if set_code else ValueError):
+                    self.exercise(respond, disable_guest_host_query_reset=True)
+                report = self.report()
+                self.assertFalse(report['ready'])
+                self.assertFalse(report['guestHostQueryResetCompat']['propertyReadbackVerified'])
+                self.assertNotIn('wm', [args[4] for args, _, _ in self.calls])
+                self.assertEqual(1, sum(args[4] == 'setprop' for args, _, _ in self.calls))
+                self.assertEqual([], report['guestLogcat'])
+                if set_code:
+                    self.assertEqual(7, report['commands'][-1]['returnCode'])
+                    self.assertEqual('fixture denied', report['commands'][-1]['stderr'])
+                else:
+                    self.assertEqual(readback, report['commands'][-1]['stdout'])
+
+    def test_host_query_reset_cancellation_after_setprop_sends_no_further_commands(self):
+        def respond(arguments, options):
+            if arguments[4] == 'setprop':
+                self.receipt['interruptSignals'].append(15)
+            return self.result(arguments)
+        with self.assertRaises(InterruptedError):
+            self.exercise(respond, disable_guest_host_query_reset=True)
+        self.assertEqual([
+            ['getprop', 'sys.boot_completed'],
+            ['setprop', 'debug.angle.feature_overrides_disabled', 'supportsHostQueryReset'],
+        ], [args[4:] for args, _, _ in self.calls])
+        report = self.report()
+        self.assertFalse(report['ready'])
+        self.assertFalse(report['guestHostQueryResetCompat']['propertyReadbackVerified'])
+        self.assertEqual([], report['failureDiagnostics'])
+        self.assertEqual([], report['guestLogcat'])
+
+    def test_host_query_reset_setup_cannot_send_setprop_after_original_deadline(self):
+        def respond(arguments, options):
+            if arguments[4:] == ['getprop', 'sys.boot_completed']:
+                self.now = 600
+            return self.result(arguments)
+        with self.assertRaisesRegex(TimeoutError, '600-second'):
+            self.exercise(respond, disable_guest_host_query_reset=True)
+        self.assertEqual([['getprop', 'sys.boot_completed']], [args[4:] for args, _, _ in self.calls])
+        report = self.report()
+        self.assertFalse(report['ready'])
+        self.assertFalse(report['guestHostQueryResetCompat']['propertyReadbackVerified'])
+        self.assertEqual([], report['failureDiagnostics'])
+        self.assertEqual([], report['guestLogcat'])
+        self.assertEqual(600, report['elapsedSeconds'])
 
 
 if __name__ == '__main__':
