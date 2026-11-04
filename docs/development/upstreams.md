@@ -1182,6 +1182,14 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 **许可证、署名与证据：** 所引 QEMU 文件 GPLv2，Goldfish 配置与 OpenGL HAL Apache-2.0，ANGLE BSD-3-Clause；保留原 SDK 各组件 NOTICE，无新增 APP 依赖或第三方二进制分发。
 
+#### [KhronosGroup/Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader)
+
+**已核来源 / 版本边界：** 官方 `v1.3.290` 的 [`LoaderDebugging.md`](https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.290/docs/LoaderDebugging.md)、[`loader.c`](https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.290/loader/loader.c) 与 [`log.c`](https://github.com/KhronosGroup/Vulkan-Loader/blob/v1.3.290/loader/log.c)。该参考 tag 不冒称 SDK 37.2.13 内 loader 的实际版本，原日志中的 Vulkan driver API 版本也不是 loader 版本证明。
+
+**用途与采用方式：** 原 230 的真实 API33 guest ANGLE 在 `vkCreateDevice` 返回扩展不支持，SurfaceFlinger 反复崩溃。后续原208诊断仅在既有运行分支设置 `VK_LOADER_DEBUG=error,warn,info`，沿 owned emulator 的原 stdout/stderr 保存宿主 SDK loader 自身日志；官方源码的设备扩展校验失败路径可打印具体扩展名，ICD 内部失败则可能只报告通用错误。该 desktop 环境变量不视为 guest Android 的日志开关；没有日志也不能证明请求未到宿主。未修改 loader、复制实现或新增 APP 依赖；具体拒绝项、修复及 Android 验收均须由实际结果确认。
+
+**许可证、署名与证据：** 所引源码文件头 Apache-2.0，保留 Khronos Group、Valve 与 LunarG 版权；仅参考现成日志接口与错误路径。
+
 #### [google/swiftshader](https://github.com/google/swiftshader)
 
 **固定版本 / revision：** `cddb5c91b23ff70a1f607ea31610aa0d7f4b5ad5`

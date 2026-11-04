@@ -217,6 +217,7 @@ jobs:
         AEROVE_GUEST_ANGLE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
       run: |
         if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
+          export VK_LOADER_DEBUG=error,warn,info
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite208-original-flutter-runtime"
         elif [[ "$RUNTIME_TARGET" == lite201-flutter-ui ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite201-original-flutter-runtime"
