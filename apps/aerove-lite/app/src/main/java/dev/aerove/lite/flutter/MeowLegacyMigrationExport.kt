@@ -29,8 +29,19 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-class MeowLegacyExportException(val legacyField: String, val reason: String) :
-    IllegalStateException("$legacyField: $reason")
+class MeowLegacyExportException(val legacyField: String, val reason: String, cause: Throwable? = null) :
+    IllegalStateException("$legacyField: $reason", cause) {
+    fun safeDiagnostic(): Map<String, Any> {
+        val causes = mutableListOf<Map<String, Any>>()
+        var current: Throwable? = this
+        while (current != null && causes.size < 4) {
+            causes.add(mapOf("type" to current.javaClass.name.take(160),
+                "frames" to current.stackTrace.take(8).map { it.toString().take(256) }))
+            current = current.cause
+        }
+        return mapOf("causes" to causes)
+    }
+}
 
 /** Owns only the private export; closing never deletes, edits or marks the legacy source migrated. */
 class MeowLegacyExportLease internal constructor(
@@ -150,8 +161,8 @@ class MeowLegacyMigrationExport(
             val resourceField = failure.message?.substringBefore(':')?.takeIf {
                 it in setOf("runtime/resources", "runtime/resources/library") || it.matches(Regex("runtime/resources/library/[0-9a-f]{64}\\.json"))
             }
-            if (resourceField != null) fail(resourceField, "resource owner is active, unavailable or source validation failed")
-            fail("files/.domain.lock or .restore-journal", "read-only source transaction failed (${failure.javaClass.simpleName})")
+            if (resourceField != null) fail(resourceField, "resource owner is active, unavailable or source validation failed", failure)
+            fail("files/.domain.lock or .restore-journal", "read-only source transaction failed (${failure.javaClass.simpleName})", failure)
         }
         } } catch (failure: Throwable) {
             withContext(NonCancellable + Dispatchers.IO) { completed?.close() }
@@ -290,5 +301,5 @@ class MeowLegacyMigrationExport(
             }
             fail(detail ?: field, "invalid legacy source; no defaults or repairs applied")
         }
-    private fun fail(field: String, reason: String): Nothing = throw MeowLegacyExportException(field, reason)
+    private fun fail(field: String, reason: String, cause: Throwable? = null): Nothing = throw MeowLegacyExportException(field, reason, cause)
 }

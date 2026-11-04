@@ -62,7 +62,7 @@ class MeowLegacyMigrationExportTest {
     private fun hashes(root: File) = root.walkTopDown().filter { it.isFile && "native-lite-migration-exports" !in it.relativeTo(root).invariantSeparatorsPath }
         .associate { it.relativeTo(root).invariantSeparatorsPath to sha256(it) }
     private fun published(root: File) = File(root, "native-lite-migration-exports").listFiles().orEmpty().toList()
-    private suspend fun rejected(f: Fixture, field: String) {
+    private suspend fun rejected(f: Fixture, field: String): MeowLegacyExportException {
         val before = hashes(f.root)
         val failure = runCatching { f.exporter().export() }.exceptionOrNull()
         assertTrue(failure.toString(), failure is MeowLegacyExportException)
@@ -70,6 +70,7 @@ class MeowLegacyMigrationExportTest {
         assertFalse(failure.toString().contains("fixture-private"))
         assertEquals(before, hashes(f.root))
         assertTrue(published(f.root).isEmpty())
+        return failure
     }
 
     @Test fun rawSourceIdentitySelectionHistorySecretsUnknownAndDeletionFactSurviveWithoutSourceMutation() = runBlocking<Unit> {
@@ -128,7 +129,38 @@ class MeowLegacyMigrationExportTest {
         val f = fixture()
         File(f.root, ".restore-journal").mkdir()
         File(f.root, ".restore-journal/state.json").writeText("broken fixture journal")
-        rejected(f, "files/.domain.lock")
+        val failure = rejected(f, "files/.domain.lock")
+        assertTrue(failure.cause is IllegalStateException)
+        assertEquals("Pending restore journal requires owner recovery", failure.cause!!.message)
+    }
+    @Test fun exportDiagnosticExcludesSensitiveMessagesAndBoundsCauseFrames() {
+        val frames = Array(24) { index ->
+            if (index == 0) StackTraceElement("fixture.NativeExport", "acquire", "Fixture.kt", 42)
+            else StackTraceElement("fixture." + "LongClass".repeat(100), "frame", "Fixture.kt", index)
+        }
+        var original: Throwable = IllegalArgumentException("https://secret.invalid/?token=fixture-private")
+        repeat(6) {
+            val message = if (it % 2 == 0) "https://secret.invalid/?token=fixture-private"
+                else "AGE-SECRET-KEY-fixture-private"
+            original = IllegalStateException(message, original).also { it.stackTrace = frames }
+        }
+        val error = MeowLegacyExportException("profiles/fixture-private", "https://secret.invalid/?token=fixture-private AGE-SECRET-KEY", original)
+            .also { it.stackTrace = frames }
+        val diagnostic = JSONObject(error.safeDiagnostic())
+        val causes = diagnostic.getJSONArray("causes")
+        assertEquals(4, causes.length())
+        assertEquals(MeowLegacyExportException::class.java.name, causes.getJSONObject(0).getString("type"))
+        assertEquals(IllegalStateException::class.java.name, causes.getJSONObject(1).getString("type"))
+        assertEquals("fixture.NativeExport.acquire(Fixture.kt:42)", causes.getJSONObject(1).getJSONArray("frames").getString(0))
+        for (i in 0 until causes.length()) {
+            val locations = causes.getJSONObject(i).getJSONArray("frames")
+            assertEquals(8, locations.length())
+            for (j in 0 until locations.length()) assertTrue(locations.getString(j).length <= 256)
+        }
+        val wire = diagnostic.toString()
+        assertTrue(wire.length < 12000)
+        listOf("fixture-private", "secret.invalid", "AGE-SECRET-KEY", "https://").forEach { assertFalse(wire.contains(it)) }
+        assertSame(original, error.cause)
     }
     @Test fun pathEscapeInRevisionIsRejected() = runBlocking<Unit> {
         val f = fixture()

@@ -86,7 +86,7 @@ private class MeowLegacyMigrationPlugin : FlutterPlugin, MethodChannel.MethodCal
                 val reason = (failure as? MeowLegacyExportException)?.legacyField ?: failure.message?.takeIf {
                     it.matches(Regex("migration_[a-z0-9_:.-]+"))
                 } ?: "migration_private_source_or_target_invalid"
-                reply.error(reason)
+                reply.error(reason, (failure as? MeowLegacyExportException)?.safeDiagnostic())
             } finally { replies.remove(reply) }
         }
     }
@@ -100,7 +100,7 @@ private class MeowLegacyMigrationPlugin : FlutterPlugin, MethodChannel.MethodCal
     private class MigrationReply(private val result: MethodChannel.Result) {
         private val completed = AtomicBoolean()
         fun success(value: Any?) { if (completed.compareAndSet(false, true)) result.success(value) }
-        fun error(reason: String) { if (completed.compareAndSet(false, true)) result.error("native_migration_blocked", reason, null) }
+        fun error(reason: String, details: Any? = null) { if (completed.compareAndSet(false, true)) result.error("native_migration_blocked", reason, details) }
     }
 }
 
