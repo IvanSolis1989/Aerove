@@ -226,11 +226,14 @@ jobs:
         PY
         gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease -PqaDriver=surface-pixel-diagnostic \
           2>&1 | tee "$evidence/build.log"
+        gradle --no-daemon -p apps/aerove-lite/android-qa dependencies --configuration releaseRuntimeClasspath \
+          -PqaDriver=surface-pixel-diagnostic > "$evidence/runtime-classpath.txt"
         python3 - <<'PY'
         import hashlib, json, os, re, shutil, subprocess, sys
         from pathlib import Path
         sys.path.insert(0, 'apps/aerove-lite/tool')
         from verify_apk import signing_certificate
+        from seal_platform_runner import classes
         evidence = Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness'
         output = Path('apps/aerove-lite/android-qa/build/outputs/apk/release')
         metadata = json.loads((output/'output-metadata.json').read_text())
@@ -240,6 +243,12 @@ jobs:
         assert Path(name).name == name and name.endswith('.apk')
         apk = output/name
         assert apk.is_file() and not apk.is_symlink()
+        defined = subprocess.check_output([str(Path(os.environ['ANDROID_SDK_ROOT'])/'cmdline-tools/latest/bin/apkanalyzer'),
+            'dex', 'packages', '--defined-only', str(apk)], text=True)
+        (evidence/'defined-classes.txt').write_text(defined)
+        actual_classes = classes(defined)
+        assert 'dev.aerove.lite.SurfacePixelDiagnosticTest' in actual_classes
+        assert not any(name.startswith('kotlinx.coroutines.') for name in actual_classes), 'Runner duplicated target coroutine classes'
         tools = Path(os.environ['ANDROID_HOME'])/'build-tools/37.0.0'
         signature = subprocess.check_output([str(tools/'apksigner'),'verify','--verbose','--print-certs',str(apk)], text=True)
         badging = subprocess.check_output([str(tools/'aapt'),'dump','badging',str(apk)], text=True)

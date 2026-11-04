@@ -98,6 +98,5 @@ androidComponents.beforeVariants { variant ->
 // These are the existing runner coordinates; no product classes or Compose graph.
 dependencies {
     implementation("androidx.test:runner:1.6.2")
-    implementation("androidx.test:core:1.6.1")
     implementation("junit:junit:4.13.2")
 }
