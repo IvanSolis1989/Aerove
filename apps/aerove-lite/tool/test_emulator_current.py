@@ -678,10 +678,24 @@ class SigillCaptureHostTests(unittest.TestCase):
         # LIFO: debugger must detach before the existing owner stops its target.
         self.addCleanup(self.child.stdin.close)
         self.addCleanup(self.child.stdout.close)
-        self.addCleanup(current.stop_owned, self.child)
+        def stop_target_and_record_exit():
+            before_stop = self.child.poll()
+            try:
+                current.stop_owned(self.child)
+            finally:
+                (self.root / 'target-exit.json').write_text(json.dumps(dict(
+                    beforeOwnedStop=before_stop, afterOwnedStop=self.child.poll())) + '\n')
+        self.addCleanup(stop_target_and_record_exit)
+        self.receipt.update(targetProcessGroup=os.getpgid(self.child.pid), ownerProcessGroup=os.getpgrp())
+        version = subprocess.run(['sudo', '-V'], capture_output=True, text=True, timeout=5)
+        (self.root / 'sudo-version.out').write_text(version.stdout)
+        (self.root / 'sudo-version.err').write_text(version.stderr)
+        (self.root / 'sudo-version.exit').write_text(str(version.returncode) + '\n')
+        self.assertEqual(0, version.returncode, version.stderr)
         self.capture = current.SigillCapture(self.child, self.root, self.receipt)
         self.addCleanup(current.write_owner_receipt, self.root / 'HOST-OWNER.json', self.receipt)
         self.addCleanup(self.capture.close)
+        self.addCleanup(lambda: self.receipt.update(targetReturnCodeBeforeOwnedCleanup=self.child.poll()))
 
     def assert_target_executes(self):
         import selectors
@@ -789,8 +803,32 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertTrue(self.receipt['cleanupRequested'])
         self.assertFalse(self.receipt['unexpectedEmulatorExit'])
         self.assertEqual([signal.SIGTERM], self.receipt['interruptSignals'])
+        self.assertEqual(1, len(self.capture.state['commands']))
         for row in self.capture.state['commands']:
-            self.assertEqual('-' + str(self.capture.child.pid), row['command'][-1])
+            if row['signal'] == 'INT':
+                self.assertEqual([str(self.capture.state['gdbPid']), str(self.capture.state['gdbStarttime'])], row['command'][-2:])
+                self.assertEqual(dict(signal=2, targetPid=self.capture.state['gdbPid'],
+                                      targetStarttime=self.capture.state['gdbStarttime']), json.loads(row['stdout']))
+            else:
+                self.assertEqual('KILL', row['signal'])
+                self.assertEqual('-' + str(self.capture.child.pid), row['command'][-1])
+        owner_signals = [json.loads(line.removeprefix('AEROVE_GDB_OWNER_SIGNAL '))
+                         for line in self.logs().splitlines() if line.startswith('AEROVE_GDB_OWNER_SIGNAL ')]
+        self.assertEqual([dict(signo=2, sender=self.capture.state['gdbPid'], gdbPid=self.capture.state['gdbPid'])], owner_signals)
+
+    def test_wrong_debugger_starttime_rejects_interrupt_without_signalling_another_identity(self):
+        import subprocess
+        self.capture.start()
+        command = current.sigill_interrupt_command(self.capture.state['gdbPid'], self.capture.state['gdbStarttime'] + 1)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('Owned debugger identity changed', result.stderr)
+        self.assertEqual('', result.stdout)
+        self.assertIsNone(self.capture.child.poll(), self.logs())
+        self.assert_target_executes()
+        self.assertNotIn('AEROVE_GDB_OWNER_SIGNAL ', self.logs())
+        self.capture.close()
+        self.assert_target_executes()
 
     def test_external_sigint_is_not_cleared_as_owner_control(self):
         import signal

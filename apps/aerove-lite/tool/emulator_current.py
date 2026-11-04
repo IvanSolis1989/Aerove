@@ -253,6 +253,22 @@ end
 """ % (pid, str(ready), str(fault), control)
 
 
+def sigill_interrupt_command(pid, starttime):
+    program = """import json, os, pathlib, signal, sys
+pid, expected = int(sys.argv[1]), int(sys.argv[2])
+fd = os.pidfd_open(pid)
+try:
+    raw = (pathlib.Path('/proc') / str(pid) / 'stat').read_text()
+    actual = int(raw[raw.rfind(')') + 2:].split()[19])
+    if actual != expected:
+        raise RuntimeError('Owned debugger identity changed')
+    signal.pidfd_send_signal(fd, signal.SIGINT)
+    print(json.dumps(dict(signal=2, targetPid=pid, targetStarttime=actual)), flush=True)
+finally:
+    os.close(fd)
+"""
+    return ['sudo', '-n', '--', sys.executable, '-c', program, str(pid), str(starttime)]
+
 class SigillCapture:
     """One opt-in sidecar; the emulator remains the owner's original Popen child."""
     def __init__(self, emulator, directory, receipt):
@@ -308,7 +324,8 @@ class SigillCapture:
             raise ValueError('Owned emulator changed during GDB attach')
         gdb_stat = proc_stat((Path('/proc') / str(actual['gdbPid']) / 'stat').read_text())
         self.state.update(status='attached', gdbPid=actual['gdbPid'],
-                          gdbStarttime=gdb_stat['starttime'], firstResume=True)
+                          gdbStarttime=gdb_stat['starttime'], firstResume=True,
+                          gdbProcessGroup=os.getpgid(actual['gdbPid']), sidecarProcessGroup=os.getpgid(self.child.pid))
         self.check()
 
     def check(self):
@@ -368,8 +385,13 @@ class SigillCapture:
         for name in ('INT', 'KILL'):
             if self.child.poll() is not None or remaining_timeout(5) <= 0:
                 break
-            command = ['sudo', '-n', '--', 'kill', '-' + name, '--', '-' + str(self.child.pid)]
-            entry = dict(command=command)
+            if name == 'INT':
+                if self.state.get('gdbPid') is None:
+                    continue
+                command = sigill_interrupt_command(self.state['gdbPid'], self.state['gdbStarttime'])
+            else:
+                command = ['sudo', '-n', '--', 'kill', '-' + name, '--', '-' + str(self.child.pid)]
+            entry = dict(command=command, signal=name)
             self.state['commands'].append(entry)
             try:
                 result = subprocess.run(command, capture_output=True, text=True, timeout=remaining_timeout(5))
