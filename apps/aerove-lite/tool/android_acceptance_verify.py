@@ -59,7 +59,7 @@ def platform_binding(runtime, info):
     for relative,key in (("app-abi-rules.pro","appRulesSha256"),("app-abi-report.json","appAbiReportSha256"),
                          ("test-mapping.txt","testR8MappingSha256"),("test-configuration.txt","testR8ConfigurationSha256")):
         require(sha(sealed_file(runtime,manifest,relative))==abi.get(key),"R8 ABI input/output seal changed")
-    from seal_platform_runner import seal_abi
+    from seal_platform_runner import seal_abi, native_migration_binding
     actual_abi=seal_abi(
         sealed_file(runtime,manifest,"lite-platform-one-build-graph.txt").read_text(),
         sealed_file(runtime,manifest,"mapping/release/mapping.txt").read_text(),
@@ -67,6 +67,13 @@ def platform_binding(runtime, info):
         sealed_file(runtime,manifest,"app-abi-rules.pro"),sealed_file(runtime,manifest,"app-abi-report.json"),
         sealed_file(runtime,manifest,"test-mapping.txt"),sealed_file(runtime,manifest,"test-configuration.txt"))
     require(actual_abi==abi,"Raw target/test R8 ABI proof differs from producer receipt")
+    fixture_root = Path(runtime) / "native-migration-fixture"
+    for path in fixture_root.rglob("*"):
+        if path.is_file():
+            sealed_file(runtime, manifest, path.relative_to(runtime).as_posix())
+    fixture = native_migration_binding(info, apk,
+        sealed_file(runtime, manifest, "platform-defined-classes.stdout.txt").read_text(), fixture_root)
+    require(receipt.get("nativeMigrationFixture") == fixture, "Runner migration fixture source or assets changed")
     from profile_cancel_verify import prerequisite
     cancel_root=Path(runtime)/"profile-cancel-prerequisite"
     for path in cancel_root.rglob("*"):
@@ -96,6 +103,100 @@ def platform_log(log, contract=None):
     require(all(row["status"] == "passed" for row in records), "Skipped/assumption platform case is not acceptance")
     require(re.findall(r"OK \((\d+) tests?\)", Path(log).read_text()) == ["28"], "Exact JUnit 28 pass terminal required")
     return dict(logSha256=sha(log), selectors=actual, allPassed=True)
+
+
+def legacy_log(path, selector):
+    records = parse_log(path)
+    require(len(records) == 1 and records[0]["className"] + "#" + records[0]["testName"] == selector and
+            records[0]["status"] == "passed" and re.findall(r"OK \((\d+) tests?\)", Path(path).read_text()) == ["1"],
+            "Each legacy invocation must pass exactly its selected real Android method")
+
+
+def legacy_capture(directory, method, info, token, fixture, harness_sha, build_info_sha):
+    directory = Path(directory)
+    receipt = load(directory / "receipt.json")
+    require(receipt.get("schema") == 1 and receipt.get("producer") == "dev.aerove.lite.platformqa.NativeLegacyMigrationFixtureTest"
+            and receipt.get("method") == method and receipt.get("qaToken") == token and receipt.get("status") == "passed"
+            and receipt.get("synthetic") is True and receipt.get("visualAccepted") is False
+            and receipt.get("userDataAcceptance") is False and receipt.get("cooperativeCancellationTested") is False
+            and receipt.get("sourceUnchanged") is True and receipt.get("targetVerified") is True,
+            "Legacy fixture execution did not prove its exact synthetic migration scenario")
+    parameters = receipt.get("sourceParameters", {})
+    expected = dict(rootSourceSha=info["source"], productionSourceSha=info["source"], harnessSourceSha=info["source"],
+        fixtureSourceSha=fixture["producerSource"], fixtureProducerRun=fixture["producerRun"],
+        productionBuildInfoSha256=build_info_sha, requiresExternalSourceBuildInfoBinding=True)
+    require(parameters == expected and receipt.get("fixtureManifestSha256") == fixture["manifestSha256"],
+            "Legacy receipt differs from the sealed producer and original Build Info")
+    require(receipt.get("processName") == "dev.aerove.lite", "Legacy test did not run in the actual target process")
+    for field in ("installedAppBefore", "installedAppAfter", "installedHarness"):
+        identity = receipt.get(field, {})
+        app = field != "installedHarness"
+        require(identity.get("package") == ("dev.aerove.lite" if app else "dev.aerove.lite.platform.test") and
+                identity.get("apkSha256") == (info["apk_sha256"] if app else harness_sha) and
+                identity.get("signerSha256") == info["signer_sha256"] and
+                isinstance(identity.get("pid"), int) and identity["pid"] > 0 and
+                identity.get("processUid") == receipt["installedAppBefore"]["uid"] and
+                re.fullmatch(r"/data/app/[^\s]+/base\.apk", identity.get("packageCodePath", "")),
+                "Actual legacy App/runner identity differs from the sealed installation")
+        if app:
+            require(identity.get("uid") == identity["processUid"] and identity.get("versionCode") == info["version_code"] and
+                    identity.get("versionName") == info["version"], "Legacy App version or execution UID changed")
+    native, dart = load(directory / "native-state.json"), load(directory / "dart-journal.json")
+    source_path, target_path = directory / "android-source-manifest.json", directory / "target-receipt.json"
+    digest, target_digest = sha(source_path), sha(target_path)
+    require(native.get("schema") == dart.get("schema") == 1 and native.get("phase") == "shared" and
+            dart.get("phase") == "complete" and native.get("sourceDigest") == dart.get("sourceDigest") == digest and
+            native.get("receiptSha256") == dart.get("receiptSha256") == target_digest and
+            receipt.get("androidSourceDigest") == digest and receipt.get("receiptSha256") == target_digest and
+            (directory / "committed-receipt.json").read_bytes() == target_path.read_bytes(),
+            "Actual native/Dart migration journals and committed target receipt do not converge")
+    proof = load(target_path)
+    require(proof.get("schema") == 1 and proof.get("sourceDigest") == digest, "Committed migration target has a different source")
+    if method == "receiptPathFailureRecoversThroughProductionLauncherWithoutChangingSource":
+        failure = receipt.get("receiptPathFailure", {})
+        before_native, before_dart = load(directory / "failure-native-state.json"), load(directory / "failure-dart-journal.json")
+        require(failure.get("nativePhase") == before_native.get("phase") == "pending" and
+                failure.get("dartPhase") == before_dart.get("phase") == "preferencesCommitted" and
+                all(failure.get(key) is True for key in ("startupFailureVisible", "committedReceiptAbsent", "sourceUnchanged")) and
+                "receiptSha256" not in before_native and "receiptSha256" not in before_dart and
+                before_native.get("sourceDigest") == before_dart.get("sourceDigest") == digest and
+                before_dart.get("ids") == dart.get("ids") and bool(dart.get("ids")) and
+                receipt.get("sameJournalSourceAndIdsRecovered") is True and
+                receipt.get("recoveryAction") == "remove-owned-link-then-finish-and-relaunch-Launcher",
+                "Legacy persistence failure was not observed and recovered with the same source and IDs")
+    return receipt
+
+
+def verify_legacy_invocations(root, phase, info, contract):
+    root = Path(root)
+    from ci_artifacts import verify
+    fixture_root = root / "native-migration-fixture"
+    transfer = verify(fixture_root, dict(sourceRevision=info["source"], sourceTree=info["tree"],
+        workflowRun=info["workflow"].rsplit("/", 1)[-1], runNumber=info["run_number"], runAttempt=info["run_attempt"]))
+    require(transfer.get("abi") == "shared-fixture", "Legacy source was not the verified shared fixture")
+    envelope = phase.get("legacyMigration", {})
+    fixture = envelope.get("fixture", {})
+    require(fixture.get("producerSource") == info["source"] and fixture.get("producerTree") == info["tree"] and
+            fixture.get("producerRun") == info["workflow"].rsplit("/", 1)[-1] and fixture.get("producerAttempt") == info["run_attempt"] and
+            fixture.get("provenanceSha256") == sha(fixture_root / "TRANSFER.json") and
+            fixture.get("manifestSha256") == sha(fixture_root / "retained-export/manifest.json"), "Legacy fixture binding changed")
+    rows = envelope.get("invocations", [])
+    require([row.get("selector") for row in rows] == contract["legacySelectors"] and len(rows) == 2 and
+            len({row.get("qaToken") for row in rows}) == 2, "Both independent legacy Android scenarios must run")
+    expected_records = load(fixture_root / "retained-export/manifest.json")["files"]
+    for generation, row in enumerate(rows, 2):
+        method = row["selector"].split("#", 1)[1]
+        require(row.get("directory") == "legacy/" + method and row.get("logPath") == "legacy-" + method + ".out" and
+                row.get("installation") == dict(generation=generation, previousOwnedInstallationRemoved=True,
+                    absenceConfirmed=True, productionApkSha256=info["apk_sha256"], testApkSha256=phase["platformApkSha256"]),
+                "Legacy scenarios did not use independent owned installations of the same original APKs")
+        legacy_log(root / row["logPath"], row["selector"])
+        directory = root / row["directory"]
+        require(row.get("receiptSha256") == sha(directory / "receipt.json"), "Legacy invocation receipt changed")
+        captured = legacy_capture(directory, method, info, row["qaToken"], fixture, phase["platformApkSha256"], sha(root / "BUILD_INFO.json"))
+        records = lambda values: {item["path"]: (item["bytes"], item["sha256"]) for item in values}
+        require(records(captured["seededRecords"]) == records(expected_records) ==
+                records(load(directory / "android-source-manifest.json")["files"]), "Legacy Android source or retained history changed")
 
 
 def checkpoint(directory, stage, info, token):
@@ -261,6 +362,7 @@ def aggregate(directory, source, run, attempt, require_full=True):
     require(platform_log(platform_root / "platform-tests.out") == platform.get("platform"), "Platform receipt differs from actual raw log")
     info = load(ui_root / "BUILD_INFO.json")
     require(info["source"] == source and info["apk_sha256"] == ui["apkSha256"], "Raw build identity differs")
+    verify_legacy_invocations(platform_root, platform, info, contract)
     invocations = ui.get("uiInvocations", [])
     require(["dev.aerove.lite.FlutterProductionUiTest#" + row["method"] for row in invocations] == contract["uiSelectors"] and
             len({row["qaToken"] for row in invocations}) == len(contract["uiSelectors"]), "Each exact UI method requires its own fresh token")

@@ -13,14 +13,16 @@ val targetApplicationId = product.getProperty("applicationId")
 check(targetApplicationId == "dev.aerove.lite") { "The black-box runner targets AEROVE Lite only" }
 val releaseKeystore = providers.environmentVariable("AEROVE_LITE_KEYSTORE_PATH")
 val releasePassword = providers.environmentVariable("AEROVE_LITE_KEYSTORE_PASSWORD")
-val driverSource = productRoot.resolve(
-    "app/src/androidTest/java/dev/aerove/lite/FlutterProductionUiTest.kt",
-)
+val driverSource = when (providers.gradleProperty("qaDriver").orElse("production").get()) {
+    "production" -> productRoot.resolve("app/src/androidTest/java/dev/aerove/lite/FlutterProductionUiTest.kt")
+    "surface-pixel-diagnostic" -> rootDir.resolve("src/main/java/dev/aerove/lite/SurfacePixelDiagnosticTest.kt")
+    else -> error("Unknown qaDriver; use production or surface-pixel-diagnostic")
+}
 val prepareDriverSource = tasks.register<Sync>("prepareDriverSource") {
     from(driverSource)
     into(layout.buildDirectory.dir("generated/driverSource/dev/aerove/lite"))
     doFirst {
-        check(driverSource.isFile) { "Integrate the frozen FlutterProductionUiTest before building the runner" }
+        check(driverSource.isFile) { "Integrate the selected independent QA driver before building the runner" }
     }
 }
 val verifyDriverSigning = tasks.register("verifyDriverSigning") {

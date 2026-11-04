@@ -38,6 +38,104 @@ class FixedSelectionTest(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.contract = v.load(v.CONTRACT)
 
+    def test_legacy_fresh_install_never_removes_an_unowned_package(self):
+        platform = self.root / "platform.apk"
+        platform.write_bytes(b"host-only runner fixture")
+        producer = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root, phase="flutter-platform"))
+        with patch.object(producer, "adb_command") as command, self.assertRaisesRegex(ValueError, "owned installation"):
+            producer.fresh_legacy_install(platform, dict(apk_sha256="a"*64), 2)
+        command.assert_not_called()
+        self.assertEqual(producer.installed, [])
+
+    def test_legacy_interrupted_reinstall_tracks_only_the_new_owned_attempt(self):
+        from android_acceptance import PACKAGE, TEST_PACKAGE
+        app, platform = self.root / "app.apk", self.root / "platform.apk"
+        app.write_bytes(b"host-only app fixture")
+        platform.write_bytes(b"host-only runner fixture")
+        producer = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=self.root,
+            phase="flutter-platform", apk=app))
+        producer.installed = [PACKAGE, TEST_PACKAGE]
+        def adb(_label, *arguments, **_options):
+            if arguments[0] == "install" and arguments[-1] == str(app):
+                raise InterruptedError("installation interrupted after the owned attempt was recorded")
+            return b""
+        with patch.object(producer, "installed_hash"), patch.object(producer, "adb_command", side_effect=adb) as command:
+            with self.assertRaises(InterruptedError):
+                producer.fresh_legacy_install(platform, dict(apk_sha256=v.sha(app)), 2)
+        self.assertEqual(producer.installed, [PACKAGE])
+        self.assertEqual([call.args[2] for call in command.call_args_list if call.args[1] == "uninstall"],
+                         [TEST_PACKAGE, PACKAGE])
+
+    def test_legacy_invocation_rejects_skips_and_a_different_single_method(self):
+        selector = self.contract["legacySelectors"][0]
+        path = self.root / "legacy.out"
+        path.write_text(log([selector]))
+        v.legacy_log(path, selector)
+        with self.assertRaisesRegex(ValueError, "selected real Android method"):
+            v.legacy_log(path, self.contract["legacySelectors"][1])
+        path.write_text(log([selector], skipped=True))
+        with self.assertRaisesRegex(ValueError, "selected real Android method"):
+            v.legacy_log(path, selector)
+
+    def test_legacy_runner_assets_require_the_exact_same_source_and_payload(self):
+        import zipfile
+        from ci_artifacts import seal as seal_transport
+        from lite_release import PromotionError
+        fixture = self.root / "fixture"
+        retained = fixture / "retained-export"
+        payload = retained / "payload/profiles/index.json"
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"host-only original source bytes")
+        manifest = retained / "manifest.json"
+        manifest.write_text(json.dumps(dict(files=[dict(path="profiles/index.json", bytes=payload.stat().st_size, sha256=v.sha(payload))])))
+        (fixture / "fixture.json").write_text(json.dumps(dict(manifest="/runner/native-migration/retained-export/manifest.json", sha256=v.sha(manifest))))
+        identity = dict(sourceRevision="1"*40, sourceTree="2"*40, workflowRun="123", runNumber=9, runAttempt=1)
+        seal_transport(fixture, "shared-fixture", identity)
+        info = dict(source="1"*40, tree="2"*40, workflow="https://github.com/IvanSolis1989/Aerove/actions/runs/123", run_number=9, run_attempt=1)
+        defined = "C d 1 1 200 dev.aerove.lite.platformqa.NativeLegacyMigrationFixtureTest\n"
+        test = self.root / "host-only-assets.zip"
+        def archive(changed=False):
+            with zipfile.ZipFile(test, "w") as output:
+                output.write(manifest, "assets/native-migration-fixture/manifest.json")
+                output.writestr("assets/native-migration-fixture/payload/profiles/index.json",
+                                b"changed source bytes" if changed else payload.read_bytes())
+        archive()
+        actual = seal.native_migration_binding(info, test, defined, fixture)
+        self.assertEqual(actual["producerSource"], "1"*40)
+        self.assertEqual(actual["manifestSha256"], v.sha(manifest))
+        with self.assertRaisesRegex(PromotionError, "source/run/attempt identity mismatch"):
+            seal.native_migration_binding(dict(info, source="3"*40), test, defined, fixture)
+        archive(changed=True)
+        with self.assertRaisesRegex(ValueError, "fixture asset changed"):
+            seal.native_migration_binding(info, test, defined, fixture)
+
+    def test_surface_cancellation_pulls_existing_evidence_before_owned_uninstall(self):
+        from unittest.mock import Mock
+        from lite236_pixel_diagnostic import Diagnostic
+        args = Namespace(sdk=Path("sdk"), output=self.root, source="a"*40, run="123", attempt="1",
+                         disable_queue_submit_with_commands=False)
+        producer = Diagnostic(args)
+        producer.emulator = Mock()
+        producer.emulator.poll.return_value = None
+        calls = []
+        def execute():
+            producer.install_attempted = producer.surface_install_attempted = True
+            producer.surface_evidence_remote = "/sdcard/Android/data/dev.aerove.lite/files/surface-pixel-diagnostic/owned"
+            producer.receipt["interruptSignals"].append(15)
+            raise InterruptedError("cancel before the ordinary evidence pull could start")
+        def adb(label, *_arguments, **_options):
+            calls.append(label)
+            producer.receipt["commands"].append(dict(label=label))
+            return b"", dict(exit=0)
+        with patch.object(producer, "execute", side_effect=execute), patch.object(producer, "adb_command", side_effect=adb), \
+                patch("lite236_pixel_diagnostic.finish_emulator", return_value=1):
+            self.assertEqual(producer.run(), 1)
+        self.assertEqual(calls.count("surface-evidence-pull"), 1)
+        self.assertLess(calls.index("surface-evidence-pull"), calls.index("cleanup-uninstall-surface-runner"))
+        self.assertLess(calls.index("surface-evidence-pull"), calls.index("cleanup-uninstall-owned-app"))
+        self.assertEqual(producer.receipt["status"], "cancelled")
+        self.assertFalse(producer.receipt["collectionComplete"])
+
     def test_real_parser_accepts_exact_28_terminal_passes(self):
         p = self.root / "platform.log"; p.write_text(log(self.contract["platformSelectors"]))
         self.assertEqual(v.platform_log(p)["selectors"], self.contract["platformSelectors"])

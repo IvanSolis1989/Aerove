@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from flutter_android_qa import Producer, PACKAGE, CLASS, LAUNCHER, idle, renderer, save, sha, validate_binding
 from android_acceptance_verify import (CONTRACT, checkpoint, load, platform_binding, platform_log, require,
-                                       separate_uid, ui_capture)
+                                       separate_uid, ui_capture, legacy_capture, legacy_log)
 from instrumentation_shards import parse_log
 from verify_apk import signing_certificate
 
@@ -69,6 +69,59 @@ class Acceptance(Producer):
         destination = self.args.output / method
         self.adb_command(self.unique(method + "-pull"), "pull", self.remote(token), str(destination), timeout=90)
         return destination
+
+    def fresh_legacy_install(self, platform, info, generation):
+        for package, expected in ((TEST_PACKAGE, sha(platform)), (PACKAGE, info["apk_sha256"])):
+            require(package in self.installed, "Legacy reinstall may remove only this task's owned installation")
+            self.installed_hash(self.unique("legacy-owned"), package, expected)
+            self.adb_command(self.unique("legacy-stop"), "shell", "am", "force-stop", package)
+            self.adb_command(self.unique("legacy-uninstall"), "uninstall", package, timeout=45)
+            self.installed.remove(package)
+            require(b"package:" not in self.adb_command(self.unique("legacy-absent"), "shell", "pm", "path", package, check=False),
+                    "Owned legacy installation was not removed")
+        for package, path in ((PACKAGE, self.args.apk), (TEST_PACKAGE, platform)):
+            self.installed.append(package)
+            self.adb_command(self.unique("legacy-install"), "install", *(["-t"] if package == TEST_PACKAGE else []),
+                             "--no-streaming", str(path), timeout=120)
+            self.installed_hash(self.unique("legacy-installed"), package, sha(path))
+        self.adb_command(self.unique("legacy-locale"), "shell", "cmd", "locale", "set-app-locales", PACKAGE,
+                         "--user", "0", "--locales", "en-US")
+        return dict(generation=generation, previousOwnedInstallationRemoved=True, absenceConfirmed=True,
+                    productionApkSha256=info["apk_sha256"], testApkSha256=sha(platform))
+
+    def legacy_case(self, selector, platform, info, fixture, generation):
+        installation = self.fresh_legacy_install(platform, info, generation)
+        method = selector.split("#", 1)[1]
+        token = "legacy-" + uuid4().hex
+        label = "legacy-" + method
+        directory = self.args.output / "legacy" / method
+        directory.parent.mkdir(parents=True, exist_ok=True)
+        remote = f"/sdcard/Android/data/{PACKAGE}/files/native-legacy-fixture-qa/{token}"
+        values = dict(qaToken=token, rootSourceSha=info["source"], productionSourceSha=info["source"],
+            harnessSourceSha=info["source"], fixtureSourceSha=fixture["producerSource"], fixtureProducerRun=fixture["producerRun"],
+            productionBuildInfoSha256=sha(self.args.build_info), productionApkSha256=info["apk_sha256"],
+            harnessApkSha256=sha(platform), productionSignerSha256=info["signer_sha256"],
+            productionVersionCode=str(info["version_code"]), productionVersionName=info["version"],
+            fixtureManifestSha256=fixture["manifestSha256"])
+        command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", selector]
+        for key, value in values.items():
+            command += ["-e", key, str(value)]
+        try:
+            self.normal_instrument(label, *command, RUNNER)
+            self.adb_command(self.unique(label + "-pull"), "pull", remote, str(directory), timeout=90)
+        except BaseException:
+            try:
+                self.adb_command(self.unique(label + "-failure-pull"), "pull", remote, str(directory),
+                                 timeout=45, check=False, cancelling=True)
+            except BaseException as error:
+                self.receipt.setdefault("diagnosticErrors", []).append(repr(error))
+            raise
+        legacy_log(self.args.output / (label + ".out"), selector)
+        legacy_capture(directory, method, info, token, fixture, sha(platform), sha(self.args.build_info))
+        self.installed_hash(self.unique("legacy-after-app"), PACKAGE, info["apk_sha256"])
+        self.installed_hash(self.unique("legacy-after-runner"), TEST_PACKAGE, sha(platform))
+        return dict(selector=selector, qaToken=token, directory=directory.relative_to(self.args.output).as_posix(),
+                    logPath=label + ".out", receiptSha256=sha(directory / "receipt.json"), installation=installation)
 
     def ui(self, method, info, extra=None):
         token = "qa-" + uuid4().hex
@@ -240,7 +293,8 @@ class Acceptance(Producer):
             identity = validate_binding(self.args.apk, self.args.test_apk, info, proof)
             platform = platform_binding(proof["runtimeDirectory"], info)
             require(platform.resolve() == self.args.platform_apk.resolve(), "Platform APK argument differs from sealed runtime")
-            save(self.args.output / "BUILD_INFO.json", info)
+            if Path(self.args.build_info).resolve() != (self.args.output / "BUILD_INFO.json").resolve():
+                shutil.copyfile(self.args.build_info, self.args.output / "BUILD_INFO.json")
             platform_build = load(Path(proof["runtimeDirectory"]) / "platform-runner-build.json")
             self.receipt["sharedUiReuse"] = platform_build["sharedUiReuse"]
             self.receipt.update(identity=identity, apkSha256=sha(self.args.apk), platformApkSha256=sha(platform),
@@ -275,6 +329,13 @@ class Acceptance(Producer):
                                  ",".join(contract["platformSelectors"]), "-e", "isolatedBackgroundPolicy", "true",
                                  "-e", "smartConfigFixtureUrl", "http://10.0.2.2:18080/smart-config-meow/", RUNNER, timeout=900)
                 self.receipt["platform"] = platform_log(self.args.output / "platform-tests.out")
+                fixture = platform_build["nativeMigrationFixture"]
+                shutil.copytree(Path(proof["runtimeDirectory"]) / "native-migration-fixture",
+                                self.args.output / "native-migration-fixture")
+                invocations = []
+                self.receipt["legacyMigration"] = dict(fixture=fixture, invocations=invocations)
+                for generation, selector in enumerate(contract["legacySelectors"], 2):
+                    invocations.append(self.legacy_case(selector, platform, info, fixture, generation))
             elif self.args.phase == "flutter-ui":
                 self.receipt.update(uiInvocations=self.consent_restart(info), matrixImages=12)
             else:

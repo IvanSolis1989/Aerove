@@ -4,8 +4,10 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import xml.etree.ElementTree as ET
+import zipfile
 
 from verify_apk import signing_certificate
 
@@ -23,6 +25,34 @@ def classes(text):
     result = set(re.findall(r"^\s*C\s+d\s+\d+\s+\d+\s+\d+\s+(\S+)\s*$", text, re.M))
     require(bool(result), "No actual defined DEX classes from official apkanalyzer")
     return result
+
+
+def native_migration_binding(info, test, defined, directory):
+    from ci_artifacts import verify
+    directory = Path(directory)
+    expected = dict(sourceRevision=info["source"], sourceTree=info["tree"],
+        workflowRun=info["workflow"].rsplit("/", 1)[-1], runNumber=info["run_number"], runAttempt=info["run_attempt"])
+    transfer = verify(directory, expected)
+    require(transfer.get("abi") == "shared-fixture", "Migration fixture is not the shared same-run transport")
+    descriptor = json.loads((directory / "fixture.json").read_text())
+    retained = directory / "retained-export"
+    manifest = retained / "manifest.json"
+    require(descriptor.get("sha256") == sha(manifest), "Retained migration descriptor and manifest differ")
+    require("dev.aerove.lite.platformqa.NativeLegacyMigrationFixtureTest" in classes(defined),
+            "Runner lacks the actual legacy migration test class")
+    expected_assets = {p.relative_to(retained).as_posix(): p for p in retained.rglob("*") if p.is_file()}
+    require("manifest.json" in expected_assets and any(name.startswith("payload/") for name in expected_assets),
+            "Real migration fixture has no retained payload")
+    prefix = "assets/native-migration-fixture/"
+    with zipfile.ZipFile(test) as archive:
+        names = [name for name in archive.namelist() if name.startswith(prefix) and not name.endswith("/")]
+        require(len(names) == len(set(names)) and {name[len(prefix):] for name in names} == set(expected_assets),
+                "Runner does not contain exactly the verified migration fixture assets")
+        for name, path in expected_assets.items():
+            require(archive.read(prefix + name) == path.read_bytes(), "Runner migration fixture asset changed: " + name)
+    return dict(schema=1, producerSource=expected["sourceRevision"], producerTree=expected["sourceTree"],
+        producerRun=expected["workflowRun"], producerAttempt=expected["runAttempt"],
+        manifestSha256=sha(manifest), provenanceSha256=sha(directory / "TRANSFER.json"), assetPrefix=prefix)
 
 
 def seal(info, app, test, signature, manifest, graph, mapping, defined, driver):
@@ -120,6 +150,7 @@ def main():
         p.add_argument("--"+name,type=Path,required=True)
     for name in ("profile-cancel-implementation","profile-cancel-green","profile-cancel-evidence"):
         p.add_argument("--"+name,type=Path,required=True)
+    p.add_argument("--native-migration-fixture", type=Path, required=True)
     p.add_argument("--apksigner", type=Path, required=True)
     p.add_argument("--apkanalyzer", type=Path, required=True)
     args = p.parse_args()
@@ -140,6 +171,9 @@ def main():
                    args.graph.read_text(), args.mapping.read_text(), evidence["defined-classes"], args.driver)
     receipt["r8Abi"] = seal_abi(args.graph.read_text(),args.mapping.read_text(),evidence["all-references"],
         args.abi_rules,args.abi_report,args.test_mapping,args.test_configuration)
+    receipt["nativeMigrationFixture"] = native_migration_binding(json.loads(args.info.read_text()), args.test,
+        evidence["defined-classes"], args.native_migration_fixture)
+    shutil.copytree(args.native_migration_fixture, args.output / "native-migration-fixture")
     for label,source in (("app-abi-rules.pro",args.abi_rules),("app-abi-report.json",args.abi_report),
                          ("test-mapping.txt",args.test_mapping),("test-configuration.txt",args.test_configuration)):
         (args.output/label).write_bytes(source.read_bytes())

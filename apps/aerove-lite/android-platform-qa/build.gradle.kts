@@ -97,3 +97,21 @@ dependencies {
     compileOnly("com.google.errorprone:error_prone_annotations:2.38.0")
     // Target compile libraries are wired by the App variant callback as compileOnly files.
 }
+
+val nativeMigrationFixtureDir = providers.gradleProperty("nativeMigration.fixtureDir")
+if (nativeMigrationFixtureDir.isPresent) {
+    check(nativeMigrationFixtureDir.get().isNotBlank()) { "nativeMigration.fixtureDir must not be blank" }
+    val fixture = file(nativeMigrationFixtureDir.get())
+    check(fixture.resolve("manifest.json").isFile && fixture.resolve("payload").isDirectory) {
+        "nativeMigration.fixtureDir requires the actual Host retained manifest and payload"
+    }
+    val fixtureAssets = layout.buildDirectory.dir("generated/nativeMigrationFixtureAssets")
+    val prepareNativeMigrationFixtureAssets = tasks.register<Sync>("prepareNativeMigrationFixtureAssets") {
+        from(fixture) { include("manifest.json", "payload/**") }
+        into(fixtureAssets.map { it.dir("native-migration-fixture") })
+    }
+    android.sourceSets.getByName("main").assets.srcDir(files(fixtureAssets).builtBy(prepareNativeMigrationFixtureAssets))
+    tasks.matching { it.name == "mergeReleaseAssets" }.configureEach {
+        dependsOn(prepareNativeMigrationFixtureAssets)
+    }
+}

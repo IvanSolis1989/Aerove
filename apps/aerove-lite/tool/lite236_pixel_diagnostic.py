@@ -20,7 +20,7 @@ import xml.etree.ElementTree as ET
 from emulator_bootstrap import wait_ready
 from emulator_current import guest_angle_evidence, write_owner_receipt
 from emulator_qa79 import GPU_BACKEND, emulator_environment, finish_emulator
-from verify_apk import verify_identity
+from verify_apk import verify_identity, signing_certificate
 
 APP = dict(sourceRevision="2a38627ca1c224f6ebf71c3e42052912699decdb",
            sourceTree="ec62b4fdf2f113960237e1853da2faf9664f3e05",
@@ -85,6 +85,8 @@ class Diagnostic:
         self.emulator = None
         self.child = None
         self.install_attempted = False
+        self.surface_install_attempted = False
+        self.surface_evidence_remote = None
         self.cleaning = False
         self.finalizing = False
         self.handlers = {}
@@ -96,6 +98,59 @@ class Diagnostic:
             disableQueueSubmitWithCommands=args.disable_queue_submit_with_commands,
             executorScriptSha256=sha(__file__), ownerPid=os.getpid(), deviceSerial=SERIAL,
             interruptSignals=[], commands=[], frames=[], cleanupErrors=[], unexpectedEmulatorExit=False)
+
+    def surface_capture(self):
+        args = self.args
+        harness = json.loads(args.surface_test_info.read_text())
+        require(harness.get("schema") == 1 and harness.get("diagnosticOnly") is True and
+                harness.get("sourceRevision") == args.source and harness.get("workflowRun") == args.run and
+                harness.get("runAttempt") == int(args.attempt) and harness.get("apkSha256") == sha(args.surface_test_apk) and
+                harness.get("signerSha256") == SIGNER and harness.get("appCompiled") is False,
+                "Surface diagnostic runner must be the separately built same-executor test APK")
+        signature, _ = self.command("surface-runner-signature", [args.sdk / "build-tools/37.0.0/apksigner",
+            "verify", "--verbose", "--print-certs", args.surface_test_apk], timeout=120)
+        require(signing_certificate(signature.decode()) == SIGNER, "Surface runner differs from the original Lite signer")
+        self.receipt.update(appOrHarnessCompiled=True, appCompiled=False, harnessCompiled=True,
+                            surfaceHarness=harness, surfaceHarnessInfoSha256=sha(args.surface_test_info))
+        self.surface_install_attempted = True
+        self.adb_command("install-surface-runner", "install", "-t", "--no-streaming", args.surface_test_apk, timeout=120)
+        token = "surface-" + uuid4().hex
+        remote = "/sdcard/Android/data/" + PACKAGE + "/files/surface-pixel-diagnostic/" + token
+        self.surface_evidence_remote = remote
+        values = dict(qaToken=token, originalAppApkSha256=APK_SHA, originalAppSignerSha256=SIGNER,
+            originalAppVersionCode="28", harnessApkSha256=harness["apkSha256"], harnessSignerSha256=SIGNER,
+            harnessSourceSha=args.source, harnessBuildRun=args.run, harnessBuildAttempt=args.attempt,
+            executorSourceSha=args.source, executionRun=args.run, executionAttempt=args.attempt)
+        selector = "dev.aerove.lite.SurfacePixelDiagnosticTest#captureLateSurfaceAndCompositor"
+        command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", selector]
+        for key, value in values.items():
+            command += ["-e", key, str(value)]
+        directory = args.output / "surface-capture"
+        pulled = False
+        try:
+            log, _ = self.adb_command("surface-instrument", *command,
+                "dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner", timeout=170)
+        finally:
+            try:
+                _, result = self.adb_command("surface-evidence-pull", "pull", remote, directory, timeout=45, check=False)
+                pulled = result["exit"] == 0
+            except BaseException as error:
+                self.receipt.setdefault("diagnosticErrors", []).append(repr(error))
+        from instrumentation_shards import parse_log
+        records = parse_log(args.output / "surface-instrument.out")
+        require(len(records) == 1 and records[0]["className"] + "#" + records[0]["testName"] == selector and
+                records[0]["status"] == "passed" and re.findall(rb"OK \((\d+) tests?\)", log) == [b"1"],
+                "The one actual Surface capture test did not pass")
+        require(pulled, "Surface capture evidence could not be read back")
+        capture = json.loads((directory / "receipt.json").read_text())
+        require(capture.get("status") == "captured" and capture.get("captureCompleted") is True and
+                capture.get("diagnosticOnly") is True and capture.get("accepted") is False and
+                capture.get("visualApproved") is False and capture.get("atomicSameFrame") is False and
+                capture.get("resourceCleanup") == "complete", "Surface capture or resource cleanup did not complete")
+        for key, filename in (("surfaceCopy", "surface.png"), ("compositorCopy", "compositor.png")):
+            require(capture[key]["image"]["sha256"] == sha(directory / filename), "Captured original pixels changed")
+        self.receipt["surfaceCapture"] = dict(receiptSha256=sha(directory / "receipt.json"),
+            directory="surface-capture", captureCompleted=True, visualApproved=False, atomicSameFrame=False)
 
     def check(self, _receipt=None):
         if self.receipt["interruptSignals"] and not self.cleaning:
@@ -294,6 +349,8 @@ class Diagnostic:
             self.receipt["ownedHierarchyRemoved"] = True
         else:
             self.receipt["hierarchyUnavailable"] = True
+        if args.surface_test_apk:
+            self.surface_capture()
         self.receipt["installedAppAfter"] = self.installed_hash("final-original")
         require(sha(apk) == APK_SHA and sha(args.runtime_directory / "BUILD_INFO.json") == INFO_SHA,
                 "Original App/BUILD_INFO changed during capture")
@@ -312,7 +369,15 @@ class Diagnostic:
         finally:
             self.cleaning = True
             package_cleaned = not self.install_attempted
+            surface_package_cleaned = not self.surface_install_attempted
             if self.emulator is not None and self.emulator.poll() is None:
+                if self.surface_evidence_remote and not any(row["label"] == "surface-evidence-pull" for row in self.receipt["commands"]):
+                    try:
+                        _, pulled = self.adb_command("surface-evidence-pull", "pull", self.surface_evidence_remote,
+                            self.args.output / "surface-capture", timeout=45, check=False)
+                        self.receipt["surfaceEvidencePullExit"] = pulled["exit"]
+                    except BaseException as error:
+                        self.receipt.setdefault("diagnosticErrors", []).append(repr(error))
                 if code and self.receipt.get("appPid"):
                     for label, command in (("failure-app-logcat", ["logcat", "-b", "all", "-d", "-v", "threadtime", "--pid=" + str(self.receipt["appPid"])]),
                                            ("failure-window", ["shell", "dumpsys", "window", "windows"])):
@@ -320,6 +385,15 @@ class Diagnostic:
                             self.adb_command(label, *command, timeout=15)
                         except BaseException as error:
                             self.receipt.setdefault("diagnosticErrors", []).append(repr(error))
+                if self.surface_install_attempted:
+                    for label, command in (("cleanup-stop-surface-runner", ["shell", "am", "force-stop", "dev.aerove.lite.test"]),
+                                           ("cleanup-uninstall-surface-runner", ["uninstall", "dev.aerove.lite.test"])):
+                        try:
+                            self.adb_command(label, *command, timeout=45)
+                            if label == "cleanup-uninstall-surface-runner":
+                                surface_package_cleaned = True
+                        except BaseException as error:
+                            self.receipt["cleanupErrors"].append(repr(error))
                 if self.install_attempted:
                     for label, command in (("cleanup-stop-owned-app", ["shell", "am", "force-stop", PACKAGE]),
                                            ("cleanup-uninstall-owned-app", ["uninstall", PACKAGE])):
@@ -341,9 +415,12 @@ class Diagnostic:
                     code = 1; self.receipt["cleanupErrors"].append(repr(error))
             if not package_cleaned:
                 self.receipt["cleanupErrors"].append("Owned install could not be confirmed removed from the dedicated AVD")
+            if not surface_package_cleaned:
+                self.receipt["cleanupErrors"].append("Owned Surface runner install could not be confirmed removed")
             if self.receipt["interruptSignals"] or self.receipt["cleanupErrors"]:
                 code = 1
             self.receipt.update(result=code, packageCleanupConfirmed=package_cleaned,
+                                surfaceRunnerCleanupConfirmed=surface_package_cleaned,
                                 cleanupStatus="failed" if self.receipt["cleanupErrors"] else "complete")
             if code and self.receipt["status"] == "collected-diagnostic-only":
                 self.receipt["status"] = "cleanup-failed"
@@ -368,7 +445,12 @@ def main():
     parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or "/missing-sdk"))
     parser.add_argument("--avd", default="test")
     parser.add_argument("--disable-queue-submit-with-commands", action="store_true")
+    parser.add_argument("--surface-test-apk", type=Path)
+    parser.add_argument("--surface-test-info", type=Path)
     args = parser.parse_args()
+    require(bool(args.surface_test_apk) == bool(args.surface_test_info), "Surface runner APK and actual build metadata must be supplied together")
+    require(not args.surface_test_apk or not args.disable_queue_submit_with_commands,
+            "Surface readback uses the unchanged original graphics recipe; the queue-submit control has ended")
     require(re.fullmatch(r"[0-9a-f]{40}", args.source) and args.run.isdecimal() and int(args.run) > 0
             and args.attempt.isdecimal() and int(args.attempt) > 0 and re.fullmatch(r"[A-Za-z0-9_.-]+", args.avd),
             "Requires truthful executor source/run/attempt and a named dedicated AVD")

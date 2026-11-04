@@ -1,5 +1,9 @@
 {
   "schema": 1,
+  "legacySelectors": [
+    "dev.aerove.lite.platformqa.NativeLegacyMigrationFixtureTest#syntheticNativeSourceMigratesThroughProductionLauncher",
+    "dev.aerove.lite.platformqa.NativeLegacyMigrationFixtureTest#receiptPathFailureRecoversThroughProductionLauncherWithoutChangingSource"
+  ],
   "platformSelectors": [
     "dev.aerove.lite.RuleFileNativeTest#corruptedAndMismatchedFilesThrowInsteadOfReportingAnEmptySuccess",
     "dev.aerove.lite.RuleFileNativeTest#emptyLocalFilesRemainEmptyClassicalSets",

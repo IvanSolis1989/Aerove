@@ -75,13 +75,13 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'gfxstream37-static') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'gfxstream37-static') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite236_pixels:
     name: Original236 untouched consent pixels (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit') }}
+    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || inputs.diagnostic_target == 'lite236-surface') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -190,13 +190,93 @@ jobs:
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
         grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
+    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      if: inputs.diagnostic_target == 'lite236-surface'
+      with:
+        gradle-version: 9.6.0
+        cache-read-only: false
+    - name: Build only the independent public-API Surface diagnostic runner
+      if: inputs.diagnostic_target == 'lite236-surface'
+      env:
+        KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
+        AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}
+      run: |
+        sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
+        evidence="$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness"
+        mkdir -p "$evidence"
+        export AEROVE_LITE_KEYSTORE_PATH="$RUNNER_TEMP/lite-surface-signer.p12"
+        trap 'rm -f -- "$AEROVE_LITE_KEYSTORE_PATH"' EXIT
+        python3 - <<'PY'
+        import base64, os
+        from pathlib import Path
+        key = Path(os.environ['AEROVE_LITE_KEYSTORE_PATH'])
+        assert not key.exists() and os.environ['KEYSTORE_BASE64'] and os.environ['AEROVE_LITE_KEYSTORE_PASSWORD']
+        key.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
+        key.chmod(0o600)
+        PY
+        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease --dry-run -PqaDriver=surface-pixel-diagnostic \
+          > "$evidence/task-graph.txt"
+        python3 - <<'PY'
+        import os, re
+        from pathlib import Path
+        graph = (Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness/task-graph.txt').read_text()
+        tasks = re.findall(r'(?m)^(:\S+) SKIPPED$', graph)
+        assert tasks.count(':assembleRelease') == 1 and tasks.count(':prepareDriverSource') == 1
+        assert all(task.count(':') == 1 and not re.search(r'flutter|meow|helper|r8|minify', task, re.I) for task in tasks)
+        PY
+        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease -PqaDriver=surface-pixel-diagnostic \
+          2>&1 | tee "$evidence/build.log"
+        python3 - <<'PY'
+        import hashlib, json, os, re, shutil, subprocess, sys
+        from pathlib import Path
+        sys.path.insert(0, 'apps/aerove-lite/tool')
+        from verify_apk import signing_certificate
+        evidence = Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness'
+        output = Path('apps/aerove-lite/android-qa/build/outputs/apk/release')
+        metadata = json.loads((output/'output-metadata.json').read_text())
+        rows = metadata['elements']
+        assert metadata['variantName'] == 'release' and len(rows) == 1 and not rows[0]['filters']
+        name = rows[0]['outputFile']
+        assert Path(name).name == name and name.endswith('.apk')
+        apk = output/name
+        assert apk.is_file() and not apk.is_symlink()
+        tools = Path(os.environ['ANDROID_HOME'])/'build-tools/37.0.0'
+        signature = subprocess.check_output([str(tools/'apksigner'),'verify','--verbose','--print-certs',str(apk)], text=True)
+        badging = subprocess.check_output([str(tools/'aapt'),'dump','badging',str(apk)], text=True)
+        manifest = subprocess.check_output([str(tools/'aapt'),'dump','xmltree',str(apk),'AndroidManifest.xml'], text=True)
+        (evidence/'signature.txt').write_text(signature)
+        (evidence/'badging.txt').write_text(badging)
+        (evidence/'manifest.txt').write_text(manifest)
+        signer = signing_certificate(signature)
+        assert signer == '09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'
+        assert re.search(r"^package: name='dev.aerove.lite.test' ", badging, re.M) and 'launchable-activity:' not in badging
+        assert len(re.findall(r'E: instrumentation(?: |$)', manifest, re.M)) == 1
+        assert re.search(r'android:name[^=]*="androidx.test.runner.AndroidJUnitRunner"', manifest)
+        assert re.search(r'android:targetPackage[^=]*="dev.aerove.lite"', manifest)
+        assert re.search(r'android:testOnly[^=]*=\(type 0x12\)0xffffffff', manifest)
+        staged = evidence/'surface-test.apk'
+        shutil.copyfile(apk, staged)
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        info = dict(schema=1, diagnosticOnly=True, sourceRevision=os.environ['GITHUB_SHA'],
+            sourceTree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+            workflowRun=os.environ['GITHUB_RUN_ID'], runAttempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
+            runNumber=int(os.environ['GITHUB_RUN_NUMBER']), apkSha256=digest(staged), signerSha256=signer,
+            appCompiled=False, harnessCompiled=True, taskGraphSha256=digest(evidence/'task-graph.txt'),
+            sourceSha256=digest(Path('apps/aerove-lite/android-qa/src/main/java/dev/aerove/lite/SurfacePixelDiagnosticTest.kt')))
+        (evidence/'HARNESS-INFO.json').write_text(json.dumps(info,indent=2)+'\n')
+        PY
     - name: Capture unchanged original App before and after one hierarchy read
       env:
         DISABLE_DEFERRED_SUBMIT: ${{ inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' }}
+        SURFACE_READBACK: ${{ inputs.diagnostic_target == 'lite236-surface' }}
       run: |
         extra=()
         if [[ "$DISABLE_DEFERRED_SUBMIT" == true ]]; then
           extra+=(--disable-queue-submit-with-commands)
+        fi
+        if [[ "$SURFACE_READBACK" == true ]]; then
+          extra+=(--surface-test-apk "$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness/surface-test.apk"
+                  --surface-test-info "$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness/HARNESS-INFO.json")
         fi
         python3 apps/aerove-lite/tool/lite236_pixel_diagnostic.py \
           --runtime-directory "$RUNNER_TEMP/lite236-original/unpacked" \
@@ -1030,6 +1110,35 @@ jobs:
           --dart-define="NATIVE_LITE_FIXTURE=$evidence/fixture.json" \
           test/common/native_lite_migration_test.dart) \
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-dart.log"
+        python3 tool/ci_artifacts.py seal --directory "$evidence" --abi shared-fixture
+        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          -PnativeMigration.fixtureDir="$evidence/retained-export" :platform-qa:mergeReleaseAssets --dry-run \
+          > "$RUNNER_TEMP/lite-flutter-host/native-migration-assets-graph.txt"
+        python3 - <<'PY'
+        import os, re
+        from pathlib import Path
+        graph = (Path(os.environ['RUNNER_TEMP'])/'lite-flutter-host/native-migration-assets-graph.txt').read_text()
+        tasks = re.findall(r'(?m)^\s*(?:> Task\s+)?(:\S+)\s+SKIPPED\s*$', graph)
+        assert tasks.count(':platform-qa:mergeReleaseAssets') == tasks.count(':platform-qa:prepareNativeMigrationFixtureAssets') == 1
+        assert not any(re.fullmatch(r':app:(?:assembleRelease|packageRelease|bundleRelease|minifyReleaseWithR8)', task) for task in tasks)
+        PY
+        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          -PnativeMigration.fixtureDir="$evidence/retained-export" :platform-qa:mergeReleaseAssets \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-assets.log"
+        python3 - <<'PY'
+        import os
+        from pathlib import Path
+        source = Path(os.environ['RUNNER_TEMP'])/'lite-flutter-host/native-migration/retained-export'
+        actual = Path('build/flutter-host/platform-qa/generated/nativeMigrationFixtureAssets/native-migration-fixture')
+        files = lambda root: {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+        assert files(source) and files(source) == files(actual), 'Actual Gradle fixture assets differ from the real producer'
+        PY
+    - name: Preserve the same-run real migration fixture for both Android targets
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: Lite-native-migration-fixture-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-flutter-host/native-migration/
+        if-no-files-found: error
     - name: Verify DNS and Geo fixtures in eight independent Flutter processes
       timeout-minutes: 30
       working-directory: apps/aerove
@@ -1768,7 +1877,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, gfxstream37-static]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, gfxstream37-static]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

@@ -169,6 +169,11 @@ jobs:
         cp -r "$RUNNER_TEMP/lite-helper/jniLibs/"* apps/aerove-lite/app/src/main/jniLibs/
         cp "$RUNNER_TEMP/lite-core/provenance.json" apps/aerove-lite/meow-native/build/${{ inputs.abi }}-receipt.json
         cp "$RUNNER_TEMP/lite-helper/build-receipt.json" "$RUNNER_TEMP/aerove-client-helper-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ inputs.abi }}/"
+    - name: Fetch the same-run real migration fixture verified by Kotlin and Dart
+      run: |
+        python3 apps/aerove-lite/tool/ci_artifacts.py fetch \
+          --name "Lite-native-migration-fixture-attempt-${GITHUB_RUN_ATTEMPT}" \
+          --destination "$RUNNER_TEMP/lite-native-migration" --abi shared-fixture
     - name: Prepare the independent Lite release signing identity
       env:
         KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
@@ -189,15 +194,15 @@ jobs:
       if: inputs.abi == 'arm64-v8a'
       working-directory: apps/aerove-lite
       run: |
-        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease --dry-run -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA" > "$RUNNER_TEMP/lite-platform-one-build-graph.txt"
-        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
+        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease --dry-run -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" > "$RUNNER_TEMP/lite-platform-one-build-graph.txt"
+        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
     - name: Build the emulator production Flutter APK once
       id: emulator_app
       if: inputs.abi == 'x86_64'
       working-directory: apps/aerove-lite
       run: |
-        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease --dry-run -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" > "$RUNNER_TEMP/lite-platform-one-build-graph.txt"
-        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
+        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease --dry-run -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" > "$RUNNER_TEMP/lite-platform-one-build-graph.txt"
+        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
     - name: Check the signed APK and record its exact provenance
       id: apk_inspection
       run: |
@@ -323,6 +328,7 @@ jobs:
           --test-configuration build/flutter-host/platform-qa/outputs/mapping/release/configuration.txt \
           --graph "$RUNNER_TEMP/lite-platform-one-build-graph.txt" \
           --driver app/src/androidTest/java/dev/aerove/lite/FlutterProductionUiTest.kt \
+          --native-migration-fixture "$RUNNER_TEMP/lite-native-migration" \
           --apksigner "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" \
           --apkanalyzer "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" \
           --output "$RUNNER_TEMP/lite-platform-seal"
