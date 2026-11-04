@@ -1180,6 +1180,8 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 原 215 已实际启用 GuestVulkanOnly、Vulkan native swapchain 和 Vulkan composition，但在 600 秒启动门内超时；不能靠再加同名开关推定修复。后续代表性诊断仅补同一启动预算内的首次 ADB 与失败前 guest logcat 快照，以读回 SurfaceFlinger/ANGLE 的原始错误；沿用完整官方 37.2.13 和原 App、API33、渲染及画质门，不宣称启动或产品验收已通过。
 
+原 230/231 的 guest 日志确认 ANGLE `vkCreateDevice` 返回扩展不支持并引起 SurfaceFlinger 反复崩溃；231 的宿主 loader 日志生效但未给出具体拒绝项。诊断另参照 AOSP `frameworks/native` 的 Android13 `android-13.0.0_r83` / `d6b05b5758e82f399ed7baeec811e476c74e1a2f`：[设备扩展验证与内置 callback](https://android.googlesource.com/platform/frameworks/native/+/d6b05b5758e82f399ed7baeec811e476c74e1a2f/vulkan/libvulkan/api.cpp)、[默认 callback 分发](https://android.googlesource.com/platform/frameworks/native/+/d6b05b5758e82f399ed7baeec811e476c74e1a2f/vulkan/libvulkan/debug_report.cpp)。仅在原208诊断首个可用 ADB 后核验 `ro.debuggable`，一次设置并读回非持久属性 `debug.vulkan.enable_callback=true`，沿原预算等待系统自然重试；实际 `Installed debug report callback` 与具体缺扩展消息须从原日志确认，属性读回不冒称 callback 已安装。该诊断会改变实例调试配置，不作为性能或产品验收；上述公开参考不是镜像12342917完整源码身份。所引两文件保留 2016 The Android Open Source Project / Apache-2.0，仅复用现成属性与日志入口，未复制 loader 实现或侧载层、驱动。
+
 **许可证、署名与证据：** 所引 QEMU 文件 GPLv2，Goldfish 配置与 OpenGL HAL Apache-2.0，ANGLE BSD-3-Clause；保留原 SDK 各组件 NOTICE，无新增 APP 依赖或第三方二进制分发。
 
 #### [KhronosGroup/Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader)

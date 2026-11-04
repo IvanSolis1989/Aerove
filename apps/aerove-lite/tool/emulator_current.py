@@ -640,7 +640,8 @@ def main():
             receipt['emulatorPid'] = emulator.pid
             check_cancelled(receipt)
             if guest_angle:
-                wait_ready(emulator, directory, receipt, check_cancelled, capture_guest_logcat=True)
+                wait_ready(emulator, directory, receipt, check_cancelled, capture_guest_logcat=True,
+                           debug_guest_vulkan=current.get('runtimeTarget') == 'lite208-flutter-ui')
             else:
                 wait_ready(emulator, directory, receipt, check_cancelled)
             check_cancelled(receipt)

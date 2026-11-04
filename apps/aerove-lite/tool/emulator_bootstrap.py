@@ -20,7 +20,8 @@ def keyguard_ready(text):
                for key, value in expected.items())
 
 
-def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_logcat=False):
+def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_logcat=False,
+               debug_guest_vulkan=False):
     started = time.monotonic()
     deadline = started + 600
     report = dict(schema=1, ownerPid=receipt['ownerPid'], emulatorPid=emulator.pid,
@@ -29,6 +30,10 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
     boot_shell_ready = False
     initial_logcat = False
     deadline_logcat = False
+    debug_vulkan_attempted = False
+    if debug_guest_vulkan:
+        report['guestVulkanDebug'] = dict(property='debug.vulkan.enable_callback',
+                                        requestedValue='true', propertyReadbackVerified=False)
     if capture_guest_logcat:
         report['guestLogcat'] = []
 
@@ -88,12 +93,33 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
             return ''
         if result.returncode:
             raise RuntimeError('Bootstrap adb command failed: ' + ' '.join(arguments))
-        if capture_guest_logcat and boot_probe:
+        if capture_guest_logcat and boot_probe and not debug_guest_vulkan:
             boot_shell_ready = True
             if not initial_logcat:
                 initial_logcat = True
                 guest_logcat('initial')
         return result.stdout
+
+    def debug_boot_probe():
+        nonlocal debug_vulkan_attempted, boot_shell_ready, initial_logcat
+        # Run outside command(): property commands cannot recursively trigger this setup.
+        value = command(['getprop', 'sys.boot_completed'], boot_probe=True)
+        if report['commands'][-1].get('returnCode') == 0:
+            if not debug_vulkan_attempted:
+                debug_vulkan_attempted = True
+                if command(['getprop', 'ro.debuggable']).strip() != '1':
+                    raise ValueError('Guest Vulkan callback diagnosis requires ro.debuggable=1')
+                command(['setprop', 'debug.vulkan.enable_callback', 'true'])
+                if command(['getprop', 'debug.vulkan.enable_callback']).strip() != 'true':
+                    raise ValueError('Guest Vulkan callback property readback differs from true')
+                # This proves the property only; a real loader log must prove callback installation.
+                report['guestVulkanDebug']['propertyReadbackVerified'] = True
+            if capture_guest_logcat:
+                boot_shell_ready = True
+                if not initial_logcat:
+                    initial_logcat = True
+                    guest_logcat('initial')
+        return value
 
     def pause():
         nonlocal deadline_logcat
@@ -116,7 +142,8 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
                 guest_logcat('before-deadline')
 
     try:
-        while command(['getprop', 'sys.boot_completed'], boot_probe=True).strip() != '1':
+        while (debug_boot_probe() if debug_guest_vulkan else
+               command(['getprop', 'sys.boot_completed'], boot_probe=True)).strip() != '1':
             pause()
         # WindowManager performs dismissal, without synchronous injected input.
         command(['wm', 'dismiss-keyguard'])

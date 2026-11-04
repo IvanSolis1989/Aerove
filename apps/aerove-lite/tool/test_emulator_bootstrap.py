@@ -116,7 +116,7 @@ class GuestLogcatTests(unittest.TestCase):
         self.emulator.poll.return_value = None
         self.receipt = dict(ownerPid=456, interruptSignals=[])
 
-    def exercise(self, respond, cancel=None):
+    def exercise(self, respond, cancel=None, *, debug_guest_vulkan=False):
         def run(arguments, **options):
             self.calls.append((arguments, options, self.now))
             return respond(arguments, options)
@@ -129,7 +129,7 @@ class GuestLogcatTests(unittest.TestCase):
                 patch.object(bootstrap.time, 'monotonic', side_effect=lambda: self.now), \
                 patch.object(bootstrap.time, 'sleep', side_effect=sleep):
             bootstrap.wait_ready(self.emulator, self.directory, self.receipt, cancel or check,
-                                 capture_guest_logcat=True)
+                                 capture_guest_logcat=True, debug_guest_vulkan=debug_guest_vulkan)
 
     def report(self):
         return json.loads((self.directory / 'BOOTSTRAP.json').read_text())
@@ -240,6 +240,89 @@ class GuestLogcatTests(unittest.TestCase):
         self.assertIn('controlled logcat spawn failure', report['guestLogcat'][0]['error'])
         self.assertFalse(report['ready'])
         self.assertEqual(3, len(report['failureDiagnostics']))
+
+    def test_callback_property_setup_follows_first_successful_shell_probe_once(self):
+        probes = 0
+        def respond(arguments, options):
+            nonlocal probes
+            command = arguments[4:]
+            if command == ['getprop', 'sys.boot_completed']:
+                probes += 1
+                return self.result(arguments, '1' if probes == 3 else '', code=1 if probes == 1 else 0)
+            if command == ['getprop', 'ro.debuggable']:
+                return self.result(arguments, '1\n')
+            if command == ['getprop', 'debug.vulkan.enable_callback']:
+                return self.result(arguments, 'true\n')
+            if command == ['dumpsys', 'window', 'policy']:
+                return self.result(arguments, READY)
+            return self.result(arguments)
+        self.exercise(respond, debug_guest_vulkan=True)
+        self.assertTrue(self.report()['ready'])
+        self.assertEqual([
+            ['getprop', 'sys.boot_completed'], ['getprop', 'sys.boot_completed'],
+            ['getprop', 'ro.debuggable'], ['setprop', 'debug.vulkan.enable_callback', 'true'],
+            ['getprop', 'debug.vulkan.enable_callback'],
+            ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash', '-d', '-v', 'threadtime'],
+            ['getprop', 'sys.boot_completed'], ['wm', 'dismiss-keyguard'], ['dumpsys', 'window', 'policy'],
+        ], [args[4:] for args, _, _ in self.calls])
+        self.assertEqual(['initial'], [row['window'] for row in self.report()['guestLogcat']])
+        self.assertTrue(self.report()['guestVulkanDebug']['propertyReadbackVerified'])
+        self.assertNotIn('callbackInstalled', self.report()['guestVulkanDebug'])
+        self.assertTrue(all(options['timeout'] <= min(10, 600 - at) for _, options, at in self.calls))
+
+    def test_callback_unsupported_or_failed_property_keeps_original_command_evidence(self):
+        for debuggable, readback, set_code in [('0', 'true', 0), ('1', 'false', 0), ('1', 'true', 7)]:
+            with self.subTest(debuggable=debuggable, readback=readback, set_code=set_code):
+                self.calls.clear()
+                def respond(arguments, options):
+                    command = arguments[4:]
+                    if command == ['getprop', 'sys.boot_completed']:
+                        return self.result(arguments, '')
+                    if command == ['getprop', 'ro.debuggable']:
+                        return self.result(arguments, debuggable)
+                    if command == ['setprop', 'debug.vulkan.enable_callback', 'true']:
+                        return self.result(arguments, code=set_code, stderr='fixture setprop denied' if set_code else '')
+                    if command == ['getprop', 'debug.vulkan.enable_callback']:
+                        return self.result(arguments, readback)
+                    return self.result(arguments)
+                with self.assertRaises(RuntimeError if set_code else ValueError):
+                    self.exercise(respond, debug_guest_vulkan=True)
+                report = self.report()
+                self.assertFalse(report['ready'])
+                self.assertFalse(report['guestVulkanDebug']['propertyReadbackVerified'])
+                self.assertNotIn('wm', [args[4] for args, _, _ in self.calls])
+                self.assertLessEqual(sum(args[4] == 'setprop' for args, _, _ in self.calls), 1)
+                if set_code:
+                    self.assertEqual(7, report['commands'][-1]['returnCode'])
+                    self.assertEqual('fixture setprop denied', report['commands'][-1]['stderr'])
+
+    def test_callback_cancellation_after_setprop_sends_no_readback_or_cleanup_commands(self):
+        def respond(arguments, options):
+            if arguments[4] == 'setprop':
+                self.receipt['interruptSignals'].append(15)
+            return self.result(arguments, '1' if arguments[4:] == ['getprop', 'ro.debuggable'] else '')
+        with self.assertRaises(InterruptedError):
+            self.exercise(respond, debug_guest_vulkan=True)
+        self.assertEqual([
+            ['getprop', 'sys.boot_completed'], ['getprop', 'ro.debuggable'],
+            ['setprop', 'debug.vulkan.enable_callback', 'true'],
+        ], [args[4:] for args, _, _ in self.calls])
+        self.assertEqual([], self.report()['failureDiagnostics'])
+        self.assertFalse(self.report()['guestVulkanDebug']['propertyReadbackVerified'])
+
+    def test_callback_setup_cannot_send_setprop_after_original_deadline(self):
+        def respond(arguments, options):
+            if arguments[4:] == ['getprop', 'ro.debuggable']:
+                self.now = 600
+                return self.result(arguments, '1')
+            return self.result(arguments)
+        with self.assertRaisesRegex(TimeoutError, '600-second'):
+            self.exercise(respond, debug_guest_vulkan=True)
+        self.assertEqual([['getprop', 'sys.boot_completed'], ['getprop', 'ro.debuggable']],
+                         [args[4:] for args, _, _ in self.calls])
+        self.assertEqual([], self.report()['failureDiagnostics'])
+        self.assertEqual(600, self.report()['elapsedSeconds'])
+        self.assertFalse(self.report()['ready'])
 
 
 if __name__ == '__main__':
