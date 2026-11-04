@@ -256,6 +256,7 @@ mkdir -- "$AOSP_DIR"
 pushd "$AOSP_DIR" > /dev/null
 REPO=(python3 "$OUTPUT/repo-tool/repo")
 run manifest-init 300s "${REPO[@]}" init --no-clone-bundle --depth=1 \
+  --partial-clone --clone-filter=blob:none \
   --repo-url=https://gerrit.googlesource.com/git-repo --repo-rev=v2.59 \
   -u https://android.googlesource.com/platform/manifest \
   -b 2692acc620f6563b21995540656674faeb536cdc -g default,platform-linux
@@ -272,7 +273,51 @@ destination.parent.mkdir(parents=True, exist_ok=True)
 ET.ElementTree(root).write(destination, encoding='utf-8', xml_declaration=True)
 PY
 # No custom multi-repo downloader, toolchain fallback or prebuilt rebuild matrix.
-run source-sync 1800s "${REPO[@]}" sync -c -j2 --fail-fast --no-clone-bundle
+run source-sync 1800s bash -s -- "$AOSP_DIR" "$OUTPUT" <<'SOURCE_SYNC'
+set -euo pipefail
+AOSP_DIR=$1
+OUTPUT=$2
+REPO=(python3 "$OUTPUT/repo-tool/repo")
+cd -- "$AOSP_DIR"
+printf '%s\n' network-only > "$OUTPUT/source-sync-phase.txt"
+"${REPO[@]}" sync --network-only -c -j2 --fail-fast --no-clone-bundle </dev/null
+df -B1 "$AOSP_DIR" > "$OUTPUT/source-network-df.txt"
+du -x -B1 -s "$AOSP_DIR/.repo" > "$OUTPUT/source-network-du.txt"
+printf '%s\n' clang-sparse-config > "$OUTPUT/source-sync-phase.txt"
+clang_gitdir="$AOSP_DIR/.repo/projects/prebuilts/clang/host/linux-x86.git"
+clang_worktree="$AOSP_DIR/prebuilts/clang/host/linux-x86"
+[[ -d "$clang_gitdir" && ! -L "$clang_gitdir" && $(realpath -e -- "$clang_gitdir") == "$clang_gitdir" ]]
+[[ ! -e "$clang_worktree/.git" && ! -L "$clang_worktree/.git" ]]
+[[ ! -L "$clang_gitdir/config" && ! -L "$clang_gitdir/info" && ! -e "$clang_gitdir/config.worktree" ]]
+[[ $(git --git-dir="$clang_gitdir" rev-parse --absolute-git-dir) == "$clang_gitdir" ]]
+[[ $(git --git-dir="$clang_gitdir" config --local --get extensions.partialclone) == aosp ]]
+# v2.59's default layout has a project-local config/info, not git-worktree config.
+if git --git-dir="$clang_gitdir" config --local --get extensions.worktreeConfig > "$OUTPUT/clang-existing-worktree-config.txt"; then
+  echo 'Unexpected git-worktree config before initial Clang checkout' >&2
+  exit 1
+else
+  config_exit=$?
+  [[ "$config_exit" == 1 ]] || exit "$config_exit"
+fi
+git --git-dir="$clang_gitdir" config --local core.sparseCheckout true
+git --git-dir="$clang_gitdir" config --local core.sparseCheckoutCone false
+mkdir -p -- "$clang_gitdir/info"
+# Standard Git sparse patterns: root files plus this entire compiler version.
+printf '/*\n!/*/\n/clang-r596125/\n' > "$clang_gitdir/info/sparse-checkout"
+cp -- "$clang_gitdir/info/sparse-checkout" "$OUTPUT/clang-sparse-checkout.txt"
+git --git-dir="$clang_gitdir" config --local --show-origin --get-regexp \
+  '^(core\.sparsecheckout|core\.sparsecheckoutcone|extensions\.partialclone)$' > "$OUTPUT/clang-sparse-config.txt"
+printf '%s\n' local-only > "$OUTPUT/source-sync-phase.txt"
+# Git's promisor lazy fetch still obtains selected blobs; local-only is not offline.
+"${REPO[@]}" sync --local-only -c -j2 --fail-fast --no-clone-bundle </dev/null
+[[ $(realpath -e -- "$clang_worktree/.git") == "$clang_gitdir" ]]
+[[ $(git -C "$clang_worktree" config --get core.sparseCheckout) == true ]]
+[[ $(git -C "$clang_worktree" config --get core.sparseCheckoutCone) == false ]]
+cmp -- "$OUTPUT/clang-sparse-checkout.txt" "$clang_gitdir/info/sparse-checkout"
+df -B1 "$AOSP_DIR" > "$OUTPUT/source-local-df.txt"
+du -x -B1 -s "$AOSP_DIR/.repo" "$clang_worktree" > "$OUTPUT/source-local-du.txt"
+printf '%s\n' complete > "$OUTPUT/source-sync-phase.txt"
+SOURCE_SYNC
 run source-manifest 120s "${REPO[@]}" manifest -r -o "$OUTPUT/resolved-manifest.xml"
 popd > /dev/null
 run source-pins-check 30s python3 - "$SOURCE_PINS" "$AOSP_DIR" <<'PY'

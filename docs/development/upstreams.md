@@ -1166,7 +1166,7 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 **固定版本 / revision：** `v2.59`，peeled commit `1afe96a7e997ce7748f066b206a85ac648f7a87c`。
 
-**用途与采用方式：** CI隔离目录内通过固定官方源码launcher运行repo init/sync/manifest，按官方local-manifest extend-project固定关键revision，避免自写多repo下载框架；保留repo签名验证与checkout身份核验，无近似版本fallback。工具源码不加入APP/SDK或随诊断分发。
+**用途与采用方式：** CI隔离目录内通过固定官方源码launcher运行repo init/sync/manifest，按官方local-manifest extend-project固定关键revision，避免自写多repo下载框架；保留repo签名验证与checkout身份核验，无近似版本fallback。依照该版本 `project.py` 的首次worktree初始化路径，采用官方partial clone、network-only与local-only流程；参照Git官方 [read-tree稀疏检出](https://git-scm.com/docs/git-read-tree#_sparse_checkout)、[标准patterns](https://git-scm.com/docs/git-sparse-checkout#_internals_full_pattern_set)与[partial clone](https://git-scm.com/docs/partial-clone)文档，仅落地完整 `clang-r596125` 和根文件/许可证，保留全部manifest项目及真实解析来源。工具源码不加入APP/SDK或随诊断分发，实际容量与Android结果另行验收。
 
 **许可证、署名与证据：** [固定LICENSE](https://gerrit.googlesource.com/git-repo/+/1afe96a7e997ce7748f066b206a85ac648f7a87c/LICENSE)，Apache-2.0；工具revision/版权与notice随来源记录保留。
 
