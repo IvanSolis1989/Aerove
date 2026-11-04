@@ -202,7 +202,7 @@ jobs:
       working-directory: apps/aerove-lite
       run: |
         gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease --dry-run -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" > "$RUNNER_TEMP/lite-platform-one-build-graph.txt"
-        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
+        gradle --no-daemon --refresh-dependencies --info -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
     - name: Check the signed APK and record its exact provenance
       id: apk_inspection
       run: |
