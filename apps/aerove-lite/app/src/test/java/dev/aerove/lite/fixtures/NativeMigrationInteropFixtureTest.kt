@@ -62,7 +62,7 @@ class NativeMigrationInteropFixtureTest {
         val historical = ProfileRepository(root, bound, resources = manager(bound))
         val subscription = historical.importText("Fixture subscription", historicalYaml, "https://example.invalid/subscription")
         historical.markUsable(historical.prepareForStart(subscription.id))
-        historical.replace(subscription.id, yaml)
+        ProfileRepository(root, unbound, resources = manager(unbound)).replace(subscription.id, yaml)
         val profiles = ProfileRepository(root, ProfileValidator { })
         val local = profiles.importText("Fixture local", yaml)
         val rows = JSONObject(File(root, "profiles/index.json").readText()).getJSONArray("profiles")

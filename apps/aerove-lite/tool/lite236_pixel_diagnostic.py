@@ -93,6 +93,7 @@ class Diagnostic:
             fullAcceptance=False, releaseAccepted=False, collectionComplete=False, clicksPerformed=False,
             appOrHarnessCompiled=False, originalAppIdentity=APP,
             executorIdentity=dict(sourceRevision=args.source, workflowRun=args.run, runAttempt=int(args.attempt)),
+            disableQueueSubmitWithCommands=args.disable_queue_submit_with_commands,
             executorScriptSha256=sha(__file__), ownerPid=os.getpid(), deviceSerial=SERIAL,
             interruptSignals=[], commands=[], frames=[], cleanupErrors=[], unexpectedEmulatorExit=False)
 
@@ -165,6 +166,8 @@ class Diagnostic:
                 and raw.endswith(b"\x00\x00\x00\x00IEND\xaeB`\x82"), "screencap did not return a complete original PNG")
         width, height = int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
         require(width > 100 and height > 100, "Unexpected original screencap dimensions")
+        if self.args.disable_queue_submit_with_commands:
+            require((width, height) == (1080, 2400), "Queue-submit control changed the original render dimensions")
         path = self.args.output / (label + ".png")
         # Write the exact adb exec-out bytes; no image conversion, crop or annotation.
         path.write_bytes(raw)
@@ -189,6 +192,7 @@ class Diagnostic:
         args = self.args
         self.receipt["originalArtifact"] = original(args)
         require(sys.platform == "linux", "Use the existing isolated Linux/KVM runner; no other device is supported")
+        require(not os.environ.get("ANDROID_EMU_VK_DISABLE_FEATURE_DEPS_CHECK"), "Never bypass emulator feature dependencies")
         for key, supplied in (("GITHUB_SHA", args.source), ("GITHUB_RUN_ID", args.run), ("GITHUB_RUN_ATTEMPT", args.attempt)):
             require(not os.environ.get(key) or os.environ[key] == supplied, "Executor argument differs from actual " + key)
         require(args.run != APP["workflowRun"], "A new diagnostic execution must not impersonate original236")
@@ -208,8 +212,11 @@ class Diagnostic:
         signature, _ = self.command("original-apk-signature", [args.sdk / "build-tools/37.0.0/apksigner", "verify", "--verbose", "--print-certs", apk], timeout=120)
         self.receipt["packageIdentity"] = verify_identity(badging.decode(), signature.decode(),
             dict(applicationId=PACKAGE, version="0.1.0-beta.28", versionCode="28", signerSha256=SIGNER), "preview")
+        features = "GuestAngle,Vulkan"
+        if args.disable_queue_submit_with_commands:
+            features += ",-VulkanQueueSubmitWithCommands"
         command = [str(args.sdk / "emulator/emulator"), "-port", "5554", "-avd", args.avd,
-            "-no-window", "-gpu", GPU_BACKEND, "-no-snapshot", "-noaudio", "-no-boot-anim", "-feature", "GuestAngle,Vulkan"]
+            "-no-window", "-gpu", GPU_BACKEND, "-no-snapshot", "-noaudio", "-no-boot-anim", "-feature", features]
         self.receipt.update(emulatorCommand=command, avd=args.avd)
         with (args.output / "emulator.stdout.log").open("wb") as out, (args.output / "emulator.stderr.log").open("wb") as err:
             self.emulator = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
@@ -223,6 +230,13 @@ class Diagnostic:
         require(abi.strip() == b"x86_64", "Requires the existing x86_64 image")
         self.receipt["guestGraphicsRoute"] = guest_angle_evidence(args.output, self.receipt,
             (args.output / "emulator.stdout.log").read_text(errors="replace"))
+        if args.disable_queue_submit_with_commands:
+            host = (args.output / "emulator.stdout.log").read_text(errors="replace")
+            require(re.search(r"Feature 'VulkanQueueSubmitWithCommands' \([0-9]+\) is overridden to 'disabled'", host),
+                    "SDK did not prove the requested queue-submit override disabled")
+            require(not re.search(r"Feature 'VulkanQueueSubmitWithCommands' \([0-9]+\) is overridden to 'enabled'", host),
+                    "SDK re-enabled the queue-submit feature")
+            self.receipt["queueSubmitOverrideDisabled"] = True
         users, _ = self.adb_command("owned-device-users", "shell", "pm", "list", "users")
         require(re.findall(rb"UserInfo\{([0-9]+):", users) == [b"0"], "Requires a fresh single-user dedicated AVD")
         packages, _ = self.adb_command("preexisting-target-packages", "shell", "pm", "list", "packages", "-u", "--user", "0", PACKAGE)
@@ -247,6 +261,17 @@ class Diagnostic:
                 time.sleep(max(0, min(0.1, deadline - time.monotonic())))
             self.frame(label, target=offset)
         self.scene_diagnostics("before-accessibility")
+        if args.disable_queue_submit_with_commands:
+            own_log = (args.output / "before-accessibility-app-logcat.out").read_text(errors="replace")
+            capabilities = [line for line in own_log.splitlines() if "HostConnection" in line and "HostComposition ext " in line]
+            require(capabilities and all(re.search(r"\bANDROID_EMU_vulkan\b", line) for line in capabilities),
+                    "App did not advertise the original Vulkan transport")
+            require(not any(re.search(r"\bANDROID_EMU_vulkan_queue_submit_with_commands\b", line) for line in capabilities),
+                    "App still advertises the queue-submit extension")
+            require("Using the Impeller rendering backend (OpenGLES)" in own_log,
+                    "App did not retain the original Impeller OpenGLES backend")
+            self.receipt["queueSubmitControl"] = dict(overrideDisabled=True, extensionAdvertised=False,
+                hostCompositionRows=len(capabilities), impellerBackend="OpenGLES")
         available, availability = self.adb_command("uiautomator-availability", "shell", "command", "-v", "uiautomator", check=False)
         errors = (args.output / "uiautomator-availability.err").read_bytes()
         require(availability["exit"] == 0 or availability["exit"] in (1, 127) and not available.strip() and not errors.strip(),
@@ -342,6 +367,7 @@ def main():
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--sdk", type=Path, default=Path(os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME") or "/missing-sdk"))
     parser.add_argument("--avd", default="test")
+    parser.add_argument("--disable-queue-submit-with-commands", action="store_true")
     args = parser.parse_args()
     require(re.fullmatch(r"[0-9a-f]{40}", args.source) and args.run.isdecimal() and int(args.run) > 0
             and args.attempt.isdecimal() and int(args.attempt) > 0 and re.fullmatch(r"[A-Za-z0-9_.-]+", args.avd),

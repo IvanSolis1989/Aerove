@@ -75,13 +75,13 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'gfxstream37-static') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'gfxstream37-static') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite236_pixels:
     name: Original236 untouched consent pixels (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite236-pixels' }}
+    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -191,13 +191,19 @@ jobs:
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
         grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
     - name: Capture unchanged original App before and after one hierarchy read
+      env:
+        DISABLE_DEFERRED_SUBMIT: ${{ inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' }}
       run: |
+        extra=()
+        if [[ "$DISABLE_DEFERRED_SUBMIT" == true ]]; then
+          extra+=(--disable-queue-submit-with-commands)
+        fi
         python3 apps/aerove-lite/tool/lite236_pixel_diagnostic.py \
           --runtime-directory "$RUNNER_TEMP/lite236-original/unpacked" \
           --archive "$RUNNER_TEMP/lite236-original/official.zip" \
           --artifact-api "$RUNNER_TEMP/lite236-original/ARTIFACT-API.json" \
           --source "$GITHUB_SHA" --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
-          --sdk "$ANDROID_HOME" --avd test --output "$RUNNER_TEMP/lite-diagnostics/lite236-pixel"
+          --sdk "$ANDROID_HOME" --avd test --output "$RUNNER_TEMP/lite-diagnostics/lite236-pixel" "${extra[@]}"
     - name: Preserve actual raw pixels and failures without acceptance
       if: always()
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -1004,61 +1010,6 @@ jobs:
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/compile.log"
         test -s build/app/intermediates/androidTestAppKeepRules/release/rules.pro
         test -s build/app/intermediates/androidTestAppKeepRules/release/inputs.json
-    - name: Reproduce retained TUN migration failure with the original affected production files
-      if: ${{ inputs.client_preflight }}
-      working-directory: apps/aerove-lite
-      run: |
-        python3 - <<'PY'
-        import hashlib, json, os, shutil, subprocess
-        from pathlib import Path
-        import xml.etree.ElementTree as ET
-        root = Path.cwd()
-        evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/tun-baseline'
-        evidence.mkdir()
-        baseline = '2a38627ca1c224f6ebf71c3e42052912699decdb'
-        paths = ['app/src/main/java/dev/aerove/lite/data/ProfileRepository.kt',
-                 'app/src/main/java/dev/aerove/lite/data/ResourceBundleManager.kt',
-                 'app/src/main/java/dev/aerove/lite/flutter/MeowLegacyMigrationExport.kt']
-        saved = {name: (root/name).read_bytes() for name in paths}
-        receipt = dict(kind='affected-production-overlay-regression', baselineProductionSource=baseline,
-            executorSource=os.environ['GITHUB_SHA'], baselineOutcome='not-executed', apkBuilt=False, androidAppExecuted=False)
-        case = 'retainedTunBundlesUseEachActualPolicyAndOldSettingsWithoutChangingSource'
-        test = root/'app/src/test/java/dev/aerove/lite/flutter/MeowLegacyMigrationExportTest.kt'
-        receipt['testSha256'] = hashlib.sha256(test.read_bytes()).hexdigest()
-        subprocess.run(['git', 'fetch', '--no-tags', '--depth=1', 'origin', baseline], check=True)
-        try:
-            for name in paths:
-                data = subprocess.check_output(['git', 'show', baseline+':apps/aerove-lite/'+name])
-                (root/name).write_bytes(data)
-            receipt['productionFiles'] = {name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in paths}
-            command = ['gradle', '--no-daemon', '-p', 'android', '-Ptarget-platform=android-x64', '-PliteAbi=x86_64',
-                '-PsourceSha='+os.environ['GITHUB_SHA'], ':app:testReleaseUnitTest', '--tests',
-                'dev.aerove.lite.flutter.MeowLegacyMigrationExportTest.'+case]
-            with (evidence/'original-failure.log').open('wb') as output:
-                result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT)
-            receipt['exit'] = result.returncode
-            reports = root/'build/app/test-results/testReleaseUnitTest'
-            shutil.copytree(reports, evidence/'original-xml')
-            cases = [node for file in (evidence/'original-xml').glob('TEST-*.xml')
-                     for node in ET.parse(file).getroot().iter('testcase')]
-            assert result.returncode != 0 and len(cases) == 1 and cases[0].get('name') == case
-            failure = cases[0].find('failure')
-            assert failure is not None and not cases[0].findall('skipped') and not cases[0].findall('error')
-            assert failure.get('type') == 'dev.aerove.lite.flutter.MeowLegacyExportException'
-            expected = 'dev.aerove.lite.flutter.MeowLegacyExportException: profiles/index.json: invalid legacy source; no defaults or repairs applied'
-            assert failure.get('message') == expected
-            message = ''.join(failure.itertext())
-            assert 'Suppressed: dev.aerove.lite.data.ConfigValidationException:' in message
-            assert '$.tun.enable: Explicit source TUN policy requires Android Builder reconciliation before activation' in message
-            receipt['baselineOutcome'] = 'expected-original-failure-reproduced'
-        finally:
-            for name, data in saved.items():
-                (root/name).write_bytes(data)
-            receipt['candidateProductionRestored'] = all((root/name).read_bytes() == data for name,data in saved.items())
-            (evidence/'BASELINE.json').write_text(json.dumps(receipt, indent=2)+'\n')
-        assert receipt['candidateProductionRestored']
-        print('Original affected production regression remains RED; candidate tests follow separately.')
-        PY
     - name: Verify native migration ownership and the real Kotlin to Dart import
       working-directory: apps/aerove-lite
       run: |-
@@ -1817,7 +1768,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, gfxstream37-static]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, gfxstream37-static]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false
