@@ -195,7 +195,7 @@ jobs:
       working-directory: apps/aerove-lite
       run: |
         gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease --dry-run -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" > "$RUNNER_TEMP/lite-platform-one-build-graph.txt"
-        gradle --no-daemon -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
+        gradle --no-daemon --refresh-dependencies --info -p android :app:assembleRelease :platform-qa:assembleRelease -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a -PsourceSha="$GITHUB_SHA" -PnativeMigration.fixtureDir="$RUNNER_TEMP/lite-native-migration/retained-export" | tee "$RUNNER_TEMP/lite-platform-one-build.log"
     - name: Build the emulator production Flutter APK once
       id: emulator_app
       if: inputs.abi == 'x86_64'
