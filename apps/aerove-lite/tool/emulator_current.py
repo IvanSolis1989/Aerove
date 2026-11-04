@@ -338,26 +338,48 @@ class SigillCapture:
                 self.child.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.state['readbackTimeout'] = True
+        normal_exit_deadline = None
+        if self.emulator.poll() == 0 and self.child.poll() is None:
+            from beta14_render_profile import proc_stat
+            target = Path('/proc') / str(self.emulator.pid) / 'stat'
+            try:
+                actual = proc_stat(target.read_text())
+            except FileNotFoundError:
+                actual = None
+            if (actual is None or actual['starttime'] != self.state['targetStarttime']
+                    or actual['state'] == 'Z'):
+                # Reuse both existing command(5s)+wait(3s) allowances, not another grace window.
+                normal_exit_deadline = time.monotonic() + 2 * (5 + 3)
+                self.state['normalTargetReaped'] = True
+        def remaining_timeout(limit):
+            if normal_exit_deadline is None:
+                return limit
+            return max(0, min(limit, normal_exit_deadline - time.monotonic()))
+        if normal_exit_deadline is not None:
+            try:
+                self.child.wait(timeout=remaining_timeout(3))
+            except subprocess.TimeoutExpired:
+                self.state['normalExitJoinTimedOut'] = True
         if self.child.poll() is None and self.state.get('gdbPid') is not None:
             request = dict(token=self.control['token'], targetPid=self.emulator.pid, gdbPid=self.state['gdbPid'])
             temporary = Path(self.control['path']).with_suffix('.tmp')
             temporary.write_text(json.dumps(request) + '\n')
             os.replace(temporary, self.control['path'])
         for name in ('INT', 'KILL'):
-            if self.child.poll() is not None:
+            if self.child.poll() is not None or remaining_timeout(5) <= 0:
                 break
             command = ['sudo', '-n', '--', 'kill', '-' + name, '--', '-' + str(self.child.pid)]
             entry = dict(command=command)
             self.state['commands'].append(entry)
             try:
-                result = subprocess.run(command, capture_output=True, text=True, timeout=5)
+                result = subprocess.run(command, capture_output=True, text=True, timeout=remaining_timeout(5))
                 entry.update(returnCode=result.returncode, stdout=result.stdout, stderr=result.stderr)
                 if result.returncode == 0:
                     self.state['stopRequested'] = True
             except (OSError, subprocess.TimeoutExpired) as error:
                 entry['error'] = repr(error)
             try:
-                self.child.wait(timeout=3)
+                self.child.wait(timeout=remaining_timeout(3))
             except subprocess.TimeoutExpired:
                 continue
         if self.child.poll() is None:

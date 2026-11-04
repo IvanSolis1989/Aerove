@@ -707,6 +707,48 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertFalse(self.receipt['cleanupRequested'])
         self.assertFalse(self.capture.state['accepted'])
 
+    def test_reaped_normal_target_allows_pending_gdb_finalization_before_owner_interrupt(self):
+        import time
+        release = self.root / 'allow-gdb-normal-exit'
+        original = current.sigill_gdb_script
+        marker = 'AEROVE_GDB_NORMAL_EXIT_PENDING'
+        def delayed_finalization(*args):
+            barrier = (
+                'finally:\n'
+                '    if not gdb.selected_inferior().pid:\n'
+                f'        print({marker!r}, flush=True)\n'
+                '        deadline = time.monotonic() + 10\n'
+                f'        while not pathlib.Path({str(release)!r}).exists():\n'
+                '            if time.monotonic() >= deadline:\n'
+                '                raise RuntimeError("Test normal-exit barrier was not released")\n'
+                '            time.sleep(.01)\n'
+                '    if gdb.selected_inferior().pid:'
+            )
+            return original(*args).replace('finally:\n    if gdb.selected_inferior().pid:', barrier)
+        with patch.object(current, 'sigill_gdb_script', side_effect=delayed_finalization):
+            self.capture.start()
+        self.child.stdin.write(b'exit\n')
+        self.child.stdin.flush()
+        self.assertEqual(0, self.child.wait(timeout=15), self.logs())
+        deadline = time.monotonic() + 5
+        while marker not in self.logs():
+            self.assertIsNone(self.capture.child.poll(), self.logs())
+            self.assertLess(time.monotonic(), deadline, self.logs())
+            time.sleep(.01)
+        self.assertIsNone(self.capture.child.poll(), self.logs())
+        actual_wait = self.capture.child.wait
+        def release_then_join(*args, **kwargs):
+            release.touch()
+            return actual_wait(*args, **kwargs)
+        with patch.object(self.capture.child, 'wait', side_effect=release_then_join):
+            self.capture.close()
+        self.assertEqual(0, self.capture.child.returncode, self.logs())
+        self.assertEqual([], self.capture.state['commands'])
+        self.assertFalse(Path(self.capture.control['path']).exists())
+        self.assertEqual(1, current.finish_emulator(self.child, self.receipt, 0))
+        self.assertTrue(self.receipt['unexpectedEmulatorExit'])
+        self.assertFalse(self.receipt['cleanupRequested'])
+        self.assertFalse(self.capture.state['accepted'])
     def test_original_sigill_reaches_parent_even_if_one_diagnostic_read_fails(self):
         import signal
         original = current.sigill_gdb_script
