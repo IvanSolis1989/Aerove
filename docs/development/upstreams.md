@@ -1242,6 +1242,8 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 Lite 私有数据迁移另只读核对 `android-13.0.0_r75` 的 [`java.io.UnixFileSystem`](https://android.googlesource.com/platform/libcore/+/android-13.0.0_r75/ojluni/src/main/java/java/io/UnixFileSystem.java) canonicalize 路径解析边界。只使用平台既有 API，未复制实现或修改缓存；该文件为 GPL-2.0 with Classpath exception，保留 Oracle 1998、2010 版权。参考 tag 不作为当前 Android 镜像源码身份的证明。
 
+Lite 私有文件权限另只读核对 `android-13.0.0_r1` 的固定提交 `7267082c39a25fb5afbc4eeb5752c1b276d29344`：[`UnixFileSystemProvider.java`](https://android.googlesource.com/platform/libcore/+/7267082c39a25fb5afbc4eeb5752c1b276d29344/ojluni/src/main/java/sun/nio/fs/UnixFileSystemProvider.java) 明确 `getFileStore(Path)` 始终抛出 `SecurityException`，[`UnixFileAttributeViews.java`](https://android.googlesource.com/platform/libcore/+/7267082c39a25fb5afbc4eeb5752c1b276d29344/ojluni/src/main/java/sun/nio/fs/UnixFileAttributeViews.java) 提供目标路径的 POSIX 属性视图。导出与响应文件复用系统属性视图设置、读回私有权限，未复制实现或新增依赖；两文件为 GPL-2.0 with Classpath exception，保留 Oracle 版权头。源码 SHA256 分别为 `73e7dd3cc40af013220fbfaa06a6e58ebef9999f85325925d02d115bd622a731`、`0964131a0d94eb3f75154081b1ac9465424b9bac65a512b4a27faa9780eea4d1`；参考提交不冒充实际系统镜像的源码身份。
+
 #### [OpenJDK jdk17u](https://github.com/openjdk/jdk17u)
 
 **固定版本 / revision：** `jdk-17.0.13+11`。

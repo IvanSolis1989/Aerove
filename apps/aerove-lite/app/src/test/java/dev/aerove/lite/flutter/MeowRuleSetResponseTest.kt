@@ -65,6 +65,12 @@ class MeowRuleSetResponseTest {
         val text = (0..31).map(Int::toChar).joinToString("") + "\"\\/東京🦊"
         MeowFlutterSpill(home, MeowSpillBudget(4096, 4096)).use { spill ->
             val file = File(spill.writeJsonStringResult("\u0001".repeat(256), text))
+            val posix = Files.getFileAttributeView(file.toPath(), java.nio.file.attribute.PosixFileAttributeView::class.java)
+            if (posix != null) {
+                assertEquals(java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"), posix.readAttributes().permissions())
+                assertEquals(java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"),
+                    Files.getPosixFilePermissions(file.parentFile.toPath()))
+            }
             val saved = JSONObject(file.readText())
             assertEquals("\u0001".repeat(256), saved.getString("id"))
             assertEquals(text, saved.getString("result"))

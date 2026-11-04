@@ -276,8 +276,11 @@ class MeowLegacyMigrationExport(
         if (!directory.exists()) { check(directory.mkdir()); restrict(directory, true) }
     }
     private fun restrict(file: File, directory: Boolean) {
-        if (Files.getFileStore(file.toPath()).supportsFileAttributeView("posix")) {
-            Files.setPosixFilePermissions(file.toPath(), PosixFilePermissions.fromString(if (directory) "rwx------" else "rw-------"))
+        val posix = Files.getFileAttributeView(file.toPath(), java.nio.file.attribute.PosixFileAttributeView::class.java, NOFOLLOW_LINKS)
+        if (posix != null) {
+            val permissions = PosixFilePermissions.fromString(if (directory) "rwx------" else "rw-------")
+            posix.setPermissions(permissions)
+            check(posix.readAttributes().permissions() == permissions) { "Private POSIX permission read-back mismatch" }
         } else {
             val view = Files.getFileAttributeView(file.toPath(), java.nio.file.attribute.AclFileAttributeView::class.java)
                 ?: fail("candidate.permissions", "private file permissions unavailable")

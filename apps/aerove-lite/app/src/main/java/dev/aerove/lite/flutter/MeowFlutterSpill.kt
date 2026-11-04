@@ -207,8 +207,12 @@ class MeowFlutterSpill(homeDir: File, private val budget: MeowSpillBudget = Meow
         }
 
         private fun restrictPermissions(file: File, directory: Boolean = false) {
-            if (Files.getFileStore(file.toPath()).supportsFileAttributeView("posix"))
-                Files.setPosixFilePermissions(file.toPath(), PosixFilePermissions.fromString(if (directory) "rwx------" else "rw-------"))
+            val posix = Files.getFileAttributeView(file.toPath(), java.nio.file.attribute.PosixFileAttributeView::class.java, NOFOLLOW_LINKS)
+            if (posix != null) {
+                val permissions = PosixFilePermissions.fromString(if (directory) "rwx------" else "rw-------")
+                posix.setPermissions(permissions)
+                check(posix.readAttributes().permissions() == permissions) { "Private POSIX permission read-back mismatch" }
+            }
         }
     }
 }

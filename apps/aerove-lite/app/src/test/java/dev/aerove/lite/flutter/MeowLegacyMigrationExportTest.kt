@@ -73,6 +73,18 @@ class MeowLegacyMigrationExportTest {
         return failure
     }
 
+    private fun assertOwnerOnly(file: File) {
+        val posix = Files.getFileAttributeView(file.toPath(), java.nio.file.attribute.PosixFileAttributeView::class.java)
+        if (posix != null) {
+            assertEquals(java.nio.file.attribute.PosixFilePermissions.fromString(if (file.isDirectory) "rwx------" else "rw-------"),
+                posix.readAttributes().permissions())
+        } else {
+            val acl = requireNotNull(Files.getFileAttributeView(file.toPath(), java.nio.file.attribute.AclFileAttributeView::class.java)).acl
+            val owner = Files.getOwner(file.toPath())
+            assertTrue(acl.isNotEmpty())
+            assertTrue(acl.all { it.principal() == owner && it.type() == java.nio.file.attribute.AclEntryType.ALLOW })
+        }
+    }
     @Test fun rawSourceIdentitySelectionHistorySecretsUnknownAndDeletionFactSurviveWithoutSourceMutation() = runBlocking<Unit> {
         val f = fixture()
         val before = hashes(f.root)
@@ -82,6 +94,8 @@ class MeowLegacyMigrationExportTest {
             assertFalse(manifest.getBoolean("migrationComplete"))
             assertEquals(sha256(lease.manifest), lease.manifestSha256)
             val payload = File(lease.manifest.parentFile, "payload")
+            assertOwnerOnly(lease.manifest.parentFile.parentFile)
+            lease.manifest.parentFile.walkTopDown().forEach(::assertOwnerOnly)
             val rows = manifest.getJSONArray("files")
             for (i in 0 until rows.length()) {
                 val row = rows.getJSONObject(i)
