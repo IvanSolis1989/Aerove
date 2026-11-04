@@ -205,6 +205,8 @@ class NativeLegacyMigrationFixtureTest {
             val component = requireNotNull(launch.component)
             check(component.className == "dev.aerove.lite.FlutterMainActivity")
             evidence.put("launcher", component.flattenToString())
+            // Connect before phase waits so startup errors can publish accessibility semantics.
+            val ui = checkNotNull(instrumentation.uiAutomation) { "UiAutomation connection failed before production Launcher" }
             var recoveryDigest: String? = null
             var recoveryIds: JSONObject? = null
             if (recoverReceiptPath) {
@@ -222,7 +224,7 @@ class NativeLegacyMigrationFixtureTest {
                     if (failedNative.isFile && failedJournal.isFile &&
                         json(failedNative).getString("phase") == "pending" &&
                         json(failedJournal).getString("phase") == "preferencesCommitted" &&
-                        instrumentation.uiAutomation.rootInActiveWindow?.let { containsLabel(it, "Startup failed") } == true) break
+                        ui.rootInActiveWindow?.let { containsLabel(it, "Startup failed") } == true) break
                     check(SystemClock.elapsedRealtime() < failureDeadline) { "No real pending/preferencesCommitted failure before 60s" }
                     Thread.sleep(100)
                 }
@@ -273,7 +275,7 @@ class NativeLegacyMigrationFixtureTest {
             while (true) {
                 if (nativeState.isFile && journal.isFile && json(nativeState).getString("phase") == "shared" &&
                     json(journal).getString("phase") == "complete" &&
-                    instrumentation.uiAutomation.rootInActiveWindow?.let { containsAgree(it) } == true) break
+                    ui.rootInActiveWindow?.let { containsAgree(it) } == true) break
                 check(SystemClock.elapsedRealtime() < deadline) { "No real shared/complete migration before 60s" }
                 Thread.sleep(100)
             }
@@ -324,7 +326,7 @@ class NativeLegacyMigrationFixtureTest {
                 val saved = privateFile(root, "native-lite-migration/source/payload/${row.path}")
                 check(saved.length() == row.bytes && digest(saved) == row.digest) { "App recovery source changed" }
             }
-            check(instrumentation.uiAutomation.rootInActiveWindow?.let { containsAgree(it) } == true) { "Production Agree not visible" }
+            check(ui.rootInActiveWindow?.let { containsAgree(it) } == true) { "Production Agree not visible" }
             listOf("native-state" to nativeState, "dart-journal" to journal, "android-source-manifest" to savedManifest,
                 "target-receipt" to receiptFile, "committed-receipt" to committed).forEach { (name, file) ->
                 File(output, "$name.json").writeBytes(file.readBytes())

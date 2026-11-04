@@ -1095,10 +1095,15 @@ class FlutterProductionUiTest {
 
     private fun choose(label: String) {
         click(label, scroll = true)
-        awaitNode("selected theme choice $label") { node ->
-            matches(node, label) && selected(node)
+        val end = SystemClock.elapsedRealtime() + 12_000
+        var choice: AccessibilityNodeInfo? = null
+        awaitCondition("selected theme choice $label") {
+            // Material changes can move the choice off-screen; keep the original readback budget.
+            val node = findLabel(label) ?: reveal(label, end)
+            check(SystemClock.elapsedRealtime() < end) { "Timed out reading selected theme choice $label" }
+            selected(node).also { if (it) choice = node }
         }
-        action("verified-selected-choice", requireLabel(label), label)
+        action("verified-selected-choice", requireNotNull(choice), label)
     }
 
     private fun navigate(label: String) {
@@ -1142,10 +1147,9 @@ class FlutterProductionUiTest {
         error("No enabled ACTION_CLICK for ${node.text ?: node.contentDescription}; no coordinate fallback")
     }
 
-    private fun reveal(label: String): AccessibilityNodeInfo {
+    private fun reveal(label: String, end: Long = SystemClock.elapsedRealtime() + 25_000): AccessibilityNodeInfo {
         findLabel(label)?.let { return it }
         // Search to the top, then forward; both directions and the total time are bounded.
-        val end = SystemClock.elapsedRealtime() + 25_000
         for (direction in listOf(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
             repeat(28) {
                 check(SystemClock.elapsedRealtime() < end) { "Timed out revealing $label" }
