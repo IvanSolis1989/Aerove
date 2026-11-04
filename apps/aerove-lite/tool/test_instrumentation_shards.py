@@ -150,11 +150,15 @@ class ShardSelectionTests(unittest.TestCase):
         workflow = (repository / ".github/workflows/aerove-lite-build.yaml").read_text(encoding="utf-8")
         commands = [line.strip().removeprefix("run: ") for line in workflow.splitlines()
                     if "gradle --no-daemon " in line and ":app:assembleRelease" in line]
-        self.assertEqual(3, len(commands))
-        arm = next(command for command in commands if "-PliteAbi=arm64-v8a" in command)
-        x86 = [command for command in commands if "-PliteAbi=x86_64" in command]
-        self.assertEqual(2, len(x86))
-        self.assertEqual(1, sum("--dry-run" in command for command in x86))
+        self.assertEqual(4, len(commands))
+        for abi, target in (("arm64-v8a", "android-arm64"), ("x86_64", "android-x64")):
+            abi_commands = [command for command in commands if "-PliteAbi=" + abi in command]
+            with self.subTest(abi=abi):
+                self.assertEqual(2, len(abi_commands))
+                self.assertEqual(1, sum("--dry-run" in command for command in abi_commands))
+                for command in abi_commands:
+                    self.assertIn("-Ptarget-platform=" + target, command)
+                    self.assertLess(command.index(":app:assembleRelease"), command.index(":platform-qa:assembleRelease"))
         for command in commands:
             with self.subTest(command=command):
                 self.assertIn("-p android ", command)
@@ -162,11 +166,6 @@ class ShardSelectionTests(unittest.TestCase):
                 self.assertNotIn("compose_ui_graphs.gradle", command)
                 self.assertNotIn(":app:reportComposeUiResolution", command)
                 self.assertNotIn(":app:assembleReleaseAndroidTest", command)
-        self.assertIn("-Ptarget-platform=android-arm64", arm)
-        self.assertNotIn(":platform-qa:assembleRelease", arm)
-        for command in x86:
-            self.assertIn("-Ptarget-platform=android-x64", command)
-            self.assertLess(command.index(":app:assembleRelease"), command.index(":platform-qa:assembleRelease"))
         self.assertIn(":platform-qa:dependencies --configuration releaseRuntimeClasspath", workflow)
         self.assertIn("for configuration in releaseRuntimeClasspath; do", workflow)
         self.assertIn(':app:dependencies --configuration "$configuration"', workflow)
