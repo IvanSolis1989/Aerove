@@ -1164,7 +1164,7 @@ jobs:
           --root "$GITHUB_WORKSPACE" --receipt "$RUNNER_TEMP/lite-promotion/promotion.json" \
           --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT"
   build_arm:
-    needs: flutter_host_preflight
+    needs: [flutter_host_preflight, verify]
     name: build (arm64-v8a)
     if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
@@ -1176,7 +1176,7 @@ jobs:
       contents: read
       actions: read
   build_x86:
-    needs: flutter_host_preflight
+    needs: [flutter_host_preflight, verify]
     name: build (x86_64)
     if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     uses: ./.github/workflows/aerove-lite-build.yaml
