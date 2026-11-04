@@ -1,5 +1,6 @@
 package dev.aerove.lite.data
 
+import dev.aerove.lite.LiteSettings
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -588,7 +589,14 @@ class ResourceBundleManager(
         }
     }
 
-    internal suspend fun load(profileId: String, generation: String, source: String): ResourceBundle = withContext(Dispatchers.IO) {
+    internal suspend fun load(profileId: String, generation: String, source: String): ResourceBundle =
+        readValidatedBundle(profileId, generation, source, null)
+
+    internal suspend fun loadForMigration(profileId: String, generation: String, source: String,
+        legacySettings: LiteSettings): ResourceBundle = readValidatedBundle(profileId, generation, source, legacySettings)
+
+    private suspend fun readValidatedBundle(profileId: String, generation: String, source: String,
+        legacySettings: LiteSettings?): ResourceBundle = withContext(Dispatchers.IO) {
         checkIdentifier(profileId)
         checkIdentifier(generation)
         val directory = File(root, "bundles/$profileId/$generation").canonicalFile
@@ -621,7 +629,10 @@ class ResourceBundleManager(
         }
         val yaml = storage.read("config.yaml")
         require(sha256(yaml) == manifest.getString("configSha256")) { "Prepared configuration changed" }
-        validator.validatePrepared(yaml, directory)
+        val readValidator = if (legacySettings != null &&
+            MeowTunReconciliation.sourcePolicy(yaml).any { (key, value) -> key != "enable" || value == true })
+            validator.withTunReconciliation(MeowTunReconciliation.reconcile(yaml, legacySettings)) else validator
+        readValidator.validatePrepared(yaml, directory)
         verifyPreparedBytes(directory, manifestSource)
         ResourceBundle(generation, directory, sha256(source), yaml,
             if (manifest.isNull("nextRefreshAt")) null else manifest.getLong("nextRefreshAt"), compiledInputSha, policyFingerprint,

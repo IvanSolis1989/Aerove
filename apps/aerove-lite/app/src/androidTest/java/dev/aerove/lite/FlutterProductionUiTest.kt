@@ -807,24 +807,56 @@ class FlutterProductionUiTest {
     }
 
     private fun copyStatement() {
-        val statement = requireLabel(STATEMENT)
+        requireLabel(STATEMENT)
         val selection = Bundle().apply {
             putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
             putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, STATEMENT.length)
         }
-        val selected = statement.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selection)
-        var copied = selected && statement.performAction(AccessibilityNodeInfo.ACTION_COPY)
-        action("select-statement", statement, "selection=$selected directCopy=$copied")
-        if (!copied) {
-            check(statement.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK)) {
-                "Selectable production statement exposes neither copy actions nor a long-click selection menu"
+        var focusRequested = false
+        var longClickRequested = false
+        var selectionRequested = false
+        var menuSelectAllRequested = false
+        awaitCondition("real statement selection or copy action") {
+            val current = findLabel(STATEMENT) ?: return@awaitCondition false
+            if (!menuSelectAllRequested) {
+                findLabel("Select all", appOnly = false)?.let {
+                    performClick(it)
+                    action("select-statement", it, "route=menu-select-all")
+                    menuSelectAllRequested = true
+                    return@awaitCondition false
+                }
             }
-            awaitNode("real selection menu", { matches(it, "Select all") || matches(it, "Copy") })
-            findLabel("Select all", appOnly = false)?.let { performClick(it) }
-            click("Copy", appOnly = false)
-            copied = true
+            findLabel("Copy", appOnly = false)?.let {
+                performClick(it)
+                action("select-statement", it, "route=menu-copy")
+                return@awaitCondition true
+            }
+            val advertised = current.actionList.map { it.id }
+            if (!selectionRequested && AccessibilityNodeInfo.ACTION_SET_SELECTION in advertised) {
+                check(current.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selection))
+                action("select-statement", current, "route=advertised-set-selection")
+                selectionRequested = true
+                return@awaitCondition false
+            }
+            if (selectionRequested && current.textSelectionStart == 0 && current.textSelectionEnd == STATEMENT.length &&
+                AccessibilityNodeInfo.ACTION_COPY in advertised) {
+                check(current.performAction(AccessibilityNodeInfo.ACTION_COPY))
+                action("select-statement", current, "route=advertised-copy")
+                return@awaitCondition true
+            }
+            if (!focusRequested && AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS in advertised) {
+                check(current.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS))
+                action("select-statement", current, "route=advertised-focus")
+                focusRequested = true
+                return@awaitCondition false
+            }
+            if (!longClickRequested && AccessibilityNodeInfo.ACTION_LONG_CLICK in advertised) {
+                check(current.performAction(AccessibilityNodeInfo.ACTION_LONG_CLICK))
+                action("select-statement", current, "route=advertised-long-click")
+                longClickRequested = true
+            }
+            false
         }
-        check(copied)
         awaitCondition("actual clipboard statement") {
             var text: String? = null
             instrumentation.runOnMainSync {

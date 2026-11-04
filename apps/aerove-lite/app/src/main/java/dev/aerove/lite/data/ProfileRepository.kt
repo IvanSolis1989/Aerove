@@ -1,5 +1,6 @@
 package dev.aerove.lite.data
 
+import dev.aerove.lite.LiteSettings
 import dev.aerove.lite.ProfileSummary
 import dev.aerove.lite.profilesource.*
 import dev.aerove.lite.resources.LibraryRuleSource
@@ -117,7 +118,7 @@ class ProfileRepository(
             }
         }
 
-    internal suspend fun migrationSnapshot(): ProfileSnapshot = privateDomainReadOnlyTransaction(storage.root.parentFile!!) {
+    internal suspend fun migrationSnapshot(legacySettings: LiteSettings? = null): ProfileSnapshot = privateDomainReadOnlyTransaction(storage.root.parentFile!!) {
         val index = load()
         index.entries.forEachIndexed { position, entry ->
             val path = "profiles/index.json.profiles[$position]"
@@ -135,7 +136,8 @@ class ProfileRepository(
                 if (generation != null) {
                     require(revision != null) { "$path.bundle: missing revision binding" }
                     val manager = checkNotNull(resources) { "$path.bundle: resource owner unavailable" }
-                    manager.load(entry.summary.id, generation, readRevision(revision))
+                    if (legacySettings == null) manager.load(entry.summary.id, generation, readRevision(revision))
+                    else manager.loadForMigration(entry.summary.id, generation, readRevision(revision), legacySettings)
                 }
             }
         }

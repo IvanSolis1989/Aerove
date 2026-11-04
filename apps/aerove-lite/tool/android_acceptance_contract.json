@@ -53,7 +53,7 @@
     "dev.aerove.lite.FlutterProductionUiTest#independentApplicationTcpUdpNativeAttribution"
   ],
   "expectedTerminationSelector": "dev.aerove.lite.FlutterProductionUiTest#prepareImportedRunningSessionForProcessRestart",
-  "uiSourceSha256": "30a781bed006cc4cb9b50defd5f907473360b76403b25e237dd4e885f629ea4c",
+  "uiSourceSha256": "a9ed9448945f5c548bafd0f08ea5f922ad23346fc781723f429d44a17c7f8e31",
   "stages": [
     "imported-selected",
     "vpn-active",

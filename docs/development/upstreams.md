@@ -304,6 +304,8 @@ Lite Flutter Android 黑盒 API 候选 QA93 另只读核对 AndroidX 固定 `c86
 
 仪表盘速度局部布局另只读参考同固定 SDK 的 `BuildScope`、`BuildOwner.buildScope`、`parentUsesSize` 与 `invokeLayoutCallback`；继承环境在当前帧 build 阶段变化时，由卡片布局入口同步刷新局部构建作用域，正常采样保留布局前合并。复用公开 API，未复制框架实现或新增依赖。
 
+Lite Android 复制验收驱动另只读参考同固定 SDK 的 [`AccessibilityBridge.performAction`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/engine/src/flutter/shell/platform/android/io/flutter/view/AccessibilityBridge.java)、`SemanticsOwner.performAction`、`RenderEditable` 与 `SelectableText`：只执行节点实际声明的焦点、选择和复制动作，等待读回真实选择或菜单，保留完整剪贴板等值验收。未复制框架实现、改变生产控件或新增依赖。
+
 组织名单行适配复用公开 `TextPainter`、`TextScaler`、`GlassText` 和项目既有 `DashboardFitText` 测量方式；连续圆角背景裁剪另只读参考同固定 SDK 的 [`RenderClipPath.paint`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/proxy_box.dart) 与 `PaintingContext.pushClipPath` 的图层复用行为，采用现有 `AppShape.getOuterPath`。未复制框架实现或新增依赖，BSD-3-Clause 与 Flutter Authors 署名保持。
 
 **许可证、署名与证据：** BSD-3-Clause（Flutter）；字体按原 `roboto_license.txt`；`apps/aerove-lite/app/src/main/assets/optics/NOTICE.md`、`FLUTTER_LICENSE`、`apps/aerove/test/fixtures/fonts/SOURCE.json`

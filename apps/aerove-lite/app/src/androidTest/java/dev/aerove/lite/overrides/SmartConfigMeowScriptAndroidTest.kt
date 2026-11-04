@@ -168,6 +168,10 @@ class SmartConfigMeowScriptAndroidTest {
             val nativePrepared = JniResourceFetch.preparedValidator(context)
             var finalNativeCalls = 0
             var pendingPreflights = 0
+            val baseSettings = LiteSettings(mode = ProxyMode.Global, ipv6 = true,
+                network = NetworkSettings(ports = UserProxyPorts(mixed = 7893), mtu = 1480, dnsHijacking = true))
+            val reconciliation = MeowTunReconciliation.reconcile(source, baseSettings)
+            val settings = reconciliation.settings
             val validator = CompatibilityValidator.forMeow(NativeConfigValidator { yaml ->
                 JniResourceFetch.offlineRead { MeowNativeCore.validate(it, yaml) }
             }, runtime,
@@ -178,7 +182,7 @@ class SmartConfigMeowScriptAndroidTest {
                     RuleResourcePreflight.parse(JniResourceFetch.preflightRuleResource(path, behavior, format), behavior, format).also {
                         if (it.requiresPreparedContext) pendingPreflights++
                     }
-                }, MeowNativeCore::readVerifiedFeatures)
+                }, MeowNativeCore::readVerifiedFeatures).withTunReconciliation(reconciliation)
             val manager = ResourceBundleManager(runtime, validator, NativeResourceValidator { kind, path, behavior, format ->
                 JniResourceFetch.offlineRead { MeowNativeCore.validateResource(it, kind, path, behavior, format) }
             },
@@ -239,10 +243,8 @@ class SmartConfigMeowScriptAndroidTest {
             }
             val cache = File(runtime, "meow-cache/test-${UUID.randomUUID()}").apply { check(mkdirs()) }
             val composer = MeowRuntimeConfigComposer(runtime, "AEROVE-Smart-fixture/2", cache)
-            val settings = LiteSettings(mode = ProxyMode.Global, ipv6 = true,
-                network = NetworkSettings(ports = UserProxyPorts(mixed = 7893), mtu = 1480, dnsHijacking = true))
             val plan = composer.compose(prepared, settings, -1, 49152, PRIVATE_SECRET,
-                initiallyParked = true, verifiedNativeFeatures = MeowNativeCore.readVerifiedFeatures())
+                initiallyParked = true, verifiedNativeFeatures = MeowNativeCore.readVerifiedFeatures(), tunReconciliation = reconciliation)
             val engine = ConfigYaml.parse(plan.engineYaml)
             assertEquals(rules, engine["rules"])
             for (key in listOf("hosts", "sniffer")) assertEquals(output[key], engine[key])
@@ -282,7 +284,7 @@ class SmartConfigMeowScriptAndroidTest {
             val invalid = output.toMutableMap().apply { put("firewall", true) }
             try {
                 composer.compose(ConfigYaml.dump(invalid), settings, -1, 49152, PRIVATE_SECRET,
-                    initiallyParked = true, verifiedNativeFeatures = MeowNativeCore.readVerifiedFeatures())
+                    initiallyParked = true, verifiedNativeFeatures = MeowNativeCore.readVerifiedFeatures(), tunReconciliation = reconciliation)
                 fail("Unsupported host field was silently ignored")
             } catch (error: ConfigValidationException) { assertEquals("$.firewall", error.issues.single().path) }
         } finally { root.deleteRecursively() }

@@ -170,8 +170,9 @@ class MeowLegacyMigrationExport(
     }
 
     private suspend fun validateSource() {
-        val snapshot = checked("profiles/index.json") { profiles.migrationSnapshot() }
-        if (File(root, "settings/settings.json").exists()) checked("settings/settings.json") { settings.migrationSnapshot() }
+        val legacySettings = if (File(root, "settings/settings.json").exists())
+            checked("settings/settings.json") { settings.migrationSnapshot() } else null
+        val snapshot = checked("profiles/index.json") { profiles.migrationSnapshot(legacySettings) }
         val state = checked("settings/overrides.json") { overrides.migrationSnapshot() }
         if (state != null && state.profiles.any { profile -> snapshot.profiles.none { it.id == profile.profileId } }) {
             fail("settings/overrides.json.profiles[].profileId", "missing profile reference")

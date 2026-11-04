@@ -269,6 +269,86 @@ class MeowLegacyMigrationExportTest {
         assertTrue(published(f.root).isEmpty())
     }
 
+    @Test fun retainedTunBundlesUseEachActualPolicyAndOldSettingsWithoutChangingSource() = runBlocking<Unit> {
+        val root = temporary.newFolder()
+        val runtime = File(root, "runtime")
+        val settingsStore = LiteSettingsStore(root)
+        settingsStore.save(LiteSettings(ipv6 = true,
+            network = dev.aerove.lite.networksettings.NetworkSettings(mtu = 1450)))
+        val savedSettings = settingsStore.read()
+        var preparedChecks = 0
+        val unbound = CompatibilityValidator.forMeow(NativeConfigValidator { null }, runtime,
+            NativePreparedConfigValidator { _, _ -> preparedChecks++; null }) { setOf("ss") }
+        fun manager(validator: CompatibilityValidator) = ResourceBundleManager(runtime, validator,
+            NativeResourceValidator { _, _, _, _ -> null })
+        fun oldRepository(source: String): ProfileRepository {
+            val reconciliation = MeowTunReconciliation.reconcile(source, savedSettings)
+            val bound = unbound.withTunReconciliation(reconciliation)
+            return ProfileRepository(root, bound, resources = manager(bound))
+        }
+        val firstSource = "mode: rule\ntun: {enable: true, mtu: 1480}\nrules: ['MATCH,DIRECT']\n"
+        val secondSource = "mode: rule\ntun: {enable: false, mtu: 1400}\nrules: ['MATCH,DIRECT']\n"
+        val firstRepository = oldRepository(firstSource)
+        val first = firstRepository.importText("Retained TUN A", firstSource)
+        firstRepository.markUsable(firstRepository.prepareForStart(first.id))
+        firstRepository.replace(first.id, firstSource.replace("mode: rule", "mode: direct"))
+        firstRepository.replace(first.id, firstSource.replace("mode: rule", "mode: global"))
+        val secondRepository = oldRepository(secondSource)
+        val second = secondRepository.importText("Retained TUN B", secondSource)
+        val index = JSONObject(File(root, "profiles/index.json").readText()).getJSONArray("profiles")
+        val firstRow = (0 until index.length()).map(index::getJSONObject).single { it.getString("id") == first.id }
+        val secondRow = (0 until index.length()).map(index::getJSONObject).single { it.getString("id") == second.id }
+        assertFalse(firstRow.isNull("bundle"))
+        assertFalse(firstRow.isNull("previousBundle"))
+        assertFalse(firstRow.isNull("lastUsableBundle"))
+        assertNotEquals(firstRow.getString("bundle"), firstRow.getString("previousBundle"))
+        assertNotEquals(firstRow.getString("previousBundle"), firstRow.getString("lastUsableBundle"))
+        assertNotEquals(firstRow.getString("bundle"), firstRow.getString("lastUsableBundle"))
+        assertNotEquals(firstRow.getString("bundle"), secondRow.getString("bundle"))
+        val unboundManager = manager(unbound)
+        val currentSource = File(root, "profiles/${firstRow.getString("current")}").readText()
+        val activationFailure = runCatching {
+            unboundManager.load(first.id, firstRow.getString("bundle"), currentSource)
+        }.exceptionOrNull()
+        assertTrue(activationFailure is ConfigValidationException)
+        assertTrue((activationFailure as ConfigValidationException).issues.any {
+            it.path == "$.tun.enable" && it.reason.contains("requires Android Builder reconciliation")
+        })
+        val profiles = ProfileRepository(root, unbound, resources = unboundManager)
+        val settings = LiteSettingsStore(root)
+        val exporter = MeowLegacyMigrationExport(root, profiles, settings, OverrideRepository(root))
+        val before = hashes(root)
+        val settingsBefore = File(root, "settings/settings.json").readBytes()
+        val checksBefore = preparedChecks
+        try {
+            exporter.export().use { lease ->
+                val rows = JSONObject(lease.manifest.readText()).getJSONArray("files")
+                for (i in 0 until rows.length()) {
+                    val row = rows.getJSONObject(i)
+                    val path = row.getString("path")
+                    assertEquals(before[path], row.getString("sha256"))
+                    assertEquals(before[path], sha256(File(lease.manifest.parentFile, "payload/$path")))
+                }
+            }
+        } catch (failure: MeowLegacyExportException) {
+            runCatching { profiles.withMigrationSourceSnapshot { profiles.migrationSnapshot() } }
+                .exceptionOrNull()?.let { failure.addSuppressed(it) }
+            throw failure
+        }
+        assertTrue("All retained slots must still reach prepared validation", preparedChecks >= checksBefore + 4)
+        assertEquals(before, hashes(root))
+        assertArrayEquals(settingsBefore, File(root, "settings/settings.json").readBytes())
+        assertNull(settings.changes.value)
+        assertTrue(published(root).isEmpty())
+        val oldConfig = File(runtime, "resources/bundles/${first.id}/${firstRow.getString("previousBundle")}/config.yaml")
+        oldConfig.appendText("\n# damaged retained generation\n")
+        val damaged = hashes(root)
+        val failure = runCatching { exporter.export() }.exceptionOrNull()
+        assertTrue(failure is MeowLegacyExportException)
+        assertEquals("profiles/index.json", (failure as MeowLegacyExportException).legacyField)
+        assertEquals(damaged, hashes(root))
+        assertTrue(published(root).isEmpty())
+    }
 }
 
 class ResourceReaderFenceRegressionTest {
