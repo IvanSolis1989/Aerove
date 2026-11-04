@@ -11,6 +11,11 @@ import dev.aerove.lite.data.CoreApiClient
 import dev.aerove.lite.data.ControlEndpoint
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.sync.Mutex
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Rule
@@ -20,6 +25,209 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
 class MeowSetupProtocolTest {
+    @Test fun preinitClientStateIsValidatedCopiedAndLatestIsAppliedOnlyWhenAttachmentExists() = runBlocking<Unit> {
+        val home = home(); val effects = Effects()
+        val pending = MeowServiceSharedState(Mutex()) { true }
+        var current: MeowSetupProtocol? = null
+        val first = shared().apply { this["currentProfileName"] = "first" }
+        val latest = shared().apply { this["currentProfileName"] = "latest"; this["onlyStatisticsProxy"] = false }
+        pending.syncState(pending.nextRevision(), first) { current?.syncState(it) }
+        pending.syncState(pending.nextRevision(), latest) { current?.syncState(it) }
+        latest["currentProfileName"] = "mutated after reply"
+        expect("bad_argument", "$.unexpected") {
+            pending.syncState(pending.nextRevision(), shared().apply { this["unexpected"] = true }) { error("Invalid state was applied") }
+        }
+        assertNull(effects.projection)
+        assertTrue(home.listFiles()!!.isEmpty())
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, RuntimeHandoffStore(home), config, effects,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            pending.withLatest { api.syncState(checkNotNull(it)) }
+            current = api
+            assertEquals("latest", JSONObject(effects.projection!!.sharedStateJson).getString("currentProfileName"))
+            assertFalse(effects.projection!!.settings.backgroundPolicy.onlyStatisticsProxy)
+            val bad = shared(true).apply {
+                this["vpnOptions"] = (this["vpnOptions"] as Map<*, *>).entries.associate { it.key as String to it.value } + ("stack" to "system")
+            }
+            expect("implementation_blocked", "$.vpnOptions.stack") {
+                pending.syncState(pending.nextRevision(), bad) { current?.syncState(it) }
+            }
+            pending.withLatest { assertEquals("latest", it!!.copyRow().getString("currentProfileName")) }
+            assertEquals("latest", JSONObject(effects.projection!!.sharedStateJson).getString("currentProfileName"))
+        }
+    }
+
+    @Test fun initAndSharedUpdatesUseOneGateAndLateOlderRequestsCannotOverwriteLatest() = runBlocking<Unit> {
+        val home = home(); val effects = Effects(); val pending = MeowServiceSharedState(Mutex()) { true }
+        pending.syncState(pending.nextRevision(), shared().apply { this["currentProfileName"] = "initial" }) { }
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, RuntimeHandoffStore(home), config, effects,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+            val initializing = async(start = CoroutineStart.UNDISPATCHED) {
+                pending.withLatest { state -> entered.complete(Unit); release.await(); api.syncState(checkNotNull(state)) }
+            }
+            entered.await()
+            val newer = async(start = CoroutineStart.UNDISPATCHED) {
+                pending.syncState(pending.nextRevision(), shared().apply { this["currentProfileName"] = "during init" }) { api.syncState(it) }
+            }
+            assertFalse(newer.isCompleted)
+            release.complete(Unit); initializing.await(); newer.await()
+            assertEquals("during init", JSONObject(effects.projection!!.sharedStateJson).getString("currentProfileName"))
+            val olderRevision = pending.nextRevision(); val newestRevision = pending.nextRevision()
+            pending.syncState(newestRevision, shared().apply { this["currentProfileName"] = "newest" }) { api.syncState(it) }
+            pending.syncState(olderRevision, shared().apply { this["currentProfileName"] = "delayed old" }) { error("Old request overwrote latest") }
+            assertEquals("newest", JSONObject(effects.projection!!.sharedStateJson).getString("currentProfileName"))
+            pending.withLatest { assertEquals("newest", it!!.copyRow().getString("currentProfileName")) }
+        }
+    }
+    @Test fun cancelledOrFailedApplyKeepsLastAcceptedStateAndDetachClearsEngineOwnership() = runBlocking<Unit> {
+        val home = home(); val effects = Effects(); var attached = true
+        val pending = MeowServiceSharedState(Mutex()) { attached }
+        pending.syncState(pending.nextRevision(), shared().apply { this["currentProfileName"] = "accepted" }) { }
+        config(home).use { config ->
+            val store = RuntimeHandoffStore(home)
+            var api = MeowSetupProtocol(home, store, config, effects,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            val initEntered = CompletableDeferred<Unit>(); val initRelease = CompletableDeferred<Unit>()
+            effects.onApply = { initEntered.complete(Unit); initRelease.await() }
+            val cancelledInit = async(start = CoroutineStart.UNDISPATCHED) {
+                pending.withLatest { api.syncState(checkNotNull(it)) }
+            }
+            initEntered.await(); cancelledInit.cancelAndJoin()
+            assertNull(effects.projection)
+            effects.onApply = {}
+            pending.withLatest { api.syncState(checkNotNull(it)) }
+            val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+            effects.onApply = { entered.complete(Unit); release.await() }
+            val cancelled = async(start = CoroutineStart.UNDISPATCHED) {
+                pending.syncState(pending.nextRevision(), shared().apply { this["currentProfileName"] = "cancelled" }) { api.syncState(it) }
+            }
+            entered.await(); cancelled.cancelAndJoin()
+            effects.onApply = { throw MeowProtocolFailure("superseded", "Runtime changed before application") }
+            try {
+                pending.syncState(pending.nextRevision(), shared().apply { this["currentProfileName"] = "failed" }) { api.syncState(it) }
+                fail("Failed runtime application was accepted")
+            } catch (failure: MeowProtocolFailure) { assertEquals("superseded", failure.code) }
+            assertEquals("accepted", JSONObject(effects.projection!!.sharedStateJson).getString("currentProfileName"))
+            effects.onApply = {}
+            val restarted = Effects()
+            api = MeowSetupProtocol(home, store, config, restarted,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            pending.withLatest { api.syncState(checkNotNull(it)) }
+            assertEquals("accepted", JSONObject(restarted.projection!!.sharedStateJson).getString("currentProfileName"))
+            val oldEngineRevision = pending.nextRevision()
+            attached = false; pending.clear()
+            try { pending.withLatest { fail("Detached engine replayed state") }; fail("Detached engine was admitted") }
+            catch (failure: MeowProtocolFailure) { assertEquals("detached", failure.code) }
+            attached = true
+            pending.withLatest { assertNull(it) }
+            pending.syncState(oldEngineRevision, shared()) { error("Old engine update crossed detach") }
+            pending.withLatest { assertNull(it) }
+        }
+    }
+    @Test fun nullableOrOmittedOptionsRetainAcceptedStateAcrossPreinitAndReinit() = runBlocking<Unit> {
+        val home = home(); val pending = MeowServiceSharedState(Mutex()) { true }
+        val options = ((shared(true)["vpnOptions"] as Map<*, *>).entries.associate { it.key as String to it.value } + ("mtu" to 1280)).toMutableMap()
+        val first = shared(true).apply { this["vpnOptions"] = options; this["setupParams"] = setup() }
+        pending.syncState(pending.nextRevision(), first) { }
+        options["mtu"] = 1500
+        pending.syncState(pending.nextRevision(), shared().apply {
+            this["vpnOptions"] = null; this["setupParams"] = null; this["currentProfileName"] = "notification only"
+        }) { }
+        config(home).use { config ->
+            repeat(2) { generation ->
+                val effects = Effects()
+                val api = MeowSetupProtocol(home, RuntimeHandoffStore(home), config, effects,
+                    verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+                pending.withLatest { api.syncState(checkNotNull(it)) }
+                val projection = effects.projection!!
+                assertEquals(1280, projection.settings.network.mtu)
+                assertTrue(projection.settings.network.vpnEnabled)
+                assertEquals("notification only", JSONObject(projection.sharedStateJson).getString("currentProfileName"))
+                assertEquals("local", JSONObject(projection.setupParamsJson!!).getJSONObject("selected-map").getString("Pick"))
+                if (generation == 0) pending.syncState(pending.nextRevision(), shared().apply {
+                    remove("vpnOptions"); remove("setupParams"); this["currentProfileName"] = "notification only"
+                }) { api.syncState(it) }
+            }
+        }
+    }
+
+    @Test fun appliedTunSourceReconcilesRawMtuBeforeFinalValidationThroughSharedOwner() = runBlocking<Unit> {
+        val home = home(); val effects = Effects(); val store = RuntimeHandoffStore(home)
+        File(home, "config.yaml").writeText("mode: rule\ntun: {enable: true, stack: lwip, mtu: 1400}\nrules: ['MATCH,DIRECT']\n")
+        val compatible = mutableListOf<Int>()
+        val checkedEffects = object : MeowSetupEffects by effects {
+            override suspend fun requireBuilderCompatible(settings: dev.aerove.lite.LiteSettings, vpnOptionsJson: String) {
+                compatible.add(settings.network.mtu)
+                assertEquals(1400, settings.network.mtu)
+                assertEquals(1400, JSONObject(vpnOptionsJson).getInt("mtu"))
+            }
+        }
+        fun state(mtu: Int) = shared(true).apply {
+            this["vpnOptions"] = (this["vpnOptions"] as Map<*, *>).entries.associate { it.key as String to it.value } + ("mtu" to mtu)
+        }
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, checkedEffects,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.syncState(state(1400)); api.setupConfig(setup())
+            val staged = store.readCurrent()!!
+            assertEquals(1400, (ConfigYaml.parse(staged.handoff.compiledYaml)["tun"] as Map<*, *>)["mtu"])
+            store.commitApplied(staged.revision, staged.intentEpoch, RuntimeAppliedProof(1, 2, "4"))
+            effects.runtime = MeowSetupRuntime(staged.revision, staged.intentEpoch, staged.handoff.compiledSha256, "4", 1, 2)
+            compatible.clear()
+            api.syncState(state(1000))
+            val pending = MeowServiceSharedState(Mutex()) { true }
+            pending.syncState(pending.nextRevision(), state(1000)) { api.syncState(it) }
+            assertEquals(listOf(1400, 1400), compatible)
+            assertEquals(1400, effects.projection!!.settings.network.mtu)
+        }
+    }
+    @Test fun boundedWireRequestsMayRetainLargerEffectiveStateAcrossPreinitAndReinit() = runBlocking<Unit> {
+        val selected = "a".repeat(80_000)
+        val domains = List(160) { "a".repeat(500) }
+        val first = shared().apply {
+            this["vpnOptions"] = null
+            this["setupParams"] = mapOf("selected-map" to mapOf("Pick" to selected), "test-url" to "", "skip-cert-verify" to false)
+        }
+        val second = shared(true).apply {
+            this["setupParams"] = null
+            this["vpnOptions"] = (this["vpnOptions"] as Map<*, *>).entries.associate { it.key as String to it.value } +
+                mapOf("systemProxy" to true, "bypassDomain" to domains)
+        }
+        assertTrue(JSONObject(first).toString().toByteArray(Charsets.UTF_8).size < 128 * 1024)
+        assertTrue(JSONObject(second).toString().toByteArray(Charsets.UTF_8).size < 128 * 1024)
+        val baselineEffects = Effects(); val baselineHome = home()
+        config(baselineHome).use { config ->
+            val api = MeowSetupProtocol(baselineHome, RuntimeHandoffStore(baselineHome), config, baselineEffects,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.syncState(first); api.syncState(second)
+            assertTrue((baselineEffects.projection!!.sharedStateJson + baselineEffects.projection!!.setupParamsJson).toByteArray(Charsets.UTF_8).size > 128 * 1024)
+        }
+        val pending = MeowServiceSharedState(Mutex()) { true }
+        pending.syncState(pending.nextRevision(), first) { }
+        pending.syncState(pending.nextRevision(), second) { }
+        val tooLarge = shared().apply { this["currentProfileName"] = "x".repeat(128 * 1024) }
+        expect("bad_argument", "$") {
+            pending.syncState(pending.nextRevision(), tooLarge) { error("Oversized raw request was applied") }
+        }
+        val replayHome = home()
+        config(replayHome).use { config ->
+            repeat(2) {
+                val effects = Effects()
+                val api = MeowSetupProtocol(replayHome, RuntimeHandoffStore(replayHome), config, effects,
+                    verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+                expect("bad_argument", "$") { api.syncState(tooLarge) }
+                pending.withLatest { api.syncState(checkNotNull(it)) }
+                val actual = effects.projection!!
+                assertEquals(baselineEffects.projection!!.settings, actual.settings)
+                assertEquals(baselineEffects.projection!!.setupParamsJson, actual.setupParamsJson)
+                assertEquals(selected, JSONObject(actual.setupParamsJson!!).getJSONObject("selected-map").getString("Pick"))
+                assertEquals(domains, actual.settings.network.bypassDomains)
+                assertTrue(actual.sharedStateJson.toByteArray(Charsets.UTF_8).size > 128 * 1024)
+            }
+        }
+    }
     @Test fun coldSetupDoesNotTreatHistoricalRequestedFlagAsLiveStartAuthority() = runBlocking<Unit> {
         val home = home(); val input = File(home, "config.yaml").apply { writeText("rules: ['MATCH,DIRECT']\n") }
         val store = RuntimeHandoffStore(home)

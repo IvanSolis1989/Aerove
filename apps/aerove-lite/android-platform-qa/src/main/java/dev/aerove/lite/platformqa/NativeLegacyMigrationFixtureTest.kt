@@ -1,5 +1,6 @@
 package dev.aerove.lite.platformqa
 
+import dev.aerove.lite.flutter.withNativeLiteReadOnlyDatabase
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -127,6 +128,77 @@ class NativeLegacyMigrationFixtureTest {
 
     @Test fun receiptPathFailureRecoversThroughProductionLauncherWithoutChangingSource() = runScenario(true)
 
+    private fun verifyReadOnlyDatabaseConsistency() {
+        val directory = File(target.cacheDir,
+            "native-readonly-" + java.util.UUID.randomUUID()).apply { check(mkdir()) }
+        val database = File(directory, "fixture.sqlite")
+        var primaryFailure: Throwable? = null
+        try {
+            SQLiteDatabase.openOrCreateDatabase(database, null).use { writer ->
+                check(writer.enableWriteAheadLogging())
+                writer.execSQL("CREATE TABLE fixture (id INTEGER PRIMARY KEY, value INTEGER NOT NULL)")
+                writer.execSQL("INSERT INTO fixture (id, value) VALUES (1, 17)")
+                val wal = File(database.path + "-wal")
+                check(wal.isFile)
+                val databaseBefore = database.readBytes()
+                val walBefore = wal.readBytes()
+                val stable = withNativeLiteReadOnlyDatabase(database, "migration_target_database_changed") { reader ->
+                    check(reader.isReadOnly)
+                    reader.rawQuery("SELECT value FROM fixture WHERE id = 1", null).use { cursor ->
+                        check(cursor.moveToFirst())
+                        cursor.getInt(0).also { check(!cursor.moveToNext()) }
+                    }
+                }
+                check(stable == 17)
+                check(databaseBefore.contentEquals(database.readBytes()))
+                check(walBefore.contentEquals(wal.readBytes()))
+
+                var writerCommitted = false
+                var returned = false
+                val failure = runCatching {
+                    withNativeLiteReadOnlyDatabase(database, "shared_source_database_changed") { reader ->
+                        check(reader.isReadOnly)
+                        reader.rawQuery("SELECT value FROM fixture WHERE id = 1", null).use { cursor ->
+                            check(cursor.moveToFirst())
+                            check(cursor.getInt(0) == 17)
+                        }
+                        writer.beginTransaction()
+                        try {
+                            writer.execSQL("UPDATE fixture SET value = 29 WHERE id = 1")
+                            writer.setTransactionSuccessful()
+                        } finally { writer.endTransaction() }
+                        writerCommitted = true
+                        reader.rawQuery("SELECT value FROM fixture WHERE id = 1", null).use { cursor ->
+                            check(cursor.moveToFirst())
+                            check(cursor.getInt(0) == 29)
+                        }
+                    }
+                    returned = true
+                }.exceptionOrNull()
+                check(writerCommitted)
+                check(!returned)
+                check(failure is IllegalStateException)
+                check(failure.message == "shared_source_database_changed")
+                writer.rawQuery("SELECT value FROM fixture WHERE id = 1", null).use { cursor ->
+                    check(cursor.moveToFirst())
+                    check(cursor.getInt(0) == 29)
+                }
+            }
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
+        } finally {
+            try {
+                check(SQLiteDatabase.deleteDatabase(database))
+                check(directory.delete())
+            } catch (cleanup: Throwable) {
+                val primary = primaryFailure
+                if (primary == null) throw cleanup
+                primary.addSuppressed(cleanup)
+            }
+        }
+    }
+
     private fun runScenario(recoverReceiptPath: Boolean) {
         val token = argument("qaToken", "[a-zA-Z0-9_-]{1,80}")
         val output = File(requireNotNull(target.getExternalFilesDir(null)).canonicalFile, "native-legacy-fixture-qa/$token")
@@ -162,6 +234,10 @@ class NativeLegacyMigrationFixtureTest {
             check(app.getLong("versionCode") == argument("productionVersionCode", "[1-9][0-9]*").toLong())
             check(app.getString("versionName") == argument("productionVersionName", "[0-9A-Za-z.+_-]{1,80}"))
             check(app.getInt("uid") == Process.myUid())
+            if (!recoverReceiptPath) {
+                verifyReadOnlyDatabaseConsistency()
+                evidence.put("readonlyDatabasePreflight", true)
+            }
             val manifestBytes = assetBytes("manifest.json")
             val fixtureDigest = argument("fixtureManifestSha256", "[0-9a-f]{64}")
             check(digest(manifestBytes) == fixtureDigest)

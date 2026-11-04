@@ -1651,7 +1651,8 @@ jobs:
         sudo udevadm trigger --name-match=kvm
         echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
         avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
+        sed -i '/^[[:space:]]*disk\.dataPartition\.size[[:space:]]*=/d' "$avd_directory/test.avd/config.ini"
+        printf 'hw.cpu.ncore=2\ndisk.dataPartition.size=4G\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/flutter-ui/avd-config.ini"
         emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
         emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
@@ -1791,7 +1792,8 @@ jobs:
         sudo udevadm trigger --name-match=kvm
         echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
         avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
+        sed -i '/^[[:space:]]*disk\.dataPartition\.size[[:space:]]*=/d' "$avd_directory/test.avd/config.ini"
+        printf 'hw.cpu.ncore=2\ndisk.dataPartition.size=4G\n' >> "$avd_directory/test.avd/config.ini"
         cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
         emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
         emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'

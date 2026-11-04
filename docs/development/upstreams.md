@@ -44,6 +44,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 局域网启用反馈另核对同固定提交的 [`intranet_ip.dart`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/lib/views/dashboard/widgets/intranet_ip.dart)，复用本仓库已保留的地址与混合端口格式、剪贴板及通知入口；本次仅增加显式开启的提交回执与消费接线，不引入新的复制或网络依赖。
 
+Lite 初始化前状态同步另只读核对同一 `8d4f9744948751f1273fe871e1d05276fac09b0e` 的 [`ServicePlugin.syncState`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/android/app/src/main/kotlin/com/follow/clash/plugins/ServicePlugin.kt) 与 [`ServiceState`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/android/app/src/main/kotlin/com/follow/clash/ServiceState.kt)。复用本项目标准版已保留的离线同步合同，在 Lite 原 owner 与严格解码器中适配；未复制上游整段实现或引入依赖，保留既有版权和许可。
+
 #### [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)
 
 **固定版本 / revision：** `v1.19.33` / `3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8`
@@ -1408,6 +1410,8 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 同一 API33 固定来源的 [`LoadedApk.makePaths`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/app/LoadedApk.java#L470-L475) 另用于核对 instrumentation APK 在目标 APK 前的类加载路径顺序，解释原独立 driver 的同名协程类遮蔽；验收复用已封存且经 App R8 mapping 关联的 same-target 平台 runner，不复制或修改系统实现。
 
 **许可证与署名：** Apache-2.0，保留上游文件的 AOSP 版权与许可头；仅作路径和类加载协议参考。
+
+同一 `android-13.0.0_r1` 来源另只读核对 [`SQLiteSession.executeSpecial`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteSession.java#L821-L831) 将 BEGIN 改为独占事务；[`SQLiteDatabaseConfiguration`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteDatabaseConfiguration.java) 与 [`SQLiteConnectionPool`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteConnectionPool.java) 的只读单连接配置，以及 [`SQLiteDatabase.OpenParams`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteDatabase.java) 的显式无限 idle timeout。结合 [SQLite 官方 data_version 文档](https://www.sqlite.org/pragma.html#pragma_data_version)，迁移和业务来源核验复用系统只读连接并比较同一连接的读取前后版本，拒绝并发提交造成的混合读；不修改系统设置或使用隐藏 API。仅参考平台代码与公开接口，未复制实现或新增依赖；保留 AOSP 2006/2011 版权与 Apache-2.0 许可。参考 tag 不作为实际运行镜像的源码身份。
 
 #### [AOSP libcore](https://android.googlesource.com/platform/libcore/)
 

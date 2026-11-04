@@ -27,6 +27,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
@@ -111,6 +112,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
     private lateinit var scope: CoroutineScope
     private val main = Handler(Looper.getMainLooper())
     private val attachmentGate = Mutex()
+    private val sharedState = MeowServiceSharedState(attachmentGate) { attached }
     private val runtimeIntentGate = Mutex()
     private val listenerCommandGate = Mutex()
     private val replies = ConcurrentHashMap.newKeySet<Reply>()
@@ -196,16 +198,19 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
             "shutdown" -> newIntent()
             else -> intent.get()
         }
+        val sharedRevision = if (call.method == "syncState") sharedState.nextRevision() else 0L
         run(reply) {
             when (call.method) {
-                "init" -> attachmentGate.withLock {
+                "init" -> sharedState.withLatest { pending ->
                     retiring?.let {
                         if (!it.closeAndJoin()) throw MeowProtocolFailure("termination_unconfirmed", "Previous Meow attachment has not joined")
                         retiring = null
                     }
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (!attached) throw MeowProtocolFailure("detached", "Meow engine is detached")
                     if (current == null) {
                         MeowNativeCore.readCapabilities()
-                        current = MeowEngineAttachment(graph.filesDir, graph.runtimeHandoffs, graph.vpn, scope,
+                        val candidate = MeowEngineAttachment(graph.filesDir, graph.runtimeHandoffs, graph.vpn, scope,
                             JniResourceFetch.preparedValidator(graph), { MeowNativeCore.readCapabilities(); Unit }, ::events,
                             { failure -> android.util.Log.w("MeowFlutter", "UI telemetry failed for the owned runtime", failure) },
                             object : MeowFlutterRuntime {
@@ -233,6 +238,19 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                                 checkNotNull(selected)
                             }, definitionSourceVerifier = { proof -> verifyNativeLiteBusinessSourceReceipt(graph, proof).definitionSha256 },
                             geoSourceVerifier = { proof -> verifyNativeLiteBusinessSourceReceipt(graph, proof).let { Triple(it.config,it.selectedMap,it.definitionSha256) } })
+                        try {
+                            pending?.let { candidate.setup.syncState(it) }
+                            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                            if (!attached) throw MeowProtocolFailure("detached", "Meow engine is detached")
+                            current = candidate
+                        } catch (failure: Throwable) {
+                            retiring = candidate
+                            withContext(NonCancellable) {
+                                try { if (candidate.closeAndJoin()) retiring = null }
+                                catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+                            }
+                            throw failure
+                        }
                     }
                     ""
                 }
@@ -240,7 +258,9 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                     cancelPermission(revision)
                     detachAttachment(revision)
                 }
-                "syncState" -> requireAttachment().setup.syncState(meowObject(call.arguments))
+                "syncState" -> sharedState.syncState(sharedRevision, meowObject(call.arguments)) { state ->
+                    current?.setup?.syncState(state)
+                }
                 "getRunTime" -> requireAttachment().runTime()
                 "setUiTelemetryActive" -> {
                     requireAttachment().setUiActive(call.arguments as? Boolean
@@ -494,9 +514,12 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try { cancelPermission(); detachAttachment() }
             finally {
-                scope.cancel()
-                replies.toList().forEach { it.error("detached", "Meow engine is detached") }
-                coroutineContext.cancel()
+                try { sharedState.clear() }
+                finally {
+                    scope.cancel()
+                    replies.toList().forEach { it.error("detached", "Meow engine is detached") }
+                    coroutineContext.cancel()
+                }
             }
         }
     }

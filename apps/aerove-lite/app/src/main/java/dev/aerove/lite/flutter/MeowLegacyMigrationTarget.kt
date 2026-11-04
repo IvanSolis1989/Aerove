@@ -185,57 +185,54 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
     val root = context.filesDir.canonicalFile
     val database = File(root, "database.sqlite")
     check(database.isFile && database.canonicalFile == database.absoluteFile && !Files.isSymbolicLink(database.toPath())) { "shared_source_database_missing" }
-    SQLiteDatabase.openDatabase(database.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
-        db.execSQL("BEGIN DEFERRED TRANSACTION")
-        try {
-            check(db.version == 22 && db.version == proof.getInt("databaseSchema")) { "shared_source_schema_changed" }
-            val all = nativeLiteBusinessTables.associateWith { table ->
-                db.rawQuery("SELECT * FROM \"$table\" ORDER BY rowid", null).use { cursor ->
-                    buildList { while (cursor.moveToNext()) add(cursor.columnNames.mapIndexed { i, name -> name to when (cursor.getType(i)) {
-                        Cursor.FIELD_TYPE_NULL -> null; Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(i); Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(i); Cursor.FIELD_TYPE_STRING -> cursor.getString(i); else -> error("shared_source_value_invalid")
-                    } }.toMap()) }
-                }
+    withNativeLiteReadOnlyDatabase(database, "shared_source_database_changed") { db ->
+        check(db.version == 22 && db.version == proof.getInt("databaseSchema")) { "shared_source_schema_changed" }
+        val all = nativeLiteBusinessTables.associateWith { table ->
+            db.rawQuery("SELECT * FROM \"$table\" ORDER BY rowid", null).use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.columnNames.mapIndexed { i, name -> name to when (cursor.getType(i)) {
+                    Cursor.FIELD_TYPE_NULL -> null; Cursor.FIELD_TYPE_INTEGER -> cursor.getLong(i); Cursor.FIELD_TYPE_FLOAT -> cursor.getDouble(i); Cursor.FIELD_TYPE_STRING -> cursor.getString(i); else -> error("shared_source_value_invalid")
+                } }.toMap()) }
             }
-            val rows = nativeLiteSelectedRows(all, config.getLong("currentProfileId"))
-            val tables = proof.getJSONObject("tables")
-            check(tables.keys().asSequence().toSet() == rows.keys) { "shared_source_tables_invalid" }
-            rows.forEach { (name, values) -> val expected = tables.getJSONObject(name); check(expected.getInt("rows") == values.size && expected.getString("sha256") == nativeLiteJsonHash(values)) { "shared_source_table_changed:$name" } }
-            val selected = rows.getValue("profiles").single { (it["id"] as Number).toLong() == config.getLong("currentProfileId") }
-            val overrides = nativeLiteObject(selected["overrides"])
-            val filters = nativeLiteObject(overrides["filterBindings"]).values.flatMap { list(it).map { (it as Number).toLong() } }.toSet()
-            val map = nativeLiteMap(config)
-            val runtime = nativeLiteRuntimeConfig(map, filters)
-            check(nativeLiteJsonHash(runtime) == proof.getString("configSha256") && nativeLiteJsonHash(nativeLiteSetupConfig(runtime)) == proof.getString("setupSha256") && nativeLiteJsonHash(nativeLiteLiveConfig(map)) == proof.getString("liveSha256")) { "shared_source_config_changed" }
-            val paths = mutableSetOf<String>()
-            rows.getValue("profiles").filter { it["type"] != "custom" }.forEach { paths += "profiles/${it["id"]}.yaml" }
-            rows.getValue("scripts").forEach { paths += "scripts/${it["id"]}.js" }
-            rows.getValue("clash_providers").forEach { val hash = MessageDigest.getInstance("MD5").digest("${it["id"]}@${it["url"]}".toByteArray()).joinToString("") { "%02x".format(it) }; paths += "providers/rules/$hash" }
-            fun resources(value: Any?) {
-                if (value is Map<*, *>) value.forEach { (key, child) ->
-                    if (key == "nativeResourceInputs") {
-                        nativeLiteObject(child).values.forEach { input -> listOf("file", "receiptFile").forEach { key -> (nativeLiteObject(input)[key] as? String)?.let(paths::add) } }
-                    } else if (key in setOf("path", "tls-cert", "tls-key", "ca", "mmdb-path", "asn-path", "geosite-path") && child is String && child.isNotEmpty()) {
-                        paths += if (File(child).isAbsolute) root.toPath().relativize(File(child).toPath()).toString().replace('\\', '/') else child
-                    } else resources(child)
-                }
-                if (value is List<*>) value.forEach(::resources)
+        }
+        val rows = nativeLiteSelectedRows(all, config.getLong("currentProfileId"))
+        val tables = proof.getJSONObject("tables")
+        check(tables.keys().asSequence().toSet() == rows.keys) { "shared_source_tables_invalid" }
+        rows.forEach { (name, values) -> val expected = tables.getJSONObject(name); check(expected.getInt("rows") == values.size && expected.getString("sha256") == nativeLiteJsonHash(values)) { "shared_source_table_changed:$name" } }
+        val selected = rows.getValue("profiles").single { (it["id"] as Number).toLong() == config.getLong("currentProfileId") }
+        val overrides = nativeLiteObject(selected["overrides"])
+        val filters = nativeLiteObject(overrides["filterBindings"]).values.flatMap { list(it).map { (it as Number).toLong() } }.toSet()
+        val map = nativeLiteMap(config)
+        val runtime = nativeLiteRuntimeConfig(map, filters)
+        check(nativeLiteJsonHash(runtime) == proof.getString("configSha256") && nativeLiteJsonHash(nativeLiteSetupConfig(runtime)) == proof.getString("setupSha256") && nativeLiteJsonHash(nativeLiteLiveConfig(map)) == proof.getString("liveSha256")) { "shared_source_config_changed" }
+        val paths = mutableSetOf<String>()
+        rows.getValue("profiles").filter { it["type"] != "custom" }.forEach { paths += "profiles/${it["id"]}.yaml" }
+        rows.getValue("scripts").forEach { paths += "scripts/${it["id"]}.js" }
+        rows.getValue("clash_providers").forEach { val hash = MessageDigest.getInstance("MD5").digest("${it["id"]}@${it["url"]}".toByteArray()).joinToString("") { "%02x".format(it) }; paths += "providers/rules/$hash" }
+        fun resources(value: Any?) {
+            if (value is Map<*, *>) value.forEach { (key, child) ->
+                if (key == "nativeResourceInputs") {
+                    nativeLiteObject(child).values.forEach { input -> listOf("file", "receiptFile").forEach { key -> (nativeLiteObject(input)[key] as? String)?.let(paths::add) } }
+                } else if (key in setOf("path", "tls-cert", "tls-key", "ca", "mmdb-path", "asn-path", "geosite-path") && child is String && child.isNotEmpty()) {
+                    paths += if (File(child).isAbsolute) root.toPath().relativize(File(child).toPath()).toString().replace('\\', '/') else child
+                } else resources(child)
             }
-            rows.getValue("profiles").forEach { resources(nativeLiteObject(it["overrides"])) }; resources(map["patchClashConfig"])
-            rows.getValue("custom_proxies").forEach { resources(nativeLiteObject(it["definition"])) }
-            val files = proof.getJSONArray("files")
-            check((0 until files.length()).map { files.getJSONObject(it).getString("path") }.toSet() == paths && files.length() == paths.size) { "shared_source_file_set_changed" }
-            verifyNativeLiteFiles(root, files)
-            check(nativeLiteJsonHash(nativeLiteCurrentConfig(context).let(::nativeLiteMap).let { nativeLiteRuntimeConfig(it, filters) }) == proof.getString("configSha256")) { "shared_source_config_changed" }
-            selectedMap = nativeLiteObject(selected["selected_map"]).mapValues { (_, value) ->
-                require(value is String) { "shared_source_selected_map_invalid" }
-                value
-            }
-            val definitions=rows.mapValues { (table,values) ->
-                values.map { row -> if(table == "profiles") row.filterKeys { it != "selected_map" } else row }
-            }
-            definitionSha256=nativeLiteJsonHash(mapOf("schema" to proof.getInt("schema"),
-                "setupSha256" to proof.getString("setupSha256"),"tables" to definitions,"files" to nativeLiteList(files)))
-        } finally { db.execSQL("ROLLBACK") }
+            if (value is List<*>) value.forEach(::resources)
+        }
+        rows.getValue("profiles").forEach { resources(nativeLiteObject(it["overrides"])) }; resources(map["patchClashConfig"])
+        rows.getValue("custom_proxies").forEach { resources(nativeLiteObject(it["definition"])) }
+        val files = proof.getJSONArray("files")
+        check((0 until files.length()).map { files.getJSONObject(it).getString("path") }.toSet() == paths && files.length() == paths.size) { "shared_source_file_set_changed" }
+        verifyNativeLiteFiles(root, files)
+        check(nativeLiteJsonHash(nativeLiteCurrentConfig(context).let(::nativeLiteMap).let { nativeLiteRuntimeConfig(it, filters) }) == proof.getString("configSha256")) { "shared_source_config_changed" }
+        selectedMap = nativeLiteObject(selected["selected_map"]).mapValues { (_, value) ->
+            require(value is String) { "shared_source_selected_map_invalid" }
+            value
+        }
+        val definitions=rows.mapValues { (table,values) ->
+            values.map { row -> if(table == "profiles") row.filterKeys { it != "selected_map" } else row }
+        }
+        definitionSha256=nativeLiteJsonHash(mapOf("schema" to proof.getInt("schema"),
+            "setupSha256" to proof.getString("setupSha256"),"tables" to definitions,"files" to nativeLiteList(files)))
     }
     return NativeLiteVerifiedSource(config,checkNotNull(selectedMap),checkNotNull(definitionSha256))
 }
@@ -251,37 +248,53 @@ private fun verifyNativeLiteFiles(root: File, files: org.json.JSONArray) {
     }
 }
 
+/** These two verifiers own a single-connection read-only handle for the whole read. */
+internal fun <T> withNativeLiteReadOnlyDatabase(database: File, changed: String, read: (SQLiteDatabase) -> T): T =
+    SQLiteDatabase.openDatabase(database, SQLiteDatabase.OpenParams.Builder()
+        .setOpenFlags(SQLiteDatabase.OPEN_READONLY)
+        // data_version must keep the same connection, including with system debug idle closure.
+        .setIdleConnectionTimeout(Long.MAX_VALUE)
+        .build()).use { db ->
+        fun dataVersion(): Long = db.rawQuery("PRAGMA data_version", null).use { cursor ->
+            check(cursor.columnCount == 1 && cursor.moveToFirst() && cursor.getType(0) == Cursor.FIELD_TYPE_INTEGER) { changed }
+            val version = cursor.getLong(0)
+            check(!cursor.moveToNext()) { changed }
+            version
+        }
+        val before = dataVersion()
+        val result = read(db)
+        check(dataVersion() == before) { changed }
+        result
+    }
+
 private fun verifyNativeLiteTables(root: File, tables: JSONObject, schema: Int, allowed: Set<String>) {
     val database = File(root, "database.sqlite")
     require(database.isFile && database.canonicalFile == database.absoluteFile && !Files.isSymbolicLink(database.toPath())) { "migration_target_database_missing" }
-    SQLiteDatabase.openDatabase(database.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
-        db.execSQL("BEGIN DEFERRED TRANSACTION")
-        try {
-            check(db.version == 22 && schema == db.version) { "migration_target_database_version" }
-            check(tables.keys().asSequence().toSet() == allowed) { "migration_target_table_set" }
-            for (table in allowed) {
-                val columns = mutableListOf<String>()
-                db.rawQuery("PRAGMA table_info(\"$table\")", null).use { cursor -> while (cursor.moveToNext()) columns += cursor.getString(cursor.getColumnIndexOrThrow("name")) }
-                val hash = MessageDigest.getInstance("SHA-256")
-                fun text(value: String) { hash.update(value.toByteArray(Charsets.UTF_8)) }
-                fun string(value: String) = "t${value.toByteArray(Charsets.UTF_8).size}:$value;"
-                columns.forEach { text(string(it)) }
-                var rows = 0
-                db.rawQuery("SELECT * FROM \"$table\" ORDER BY rowid", null).use { cursor ->
-                    while (cursor.moveToNext()) {
-                        rows++; text("r;")
-                        for (i in columns.indices) text(when (cursor.getType(i)) {
-                            Cursor.FIELD_TYPE_NULL -> "n;"
-                            Cursor.FIELD_TYPE_INTEGER -> "i${cursor.getLong(i)};"
-                            Cursor.FIELD_TYPE_FLOAT -> "d${java.lang.Double.doubleToRawLongBits(cursor.getDouble(i)).toULong().toString(16).padStart(16, '0')};"
-                            Cursor.FIELD_TYPE_BLOB -> "b${Base64.getEncoder().encodeToString(cursor.getBlob(i))};"
-                            else -> string(cursor.getString(i))
-                        })
-                    }
+    withNativeLiteReadOnlyDatabase(database, "migration_target_database_changed") { db ->
+        check(db.version == 22 && schema == db.version) { "migration_target_database_version" }
+        check(tables.keys().asSequence().toSet() == allowed) { "migration_target_table_set" }
+        for (table in allowed) {
+            val columns = mutableListOf<String>()
+            db.rawQuery("PRAGMA table_info(\"$table\")", null).use { cursor -> while (cursor.moveToNext()) columns += cursor.getString(cursor.getColumnIndexOrThrow("name")) }
+            val hash = MessageDigest.getInstance("SHA-256")
+            fun text(value: String) { hash.update(value.toByteArray(Charsets.UTF_8)) }
+            fun string(value: String) = "t${value.toByteArray(Charsets.UTF_8).size}:$value;"
+            columns.forEach { text(string(it)) }
+            var rows = 0
+            db.rawQuery("SELECT * FROM \"$table\" ORDER BY rowid", null).use { cursor ->
+                while (cursor.moveToNext()) {
+                    rows++; text("r;")
+                    for (i in columns.indices) text(when (cursor.getType(i)) {
+                        Cursor.FIELD_TYPE_NULL -> "n;"
+                        Cursor.FIELD_TYPE_INTEGER -> "i${cursor.getLong(i)};"
+                        Cursor.FIELD_TYPE_FLOAT -> "d${java.lang.Double.doubleToRawLongBits(cursor.getDouble(i)).toULong().toString(16).padStart(16, '0')};"
+                        Cursor.FIELD_TYPE_BLOB -> "b${Base64.getEncoder().encodeToString(cursor.getBlob(i))};"
+                        else -> string(cursor.getString(i))
+                    })
                 }
-                val row = tables.getJSONObject(table)
-                check(row.getInt("rows") == rows && row.getString("sha256") == hash.digest().joinToString("") { "%02x".format(it) }) { "migration_target_table_changed:$table" }
             }
-        } finally { db.execSQL("ROLLBACK") }
+            val row = tables.getJSONObject(table)
+            check(row.getInt("rows") == rows && row.getString("sha256") == hash.digest().joinToString("") { "%02x".format(it) }) { "migration_target_table_changed:$table" }
+        }
     }
 }
