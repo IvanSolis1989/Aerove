@@ -595,7 +595,10 @@ def main():
             emulator = subprocess.Popen(emulator_command, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True, env=emulator_environment(os.environ))
             receipt['emulatorPid'] = emulator.pid
             check_cancelled(receipt)
-            wait_ready(emulator, directory, receipt, check_cancelled)
+            if guest_angle:
+                wait_ready(emulator, directory, receipt, check_cancelled, capture_guest_logcat=True)
+            else:
+                wait_ready(emulator, directory, receipt, check_cancelled)
             check_cancelled(receipt)
             if guest_angle:
                 receipt['guestGraphicsRoute'] = guest_angle_evidence(

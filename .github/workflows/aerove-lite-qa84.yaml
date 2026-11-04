@@ -104,7 +104,7 @@ jobs:
       if: ${{ inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui' }}
       working-directory: apps/aerove-lite/tool
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: python3 -B -m unittest -v test_emulator_original84 test_emulator_current test_ci_artifacts test_prebuilt_android_runtime test_flutter_android_qa test_verify_apk test_android_acceptance
+      run: python3 -B -m unittest -v test_emulator_original84 test_emulator_current test_emulator_bootstrap test_ci_artifacts test_prebuilt_android_runtime test_flutter_android_qa test_verify_apk test_android_acceptance
     - name: Checkout immutable Lite141 source for Smart fixture ownership
       if: ${{ inputs.runtime_target == 'lite141-prebuilt-shards' }}
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -153,54 +153,6 @@ jobs:
     - name: Fixed original Flutter production APK inspection tools
       if: ${{ inputs.runtime_target == 'lite201-flutter-ui' || inputs.runtime_target == 'lite208-flutter-ui' }}
       run: sdkmanager --install 'build-tools;37.0.0' --channel=0
-    - name: Reclaim unrelated hosted tools for the fixed AEMU source build
-      if: ${{ inputs.runtime_target == 'lite208-flutter-ui' }}
-      timeout-minutes: 5
-      run: |
-        set -euo pipefail
-        evidence="$RUNNER_TEMP/lite-diagnostics/aemu-disk-capacity"
-        mkdir -p "$evidence"
-        printf 'imageOS=%s\nimageVersion=%s\nrunnerOS=%s\nrunnerArch=%s\n' \
-          "${ImageOS:-unknown}" "${ImageVersion:-unknown}" "$RUNNER_OS" "$RUNNER_ARCH" > "$evidence/runner-image.txt"
-        df -B1 "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/df-before.txt"
-        df -i "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/inodes-before.txt"
-        before_available=$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' ')
-        finish_capacity() {
-          local code=$?
-          trap - EXIT
-          set +e
-          df -B1 "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/df-after.txt"
-          df -i "$RUNNER_TEMP" "$GITHUB_WORKSPACE" > "$evidence/inodes-after.txt"
-          printf '%s\n' "$code" > "$evidence/cleanup.exit"
-          exit "$code"
-        }
-        trap finish_capacity EXIT
-        # Fixed runner-images install roots only; keep Android, Java, Python and all other toolcache entries.
-        for directory in /usr/share/dotnet /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL; do
-          if [[ ! -e "$directory" && ! -L "$directory" ]]; then
-            printf 'absent\t%s\n' "$directory" >> "$evidence/directories.tsv"
-            continue
-          fi
-          [[ -d "$directory" && ! -L "$directory" && $(realpath -e -- "$directory") == "$directory" ]] || {
-            printf 'Refuse unexpected hosted-tool path: %s\n' "$directory" >&2
-            exit 1
-          }
-          sudo -n du -x -B1 -s -- "$directory" >> "$evidence/directories-before.tsv"
-          sudo -n rm -rf --one-file-system -- "$directory"
-          [[ ! -e "$directory" && ! -L "$directory" ]]
-          printf 'removed\t%s\n' "$directory" >> "$evidence/directories.tsv"
-        done
-        after_available=$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1 | tr -d ' ')
-        printf 'beforeAvailableBytes=%s\nafterAvailableBytes=%s\nnetAvailableIncreaseBytes=%s\n' \
-          "$before_available" "$after_available" "$((after_available - before_available))" > "$evidence/available-bytes.txt"
-        cat "$evidence/available-bytes.txt"
-    - name: Preserve disk-capacity evidence before AEMU checkout and build
-      if: ${{ always() && inputs.runtime_target == 'lite208-flutter-ui' }}
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: AEROVE-Lite-original208-disk-capacity-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-diagnostics/aemu-disk-capacity/
-        if-no-files-found: error
     - name: Existing API33 emulator environment and fixed SDK
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
@@ -253,24 +205,6 @@ jobs:
             readelf --wide --dyn-syms "$gfx" \
             > "$gfx_evidence/dynamic-symbols.txt" 2> "$gfx_evidence/symbols.stderr.txt"
         fi
-    - name: Build and install the fixed-source gfxstream host module
-      if: ${{ inputs.runtime_target == 'lite208-flutter-ui' }}
-      timeout-minutes: 75
-      run: |
-        set -euo pipefail
-        sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=10s 120s \
-          apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
-        sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=10s 240s \
-          apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
-          -o Acquire::https::Timeout=20 install --yes --no-install-recommends \
-          build-essential cmake ninja-build pkg-config clang-18 libc++-18-dev libc++abi-18-dev \
-          libx11-dev libxcb1-dev libgl1 libglx-mesa0 libgl1-mesa-dri libvulkan1 xvfb xauth
-        module_build="$RUNNER_TEMP/gfxstream-0884-derived-host"
-        library="$ANDROID_HOME/emulator/lib64/libgfxstream_backend.so"
-        bash apps/aerove-lite/tool/build_gfxstream_derived_host.sh "$library" "$module_build"
-        cp -- "$library" "$RUNNER_TEMP/lite-original-gfxstream-backend.so"
-        cp -- "$module_build/artifact/libgfxstream_backend.so" "$library"
-        sha256sum "$library" > "$module_build/installed-library.sha256"
     - name: Verify original run84 runtime and execute matrix with owned emulator
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       env:
@@ -280,7 +214,7 @@ jobs:
         ORIGINAL_SAMPLE: ${{ inputs.sample }}
         AEROVE_EMULATOR_SIGILL_TRACE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
         AEROVE_INSTALL_LOGCAT: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
-        AEROVE_GFXSTREAM_SOURCE_RECEIPT: ${{ inputs.runtime_target == 'lite208-flutter-ui' && format('{0}/gfxstream-0884-derived-host/build-receipt.json', runner.temp) || '' }}
+        AEROVE_GUEST_ANGLE: ${{ inputs.runtime_target == 'lite208-flutter-ui' && '1' || '0' }}
       run: |
         if [[ "$RUNTIME_TARGET" == lite208-flutter-ui ]]; then
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase flutter-ui --directory "$RUNNER_TEMP/lite208-original-flutter-runtime"
@@ -292,21 +226,6 @@ jobs:
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --phase remaining --shard-index "$SHARD_INDEX" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
         else
           python3 apps/aerove-lite/tool/emulator_original84.py --target "$RUNTIME_TARGET" --directory "$RUNNER_TEMP/$RUNTIME_DIRECTORY"
-        fi
-    - name: Preserve source-built module evidence without source or build trees
-      if: ${{ always() && inputs.runtime_target == 'lite208-flutter-ui' }}
-      run: |
-        set -euo pipefail
-        source="$RUNNER_TEMP/gfxstream-0884-derived-host"
-        evidence="$RUNNER_TEMP/lite-diagnostics/gfxstream-source-build"
-        if test -d "$source"; then
-          mkdir -p "$evidence"
-          find "$source" -maxdepth 1 -type f -exec cp -- {} "$evidence/" \;
-          for name in logs artifact; do
-            if test -d "$source/$name"; then
-              cp -a -- "$source/$name" "$evidence/$name"
-            fi
-          done
         fi
     - name: Preserve original84 identity and raw owned matrix evidence
       if: always()

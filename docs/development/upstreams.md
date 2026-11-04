@@ -1176,6 +1176,8 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 **用途与采用方式：** 固定原208代表诊断复用 SDK 已有 `GuestAngle,Vulkan`，保持 API33、`-gpu swangle`、Impeller GLES、分辨率和全部材质质量。参照 [QEMU boot 属性](https://android.googlesource.com/platform/external/qemu/+/cf0f40a0aad1aa3fca68f2f89372525c8d28ca68/android/android-emu/android/userspace-boot-properties.cpp#329)、[Goldfish ANGLE 打包与 Vulkan HAL](https://android.googlesource.com/device/generic/goldfish/+/7493b6b8d8aeed860ff2415e8327af2ed97324fe/vendor.mk#78)、[init EGL 属性](https://android.googlesource.com/device/generic/goldfish/+/7493b6b8d8aeed860ff2415e8327af2ed97324fe/init.ranchu.rc#85)、[ANGLE Vulkan framebuffer](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/src/libANGLE/renderer/vulkan/FramebufferVk.cpp#358)及 [vulkan.ranchu](https://android.googlesource.com/device/generic/goldfish-opengl/+/58990d35c7ace6cc89aea121378935d46d799d14/system/vulkan/Android.mk)，将合法零附件调用交给现有 guest ANGLE Vulkan 后端，避开宿主 GLES translator 的空 vector 路径。未复制或侧载驱动；公开源码不是 Google SDK 37.2.13 的完整构建 manifest。必须读回同次 boot 的 EGL 属性、原镜像库、实际 ANGLE/Vulkan/SwiftShader renderer 和 App Impeller GLES；不能仅凭开关或宿主 ANGLE 字符串宣称路由生效、性能或验收通过。
 
+原 215 已实际启用 GuestVulkanOnly、Vulkan native swapchain 和 Vulkan composition，但在 600 秒启动门内超时；不能靠再加同名开关推定修复。后续代表性诊断仅补同一启动预算内的首次 ADB 与失败前 guest logcat 快照，以读回 SurfaceFlinger/ANGLE 的原始错误；沿用完整官方 37.2.13 和原 App、API33、渲染及画质门，不宣称启动或产品验收已通过。
+
 **许可证、署名与证据：** 所引 QEMU 文件 GPLv2，Goldfish 配置与 OpenGL HAL Apache-2.0，ANGLE BSD-3-Clause；保留原 SDK 各组件 NOTICE，无新增 APP 依赖或第三方二进制分发。
 
 #### [google/swiftshader](https://github.com/google/swiftshader)

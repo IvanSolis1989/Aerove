@@ -20,14 +20,48 @@ def keyguard_ready(text):
                for key, value in expected.items())
 
 
-def wait_ready(emulator, directory, receipt, check_cancelled):
+def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_logcat=False):
     started = time.monotonic()
     deadline = started + 600
     report = dict(schema=1, ownerPid=receipt['ownerPid'], emulatorPid=emulator.pid,
                   deviceSerial=SERIAL, budgetSeconds=600, ready=False, commands=[])
     receipt['bootstrap'] = 'BOOTSTRAP.json'
+    boot_shell_ready = False
+    initial_logcat = False
+    deadline_logcat = False
+    if capture_guest_logcat:
+        report['guestLogcat'] = []
+
+    def guest_logcat(window):
+        check_cancelled(receipt)
+        if emulator.poll() is not None:
+            raise RuntimeError('Owned emulator exited before bootstrap guest logcat')
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        arguments = ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash',
+                     '-d', '-v', 'threadtime']
+        row = dict(window=window, arguments=arguments,
+                   elapsedStart=time.monotonic() - started)
+        report['guestLogcat'].append(row)
+        try:
+            result = subprocess.run(['adb', '-s', SERIAL, 'shell', *arguments],
+                                    capture_output=True, text=True, timeout=min(3, remaining))
+            row.update(returnCode=result.returncode, stdout=result.stdout, stderr=result.stderr)
+        except subprocess.TimeoutExpired as error:
+            row.update(errorType=type(error).__name__, error=str(error), timedOut=True,
+                       stdout=error.stdout.decode('utf-8', errors='replace') if isinstance(error.stdout, bytes) else error.stdout or '',
+                       stderr=error.stderr.decode('utf-8', errors='replace') if isinstance(error.stderr, bytes) else error.stderr or '')
+        except OSError as error:
+            row.update(errorType=type(error).__name__, error=str(error))
+        finally:
+            row['elapsedEnd'] = time.monotonic() - started
+        check_cancelled(receipt)
+        if emulator.poll() is not None:
+            raise RuntimeError('Owned emulator exited during bootstrap guest logcat')
 
     def command(arguments, boot_probe=False):
+        nonlocal boot_shell_ready, initial_logcat
         check_cancelled(receipt)
         if emulator.poll() is not None:
             raise RuntimeError('Owned emulator exited during bootstrap')
@@ -54,14 +88,32 @@ def wait_ready(emulator, directory, receipt, check_cancelled):
             return ''
         if result.returncode:
             raise RuntimeError('Bootstrap adb command failed: ' + ' '.join(arguments))
+        if capture_guest_logcat and boot_probe:
+            boot_shell_ready = True
+            if not initial_logcat:
+                initial_logcat = True
+                guest_logcat('initial')
         return result.stdout
 
     def pause():
+        nonlocal deadline_logcat
         check_cancelled(receipt)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('Existing 600-second boot/readiness deadline reached')
+        if capture_guest_logcat and boot_shell_ready and not deadline_logcat and remaining <= 10:
+            deadline_logcat = True
+            guest_logcat('before-deadline')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Existing 600-second boot/readiness deadline reached')
         time.sleep(min(2, remaining))
+        # Capture before the next boot probe can consume the last ten seconds.
+        if capture_guest_logcat and boot_shell_ready and not deadline_logcat:
+            remaining = deadline - time.monotonic()
+            if 0 < remaining <= 10:
+                deadline_logcat = True
+                guest_logcat('before-deadline')
 
     try:
         while command(['getprop', 'sys.boot_completed'], boot_probe=True).strip() != '1':
