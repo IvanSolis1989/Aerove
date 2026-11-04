@@ -39,21 +39,43 @@ def verify_current_runtime(directory):
                 apkInspectorOutcome=value['apkInspectorOutcome'], bundledMeowScript=bundled_script)
 
 
+# Guest GLES is observed in SurfaceFlinger; it is not host GLES startup evidence.
+GUEST_RENDERER_LABEL = 'Guest ANGLE (Vulkan + SwiftShader)'
+
+
 def validate_renderer_proof(path):
-    if os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
+    guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
+    if not guest_angle and (os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF')):
         from emulator_original84 import validate_original_renderer
         return validate_original_renderer(path)
     proof = json.loads(Path(path).read_text())
+    expected_renderer = GUEST_RENDERER_LABEL if guest_angle else RENDERER_LABEL
     if (proof.get('schema') != 1 or proof.get('owner') != 'emulator_current.py'
-            or proof.get('identity') != artifacts.identity()
             or proof.get('deviceSerial') != os.environ.get('ANDROID_SERIAL')
             or proof.get('gpuBackend') != GPU_BACKEND
-            or proof.get('rendererBackend') != RENDERER_LABEL):
+            or proof.get('rendererBackend') != expected_renderer):
         raise ValueError('Invalid current-run renderer proof')
-    renderer_evidence('\n'.join(proof['rendererEvidence']))
     actual = verify_current_runtime(proof['runtimeDirectory'])
     if any(proof.get(key) != actual[key] for key in actual):
         raise ValueError('Current runtime proof identity or APK hashes changed')
+    if guest_angle:
+        guard_guest_angle_phase(proof.get('phase'), actual)
+        directory = Path(path).parent
+        if proof.get('guestGraphicsEvidence') != guest_angle_file_hashes(directory):
+            raise ValueError('Guest ANGLE raw evidence changed after the owner proof')
+        outputs = {name: (directory / ('guest-angle-' + name + '.out')).read_text()
+                   for name, _ in GUEST_ANGLE_READS}
+        for name, _ in GUEST_ANGLE_READS:
+            if (directory / ('guest-angle-' + name + '.exit.txt')).read_text().strip() != '0':
+                raise ValueError('Guest ANGLE device read did not succeed')
+        route = guest_angle_route(outputs, (directory / 'guest-angle-host-vulkan.out').read_text())
+        if (proof.get('guestGraphicsRoute') != route
+                or proof.get('rendererEvidence') != route['guestRenderer'] + route['hostVulkanDevice']):
+            raise ValueError('Guest ANGLE route differs from its original device evidence')
+    else:
+        if proof.get('identity') != artifacts.identity() or 'guestGraphicsRoute' in proof:
+            raise ValueError('Invalid current host graphics identity or route')
+        renderer_evidence('\n'.join(proof['rendererEvidence']))
     return proof
 
 
@@ -78,39 +100,61 @@ def check_cancelled(receipt):
         raise InterruptedError('Owner cancellation observed during runtime')
 
 
-def guest_angle_evidence(directory, receipt, startup):
-    """Confirm the original image actually selected guest ANGLE over Vulkan."""
-    outputs = {}
-    commands = (
-        ('boot-egl', ['getprop', 'ro.boot.hardwareegl']),
-        ('hardware-egl', ['getprop', 'ro.hardware.egl']),
-        ('angle-overrides-disabled', ['getprop', 'debug.angle.feature_overrides_disabled']),
-        ('libraries', ['ls', '-l', '/vendor/lib64/egl/libEGL_angle.so',
-                       '/vendor/lib64/egl/libGLESv2_angle.so', '/vendor/lib64/hw/vulkan.ranchu.so']),
-        ('surfaceflinger', ['dumpsys', 'SurfaceFlinger']),
-    )
-    for name, arguments in commands:
-        check_cancelled(receipt)
-        result = subprocess.run(['adb', '-s', 'emulator-5554', 'shell', *arguments],
-                                capture_output=True, text=True, timeout=15)
-        (directory / ('guest-angle-' + name + '.out')).write_text(result.stdout)
-        (directory / ('guest-angle-' + name + '.err')).write_text(result.stderr)
-        result.check_returncode()
-        outputs[name] = result.stdout
-    check_cancelled(receipt)
+# Same device reads supply both boot admission and the sealed renderer proof replay.
+GUEST_ANGLE_READS = (
+    ('api-level', ['getprop', 'ro.build.version.sdk']),
+    ('boot-egl', ['getprop', 'ro.boot.hardwareegl']),
+    ('hardware-egl', ['getprop', 'ro.hardware.egl']),
+    ('angle-overrides-disabled', ['getprop', 'debug.angle.feature_overrides_disabled']),
+    ('libraries', ['ls', '-l', '/vendor/lib64/egl/libEGL_angle.so',
+                   '/vendor/lib64/egl/libGLESv2_angle.so', '/vendor/lib64/hw/vulkan.ranchu.so']),
+    ('surfaceflinger', ['dumpsys', 'SurfaceFlinger']),
+)
+
+
+def guest_angle_route(outputs, startup):
+    if outputs['api-level'].strip() != '33':
+        raise ValueError('Guest ANGLE requires the actual API33 image')
     if any(outputs[name].strip() != 'angle' for name in ('boot-egl', 'hardware-egl')):
         raise ValueError('Guest ANGLE was requested but the booted EGL driver is not angle')
     if outputs['angle-overrides-disabled'].strip() != 'supportsHostQueryReset':
         raise ValueError('Guest ANGLE host-query-reset compatibility override changed during boot')
     guest = [line for line in outputs['surfaceflinger'].splitlines()
-             if re.search(r'\bGLES:', line) and all(word in line.upper() for word in ('ANGLE', 'VULKAN', 'SWIFTSHADER'))]
+             if re.search(r'\bGLES:', line) and re.search(r'OpenGL ES\s+3\.1\b', line)
+             and all(word in line.upper() for word in ('ANGLE', 'VULKAN', 'SWIFTSHADER'))]
     host = [line for line in startup.splitlines()
             if 'Selecting Vulkan device:' in line and 'SWIFTSHADER' in line.upper()]
     if not guest or not host:
         raise ValueError('Guest ANGLE Vulkan and the host SwiftShader device were not both observed')
-    return dict(route='guest-angle-vulkan', bootEgl='angle', hardwareEgl='angle',
+    return dict(route='guest-angle-vulkan', apiLevel=33, bootEgl='angle', hardwareEgl='angle',
                 angleFeatureOverridesDisabled=outputs['angle-overrides-disabled'].strip(),
                 guestRenderer=guest, hostVulkanDevice=host)
+
+
+def guest_angle_file_hashes(directory):
+    names = ['guest-angle-' + name + suffix for name, _ in GUEST_ANGLE_READS
+             for suffix in ('.out', '.err', '.exit.txt')]
+    names.append('guest-angle-host-vulkan.out')
+    return {name: sha(directory / name) for name in names}
+
+
+def guest_angle_evidence(directory, receipt, startup):
+    """Confirm the original image actually selected guest ANGLE over Vulkan."""
+    outputs = {}
+    for name, arguments in GUEST_ANGLE_READS:
+        check_cancelled(receipt)
+        result = subprocess.run(['adb', '-s', 'emulator-5554', 'shell', *arguments],
+                                capture_output=True, text=True, timeout=15)
+        (directory / ('guest-angle-' + name + '.out')).write_text(result.stdout)
+        (directory / ('guest-angle-' + name + '.err')).write_text(result.stderr)
+        (directory / ('guest-angle-' + name + '.exit.txt')).write_text(str(result.returncode) + '\n')
+        result.check_returncode()
+        outputs[name] = result.stdout
+    check_cancelled(receipt)
+    route = guest_angle_route(outputs, startup)
+    # Emulator stdout remains live; seal only the actual boot-time Vulkan selection lines.
+    (directory / 'guest-angle-host-vulkan.out').write_text('\n'.join(route['hostVulkanDevice']) + '\n')
+    return route
 
 
 def derived_host_evidence(path, emulator_pid, directory):
@@ -527,6 +571,17 @@ def guard_flutter_phase(phase, sample=None, runtime=None):
         raise ValueError('flutter-ui requires current production runtime, without original/profile/sample opt-ins')
 
 
+def guard_guest_angle_phase(phase, runtime, sample=None):
+    """Only the verified current Flutter suites or the fixed original208 UI diagnosis."""
+    if phase not in ('flutter-ui', 'flutter-platform', 'flutter-full'):
+        raise ValueError('Guest ANGLE requires a current Flutter phase or fixed original208 UI')
+    guard_flutter_phase(phase, sample, runtime)
+    if runtime.get('runtimeTarget') not in (None, 'lite208-flutter-ui'):
+        raise ValueError('Guest ANGLE cannot select another historical runtime')
+    if runtime.get('runtimeTarget') == 'lite208-flutter-ui' and phase != 'flutter-ui':
+        raise ValueError('Fixed original208 Guest ANGLE permits only representative UI')
+
+
 def flutter_ui_inputs(directory, runtime):
     """Require the inspected BUILD_INFO in the same verified transport before starting an emulator."""
     guard_flutter_phase('flutter-ui', runtime=runtime)
@@ -592,8 +647,8 @@ def main():
     if forensic and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
         raise ValueError('SIGILL capture is restricted to the fixed original208 representative diagnosis')
     guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
-    if guest_angle and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
-        raise ValueError('Guest ANGLE diagnosis is restricted to the fixed original208 representative runtime')
+    if guest_angle:
+        guard_guest_angle_phase(args.phase, current, args.sample)
     derived_host = os.environ.get('AEROVE_GFXSTREAM_SOURCE_RECEIPT')
     if derived_host and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui' or guest_angle):
         raise ValueError('Source-built host diagnosis requires the fixed original208 host GLES runtime')
@@ -663,13 +718,20 @@ def main():
                     capture.state.update(status='failed', error=repr(error))
                     raise
             check_cancelled(receipt)
-            receipt['rendererEvidence'] = renderer_evidence((directory / 'emulator.stdout.log').read_text(errors='replace'))
+            if guest_angle:
+                route = receipt['guestGraphicsRoute']
+                receipt['rendererEvidence'] = route['guestRenderer'] + route['hostVulkanDevice']
+            else:
+                receipt['rendererEvidence'] = renderer_evidence((directory / 'emulator.stdout.log').read_text(errors='replace'))
             proof = dict(current, schema=1, owner='emulator_current.py',
                          runtimeDirectory=str(args.runtime_directory.resolve()),
                          deviceSerial='emulator-5554', gpuBackend=GPU_BACKEND,
-                         rendererBackend=RENDERER_LABEL, rendererEvidence=receipt['rendererEvidence'])
+                         rendererBackend=GUEST_RENDERER_LABEL if guest_angle else RENDERER_LABEL,
+                         rendererEvidence=receipt['rendererEvidence'])
             if guest_angle:
+                proof['phase'] = args.phase
                 proof['guestGraphicsRoute'] = receipt['guestGraphicsRoute']
+                proof['guestGraphicsEvidence'] = guest_angle_file_hashes(directory)
             if derived_host:
                 proof['derivedSdkHost'] = receipt['derivedSdkHost']
             proof_path = directory / 'CURRENT-RENDERER-PROOF.json'

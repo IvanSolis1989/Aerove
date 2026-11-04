@@ -49,10 +49,11 @@ class DerivedHostEvidenceTests(unittest.TestCase):
 
 class GuestAngleEvidenceTests(unittest.TestCase):
     startup = 'Selecting Vulkan device: SwiftShader Device (Subzero), Version: 1.3.0'
-    guest = 'GLES: Google, ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)))'
+    guest = 'GLES: Google Inc. (Google), ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), Google-5.0.0), OpenGL ES 3.1.0 (ANGLE 2.1.0 git hash: unknown hash)'
 
-    def outputs(self, *, boot='angle\n', hardware='angle\n', overrides='supportsHostQueryReset\n', guest=None, library_exit=0):
-        return [subprocess.CompletedProcess([], 0, boot, ''),
+    def outputs(self, *, api='33\n', boot='angle\n', hardware='angle\n', overrides='supportsHostQueryReset\n', guest=None, library_exit=0):
+        return [subprocess.CompletedProcess([], 0, api, ''),
+                subprocess.CompletedProcess([], 0, boot, ''),
                 subprocess.CompletedProcess([], 0, hardware, ''),
                 subprocess.CompletedProcess([], 0, overrides, ''),
                 subprocess.CompletedProcess([], library_exit, 'original image libraries\n', 'missing' if library_exit else ''),
@@ -64,11 +65,14 @@ class GuestAngleEvidenceTests(unittest.TestCase):
             with patch.object(current.subprocess, 'run', side_effect=self.outputs()):
                 value = current.guest_angle_evidence(directory, {}, self.startup)
             self.assertEqual(value['route'], 'guest-angle-vulkan')
+            self.assertEqual(value['apiLevel'], 33)
             self.assertEqual(value['angleFeatureOverridesDisabled'], 'supportsHostQueryReset')
             self.assertEqual(value['guestRenderer'], [self.guest])
             self.assertEqual(value['hostVulkanDevice'], [self.startup])
             self.assertEqual((directory / 'guest-angle-boot-egl.out').read_text(), 'angle\n')
-            for outputs, startup in ((self.outputs(boot='emulation\n'), self.startup),
+            for outputs, startup in ((self.outputs(api='37\n'), self.startup),
+                                     (self.outputs(boot='emulation\n'), self.startup),
+                                     (self.outputs(guest=self.guest.replace('3.1.0', '3.0.0')), self.startup),
                                      (self.outputs(hardware='emulation\n'), self.startup),
                                      (self.outputs(overrides='\n'), self.startup),
                                      (self.outputs(overrides='someOtherFeature\n'), self.startup),
@@ -276,6 +280,104 @@ class CurrentOwnerTests(unittest.TestCase):
         (self.runtime / 'source-manifest.json').write_text(json.dumps(manifest))
         with self.assertRaisesRegex(ValueError, 'sealed runtime BUILD_INFO'):
             current.flutter_ui_inputs(self.runtime, dict(identity=self.expected))
+
+
+    def guest_proof(self):
+        self.flutter_runtime()
+        fixture = GuestAngleEvidenceTests()
+        with patch.object(current.subprocess, 'run', side_effect=fixture.outputs()):
+            route = current.guest_angle_evidence(self.root, {}, fixture.startup)
+        return dict(self.proof(), phase='flutter-full', rendererBackend=current.GUEST_RENDERER_LABEL,
+                    rendererEvidence=[fixture.guest, fixture.startup], guestGraphicsRoute=route,
+                    guestGraphicsEvidence=current.guest_angle_file_hashes(self.root))
+
+    def test_guest_proof_replays_device_route_without_inventing_host_gles(self):
+        proof = self.guest_proof()
+        with patch.dict(os.environ, AEROVE_GUEST_ANGLE='1'), \
+                patch.object(current, 'renderer_evidence', side_effect=AssertionError('Guest must not claim host GLES')):
+            self.assertEqual(self.validate(proof)['identity'], self.expected)
+        with patch.dict(os.environ, AEROVE_GUEST_ANGLE='0'), self.assertRaises(ValueError):
+            self.validate(proof)
+        with patch.dict(os.environ, AEROVE_GUEST_ANGLE='1'):
+            for change in ({'owner': 'emulator_qa79.py'}, {'deviceSerial': 'emulator-5556'},
+                           {'identity': dict(self.expected, runAttempt=1)}, {'phase': 'matrix'},
+                           {'rendererBackend': current.RENDERER_LABEL}):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    self.validate(dict(proof, **change))
+
+    def test_guest_raw_hashes_and_actual_api_compat_and_renderers_remain_required(self):
+        proof = self.guest_proof()
+        cases = (
+            ('api-level.out', '37\n', 'actual API33'),
+            ('hardware-egl.out', 'emulation\n', 'booted EGL'),
+            ('angle-overrides-disabled.out', 'someOtherFeature\n', 'compatibility override'),
+            ('surfaceflinger.out', GuestAngleEvidenceTests.guest.replace('3.1.0', '3.0.0'), 'not both observed'),
+            ('host-vulkan.out', 'Selecting Vulkan device: Mesa\n', 'not both observed'),
+            ('libraries.exit.txt', '1\n', 'did not succeed'),
+        )
+        with patch.dict(os.environ, AEROVE_GUEST_ANGLE='1'):
+            for suffix, value, error in cases:
+                path = self.root / ('guest-angle-' + suffix)
+                original = path.read_text()
+                path.write_text(value)
+                try:
+                    with self.subTest(suffix=suffix), self.assertRaisesRegex(ValueError, 'raw evidence changed'):
+                        self.validate(proof)
+                    changed = dict(proof, guestGraphicsEvidence=dict(proof['guestGraphicsEvidence'],
+                        **{path.name: current.sha(path)}))
+                    with self.subTest(resealed=suffix), self.assertRaisesRegex(ValueError, error):
+                        self.validate(changed)
+                finally:
+                    path.write_text(original)
+            changed = dict(proof, guestGraphicsRoute=dict(proof['guestGraphicsRoute'], apiLevel=37))
+            with self.assertRaisesRegex(ValueError, 'differs from its original device evidence'):
+                self.validate(changed)
+
+    def test_guest_current_phases_reach_original_platform_binding_but_diagnostics_stay_bounded(self):
+        self.flutter_runtime()
+        for phase in ('flutter-ui', 'flutter-platform', 'flutter-full'):
+            with self.subTest(phase=phase), patch.dict(os.environ, {'AEROVE_GUEST_ANGLE': '1'}, clear=True), \
+                    patch.object(current.sys, 'platform', 'linux'), \
+                    patch.object(current.sys, 'argv', ['owner', phase, '--runtime-directory', str(self.runtime)]), \
+                    patch.object(current, 'flutter_ui_inputs', side_effect=RuntimeError('original platform binding boundary')) as inputs, \
+                    patch.object(current.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(RuntimeError, 'original platform binding boundary'):
+                    current.main()
+                inputs.assert_called_once()
+                spawn.assert_not_called()
+        for flag in ('AEROVE_EMULATOR_SIGILL_TRACE', 'AEROVE_GFXSTREAM_SOURCE_RECEIPT'):
+            with self.subTest(flag=flag), patch.dict(os.environ, {'AEROVE_GUEST_ANGLE': '1', flag: '1'}, clear=True), \
+                    patch.object(current.sys, 'platform', 'linux'), \
+                    patch.object(current.sys, 'argv', ['owner', 'flutter-full', '--runtime-directory', str(self.runtime)]), \
+                    patch.object(current.subprocess, 'Popen') as spawn:
+                with self.assertRaises(ValueError):
+                    current.main()
+                spawn.assert_not_called()
+
+
+    def test_guest_original208_still_binds_original_and_harness_without_legacy_host_gles(self):
+        import emulator_original84 as original
+        proof = self.guest_proof()
+        for target, pin in (('lite208-flutter-ui', original.LITE208_FLUTTER_UI),
+                            ('lite201-flutter-ui', original.LITE201_FLUTTER_UI)):
+            runtime = dict(current.verify_current_runtime(self.runtime), identity=pin['identity'],
+                runtimeTarget=target, diagnosticOriginalRuntime=True, originalAppIdentity=pin['identity'],
+                harnessIdentity=self.expected, diagnosticOnly=True, representativeOnly=True,
+                accepted=False, aggregateAcceptance=False, promotionAccepted=False)
+            neutral = self.root / 'original-input.json'
+            neutral.write_text(json.dumps(runtime))
+            bound = dict(proof, **runtime, phase='flutter-ui')
+            with patch.dict(os.environ, AEROVE_GUEST_ANGLE='1', AEROVE_ORIGINAL_RUNTIME_PROOF=str(neutral)), \
+                    patch.object(current, 'verify_current_runtime', return_value=runtime) as verify, \
+                    patch.object(original, 'validate_original_renderer', side_effect=AssertionError('Legacy host route is not Guest')):
+                if target == 'lite208-flutter-ui':
+                    value = self.validate(bound)
+                    self.assertEqual(value['originalAppIdentity'], pin['identity'])
+                    self.assertEqual(value['harnessIdentity'], self.expected)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'another historical runtime'):
+                        self.validate(bound)
+                verify.assert_called_once_with(str(self.runtime))
 
 
 class Original84BoundaryTests(unittest.TestCase):
@@ -567,9 +669,16 @@ class FlutterPhaseBoundaryTests(unittest.TestCase):
                 with patch.dict(os.environ, {'AEROVE_ORIGINAL_RUNTIME_PROOF':str(path)}, clear=True), \
                         patch.object(current.artifacts, 'identity', return_value=harness):
                     current.guard_flutter_phase('flutter-ui', runtime=proof)
+                    if target == 'lite208-flutter-ui':
+                        current.guard_guest_angle_phase('flutter-ui', proof)
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'another historical runtime'):
+                            current.guard_guest_angle_phase('flutter-ui', proof)
                     for phase in ('flutter-platform','flutter-full'):
                         with self.subTest(phase=phase), self.assertRaises(ValueError):
                             current.guard_flutter_phase(phase, runtime=proof)
+                        with self.assertRaises(ValueError):
+                            current.guard_guest_angle_phase(phase, proof)
                     for key,value in (('runtimeTarget','lite158-frame-sample'), ('accepted',True),
                                       ('representativeOnly',1), ('harnessIdentity',dict(harness,runAttempt=1))):
                         changed = dict(proof, **{key:value})

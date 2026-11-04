@@ -1184,6 +1184,8 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 原232已在同一 SurfaceFlinger 进程实际取得 callback 安装标记和 `VK_EXT_host_query_reset` 缺失拒绝。上述固定 ANGLE 的 [RendererVk.cpp](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/src/libANGLE/renderer/vulkan/RendererVk.cpp#2448)存在按核心 Vulkan feature 启用后仍请求旧 EXT 名称的路径；[官方 feature 定义](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/include/platform/FeaturesVk.h#498)及[属性读取](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/src/libANGLE/renderer/renderer_utils.cpp#1065)支持 `debug.angle.feature_overrides_disabled=supportsHostQueryReset`。[既有 query reset 回退](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/src/libANGLE/renderer/vulkan/vk_helpers.cpp#3511)完整使用 command buffer reset，保留 query 功能。固定 API33 Guest ANGLE 路线在原启动预算内一次设置并读回该非持久属性，boot 后再核验值，采用现成兼容路径；不修改 shader、材质、画质或刷新策略。该配置的实际采用、boot、渲染与原功能断言仍须真实执行，query 性能影响不由源码推定；未复制或重编 ANGLE，许可证及原 SDK NOTICE 不变。
 
+原233已在47.3秒内真实完成启动并读回 guest ANGLE／Vulkan／SwiftShader／OpenGL ES3.1；随后原 host GLES 日志校验阻止了 App 执行，该失败保留。共用 owner 为 Guest 路线使用独立渲染标识，从同次 API33、EGL、兼容属性、原镜像库和 SurfaceFlinger 读回及宿主 Vulkan 选择行形成绑定的原始证据；原 host GLES 路线继续使用原严格校验。当前 Flutter preview、platform、full 三阶段接入同一路线并各自验证当前封存 APK，诊断 callback 仍只用于旧208；启动和渲染路线资格不替代当前两 ABI 构建、App、十二图、真机与用户验收。
+
 **许可证、署名与证据：** 所引 QEMU 文件 GPLv2，Goldfish 配置与 OpenGL HAL Apache-2.0，ANGLE BSD-3-Clause；保留原 SDK 各组件 NOTICE，无新增 APP 依赖或第三方二进制分发。
 
 #### [KhronosGroup/Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader)
