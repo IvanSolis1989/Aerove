@@ -346,6 +346,8 @@ Lite Flutter Android 黑盒 API 候选 QA93 另只读核对 AndroidX 固定 `c86
 
 **许可证、署名与证据：** BSD-3-Clause；[Isolate.kill API](https://api.dart.dev/dart-isolate/Isolate/kill.html)、固定Dart SDK版本/source
 
+Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.resolveSymbolicLinks`](https://github.com/dart-lang/sdk/blob/3.10.0/sdk/lib/io/file_system_entity.dart)：只解析由平台提供的可信私有根，保留内部输入路径的链接拒绝与异常传播。使用现有 `dart:io` API，未复制实现或新增依赖；保留 Dart project authors 2013 署名及该版本根 [BSD-3-Clause LICENSE](https://github.com/dart-lang/sdk/blob/3.10.0/LICENSE) 的 2012 署名。此参考版本不代表实际运行时版本。
+
 #### [dart-lang/test · matcher](https://github.com/dart-lang/test/tree/master/pkgs/matcher)
 
 **固定版本 / revision：** Pub `matcher 0.12.20`；锁定包 SHA256 `31bd099b47c10cd1aeb55146a2d46ce0277630ecef3f7dae54ad7873f36696cd`
@@ -1229,6 +1231,16 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 **用途与采用方式：** Lite TUN 测试只读核对 [`android.system.Os`](https://android.googlesource.com/platform/libcore/+/refs/tags/android-13.0.0_r1/luni/src/main/java/android/system/Os.java) 的 pipe、非阻塞读写、poll 及 FD 关闭接口，复用系统 API；未复制实现或新增依赖。Host NIO 管道检查与真实 Android Os 执行分别记录。
 
 **许可证、署名与证据：** Apache-2.0，保留 Android Open Source Project 2011 版权；固定文件 SHA256 `32a21f9c2efce8dbf2bdaf075339463795bbc57096121148104bb98502a56553`。
+
+Lite 私有数据迁移另只读核对 `android-13.0.0_r75` 的 [`java.io.UnixFileSystem`](https://android.googlesource.com/platform/libcore/+/android-13.0.0_r75/ojluni/src/main/java/java/io/UnixFileSystem.java) canonicalize 路径解析边界。只使用平台既有 API，未复制实现或修改缓存；该文件为 GPL-2.0 with Classpath exception，保留 Oracle 1998、2010 版权。参考 tag 不作为当前 Android 镜像源码身份的证明。
+
+#### [OpenJDK jdk17u](https://github.com/openjdk/jdk17u)
+
+**固定版本 / revision：** `jdk-17.0.13+11`。
+
+**用途与采用方式：** Lite 私有数据迁移只读参考 [`File.getCanonicalFile`](https://github.com/openjdk/jdk17u/blob/jdk-17.0.13%2B11/src/java.base/share/classes/java/io/File.java) 的可信根身份解析契约，复用项目已有 `PrivateStorage` 与迁移目标的 canonical 根策略；未复制实现、新增依赖或自建路径解析器。桌面 JDK 参考不作为 Android 实现或当前运行时身份的证明。
+
+**许可证、署名与证据：** GPL-2.0-only with Classpath exception；保留固定文件中 Oracle 1994–2022 版权。
 
 #### [platform/external/qemu](https://android.googlesource.com/platform/external/qemu)
 

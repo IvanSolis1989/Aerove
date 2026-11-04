@@ -57,7 +57,7 @@ class MeowLegacyMigrationExport(
     private val settings: LiteSettingsStore,
     private val overrides: OverrideRepository,
 ) {
-    private val root = privateDirectory.absoluteFile.toPath().normalize().toFile()
+    private val root = privateDirectory.canonicalFile
     init {
         require(listOf(profiles.migrationRoot, settings.migrationRoot, overrides.migrationRoot).all {
             it.canonicalFile == root.canonicalFile
@@ -252,6 +252,7 @@ class MeowLegacyMigrationExport(
         var cursor = path
         while (cursor != null) {
             if (Files.isSymbolicLink(cursor)) fail("files", "symbolic link source or ancestor")
+            if (cursor == root.toPath()) break
             cursor = cursor.parent
         }
         if (file.canonicalFile.toPath() != path) fail("files", "ambiguous private path")

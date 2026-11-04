@@ -876,6 +876,24 @@ jobs:
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/compile.log"
         test -s build/app/intermediates/androidTestAppKeepRules/release/rules.pro
         test -s build/app/intermediates/androidTestAppKeepRules/release/inputs.json
+    - name: Verify native migration ownership and the real Kotlin to Dart import
+      working-directory: apps/aerove-lite
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/native-migration"
+        test ! -e "$evidence"
+        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          -DnativeMigration.fixture="$evidence" :app:testReleaseUnitTest \
+          --tests dev.aerove.lite.flutter.MeowLegacyMigrationOwnerTest \
+          --tests dev.aerove.lite.flutter.MeowLegacyMigrationExportTest \
+          --tests dev.aerove.lite.fixtures.NativeMigrationInteropFixtureTest \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-jvm.log"
+        test -s "$evidence/fixture.json"
+        (cd ../aerove && flutter test --no-pub --concurrency 1 \
+          --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+          --dart-define="NATIVE_LITE_FIXTURE=$evidence/fixture.json" \
+          test/common/native_lite_migration_test.dart) \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-dart.log"
     - name: Verify DNS and Geo fixtures in eight independent Flutter processes
       timeout-minutes: 30
       working-directory: apps/aerove

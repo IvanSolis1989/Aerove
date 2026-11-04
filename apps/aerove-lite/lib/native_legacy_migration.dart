@@ -58,8 +58,11 @@ Future<void> _prepareNativeLegacyData() async {
   if (status == null) throw StateError('Native migration owner did not reply');
   if (status['status'] == 'absent') return;
   if (status['status'] == 'shared') {
+    final home = Directory(
+      await Directory(await appPath.homeDirPath).resolveSymbolicLinks(),
+    );
     await finishNativeLiteTransfer(
-      Directory(await appPath.homeDirPath),
+      home,
       status['sourceDigest'] as String,
       status['receiptSha256'] as String,
     );
@@ -73,7 +76,9 @@ Future<void> _prepareNativeLegacyData() async {
   }
   final lease = status['leaseId'] as String;
   try {
-    final home = Directory(await appPath.homeDirPath);
+    final home = Directory(
+      await Directory(await appPath.homeDirPath).resolveSymbolicLinks(),
+    );
     final manifest = File(status['manifest'] as String).absolute;
     if (!p.isWithin(home.absolute.path, manifest.path))
       throw StateError('Native export is outside the private data root');

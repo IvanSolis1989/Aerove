@@ -13,6 +13,9 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/product.dart';
 
 import '../../../aerove-lite/lib/lite_product.dart';
+import '../../../aerove-lite/lib/native_legacy_migration.dart';
+import '../helpers/app_paths.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -322,4 +325,121 @@ void main() {
       },
     );
   }
+  test(
+    'Lite channel resolves trusted home alias and retains source validation and retry release',
+    () async {
+      final container = await Directory.systemTemp.createTemp(
+        'lite-home-alias-',
+      );
+      final physical = await Directory(
+        p.join(container.path, 'physical'),
+      ).create();
+      final home = Directory(await physical.resolveSymbolicLinks());
+      final alias = Link(p.join(container.path, 'files-alias'));
+      try {
+        await alias.create(home.path);
+      } on FileSystemException {
+        await container.delete(recursive: true);
+        if (!Platform.isWindows) rethrow;
+        markTestSkipped('Windows host must permit symbolic links');
+        return;
+      }
+      const channel = MethodChannel('dev.aerove.lite/native-migration');
+      final releases = <String>[];
+      final manifest = File(p.join(home.path, 'exports', 'manifest.json'));
+      await manifest.parent.create();
+      await manifest.writeAsString('{}');
+      final digest = sha256.convert(await manifest.readAsBytes()).toString();
+      final receipt = File(
+        p.join(home.path, 'native-lite-migration', 'target-receipt.json'),
+      );
+      final journal = File(p.join(receipt.parent.path, 'journal.json'));
+      var transferred = false;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'release') {
+              releases.add((call.arguments as Map)['leaseId'] as String);
+              return null;
+            }
+            expect(call.method, 'begin');
+            if (transferred) {
+              return {
+                'status': 'shared',
+                'sourceDigest': digest,
+                'receiptSha256': sha256
+                    .convert(await receipt.readAsBytes())
+                    .toString(),
+              };
+            }
+            return {
+              'status': 'pending',
+              'leaseId': 'root-alias-lease',
+              'manifest': manifest.path,
+              'sha256': digest,
+            };
+          });
+      try {
+        await useAppPaths(Directory(alias.path));
+        await expectLater(
+          prepareNativeLegacyData(),
+          throwsA(
+            isA<NativeLiteMigrationException>()
+                .having((error) => error.field, 'field', 'manifest')
+                .having(
+                  (error) => error.reason,
+                  'reason',
+                  'unsupported export identity',
+                ),
+          ),
+        );
+        expect(releases, ['root-alias-lease']);
+        expect(await manifest.readAsString(), '{}');
+        await manifest.delete();
+        final outside = await File(
+          p.join(container.path, 'outside.json'),
+        ).writeAsString('{}');
+        await Link(manifest.path).create(outside.path);
+        await expectLater(
+          prepareNativeLegacyData(),
+          throwsA(
+            isA<NativeLiteMigrationException>()
+                .having((error) => error.field, 'field', 'manifest')
+                .having(
+                  (error) => error.reason,
+                  'reason',
+                  'unsafe export path',
+                ),
+          ),
+        );
+        expect(releases, ['root-alias-lease', 'root-alias-lease']);
+        expect(await outside.readAsString(), '{}');
+        await Link(manifest.path).delete();
+        await manifest.writeAsString('{}');
+        await receipt.parent.create();
+        await receipt.writeAsString('verified receipt fixture');
+        await journal.writeAsString(
+          jsonEncode({
+            'sourceDigest': digest,
+            'receiptSha256': sha256
+                .convert(await receipt.readAsBytes())
+                .toString(),
+            'phase': 'preferencesCommitted',
+          }),
+        );
+        transferred = true;
+        await prepareNativeLegacyData();
+        expect(
+          (jsonDecode(await journal.readAsString()) as Map)['phase'],
+          'complete',
+        );
+        expect(releases, ['root-alias-lease', 'root-alias-lease']);
+      } finally {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null);
+        await useAppPaths(Directory.systemTemp);
+        await alias.delete();
+        await container.delete(recursive: true);
+      }
+    },
+  );
 }

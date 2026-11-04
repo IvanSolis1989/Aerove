@@ -15,6 +15,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Test
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.security.MessageDigest
 
 /** Black-box release driver: no Activity rule, alternate Dart main, or product-state injection. */
@@ -775,6 +777,14 @@ class FlutterProductionUiTest {
         val previous = ui.serviceInfo
         try {
             check(android.os.Build.VERSION.SDK_INT >= 33)
+            val journal = File(context.filesDir, "native-lite-migration-native/state.json")
+            receipt.put("nativeMigrationPath", JSONObject()
+                .put("privateRootAbsolute", context.filesDir.absolutePath)
+                .put("privateRootCanonical", context.filesDir.canonicalPath)
+                .put("journalParentAbsolute", journal.parentFile!!.absolutePath)
+                .put("journalParentCanonical", journal.parentFile!!.canonicalPath)
+                .put("stateExistsNoFollow", Files.exists(journal.toPath(), LinkOption.NOFOLLOW_LINKS))
+                .put("stateSymbolicLink", Files.isSymbolicLink(journal.toPath())))
             check(context.resources.configuration.locales[0].language == "en") {
                 "Host must fix the real per-app locale to en-US before instrumentation"
             }

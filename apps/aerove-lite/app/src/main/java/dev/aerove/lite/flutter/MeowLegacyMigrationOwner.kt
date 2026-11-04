@@ -13,10 +13,12 @@ import kotlinx.coroutines.ensureActive
 
 internal object NativeLiteDataAuthority {
     fun phase(root: File): String? {
-        val file = File(root, "native-lite-migration-native/state.json")
+        val privateRoot = root.canonicalFile
+        val file = File(privateRoot, "native-lite-migration-native/state.json")
         require(file.parentFile.canonicalFile == file.parentFile.absoluteFile && !Files.isSymbolicLink(file.parentFile.toPath())) { "migration_authority_invalid" }
+        require(!Files.isSymbolicLink(file.toPath())) { "migration_authority_invalid" }
         if (!file.exists()) return null
-        require(!Files.isSymbolicLink(file.toPath()) && file.length() <= 16384) { "migration_authority_invalid" }
+        require(file.length() <= 16384) { "migration_authority_invalid" }
         return JSONObject(file.readText()).also { require(it.getInt("schema") == 1) }.getString("phase")
             .also { require(it in setOf("pending", "shared")) { "migration_authority_invalid" } }
     }
@@ -26,10 +28,11 @@ internal object NativeLiteDataAuthority {
 }
 
 internal class MeowLegacyMigrationOwner(
-    private val root: File,
+    privateDirectory: File,
     private val exporter: MeowLegacyMigrationExport,
     private val verifyTarget: (File, String) -> Unit,
 ) {
+    private val root = privateDirectory.canonicalFile
     private val sessions = ConcurrentHashMap<String, String>()
     private val leases = ConcurrentHashMap<String, MeowLegacyExportLease>()
     private val directory = File(root, "native-lite-migration-native")

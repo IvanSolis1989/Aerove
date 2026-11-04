@@ -402,7 +402,7 @@ dependencies {
 }
 
 tasks.withType<Test>().configureEach {
-    listOf("resource.fixture", "sourceProof89.fixture").forEach { key ->
+    listOf("resource.fixture", "sourceProof89.fixture", "nativeMigration.fixture").forEach { key ->
         providers.systemProperty(key).orNull?.let { systemProperty(key, it) }
     }
 }
