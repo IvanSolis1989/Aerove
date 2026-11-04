@@ -35,6 +35,54 @@ class SourceProof89Test {
         assertNotEquals(nativeLiteJsonHash(rows), nativeLiteJsonHash(nativeLiteSelectedRows(node, 1)))
         }
     }
+    @Test fun explicitNullSelectionBindsEmptyClosureAndStillRejectsInvalidSelections() {
+        val external = System.getProperty("sourceProof89.fixture")
+        val fixture = JSONObject(if (external != null) File("$external.empty").readText()
+            else checkNotNull(javaClass.getResourceAsStream("/source-proof89/projection-fixture.json")).bufferedReader().use { it.readText() })
+        val all = map(fixture.getJSONObject("all")).mapValues { (_, value) ->
+            @Suppress("UNCHECKED_CAST") (value as List<Map<String, Any?>>)
+        }
+        assertTrue(all.getValue("profiles").isNotEmpty())
+        val config = JSONObject(fixture.getJSONObject("config").toString()).put("currentProfileId", JSONObject.NULL)
+        assertNull(nativeLiteCurrentProfileId(config))
+        val rows = nativeLiteSelectedRows(all, nativeLiteCurrentProfileId(config))
+        assertEquals(all.keys, rows.keys)
+        rows.values.forEach { assertTrue(it.isEmpty()) }
+        if (external != null) {
+            val proof = fixture.getJSONObject("proof")
+            rows.forEach { (name, values) ->
+                val expected = proof.getJSONObject("tables").getJSONObject(name)
+                assertEquals(0, expected.getInt("rows"))
+                assertEquals(expected.getString("sha256"), nativeLiteJsonHash(values))
+            }
+            val runtime = nativeLiteRuntimeConfig(map(config), emptySet())
+            assertEquals(proof.getString("configSha256"), nativeLiteJsonHash(runtime))
+            assertEquals(proof.getString("setupSha256"), nativeLiteJsonHash(nativeLiteSetupConfig(runtime)))
+            assertEquals(proof.getString("liveSha256"), nativeLiteJsonHash(nativeLiteLiveConfig(map(config))))
+        }
+        listOf(JSONObject(), JSONObject().put("currentProfileId", "1"),
+            JSONObject().put("currentProfileId", 1.5), JSONObject().put("currentProfileId", false)).forEach { bad ->
+            try { nativeLiteCurrentProfileId(bad); fail("Invalid selection must be rejected") }
+            catch (_: IllegalArgumentException) { }
+        }
+        try { nativeLiteSelectedRows(all, Long.MAX_VALUE); fail("Missing selected row must be rejected") }
+        catch (_: NoSuchElementException) { }
+    }
+
+    @Test fun onlyTheTrustedRootMayResolveAnAliasBeforeStrictHomeAdmission() {
+        val root = Files.createTempDirectory("source89-home").toFile().canonicalFile
+        val alias = File(root.parentFile, "${root.name}-alias")
+        try {
+            Files.createSymbolicLink(alias.toPath(), root.toPath())
+            assertEquals(root, MeowFlutterSpill.checkedHome(alias.canonicalFile))
+            try { MeowFlutterSpill.checkedHome(alias); fail("An external alias must not be admitted") }
+            catch (failure: MeowConfigProtocolException) { assertEquals("path_error", failure.code) }
+        } finally {
+            Files.deleteIfExists(alias.toPath())
+            root.deleteRecursively()
+        }
+    }
+
     @Test fun resourceCaptureIncludesPrivateFileGeoAndCertificateInputs() {
         listOf("file","http").forEach { type -> listOf("proxy-providers","rule-providers").forEach { kind -> assertTrue(meowNeedsResourceCapture(mapOf(kind to mapOf("p" to mapOf("type" to type))))) } }
         assertFalse(meowNeedsResourceCapture(mapOf("proxy-providers" to mapOf("p" to mapOf("type" to "inline")))))

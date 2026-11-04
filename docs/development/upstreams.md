@@ -350,7 +350,7 @@ Lite Android 复制验收驱动另只读参考同固定 SDK 的 [`AccessibilityB
 
 **许可证、署名与证据：** BSD-3-Clause；[Isolate.kill API](https://api.dart.dev/dart-isolate/Isolate/kill.html)、固定Dart SDK版本/source
 
-Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.resolveSymbolicLinks`](https://github.com/dart-lang/sdk/blob/3.10.0/sdk/lib/io/file_system_entity.dart)：只解析由平台提供的可信私有根，保留内部输入路径的链接拒绝与异常传播。使用现有 `dart:io` API，未复制实现或新增依赖；保留 Dart project authors 2013 署名及该版本根 [BSD-3-Clause LICENSE](https://github.com/dart-lang/sdk/blob/3.10.0/LICENSE) 的 2012 署名。此参考版本不代表实际运行时版本。
+Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.resolveSymbolicLinks`](https://github.com/dart-lang/sdk/blob/3.10.0/sdk/lib/io/file_system_entity.dart)：只解析由平台提供的可信私有根，保留内部输入路径的链接拒绝与异常传播。使用现有 `dart:io` API，未复制实现或新增依赖；保留 Dart project authors 2013 署名及该版本根 [BSD-3-Clause LICENSE](https://github.com/dart-lang/sdk/blob/3.10.0/LICENSE) 的 2012 署名。此参考版本不代表实际运行时版本。 同一既有 API 也用于 Lite Android 共享 Flutter 启动的可信 support 根，供后续 home 与派生文件复用；标准版和外来文件路径保护保持。
 
 #### [dart-lang/test · matcher](https://github.com/dart-lang/test/tree/master/pkgs/matcher)
 
@@ -373,6 +373,8 @@ Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.reso
 **固定版本 / revision：** `956fdaeb068d791a39dec140f2efc9ba48c59729`
 
 **用途与采用方式：** 只读研究Cargo官方source/选包语义，不复制Cargo实现，不构成应用运行时依赖
+
+Lite Host 容量修复另按 2026-11-05 读回的 [Cargo profiles](https://doc.rust-lang.org/cargo/reference/profiles.html#debug) 与[环境变量文档](https://doc.rust-lang.org/cargo/reference/environment-variables.html)使用既有 dev/test `line-tables-only` 配置，保留回溯文件与行号并减少类型/变量调试数据；实际工具链仍为 1.98.1，不改优化、断言、features 或测试目标。仅参考公开配置文档，未复制实现或新增依赖；磁盘收益以真实 CI 为准。
 
 **许可证、署名与证据：** Apache-2.0 OR MIT；本轮来源检索记录
 
@@ -949,7 +951,7 @@ Lite225 临时 runner 磁盘耗尽后，容量准备仅参照固定安装脚本�
 
 **固定版本 / revision：** `d1527c8f67ef9af357290475d4af4b0fab8f12e0`
 
-**用途与采用方式：** Lite CI Rust 编译缓存。按固定 SHA 引用。
+**用途与采用方式：** Lite CI Rust 编译缓存。按固定 SHA 引用。 同固定版的 [`config.ts`](https://github.com/Swatinem/rust-cache/blob/d1527c8f67ef9af357290475d4af4b0fab8f12e0/src/config.ts#L63-L121) 与 [`restore.ts`](https://github.com/Swatinem/rust-cache/blob/d1527c8f67ef9af357290475d4af4b0fab8f12e0/src/restore.ts#L38) 用于核对 input key 和 Cargo 环境构成恢复前缀；Host 使用独立行表配置 key，保留旧缓存。只读参考，不复制 action 实现。
 
 **许可证、署名与证据：** LGPL-3.0；[固定提交 LICENSE](https://github.com/Swatinem/rust-cache/blob/d1527c8f67ef9af357290475d4af4b0fab8f12e0/LICENSE)
 
@@ -1412,6 +1414,8 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 **许可证与署名：** Apache-2.0，保留上游文件的 AOSP 版权与许可头；仅作路径和类加载协议参考。
 
 同一 `android-13.0.0_r1` 来源另只读核对 [`SQLiteSession.executeSpecial`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteSession.java#L821-L831) 将 BEGIN 改为独占事务；[`SQLiteDatabaseConfiguration`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteDatabaseConfiguration.java) 与 [`SQLiteConnectionPool`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteConnectionPool.java) 的只读单连接配置，以及 [`SQLiteDatabase.OpenParams`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteDatabase.java) 的显式无限 idle timeout。结合 [SQLite 官方 data_version 文档](https://www.sqlite.org/pragma.html#pragma_data_version)，迁移和业务来源核验复用系统只读连接并比较同一连接的读取前后版本，拒绝并发提交造成的混合读；不修改系统设置或使用隐藏 API。仅参考平台代码与公开接口，未复制实现或新增依赖；保留 AOSP 2006/2011 版权与 Apache-2.0 许可。参考 tag 不作为实际运行镜像的源码身份。
+
+同一 API33 固定来源的 [`ContextImpl.getFilesDir`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/app/ContextImpl.java#L731-L737) 另用于核对平台私有路径由 dataDir 构造、没有 canonical 保证。Lite 仅规范化可信 Context 根，复用现有私域门；不复制 AOSP 实现或将参考版本冒充手机系统来源。
 
 #### [AOSP libcore](https://android.googlesource.com/platform/libcore/)
 

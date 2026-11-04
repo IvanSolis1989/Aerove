@@ -896,10 +896,16 @@ class SetupAction extends _$SetupAction {
     if (record == null || (isCurrent != null && !isCurrent())) return false;
     final (_, _, _, params) = inputs;
     final effective = ClientProduct.current.expectedCoreId == 'meow-rs'
-        ? params.copyWith(selectedMap: Map.of(ref.read(selectedMapProvider)))
+        ? params.copyWith(
+            selectedMap: inputs.$1.profileId == null
+                ? const {}
+                : Map.of(ref.read(selectedMapProvider)),
+          )
         : params;
     try {
-      final admitted = ClientProduct.current.expectedCoreId == 'meow-rs'
+      final admitted =
+          ClientProduct.current.expectedCoreId == 'meow-rs' &&
+              inputs.$1.profileId != null
           ? profile.selectionPolicy!.consumeSql(
               effective,
               profileId: inputs.$1.profileId,
@@ -1126,7 +1132,8 @@ class SetupAction extends _$SetupAction {
     required PatchClashConfig patchConfig,
   }) async {
     final profileId = setupState.profileId;
-    if (profileId == null) {
+    if (profileId == null &&
+        ClientProduct.current.expectedCoreId != 'meow-rs') {
       return (
         yaml: '',
         md5: '',
@@ -1148,12 +1155,13 @@ class SetupAction extends _$SetupAction {
     final appendSystemDns = networkSetting.appendSystemDns;
     final isCustom = setupState.profileType == ProfileType.custom;
     final scriptContent =
-        (!isCustom || setupState.overrides.applyExtensionToCustom) &&
+        profileId != null &&
+            (!isCustom || setupState.overrides.applyExtensionToCustom) &&
             setupState.extendType == ExtendType.script
         ? await setupState.script?.content
         : null;
     final hasScript = scriptContent?.isNotEmpty == true;
-    final profileBase = !isCustom && !hasScript
+    final profileBase = profileId != null && !isCustom && !hasScript
         ? await _core.getProfileBase(profileId)
         : null;
     final resolvedGroups = isCustom
@@ -1198,7 +1206,7 @@ class SetupAction extends _$SetupAction {
           entry.key: entry.value,
       };
     }
-    final scriptOutput = hasScript
+    final scriptOutput = profileId != null && hasScript
         ? await handleEvaluate(
             scriptContent!,
             isCustom
@@ -1254,7 +1262,8 @@ class SetupAction extends _$SetupAction {
       coreId: ClientProduct.current.expectedCoreId,
       providerFileReferences: injected.files,
       selectionBinding:
-          ClientProduct.current.expectedCoreId == 'meow-rs' &&
+          profileId != null &&
+              ClientProduct.current.expectedCoreId == 'meow-rs' &&
               ref.read(profileProvider(profileId)) != null
           ? ProfileSelectionBinding(
               profileId,
@@ -1591,10 +1600,12 @@ class SetupAction extends _$SetupAction {
       dataSourceProof: dataSourceProof,
     );
     if (bindSharedSource && realProfile != null) {
-      setupParams = realProfile.selectionPolicy!.consumeSql(
-        setupParams,
-        profileId: profile?.id,
-      );
+      setupParams = profile == null
+          ? setupParams.copyWith(selectedMap: const {})
+          : realProfile.selectionPolicy!.consumeSql(
+              setupParams,
+              profileId: profile.id,
+            );
     }
     final inputs = switch (setupState) {
       final state? when !profileFailed => (

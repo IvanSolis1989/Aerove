@@ -173,6 +173,7 @@ class MeowSetupProtocolTest {
             api.syncState(state(1400)); api.setupConfig(setup())
             val staged = store.readCurrent()!!
             assertEquals(1400, (ConfigYaml.parse(staged.handoff.compiledYaml)["tun"] as Map<*, *>)["mtu"])
+            store.requestStart(staged.revision, staged.intentEpoch)
             store.commitApplied(staged.revision, staged.intentEpoch, RuntimeAppliedProof(1, 2, "4"))
             effects.runtime = MeowSetupRuntime(staged.revision, staged.intentEpoch, staged.handoff.compiledSha256, "4", 1, 2)
             compatible.clear()

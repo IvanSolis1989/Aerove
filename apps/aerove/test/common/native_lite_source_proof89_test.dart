@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:drift/native.dart';
+import 'package:fl_clash/common/native_lite_mapping.dart';
 import 'package:fl_clash/common/native_lite_migration.dart';
 import 'package:fl_clash/common/task.dart';
 import 'package:yaml/yaml.dart';
@@ -368,6 +369,96 @@ void main() {
               'proof': withResources,
             }),
           );
+      } finally {
+        await db.close();
+        await home.delete(recursive: true);
+      }
+    },
+  );
+  test(
+    'null selection binds an empty source without selecting library rows',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = await SharedPreferences.getInstance();
+      final home = await Directory.systemTemp.createTemp(
+        'source-proof89-empty-',
+      );
+      final db = Database(NativeDatabase(File('${home.path}/database.sqlite')));
+      try {
+        final config = Config(
+          currentProfileId: null,
+          themeProps: defaultThemeProps,
+          patchClashConfig: newPatchClashConfig('meow-rs'),
+        );
+        final proof = await nativeLiteBusinessSource(db, home, storage, config);
+        for (final table in (proof['tables'] as Map).values) {
+          expect((table as Map)['rows'], 0);
+        }
+        await db.profilesDao.putAll([
+          const Profile(
+            id: 11,
+            type: ProfileType.custom,
+            label: 'Unselected',
+            autoUpdateDuration: Duration.zero,
+          ).toCompanion(),
+        ]);
+        expect(
+          await nativeLiteBusinessSource(db, home, storage, config),
+          proof,
+        );
+        await expectLater(
+          nativeLiteBusinessSource(
+            db,
+            home,
+            storage,
+            config.copyWith(currentProfileId: 999),
+          ),
+          throwsA(isA<NativeLiteMigrationException>()),
+        );
+        final selected = await nativeLiteBusinessSource(
+          db,
+          home,
+          storage,
+          config.copyWith(currentProfileId: 11),
+        );
+        expect(((selected['tables'] as Map)['profiles'] as Map)['rows'], 1);
+        final changed = await nativeLiteBusinessSource(
+          db,
+          home,
+          storage,
+          config.copyWith.patchClashConfig(hosts: {'empty.test': '127.0.0.2'}),
+        );
+        expect(changed['configSha256'], isNot(proof['configSha256']));
+        await nativeLiteBusinessSource(db, home, storage, config);
+        final wire = config.toJson()..remove('currentProfileId');
+        await storage.setString('config', jsonEncode(wire));
+        await expectLater(
+          nativeLiteBusinessSource(db, home, storage, null),
+          throwsA(isA<NativeLiteMigrationException>()),
+        );
+        wire['currentProfileId'] = '11';
+        await storage.setString('config', jsonEncode(wire));
+        await expectLater(
+          nativeLiteBusinessSource(db, home, storage, null),
+          throwsA(isA<NativeLiteMigrationException>()),
+        );
+        await storage.setString('config', jsonEncode(config));
+        await nativeLiteBusinessSource(db, home, storage, config);
+        const output = String.fromEnvironment('SOURCE_PROOF89_OUTPUT');
+        if (output.isNotEmpty) {
+          final all = <String, Object?>{};
+          for (final name in (proof['tables'] as Map).keys.cast<String>()) {
+            all[name] =
+                (await db
+                        .customSelect('SELECT * FROM "$name" ORDER BY rowid')
+                        .get())
+                    .map((row) => row.data)
+                    .toList();
+          }
+          await File('$output.empty').writeAsString(
+            jsonEncode({'config': config, 'all': all, 'proof': proof}),
+          );
+        }
       } finally {
         await db.close();
         await home.delete(recursive: true);

@@ -69,7 +69,15 @@ private fun nativeLiteList(value: org.json.JSONArray): List<Any?> = (0 until val
 }
 private fun list(value: Any?) = value as? List<*> ?: emptyList<Any?>()
 
-internal fun nativeLiteSelectedRows(all: Map<String, List<Map<String, Any?>>>, id: Long): Map<String, List<Map<String, Any?>>> {
+internal fun nativeLiteCurrentProfileId(config: JSONObject): Long? {
+    require(config.has("currentProfileId")) { "shared_source_selection_invalid" }
+    if (config.isNull("currentProfileId")) return null
+    val value = config.get("currentProfileId")
+    require(value is Int || value is Long) { "shared_source_selection_invalid" }
+    return (value as Number).toLong()
+}
+internal fun nativeLiteSelectedRows(all: Map<String, List<Map<String, Any?>>>, id: Long?): Map<String, List<Map<String, Any?>>> {
+    if (id == null) return all.mapValues { emptyList() }
     fun same(value: Any?, id: Any?) = value is Number && id is Number && value.toLong() == id.toLong()
     val profile = all.getValue("profiles").single { same(it["id"], id) }
     val custom = profile["type"] == "custom"
@@ -194,12 +202,13 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
                 } }.toMap()) }
             }
         }
-        val rows = nativeLiteSelectedRows(all, config.getLong("currentProfileId"))
+        val selectedId = nativeLiteCurrentProfileId(config)
+        val rows = nativeLiteSelectedRows(all, selectedId)
         val tables = proof.getJSONObject("tables")
         check(tables.keys().asSequence().toSet() == rows.keys) { "shared_source_tables_invalid" }
         rows.forEach { (name, values) -> val expected = tables.getJSONObject(name); check(expected.getInt("rows") == values.size && expected.getString("sha256") == nativeLiteJsonHash(values)) { "shared_source_table_changed:$name" } }
-        val selected = rows.getValue("profiles").single { (it["id"] as Number).toLong() == config.getLong("currentProfileId") }
-        val overrides = nativeLiteObject(selected["overrides"])
+        val selected = if (selectedId == null) null else rows.getValue("profiles").single { (it["id"] as Number).toLong() == selectedId }
+        val overrides = nativeLiteObject(selected?.get("overrides"))
         val filters = nativeLiteObject(overrides["filterBindings"]).values.flatMap { list(it).map { (it as Number).toLong() } }.toSet()
         val map = nativeLiteMap(config)
         val runtime = nativeLiteRuntimeConfig(map, filters)
@@ -223,8 +232,8 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
         val files = proof.getJSONArray("files")
         check((0 until files.length()).map { files.getJSONObject(it).getString("path") }.toSet() == paths && files.length() == paths.size) { "shared_source_file_set_changed" }
         verifyNativeLiteFiles(root, files)
-        check(nativeLiteJsonHash(nativeLiteCurrentConfig(context).let(::nativeLiteMap).let { nativeLiteRuntimeConfig(it, filters) }) == proof.getString("configSha256")) { "shared_source_config_changed" }
-        selectedMap = nativeLiteObject(selected["selected_map"]).mapValues { (_, value) ->
+        check(nativeLiteJsonHash(nativeLiteCurrentConfig(context).also { nativeLiteCurrentProfileId(it) }.let(::nativeLiteMap).let { nativeLiteRuntimeConfig(it, filters) }) == proof.getString("configSha256")) { "shared_source_config_changed" }
+        selectedMap = nativeLiteObject(selected?.get("selected_map")).mapValues { (_, value) ->
             require(value is String) { "shared_source_selected_map_invalid" }
             value
         }

@@ -753,6 +753,9 @@ jobs:
     if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 'line-tables-only'
+      CARGO_PROFILE_TEST_DEBUG: 'line-tables-only'
     steps:
     - name: Validate exclusive full Meow host-only request
       if: ${{ inputs.meow_host_only }}
@@ -788,7 +791,7 @@ jobs:
     - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       with:
         workspaces: apps/aerove-lite/meow-native -> target
-        key: lite-meow-host-rust1.98.1
+        key: lite-meow-host-rust1.98.1-lines
         cache-workspace-crates: true
         cache-directories: apps/aerove-lite/meow-native/.upstream
     - name: Stable lock and host production regression
@@ -807,6 +810,19 @@ jobs:
         NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
       run: |-
         set -euo pipefail
+        disk_evidence=apps/aerove-lite/meow-native/build
+        mkdir -p "$disk_evidence"
+        host_disk_report() {
+          df -h . || true
+          if [[ -d apps/aerove-lite/meow-native/target ]]; then
+            du -sh apps/aerove-lite/meow-native/target || true
+          else
+            printf 'Host target directory absent\n'
+          fi
+        }
+        trap 'status=$?; trap - EXIT; host_disk_report > "$disk_evidence/host-disk-exit.txt" 2>&1 || true; cat "$disk_evidence/host-disk-exit.txt" || true; exit "$status"' EXIT
+        host_disk_report > "$disk_evidence/host-disk-start.txt" 2>&1 || true
+        cat "$disk_evidence/host-disk-start.txt" || true
         python3 apps/aerove-lite/meow-native/test_core_tests.py
         pending=false
         if [[ "$MEOW_HOST_ONLY" == true ]]; then
@@ -945,7 +961,8 @@ jobs:
         from pathlib import Path
         root = Path(os.environ['RUNNER_TEMP']) / 'lite-client-fixtures'
         for name in ('resource/ordinary-compiled.yaml', 'source-proof89.json',
-                     'source-proof89.json.resources', 'source-proof89.json.producer.yaml'):
+                     'source-proof89.json.resources', 'source-proof89.json.producer.yaml',
+                     'source-proof89.json.empty'):
             assert (root / name).is_file(), name
         receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
                        attempt=os.environ['GITHUB_RUN_ATTEMPT'], files={
@@ -1207,6 +1224,14 @@ jobs:
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert all(value['testExit'] == 0 and value['logExit'] == 0 for value in results.values()), results
         PY
+    - name: Verify fresh Lite defaults and unchanged Standard startup paths
+      working-directory: apps/aerove
+      run: |-
+        flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+          test/common/native_lite_builder_test.dart \
+          --plain-name 'fresh null selection uses the real Lite producer and no core profile read'
+        flutter test --no-pub --concurrency 1 \
+          test/common/path_test.dart test/providers/setup_action_test.dart
     - name: Verify SQL-managed source selection policy through the Standard fixture composition
       working-directory: apps/aerove
       run: |-

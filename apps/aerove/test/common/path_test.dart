@@ -35,6 +35,45 @@ void main() {
     }
   });
 
+  test(
+    'only trusted Lite Android support root resolves its platform alias',
+    () async {
+      final real = await Directory('${root.path}/trusted-support').create();
+      final link = await Link('${root.path}/support-alias').create(real.path);
+      final alias = Directory(link.path);
+      try {
+        final lite = await AppPath.resolveSupportDirectory(
+          alias,
+          isAndroid: true,
+          productId: 'aerove-lite',
+        );
+        expect(lite.path, await real.resolveSymbolicLinks());
+        expect(
+          join(lite.path, 'profiles', '1.yaml'),
+          join(await real.resolveSymbolicLinks(), 'profiles', '1.yaml'),
+        );
+        expect(
+          (await AppPath.resolveSupportDirectory(
+            alias,
+            isAndroid: true,
+            productId: 'aerove-standard',
+          )).path,
+          alias.path,
+        );
+        expect(
+          (await AppPath.resolveSupportDirectory(
+            alias,
+            isAndroid: false,
+            productId: 'aerove-lite',
+          )).path,
+          alias.path,
+        );
+      } finally {
+        await link.delete();
+        await real.delete();
+      }
+    },
+  );
   test('provider directories match the paths handed to the core', () async {
     const proxiesUrl = 'https://example.com/a.yaml';
     const rulesUrl = 'https://example.com/b.yaml';

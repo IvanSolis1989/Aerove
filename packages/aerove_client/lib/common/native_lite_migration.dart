@@ -597,6 +597,9 @@ Map<String, List<Map<String, dynamic>>> nativeLiteSelectedRows(
   Map<String, List<Map<String, dynamic>>> all,
   int? id,
 ) {
+  if (id == null) {
+    return {for (final table in all.keys) table: <Map<String, dynamic>>[]};
+  }
   final selected = all['profiles']!.where((row) => row['id'] == id).toList();
   if (selected.length != 1)
     legacyFailure('runtime.profile', 'selected profile is missing');
@@ -648,7 +651,7 @@ Map<String, List<Map<String, dynamic>>> nativeLiteSelectedRows(
       if (row['type'] != 'custom') label(row): row,
   };
   final profileIds = <int>{
-    id!,
+    id,
     for (final name in usedProfiles)
       if (providers[name] != null) providers[name]!['id'] as int,
   };
@@ -765,6 +768,12 @@ Future<Map<String, dynamic>> nativeLiteBusinessSource(
   if (encoded == null)
     legacyFailure('runtime.config', 'shared configuration is missing');
   final config = Map<String, dynamic>.from(jsonDecode(encoded) as Map);
+  if (!config.containsKey('currentProfileId') ||
+      config['currentProfileId'] != null &&
+          config['currentProfileId'] is! int) {
+    legacyFailure('runtime.profile', 'invalid profile selection');
+  }
+  final selectedId = config['currentProfileId'] as int?;
   final rows = await db.transaction(() async {
     final all = <String, List<Map<String, dynamic>>>{};
     for (final name in [
@@ -783,12 +792,12 @@ Future<Map<String, dynamic>> nativeLiteBusinessSource(
               .map((row) => row.data)
               .toList();
     }
-    return nativeLiteSelectedRows(all, config['currentProfileId'] as int?);
+    return nativeLiteSelectedRows(all, selectedId);
   });
-  final profile = rows['profiles']!.singleWhere(
-    (row) => row['id'] == config['currentProfileId'],
-  );
-  final overrides = jsonDecode(profile['overrides'] as String? ?? '{}') as Map;
+  final profile = selectedId == null
+      ? null
+      : rows['profiles']!.singleWhere((row) => row['id'] == selectedId);
+  final overrides = jsonDecode(profile?['overrides'] as String? ?? '{}') as Map;
   final filterIds = {
     for (final value in (overrides['filterBindings'] as Map? ?? {}).values)
       ...List<int>.from(value as List),

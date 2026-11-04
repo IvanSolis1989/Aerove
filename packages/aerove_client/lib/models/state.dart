@@ -215,7 +215,7 @@ abstract class ComputeGroupsState with _$ComputeGroupsState {
 abstract class MakeRealProfileState with _$MakeRealProfileState {
   const factory MakeRealProfileState({
     required String profilesPath,
-    required int profileId,
+    required int? profileId,
     @Default({}) Map<String, dynamic> rawConfig,
 
     /// A script's output, decoded on the build isolate in place of [rawConfig].

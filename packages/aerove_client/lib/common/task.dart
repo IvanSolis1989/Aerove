@@ -622,6 +622,9 @@ Future<RealProfile> _makeRealProfileTask(
   final appendSystemDns = data.appendSystemDns;
   final defaultUA = data.defaultUA;
   String getProvidersFilePathInner(String type, String key) {
+    if (profileId == null) {
+      throw StateError('A provider cache path requires a selected profile');
+    }
     return join(
       profilesPath,
       providersDirectoryName,

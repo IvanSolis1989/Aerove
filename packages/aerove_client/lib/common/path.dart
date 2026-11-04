@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/product.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -41,11 +42,27 @@ class AppPath {
   }
 
   void _bind() {
-    _dataDir = ResolveOnce(supportDirectory);
+    _dataDir = ResolveOnce(() async {
+      final directory = await supportDirectory();
+      return resolveSupportDirectory(
+        directory,
+        isAndroid: Platform.isAndroid,
+        productId: Platform.isAndroid ? ClientProduct.current.id : '',
+      );
+    });
     _downloadDir = ResolveOnce(downloadDirectory);
     _tempDir = ResolveOnce(temporaryDirectory);
     cacheDirectory().then(cacheDir.complete);
   }
+
+  @visibleForTesting
+  static Future<Directory> resolveSupportDirectory(
+    Directory directory, {
+    required bool isAndroid,
+    required String productId,
+  }) async => isAndroid && productId == 'aerove-lite'
+      ? Directory(await directory.resolveSymbolicLinks())
+      : directory;
 
   factory AppPath() {
     _instance ??= AppPath._internal();

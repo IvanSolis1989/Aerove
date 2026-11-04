@@ -210,7 +210,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                     if (!attached) throw MeowProtocolFailure("detached", "Meow engine is detached")
                     if (current == null) {
                         MeowNativeCore.readCapabilities()
-                        val candidate = MeowEngineAttachment(graph.filesDir, graph.runtimeHandoffs, graph.vpn, scope,
+                        val candidate = MeowEngineAttachment(graph.filesDir.canonicalFile, graph.runtimeHandoffs, graph.vpn, scope,
                             JniResourceFetch.preparedValidator(graph), { MeowNativeCore.readCapabilities(); Unit }, ::events,
                             { failure -> android.util.Log.w("MeowFlutter", "UI telemetry failed for the owned runtime", failure) },
                             object : MeowFlutterRuntime {

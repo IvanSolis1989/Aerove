@@ -44,6 +44,106 @@ void main() {
     );
   }
   test(
+    'fresh null selection uses the real Lite producer and no core profile read',
+    () async {
+      final home = await Directory.systemTemp.createTemp(
+        'native-empty-producer-',
+      );
+      final database = db.Database(
+        NativeDatabase(File(p.join(home.path, 'database.sqlite'))),
+      );
+      final prior = db.database;
+      db.database = database;
+      final storage = await SharedPreferences.getInstance();
+      await storage.clear();
+      ProviderContainer? container;
+      try {
+        final config = Config(
+          currentProfileId: null,
+          themeProps: defaultThemeProps,
+          patchClashConfig: newPatchClashConfig(
+            'meow-rs',
+          ).copyWith(hosts: {'fresh.test': '127.0.0.2'}, mixedPort: 7897),
+        );
+        await useAppPaths(home);
+        globalState.packageInfo = PackageInfo(
+          appName: 'AEROVE Lite',
+          packageName: 'fixture',
+          version: '1.0.0',
+          buildNumber: '1',
+        );
+        final core = _UnusedCore();
+        container = ProviderContainer(
+          overrides: [
+            ...buildConfigOverrides(config),
+            profilesProvider.overrideWith(() => TestProfiles([])),
+            coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+          ],
+        );
+        final state = await container.read(setupStateProvider(null).future);
+        expect(state.profileId, isNull);
+        final built = await container
+            .read(setupActionProvider.notifier)
+            .getProfile(
+              setupState: state,
+              patchConfig: config.patchClashConfig,
+            );
+        expect(built.yaml, isNotEmpty);
+        final yaml = jsonDecode(jsonEncode(loadYaml(built.yaml))) as Map;
+        expect(built.base, isNull);
+        expect(built.md5, isNotEmpty);
+        expect(yaml['aerove-geo-origin'], isA<Map>());
+        expect(yaml['mixed-port'], 7897);
+        expect((yaml['hosts'] as Map)['fresh.test'], '127.0.0.2');
+        expect(yaml['dns'], isA<Map>());
+        expect(built.selectionPolicy!.binding, isNull);
+        verifyNever(() => core.getProfileBase(any()));
+        verifyNever(() => core.getConfig(any()));
+        expect(
+          await Directory(p.join(home.path, 'profiles', 'null')).exists(),
+          isFalse,
+        );
+        final proof = await nativeLiteBusinessSource(
+          database,
+          home,
+          storage,
+          config,
+        );
+        for (final row in (proof['tables'] as Map).values) {
+          expect((row as Map)['rows'], 0);
+        }
+        await database.profilesDao.putAll([
+          const Profile(
+            id: 981,
+            type: ProfileType.custom,
+            label: 'Unselected',
+            autoUpdateDuration: Duration.zero,
+          ).toCompanion(),
+        ]);
+        expect(
+          await nativeLiteBusinessSource(database, home, storage, config),
+          proof,
+        );
+        expect(
+          (await container
+                  .read(setupActionProvider.notifier)
+                  .getProfile(
+                    setupState: state,
+                    patchConfig: config.patchClashConfig,
+                  ))
+              .yaml,
+          built.yaml,
+        );
+      } finally {
+        container?.dispose();
+        db.database = prior;
+        await database.close();
+        await home.delete(recursive: true);
+      }
+    },
+  );
+
+  test(
     'Native Builder import through actual setup state and YAML keeps scoped nodes and local bytes',
     () async {
       const fixture = String.fromEnvironment('NATIVE_LITE_BUILDER_FIXTURE');
@@ -137,6 +237,7 @@ void main() {
               setupState: state,
               patchConfig: config.patchClashConfig,
             );
+        expect(built.yaml, isNotEmpty);
         final yaml = jsonDecode(jsonEncode(loadYaml(built.yaml))) as Map;
         expect(yaml['custom-fact'], {'preserve': true});
         expect((yaml['proxies'] as List).single['server'], '127.0.0.2');

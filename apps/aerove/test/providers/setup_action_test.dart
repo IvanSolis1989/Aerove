@@ -1343,6 +1343,32 @@ void main() {
     );
 
     test(
+      'Standard null selection retains its original empty core default',
+      () async {
+        final core = _MockCoreHandlerInterface();
+        final scoped = ProviderContainer(
+          overrides: [
+            coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+            setupActionProvider.overrideWith(SetupAction.new),
+          ],
+        );
+        addTearDown(scoped.dispose);
+        final built = await scoped
+            .read(setupActionProvider.notifier)
+            .getProfile(
+              setupState: nullProfileSetupState,
+              patchConfig: scoped.read(patchClashConfigProvider),
+            );
+        expect(built.yaml, isEmpty);
+        expect(built.md5, isEmpty);
+        expect(built.base, isNull);
+        expect(built.selectionPolicy, isNull);
+        verifyNever(() => core.getProfileBase(any()));
+        verifyNever(() => core.getConfig(any()));
+      },
+    );
+
+    test(
       'a refresh failure still runs core.setupConfig and preloadInvoke',
       () async {
         final profile = Profile.normal(label: 'p', url: 'http://127.0.0.1:9/');
