@@ -486,11 +486,11 @@ def main():
         native_build(args.target, args.abi, args.ndk); return
     expected = identity()
     if args.action == 'seal':
-        if args.abi not in {'arm64-v8a', 'x86_64'}: parser.error('ABI required')
+        if args.abi not in {'arm64-v8a', 'x86_64', 'shared-fixture'}: parser.error('ABI required')
         seal(args.directory, args.abi, expected)
     else:
         if args.action == 'fetch':
-            if args.abi not in {'arm64-v8a', 'x86_64'}: parser.error('ABI required')
+            if args.abi not in {'arm64-v8a', 'x86_64', 'shared-fixture'}: parser.error('ABI required')
             expected['abi'] = args.abi
         value = fetch(args.name, args.destination, expected, args.action == 'runtime')
         if args.action == 'runtime':

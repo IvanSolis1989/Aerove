@@ -12,6 +12,28 @@ ci=importlib.util.module_from_spec(spec);spec.loader.exec_module(ci)
 class TransportTests(unittest.TestCase):
     expected=dict(sourceRevision='a'*40,sourceTree='b'*40,workflowRun='123',runAttempt=2,runNumber=7)
 
+    def test_cli_roundtrip_shared_fixture_preserves_run_identity_and_payload(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)/'producer';root.mkdir()
+            (root/'manifest.json').write_bytes(b'{"source":"real-producer-fixture"}\n')
+            row=dict(name='shared-migration',id=5,expired=False,
+                workflow_run=dict(id=123,head_sha='a'*40))
+            with mock.patch.object(ci,'identity',side_effect=lambda:dict(self.expected)), \
+                    mock.patch.object(ci.sys,'argv',['ci_artifacts.py','seal','--directory',str(root),'--abi','shared-fixture']):
+                ci.main()
+            target=Path(temp)/'consumer'
+            with mock.patch.object(ci,'identity',side_effect=lambda:dict(self.expected)), \
+                    mock.patch.dict(ci.os.environ,{'GITHUB_REPOSITORY':'owner/repo'}), \
+                    mock.patch.object(ci,'_gh_json',return_value={'artifacts':[row]}), \
+                    mock.patch.object(ci,'download_artifact',side_effect=lambda _,directory:ci.shutil.copytree(root,directory)), \
+                    mock.patch.object(ci.sys,'argv',['ci_artifacts.py','fetch','--name','shared-migration',
+                        '--destination',str(target),'--abi','shared-fixture']):
+                ci.main()
+            self.assertEqual((root/'manifest.json').read_bytes(),(target/'manifest.json').read_bytes())
+            binding=json.loads((target/'TRANSFER.json').read_text())
+            self.assertEqual('shared-fixture',binding['abi'])
+            for key,value in self.expected.items():self.assertEqual(value,binding[key])
+
     def test_only_exact_original201_archive_can_reach_download_without_current_identity_spoofing(self):
         import emulator_original84 as original
         import lite_release
