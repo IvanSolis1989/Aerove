@@ -214,6 +214,8 @@ jobs:
         key.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
         key.chmod(0o600)
         PY
+        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease --dry-run -PqaDriver=production \
+          > "$evidence/production-task-graph.txt"
         gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease --dry-run -PqaDriver=surface-pixel-diagnostic \
           > "$evidence/task-graph.txt"
         python3 - <<'PY'
@@ -222,7 +224,9 @@ jobs:
         graph = (Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness/task-graph.txt').read_text()
         tasks = re.findall(r'(?m)^(:\S+) SKIPPED$', graph)
         assert tasks.count(':assembleRelease') == 1 and tasks.count(':prepareDriverSource') == 1
-        assert all(task.count(':') == 1 and not re.search(r'flutter|meow|helper|r8|minify', task, re.I) for task in tasks)
+        assert all(task.count(':') == 1 and not re.search(r'flutter|meow|helper|r8|minify|kotlin', task, re.I) for task in tasks)
+        production = (Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness/production-task-graph.txt').read_text()
+        assert re.findall(r'(?m)^(:compileReleaseKotlin) SKIPPED$', production) == [':compileReleaseKotlin']
         PY
         gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease -PqaDriver=surface-pixel-diagnostic \
           2>&1 | tee "$evidence/build.log"
@@ -230,6 +234,7 @@ jobs:
           -PqaDriver=surface-pixel-diagnostic > "$evidence/runtime-classpath.txt"
         python3 - <<'PY'
         import hashlib, json, os, re, shutil, subprocess, sys
+        import xml.etree.ElementTree as ET
         from pathlib import Path
         sys.path.insert(0, 'apps/aerove-lite/tool')
         from verify_apk import signing_certificate
@@ -243,12 +248,18 @@ jobs:
         assert Path(name).name == name and name.endswith('.apk')
         apk = output/name
         assert apk.is_file() and not apk.is_symlink()
-        defined = subprocess.check_output([str(Path(os.environ['ANDROID_SDK_ROOT'])/'cmdline-tools/latest/bin/apkanalyzer'),
-            'dex', 'packages', '--defined-only', str(apk)], text=True)
+        analyzer = Path(os.environ['ANDROID_SDK_ROOT'])/'cmdline-tools/latest/bin/apkanalyzer'
+        defined = subprocess.check_output([str(analyzer), 'dex', 'packages', '--defined-only', str(apk)], text=True)
         (evidence/'defined-classes.txt').write_text(defined)
         actual_classes = classes(defined)
         assert 'dev.aerove.lite.SurfacePixelDiagnosticTest' in actual_classes
-        assert not any(name.startswith('kotlinx.coroutines.') for name in actual_classes), 'Runner duplicated target coroutine classes'
+        assert not any(name.startswith(('kotlin.', 'kotlinx.coroutines.', 'androidx.', 'android.test.', 'junit.')) for name in actual_classes), 'Surface runner duplicated provided runtime classes'
+        manifest_xml = subprocess.check_output([str(analyzer), 'manifest', 'print', str(apk)], text=True)
+        (evidence/'manifest.xml').write_text(manifest_xml)
+        android = '{http://schemas.android.com/apk/res/android}'
+        libraries = ET.fromstring(manifest_xml).find('application').findall('uses-library')
+        assert len(libraries) == 3 and {item.get(android+'name'):item.get(android+'required') for item in libraries} == {
+            'android.test.runner':'true', 'android.test.base':'true', 'android.test.mock':'true'}
         tools = Path(os.environ['ANDROID_HOME'])/'build-tools/37.0.0'
         signature = subprocess.check_output([str(tools/'apksigner'),'verify','--verbose','--print-certs',str(apk)], text=True)
         badging = subprocess.check_output([str(tools/'aapt'),'dump','badging',str(apk)], text=True)
@@ -260,7 +271,7 @@ jobs:
         assert signer == '09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'
         assert re.search(r"^package: name='dev.aerove.lite.test' ", badging, re.M) and 'launchable-activity:' not in badging
         assert len(re.findall(r'E: instrumentation(?: |$)', manifest, re.M)) == 1
-        assert re.search(r'android:name[^=]*="androidx.test.runner.AndroidJUnitRunner"', manifest)
+        assert re.search(r'android:name[^=]*="android.test.InstrumentationTestRunner"', manifest)
         assert re.search(r'android:targetPackage[^=]*="dev.aerove.lite"', manifest)
         assert re.search(r'android:testOnly[^=]*=\(type 0x12\)0xffffffff', manifest)
         staged = evidence/'surface-test.apk'
@@ -271,7 +282,7 @@ jobs:
             workflowRun=os.environ['GITHUB_RUN_ID'], runAttempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
             runNumber=int(os.environ['GITHUB_RUN_NUMBER']), apkSha256=digest(staged), signerSha256=signer,
             appCompiled=False, harnessCompiled=True, taskGraphSha256=digest(evidence/'task-graph.txt'),
-            sourceSha256=digest(Path('apps/aerove-lite/android-qa/src/main/java/dev/aerove/lite/SurfacePixelDiagnosticTest.kt')))
+            sourceSha256=digest(Path('apps/aerove-lite/android-qa/src/main/java/dev/aerove/lite/SurfacePixelDiagnosticTest.java')))
         (evidence/'HARNESS-INFO.json').write_text(json.dumps(info,indent=2)+'\n')
         PY
     - name: Capture unchanged original App before and after one hierarchy read

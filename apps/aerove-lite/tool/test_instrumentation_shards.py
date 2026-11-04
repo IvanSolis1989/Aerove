@@ -69,6 +69,21 @@ class ShardSelectionTests(unittest.TestCase):
         self.assertEqual(len(self.descriptions), len(records))
         self.assertEqual(set(self.descriptions), {record["description"] for record in records})
 
+    def test_platform_reporter_requires_explicit_selection_and_complete_success(self):
+        description = "testCaptureLateSurfaceAndCompositor(dev.aerove.lite.SurfacePixelDiagnosticTest)"
+        text = self.log([description]).replace("id=AndroidJUnitRunner", "id=InstrumentationTestRunner")
+        path = self.root / "platform.log"
+        path.write_text(text)
+        with self.assertRaisesRegex(ValueError, "Unexpected instrumentation reporter"):
+            shards.parse_log(path)
+        records = shards.parse_log(path, expected_reporter="InstrumentationTestRunner")
+        self.assertEqual([(description, "passed")], [(row["description"], row["status"]) for row in records])
+        for invalid in (text.replace("INSTRUMENTATION_STATUS_CODE: 0", "INSTRUMENTATION_STATUS_CODE: -2"),
+                        text.replace("INSTRUMENTATION_CODE: -1", "INSTRUMENTATION_CODE: 0")):
+            path.write_text(invalid)
+            with self.assertRaises(ValueError):
+                shards.parse_log(path, expected_reporter="InstrumentationTestRunner")
+
     def test_discovery_binds_resolved_runner_graph_apks_source_and_never_calls_it_passed(self):
         runtime = self.root / "runtime"
         (runtime / "dependencies").mkdir(parents=True)

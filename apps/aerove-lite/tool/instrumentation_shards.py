@@ -78,7 +78,7 @@ def shard_for(description, shard_count=SHARD_COUNT):
     return abs(value) % shard_count
 
 
-def parse_log(path):
+def parse_log(path, *, expected_reporter="AndroidJUnitRunner"):
     text = Path(path).read_text(encoding="utf-8", errors="strict")
     require(re.findall(r"^INSTRUMENTATION_CODE:\s*(-?\d+)\s*$", text, re.M) == ["-1"], "Incomplete instrumentation terminal")
     require(not re.search(r"INSTRUMENTATION_(?:FAILED|ABORTED)|FAILURES!!!", text), "Instrumentation reported failure")
@@ -92,7 +92,7 @@ def parse_log(path):
         elif line.startswith("INSTRUMENTATION_STATUS_CODE: "):
             code = int(line.split(": ", 1)[1])
             require(code in (1, 0, -3, -4), f"Failed or unknown test status {code}")
-            require(fields.get("id") == "AndroidJUnitRunner", "Unexpected instrumentation reporter")
+            require(fields.get("id") == expected_reporter, "Unexpected instrumentation reporter")
             require(all(fields.get(key) for key in ("class", "test", "numtests", "current")), "Missing test identity/count")
             identity = f"{fields['test']}({fields['class']})"
             require(fields["class"] != MATRIX_CLASS, "Discovery/run includes excluded matrix class")

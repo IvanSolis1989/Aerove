@@ -121,7 +121,7 @@ class Diagnostic:
             originalAppVersionCode="28", harnessApkSha256=harness["apkSha256"], harnessSignerSha256=SIGNER,
             harnessSourceSha=args.source, harnessBuildRun=args.run, harnessBuildAttempt=args.attempt,
             executorSourceSha=args.source, executionRun=args.run, executionAttempt=args.attempt)
-        selector = "dev.aerove.lite.SurfacePixelDiagnosticTest#captureLateSurfaceAndCompositor"
+        selector = "dev.aerove.lite.SurfacePixelDiagnosticTest#testCaptureLateSurfaceAndCompositor"
         command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", selector]
         for key, value in values.items():
             command += ["-e", key, str(value)]
@@ -129,7 +129,7 @@ class Diagnostic:
         pulled = False
         try:
             log, _ = self.adb_command("surface-instrument", *command,
-                "dev.aerove.lite.test/androidx.test.runner.AndroidJUnitRunner", timeout=170)
+                "dev.aerove.lite.test/android.test.InstrumentationTestRunner", timeout=170)
         finally:
             try:
                 _, result = self.adb_command("surface-evidence-pull", "pull", remote, directory, timeout=45, check=False)
@@ -137,7 +137,7 @@ class Diagnostic:
             except BaseException as error:
                 self.receipt.setdefault("diagnosticErrors", []).append(repr(error))
         from instrumentation_shards import parse_log
-        records = parse_log(args.output / "surface-instrument.out")
+        records = parse_log(args.output / "surface-instrument.out", expected_reporter="InstrumentationTestRunner")
         require(len(records) == 1 and records[0]["className"] + "#" + records[0]["testName"] == selector and
                 records[0]["status"] == "passed" and re.findall(rb"OK \((\d+) tests?\)", log) == [b"1"],
                 "The one actual Surface capture test did not pass")

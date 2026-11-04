@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="${targetApplicationId}" />
+    </queries>
+    <application android:label="AEROVE Lite Surface Diagnostic"
+        android:allowBackup="false" android:testOnly="true">
+        <uses-library android:name="android.test.runner" android:required="true" />
+        <uses-library android:name="android.test.base" android:required="true" />
+        <uses-library android:name="android.test.mock" android:required="true" />
+    </application>
+    <instrumentation android:name="android.test.InstrumentationTestRunner"
+        android:targetPackage="${targetApplicationId}"
+        android:functionalTest="false" android:handleProfiling="false" />
+</manifest>
