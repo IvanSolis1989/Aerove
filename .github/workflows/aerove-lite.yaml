@@ -1097,13 +1097,15 @@ jobs:
         evidence="$RUNNER_TEMP/lite-flutter-host/native-migration"
         test ! -e "$evidence"
         gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          -DnativeMigration.fixture="$evidence" :app:testReleaseUnitTest \
+          :app:testReleaseUnitTest \
           --tests dev.aerove.lite.flutter.MeowLegacyMigrationOwnerTest \
           --tests dev.aerove.lite.flutter.MeowLegacyMigrationExportTest \
           --tests dev.aerove.lite.flutter.ResourceReaderFenceRegressionTest \
           --tests dev.aerove.lite.data.MeowTunReconciliation90Test \
-          --tests dev.aerove.lite.fixtures.NativeMigrationInteropFixtureTest \
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-jvm.log"
+        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          -DnativeMigration.fixture="$evidence" :app:prepareNativeMigrationFixture \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-fixture-jvm.log"
         test -s "$evidence/fixture.json"
         (cd ../aerove && flutter test --no-pub --concurrency 1 \
           --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \

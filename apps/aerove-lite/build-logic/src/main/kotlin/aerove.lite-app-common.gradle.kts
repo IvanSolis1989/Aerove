@@ -407,6 +407,19 @@ tasks.withType<Test>().configureEach {
     }
 }
 
+tasks.register<JavaExec>("prepareNativeMigrationFixture") {
+    dependsOn("compileReleaseUnitTestKotlin")
+    mainClass.set("org.junit.runner.JUnitCore")
+    classpath(providers.provider { tasks.named<Test>("testReleaseUnitTest").get().classpath })
+    args("dev.aerove.lite.fixtures.NativeMigrationInteropFixtureTest")
+    doFirst {
+        val output = providers.systemProperty("nativeMigration.fixture").orNull
+            ?: error("prepareNativeMigrationFixture requires -DnativeMigration.fixture")
+        check(output.isNotBlank()) { "nativeMigration.fixture must not be blank" }
+        systemProperty("nativeMigration.fixture", output)
+    }
+}
+
 tasks.register<JavaExec>("prepareResource89NativeFixture") {
     dependsOn("compileReleaseUnitTestKotlin")
     mainClass.set("dev.aerove.lite.fixtures.NativeResourceFixture89Kt")
