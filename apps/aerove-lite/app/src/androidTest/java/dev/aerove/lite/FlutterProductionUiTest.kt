@@ -46,12 +46,15 @@ class FlutterProductionUiTest {
         stage = "select-copy-statement"
         copyStatement()
         stage = "actual-restatement"
-        val field = awaitNode("restatement text field") { it.isEditable }
+        val field = focusForTextInput(awaitNode("restatement text field") { it.isEditable })
         check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, STATEMENT)
         })) { "Production Flutter field rejected ACTION_SET_TEXT" }
         awaitNode("committed full statement") { it.isEditable && it.text?.toString() == STATEMENT }
         action("set-text", field, "full production statement")
+        awaitNode("enabled production confirmation") { matches(it, "Confirm") &&
+            it.packageName?.toString() == PACKAGE && it.isEnabled && it.isClickable &&
+            it.actionList.any { action -> action.id == AccessibilityNodeInfo.ACTION_CLICK } }
         click("Confirm")
         requireLabel("Got it")
         capture("glass-introduction")
@@ -291,6 +294,7 @@ class FlutterProductionUiTest {
         navigate("Tools"); click("General", scroll = true); click("Port", scroll = true)
         var mixed = rowControl("Mixed port", editable = true)
         if (allowChanges) {
+            mixed = focusForTextInput(mixed)
             check(mixed.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, port)
             })) { "Production mixed port field rejected ACTION_SET_TEXT" }
@@ -341,7 +345,7 @@ class FlutterProductionUiTest {
                     (it.hintText?.toString() == hint || matches(it, hint)) }
                 candidates.size == 1
             }
-            val field = candidates.single()
+            val field = focusForTextInput(candidates.single())
             check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
             }))
@@ -564,12 +568,13 @@ class FlutterProductionUiTest {
     }
 
     private fun cancelSetImportField(hint: String, value: String) {
-        val field = awaitNode("unique real import $hint field") { node ->
+        var field = awaitNode("unique real import $hint field") { node ->
             node.isEditable && !node.isPassword &&
                 (node.hintText?.toString() == hint || matches(node, hint))
         }
         check(nodes().count { it.isVisibleToUser && it.isEditable && !it.isPassword &&
             (it.hintText?.toString() == hint || matches(it, hint)) } == 1)
+        field = focusForTextInput(field)
         check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value)
         }))
@@ -726,7 +731,7 @@ class FlutterProductionUiTest {
 
     private fun deviceEditMixedPort(port: Int) {
         navigate("Tools"); click("General", scroll = true); click("Port", scroll = true)
-        val field = rowControl("Mixed port", editable = true)
+        val field = focusForTextInput(rowControl("Mixed port", editable = true))
         check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, Bundle().apply {
             putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, port.toString())
         }))
@@ -1111,6 +1116,15 @@ class FlutterProductionUiTest {
         return false
     }
 
+    private fun focusForTextInput(node: AccessibilityNodeInfo): AccessibilityNodeInfo {
+        // Flutter installs SET_TEXT after input focus; the Android bridge can predict unhandled text.
+        performClick(node)
+        return awaitNode("focused production field advertising ACTION_SET_TEXT") { current ->
+            current == node && current.isEditable && current.isFocused && current.isEnabled &&
+                current.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_TEXT }
+        }.also { action("focus-text", it, "advertised ACTION_SET_TEXT") }
+    }
+
     private fun click(label: String, scroll: Boolean = false, dock: Boolean = false, appOnly: Boolean = true) {
         val node = if (scroll) reveal(label) else requireLabel(label, dock, appOnly)
         performClick(node)
@@ -1200,6 +1214,7 @@ class FlutterProductionUiTest {
         .put("class", node.className?.toString()).put("package", node.packageName?.toString())
         .put("boundsPx", rect(bounds(node))).put("visible", node.isVisibleToUser)
         .put("selected", node.isSelected).put("checked", node.isChecked).put("enabled", node.isEnabled)
+        .put("focused", node.isFocused)
         .put("editable", node.isEditable).put("actions", JSONArray(node.actionList.map { it.id }))
 
     private fun action(kind: String, node: AccessibilityNodeInfo, detail: String) {

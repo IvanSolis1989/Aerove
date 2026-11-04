@@ -343,9 +343,20 @@ class NativeLegacyMigrationFixtureTest {
                 evidence.put("status", "failed").put("identityReadbackError", problem.stackTraceToString())
                 if (failure == null) failure = problem else failure!!.addSuppressed(problem)
             }
+            if (failure != null) captureFailureWindow(output, evidence)
+            val statePaths = JSONArray()
+            if (failure != null) evidence.put("failureStatePaths", statePaths)
             fixtureRoot?.let { root ->
                 runCatching {
                     listOf("native-lite-migration-native/state.json", "native-lite-migration/journal.json").forEach { path ->
+                        if (failure != null) {
+                            val pathFile = File(root, path)
+                            statePaths.put(JSONObject().put("path", path)
+                                .put("exists", Files.exists(pathFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                                .put("symbolicLink", Files.isSymbolicLink(pathFile.toPath()))
+                                .put("regularFile", Files.isRegularFile(pathFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+                                .put("directory", Files.isDirectory(pathFile.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)))
+                        }
                         val file = privateFile(root, path)
                         if (file.isFile && file.length() <= 8L * 1024 * 1024)
                             File(output, "final-${file.parentFile!!.name}-${file.name}").writeBytes(file.readBytes())
@@ -358,6 +369,34 @@ class NativeLegacyMigrationFixtureTest {
         failure?.let { throw it }
     }
 
+    private fun captureFailureWindow(output: File, evidence: JSONObject) {
+        val errors = JSONArray()
+        evidence.put("failureWindowCaptureErrors", errors)
+        runCatching {
+            val rows = JSONArray()
+            fun visit(node: android.view.accessibility.AccessibilityNodeInfo?, depth: Int) {
+                if (node == null) return
+                check(depth < 80 && rows.length() < 4000) { "Accessibility hierarchy exceeds bounded traversal" }
+                val bounds = android.graphics.Rect().also { node.getBoundsInScreen(it) }
+                rows.put(JSONObject().put("depth", depth).put("text", node.text?.toString())
+                    .put("description", node.contentDescription?.toString()).put("class", node.className?.toString())
+                    .put("package", node.packageName?.toString()).put("visible", node.isVisibleToUser)
+                    .put("boundsPx", JSONArray(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom))))
+                for (index in 0 until node.childCount) visit(node.getChild(index), depth + 1)
+            }
+            visit(instrumentation.uiAutomation.rootInActiveWindow, 0)
+            File(output, "failure-window-hierarchy.json").writeText(rows.toString(2) + "\n")
+        }.onFailure { errors.put("hierarchy: ${it.stackTraceToString()}") }
+        runCatching {
+            val bitmap = checkNotNull(instrumentation.uiAutomation.takeScreenshot()) { "SurfaceFlinger screenshot failed" }
+            try {
+                check(bitmap.width > 0 && bitmap.height > 0)
+                File(output, "failure-window.png").outputStream().use {
+                    check(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it))
+                }
+            } finally { bitmap.recycle() }
+        }.onFailure { errors.put("screenshot: ${it.stackTraceToString()}") }
+    }
     private fun launchActivity(launch: Intent): android.app.Activity {
         val monitor = instrumentation.addMonitor("dev.aerove.lite.FlutterMainActivity", null, false)
         try {
