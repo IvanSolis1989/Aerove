@@ -4,6 +4,7 @@ import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/product.dart';
+import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/views/dashboard/widgets/memory_info.dart';
 import 'package:fl_clash/widgets/widgets.dart';
