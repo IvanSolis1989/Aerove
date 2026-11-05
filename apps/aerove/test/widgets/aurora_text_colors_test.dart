@@ -10,6 +10,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/manager/theme_manager.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/product.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/glass_foreground.dart';
@@ -384,7 +385,7 @@ void main() {
               (image) =>
                   image.image is AssetImage &&
                   (image.image as AssetImage).assetName ==
-                      'assets/images/icon.png',
+                      ClientProduct.current.resources.iconAsset,
             );
         expect(icon.color, isNull);
         expect(tester.takeException(), isNull);
