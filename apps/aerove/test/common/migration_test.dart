@@ -187,6 +187,166 @@ void main() {
       ]);
     });
 
+    group('initial theme', () {
+      test('saves once and preserves later user choices', () async {
+        final store = _FakeMigrationStore(
+          configMap: null,
+          version: 0,
+          upgradeVersion: 0,
+          firstInstall: true,
+        );
+        final selected = defaultThemeProps.copyWith(
+          auroraEnabled: false,
+          liquidGlass: LiquidGlassMode.standard,
+        );
+        var calls = 0;
+        Future<ThemeProps> initialTheme() async {
+          calls++;
+          store.events.add('initialTheme');
+          return selected;
+        }
+
+        final migration = Migration(store: store);
+        final first = await migration.run(initialTheme: initialTheme);
+
+        expect(first.themeProps, selected);
+        expect(store.savedConfig?.themeProps, selected);
+        expect(Config.realFromJson(store.configMap).themeProps, selected);
+        expect(calls, 1);
+        expect(store.events, [
+          'getConfigMap',
+          'getVersion',
+          'getClashConfigMap',
+          'restore',
+          'initialTheme',
+          'saveConfig',
+          'setVersion',
+          'setUpgradeVersion',
+        ]);
+        expect(store.version, Migration.currentVersion);
+        expect(store.upgradeVersion, Migration.upgradeVersion);
+        expect(
+          (await migration.run(initialTheme: initialTheme)).themeProps,
+          selected,
+        );
+        expect(calls, 1);
+
+        for (final theme in [
+          defaultThemeProps.copyWith(
+            auroraEnabled: true,
+            liquidGlass: LiquidGlassMode.none,
+          ),
+          defaultThemeProps,
+        ]) {
+          expect(
+            await store.saveConfig(first.copyWith(themeProps: theme)),
+            isTrue,
+          );
+          expect(
+            (await migration.run(initialTheme: initialTheme)).themeProps,
+            theme,
+          );
+          expect(calls, 1);
+        }
+      });
+
+      test('preserves existing defaults and legacy clash config', () async {
+        final existing = _FakeMigrationStore(
+          configMap: _createConfigMap(),
+          version: Migration.currentVersion,
+        );
+        final legacy = _FakeMigrationStore(
+          configMap: null,
+          version: 0,
+          clashConfigMap: _createClashConfigMap(mixedPort: 1234),
+        );
+        Future<ThemeProps> unexpected() async {
+          fail('An existing configuration must not select an initial theme');
+        }
+
+        expect(
+          (await Migration(
+            store: existing,
+          ).run(initialTheme: unexpected)).themeProps,
+          defaultThemeProps,
+        );
+        final migrated = await Migration(
+          store: legacy,
+        ).run(initialTheme: unexpected);
+        expect(migrated.patchClashConfig.mixedPort, 1234);
+        expect(legacy.didClearClashConfig, isTrue);
+      });
+
+      test('does not select when storage is unavailable', () async {
+        final store = _FakeMigrationStore(
+          configMap: null,
+          version: 0,
+          firstInstall: true,
+          available: false,
+          configSaveResult: false,
+        );
+        final config = await Migration(store: store).run(
+          initialTheme: () async {
+            fail('Unavailable storage cannot prove a first install');
+          },
+        );
+
+        expect(config.themeProps, defaultThemeProps);
+        expect(store.version, 0);
+        expect(store.didClearClashConfig, isFalse);
+      });
+
+      test('failed first save can retry without marking a version', () async {
+        final store = _FakeMigrationStore(
+          configMap: null,
+          version: 0,
+          upgradeVersion: 0,
+          firstInstall: true,
+          configSaveResult: false,
+        );
+        var calls = 0;
+        for (var attempt = 0; attempt < 2; attempt++) {
+          await expectLater(
+            Migration(store: store).run(
+              initialTheme: () async {
+                calls++;
+                return defaultThemeProps.copyWith(auroraEnabled: false);
+              },
+            ),
+            throwsA(isA<StateError>()),
+          );
+          expect(store.configMap, isNull);
+          expect(await store.isFirstInstall, isTrue);
+          expect(store.version, 0);
+          expect(store.upgradeVersion, 0);
+          expect(store.didClearClashConfig, isFalse);
+        }
+        expect(calls, 2);
+        expect(store.events, isNot(contains('setVersion')));
+        expect(store.events, isNot(contains('setUpgradeVersion')));
+      });
+
+      test('propagates a decision failure without saving', () async {
+        final store = _FakeMigrationStore(
+          configMap: null,
+          version: 0,
+          upgradeVersion: 0,
+          firstInstall: true,
+        );
+        final failure = StateError('initial theme decision failed');
+
+        await expectLater(
+          Migration(store: store).run(initialTheme: () async => throw failure),
+          throwsA(same(failure)),
+        );
+
+        expect(store.savedConfig, isNull);
+        expect(store.events, isNot(contains('saveConfig')));
+        expect(store.version, 0);
+        expect(store.upgradeVersion, 0);
+      });
+    });
+
     group('upgrade', () {
       Map<String, Object?> customized() =>
           _createConfigMap()
@@ -397,10 +557,11 @@ Map<String, Object?> _createClashConfigMap({required int mixedPort}) {
 }
 
 class _FakeMigrationStore implements MigrationStore {
-  final Map<String, Object?>? configMap;
+  Map<String, Object?>? configMap;
   final Map<String, Object?>? clashConfigMap;
   final bool configSaveResult;
   final bool available;
+  bool _firstInstall;
   final List<String> events = [];
 
   int version;
@@ -416,13 +577,17 @@ class _FakeMigrationStore implements MigrationStore {
     this.clashConfigMap,
     this.configSaveResult = true,
     this.available = true,
-  });
+    bool firstInstall = false,
+  }) : _firstInstall = firstInstall;
 
   @override
   Future<bool> get isAvailable async {
     events.add('isAvailable');
     return available;
   }
+
+  @override
+  Future<bool> get isFirstInstall async => available && _firstInstall;
 
   @override
   Future<void> clearClashConfig() async {
@@ -458,6 +623,10 @@ class _FakeMigrationStore implements MigrationStore {
   Future<bool> saveConfig(Config config) async {
     events.add('saveConfig');
     savedConfig = config;
+    if (configSaveResult) {
+      configMap = jsonDecode(jsonEncode(config)) as Map<String, Object?>;
+      _firstInstall = false;
+    }
     return configSaveResult;
   }
 

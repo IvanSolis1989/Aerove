@@ -16,6 +16,8 @@ abstract interface class MigrationStore {
   /// store that opened but holds nothing.
   Future<bool> get isAvailable;
 
+  Future<bool> get isFirstInstall;
+
   Future<Map<String, Object?>?> getConfigMap();
 
   Future<int> getVersion();
@@ -40,6 +42,9 @@ class _AppMigrationStore implements MigrationStore {
 
   @override
   Future<bool> get isAvailable => preferences.isInit;
+
+  @override
+  Future<bool> get isFirstInstall => preferences.isFirstInstall;
 
   @override
   Future<Map<String, Object?>?> getConfigMap() => preferences.getConfigMap();
@@ -100,9 +105,9 @@ class Migration {
     3: _followSystemColors,
   };
 
-  Future<Config> run() async {
+  Future<Config> run({Future<ThemeProps> Function()? initialTheme}) async {
     final configMap = await _store.getConfigMap();
-    final config = await _migrate(configMap);
+    final config = await _migrate(configMap, initialTheme: initialTheme);
     return _upgrade(config, installed: configMap != null);
   }
 
@@ -124,7 +129,10 @@ class Migration {
     return upgraded;
   }
 
-  Future<Config> _migrate(Map<String, Object?>? configMap) async {
+  Future<Config> _migrate(
+    Map<String, Object?>? configMap, {
+    Future<ThemeProps> Function()? initialTheme,
+  }) async {
     var oldVersion = await _store.getVersion();
     Config? config;
     if (oldVersion > currentVersion) {
@@ -183,6 +191,9 @@ class Migration {
       coreId: ClientProduct.current.expectedCoreId,
     );
     await _store.restore(data);
+    if (initialTheme != null && await _store.isFirstInstall) {
+      config = config.copyWith(themeProps: await initialTheme());
+    }
     if (!await _store.saveConfig(config)) {
       // An unopenable store is reported later by the corrupt-cache dialog,
       // which offers a reset; failing here would hide that path.

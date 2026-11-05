@@ -57,6 +57,7 @@ class CombinationCoverageTest(unittest.TestCase):
 
     def test_current_regressions_are_selected_in_every_existing_software_shard(self):
         tests = [
+            'test/common/initial_theme_test.dart',
             'test/views/font_preview_activity_test.dart',
             'test/product_boundary_test.dart',
             'test/common/preferences_store_skip_test.dart',

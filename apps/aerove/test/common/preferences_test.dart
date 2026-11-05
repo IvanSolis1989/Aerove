@@ -8,6 +8,8 @@ import 'package:fl_clash/models/models.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 
 import '../helpers/preferences.dart';
 
@@ -28,6 +30,62 @@ void main() {
   setUp(() async {
     await mockPreferences();
     store = await SharedPreferences.getInstance();
+  });
+
+  group('first install presence', () {
+    test('an open store without configuration keys is fresh', () async {
+      expect(await preferences.isFirstInstall, isTrue);
+      await store.setString('unrelated', 'value');
+      expect(await preferences.isFirstInstall, isTrue);
+    });
+
+    test('a saved default theme prevents another first install', () async {
+      expect(
+        await preferences.saveConfig(
+          const Config(themeProps: defaultThemeProps),
+        ),
+        isTrue,
+      );
+      expect(await preferences.isFirstInstall, isFalse);
+      await preferences.rebind();
+      expect(await preferences.isFirstInstall, isFalse);
+    });
+
+    test('corrupt or non-map config entries are not missing keys', () async {
+      for (final value in <Object>['not json', 'null', '[]', 0]) {
+        await mockPreferences({configKey: value});
+        expect(await preferences.getConfigMap(), isNull);
+        expect(await preferences.isFirstInstall, isFalse);
+      }
+    });
+
+    test('any legacy or version key prevents a first install', () async {
+      for (final values in <Map<String, Object>>[
+        {configKey: '{}'},
+        {clashConfigKey: '{}'},
+        {clashConfigKey: 'not json'},
+        {'version': 0},
+        {'upgradeVersion': 0},
+      ]) {
+        await mockPreferences(values);
+        expect(await preferences.isFirstInstall, isFalse);
+      }
+    });
+
+    test('an unopened store is not a first install', () async {
+      final previous = SharedPreferencesStorePlatform.instance;
+      addTearDown(() async {
+        SharedPreferences.resetStatic();
+        SharedPreferencesStorePlatform.instance = previous;
+        await preferences.rebind();
+      });
+      SharedPreferences.resetStatic();
+      SharedPreferencesStorePlatform.instance = _UnavailablePreferencesStore();
+      await preferences.rebind();
+
+      expect(await preferences.isInit, isFalse);
+      expect(await preferences.isFirstInstall, isFalse);
+    });
   });
 
   group('version', () {
@@ -191,4 +249,30 @@ void main() {
       expect(await preferences.getBootRecord(), isNull);
     });
   });
+}
+
+class _UnavailablePreferencesStore extends SharedPreferencesStorePlatform {
+  @override
+  Future<bool> clear() async =>
+      throw StateError('Preference store is unavailable');
+
+  @override
+  Future<bool> remove(String key) async =>
+      throw StateError('Preference store is unavailable');
+
+  @override
+  Future<bool> setValue(String valueType, String key, Object value) async =>
+      throw StateError('Preference store is unavailable');
+
+  @override
+  Future<Map<String, Object>> getAll() async {
+    throw StateError('Preference store is unavailable');
+  }
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) async {
+    throw StateError('Preference store is unavailable');
+  }
 }

@@ -252,6 +252,7 @@ CURRENT_IMPELLER_PATHS = [
 ]
 
 CURRENT_REGRESSION_PATHS = [
+    'test/common/initial_theme_test.dart',
     'test/common/native_filter_protocol_test.dart',
     'test/common/native_lite_schema_test.dart',
     'test/database/migration_v1_to_v2_test.dart',
