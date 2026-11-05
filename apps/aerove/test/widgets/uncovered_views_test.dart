@@ -362,7 +362,7 @@ void main() {
     });
   }
 
-  testWidgets('about neutral surfaces respect active glass', (tester) async {
+  testWidgets('about logo is unframed and badges use glass', (tester) async {
     final container = _containerFor(tester);
     for (final brightness in Brightness.values) {
       for (final enabled in [false, true]) {
@@ -400,7 +400,25 @@ void main() {
                         .decoration
                     as ShapeDecoration)
                 .color;
-        expect(fillOf(logo), expected);
+        expect(
+          find.descendant(of: logo, matching: find.byType(DecoratedBox)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(of: logo, matching: find.byType(Padding)),
+          findsNothing,
+        );
+        final roundedLogo = find.descendant(
+          of: logo,
+          matching: find.byType(ClipRSuperellipse),
+        );
+        expect(roundedLogo, findsOneWidget);
+        final logoImage = find.descendant(
+          of: roundedLogo,
+          matching: find.byType(Image),
+        );
+        expect(logoImage, findsOneWidget);
+        expect(tester.getSize(logoImage), tester.getSize(logo));
         final license = find.ancestor(
           of: find.text('GPL-3.0'),
           matching: find.byWidgetPredicate(
