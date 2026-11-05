@@ -39,9 +39,11 @@ def enabled():
     if value is None:
         return False
     require(value == '1', 'Invalid Lite265 opt-in')
+    surface_probe = os.environ.get('AEROVE_LITE265_SURFACE_PROBE') == '1'
+    branch = 'codex/lite37-startup-and-render' if surface_probe else 'codex/lite265-original-recheck'
     require(os.environ.get('GITHUB_REPOSITORY') == release.REPO and
             os.environ.get('GITHUB_ACTOR') == 'IvanSolis1989' and
-            os.environ.get('GITHUB_REF') == 'refs/heads/codex/lite265-original-recheck' and
+            os.environ.get('GITHUB_REF') == 'refs/heads/' + branch and
             os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch', 'Fixed Lite265 recheck branch/event required')
     require(not any(os.environ.get(key) for key in (
         'AEROVE_ORIGINAL84_PROOF', 'AEROVE_ORIGINAL_RUNTIME_PROOF', 'AEROVE_QA79_PROOF',

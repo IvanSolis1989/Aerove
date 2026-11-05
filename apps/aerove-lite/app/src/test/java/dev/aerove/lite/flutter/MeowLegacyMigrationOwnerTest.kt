@@ -13,6 +13,49 @@ import org.junit.rules.TemporaryFolder
 
 class MeowLegacyMigrationOwnerTest {
     @get:Rule val temporary=TemporaryFolder()
+    @Test fun sharedConfigReadsTheSameBytesThroughATrustedSystemRootAlias() {
+        val root = temporary.newFolder().canonicalFile
+        val file = File(root, "shared_prefs/FlutterSharedPreferences.xml")
+        file.parentFile.mkdirs()
+        val xml = "<map><string name=\"flutter.config\">{\"fixture\":true}</string></map>"
+        file.writeText(xml)
+        assertEquals(xml, nativeLiteConfigInput(root).bufferedReader().use { it.readText() })
+        assertEquals(xml, nativeLiteConfigInput(trustedAlias(root)).bufferedReader().use { it.readText() })
+    }
+
+    @Test fun sharedConfigRejectsMissingAndNonRegularPreferenceFiles() {
+        val root = temporary.newFolder().canonicalFile
+        fun rejected() {
+            val failure = runCatching { nativeLiteConfigInput(root).use { it.read() } }.exceptionOrNull()
+            assertTrue(failure is IllegalStateException)
+            assertEquals("shared_config_missing", failure?.message)
+        }
+        rejected()
+        val directory = File(root, "shared_prefs").apply { mkdir() }
+        rejected()
+        File(directory, "FlutterSharedPreferences.xml").mkdir()
+        rejected()
+    }
+
+    @Test fun sharedConfigRejectsSymlinksBelowTheTrustedRoot() {
+        for (directoryLink in listOf(true, false)) {
+            val root = temporary.newFolder().canonicalFile
+            val alias = trustedAlias(root)
+            val external = temporary.newFolder().canonicalFile
+            val original = File(external, "FlutterSharedPreferences.xml").apply { writeText("outside-fixture") }
+            val directory = File(root, "shared_prefs")
+            if (directoryLink) java.nio.file.Files.createSymbolicLink(directory.toPath(), external.toPath())
+            else {
+                directory.mkdir()
+                java.nio.file.Files.createSymbolicLink(File(directory, original.name).toPath(), original.toPath())
+            }
+            val failure = runCatching { nativeLiteConfigInput(alias).use { it.read() } }.exceptionOrNull()
+            assertTrue(failure is IllegalStateException)
+            assertEquals("shared_config_missing", failure?.message)
+            assertEquals("outside-fixture", original.readText())
+        }
+    }
+
     @Test fun realDomainOwnerBlocksLegacyWritesAndOnlyVerifiedReceiptCanTransferAuthority()=runBlocking<Unit> {
         val root=temporary.newFolder()
         val profiles=ProfileRepository(root,ProfileValidator { })

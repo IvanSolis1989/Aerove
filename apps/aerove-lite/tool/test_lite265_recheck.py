@@ -45,6 +45,13 @@ class Original265BoundaryTests(unittest.TestCase):
                    GITHUB_EVENT_NAME='workflow_dispatch', AEROVE_GUEST_ANGLE='1')
         with patch.dict(os.environ, env, clear=True):
             self.assertTrue(recheck.enabled())
+        surface = dict(env, GITHUB_REF='refs/heads/codex/lite37-startup-and-render', AEROVE_LITE265_SURFACE_PROBE='1')
+        with patch.dict(os.environ, surface, clear=True):
+            self.assertTrue(recheck.enabled())
+        for invalid in (dict(surface, GITHUB_REF=env['GITHUB_REF']), dict(env, AEROVE_LITE265_SURFACE_PROBE='1'),
+                        dict(env, GITHUB_REF=surface['GITHUB_REF'])):
+            with patch.dict(os.environ, invalid, clear=True), self.assertRaises(ValueError):
+                recheck.enabled()
         for change in (dict(GITHUB_REF='refs/heads/main'), dict(AEROVE_GUEST_ANGLE='0'),
                        dict(AEROVE_ORIGINAL_RUNTIME_PROOF='other.json'), dict(AEROVE_BETA14_PROFILE='1')):
             with patch.dict(os.environ, dict(env, **change), clear=True), self.assertRaises(ValueError):

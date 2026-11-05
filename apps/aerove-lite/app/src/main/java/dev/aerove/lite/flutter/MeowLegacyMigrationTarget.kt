@@ -159,10 +159,8 @@ internal fun nativeLiteLiveConfig(config: Map<String, Any?>): Map<String, Any?> 
 }
 
 private fun nativeLiteCurrentConfig(context: Context): JSONObject {
-    val file = File(context.applicationInfo.dataDir, "shared_prefs/FlutterSharedPreferences.xml")
-    check(file.isFile && file.canonicalFile == file.absoluteFile && !Files.isSymbolicLink(file.toPath())) { "shared_config_missing" }
-    val parser = android.util.Xml.newPullParser()
-    file.inputStream().use { input ->
+    nativeLiteConfigInput(File(context.applicationInfo.dataDir)).use { input ->
+        val parser = android.util.Xml.newPullParser()
         parser.setInput(input, "UTF-8")
         while (parser.eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
             if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name == "string" && parser.getAttributeValue(null, "name") == "flutter.config") return JSONObject(parser.nextText())
@@ -171,6 +169,21 @@ private fun nativeLiteCurrentConfig(context: Context): JSONObject {
     }
     error("shared_config_missing")
 }
+
+internal fun nativeLiteConfigInput(systemDataDir: File): java.io.InputStream {
+    val root = systemDataDir.canonicalFile
+    val directory = File(root, "shared_prefs")
+    check(Files.isDirectory(root.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+        Files.isDirectory(directory.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+        !Files.isSymbolicLink(directory.toPath()) && directory.canonicalFile == directory.absoluteFile &&
+        directory.canonicalFile.parentFile == root) { "shared_config_missing" }
+    val file = File(directory, "FlutterSharedPreferences.xml")
+    check(Files.isRegularFile(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+        !Files.isSymbolicLink(file.toPath()) && file.canonicalFile == file.absoluteFile &&
+        file.canonicalFile.parentFile == directory) { "shared_config_missing" }
+    return Files.newInputStream(file.toPath(), java.nio.file.StandardOpenOption.READ, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+}
+
 internal class NativeLiteVerifiedSource(val config: JSONObject, val selectedMap: Map<String,String>, val definitionSha256: String)
 
 internal fun verifyNativeLiteBusinessSource(context: Context, proof: JSONObject): JSONObject =

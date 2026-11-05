@@ -910,10 +910,10 @@ class FlutterProductionUiTest {
             opticalDrag(android.view.ViewConfiguration.get(context).scaledTouchSlop + 13 * density)
             val expanded = opticalDockBounds()
             val anchor = nodes().filter { it.isVisibleToUser && it.packageName?.toString() == PACKAGE &&
-                !it.text.isNullOrBlank() && it.text!!.length >= 6 && bounds(it).centerY() in
+                caption(it).length >= 6 && bounds(it).centerY() in
                     (context.resources.displayMetrics.heightPixels / 4)..(context.resources.displayMetrics.heightPixels / 2) }
-                .maxByOrNull { it.text!!.length } ?: error("Tools has no visible stable text anchor")
-            val anchorText = anchor.text.toString()
+                .maxByOrNull { caption(it).length } ?: error("Tools has no visible stable text anchor")
+            val anchorText = caption(anchor)
             check(nodes().count { it.isVisibleToUser && it.packageName?.toString() == PACKAGE && matches(it, anchorText) } == 1)
             val targetY = bounds(anchor).top
             fun configuration(role: String) = JSONObject().put("opticalCandidate", true).put("role", role)
@@ -1193,6 +1193,9 @@ class FlutterProductionUiTest {
 
     private fun matches(node: AccessibilityNodeInfo, label: String) =
         node.text?.toString() == label || node.contentDescription?.toString() == label
+
+    private fun caption(node: AccessibilityNodeInfo): String =
+        node.text?.toString()?.takeIf { it.isNotBlank() } ?: node.contentDescription?.toString().orEmpty()
 
     private fun awaitNode(reason: String, condition: (AccessibilityNodeInfo) -> Boolean): AccessibilityNodeInfo {
         var result: AccessibilityNodeInfo? = null

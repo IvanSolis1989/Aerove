@@ -38,6 +38,7 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
@@ -70,6 +71,12 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     private Instrumentation instrumentation;
     private Bundle arguments;
     private Context context;
+    private boolean original265Probe;
+
+    public void testOriginal265SurfaceWindowAndStartupMetadata() throws Exception {
+        original265Probe = true;
+        testCaptureLateSurfaceAndCompositor();
+    }
 
     public void testCaptureLateSurfaceAndCompositor() throws Exception {
         // The system runner injects Instrumentation after constructing this JUnit3 case.
@@ -149,6 +156,8 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
         AtomicReference<SurfaceHolder> observedHolder = new AtomicReference<>();
         Bitmap surfaceBitmap = null;
         Bitmap compositorBitmap = null;
+        Bitmap windowBitmap = null;
+        AtomicBoolean windowCopyPending = new AtomicBoolean();
         String stage = "identity";
         saveReceipt(root, receipt);
         try {
@@ -157,6 +166,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                             .put("source", sourceArgument("executorSourceSha"))
                             .put("run", numberArgument("executionRun"))
                             .put("attempt", numberArgument("executionAttempt")));
+            if (original265Probe) receipt.put("startupMetadataBeforeLaunch", startupMetadata());
             stage = "launcher";
             saveReceipt(root, receipt);
             Intent launch = required(context.getPackageManager().getLaunchIntentForPackage(TARGET),
@@ -185,12 +195,26 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             activeTask = null;
             check(TARGET.equals(activity.getPackageName()) && LAUNCHER.equals(activity.getComponentName().getClassName()),
                     "Unexpected returned Launcher Activity");
-            receipt.put("launcherReturnedNanos", now()).put("lateFrameDelayMs", 15_000);
+            receipt.put("launcherReturnedNanos", now()).put("lateFrameDelayMs", original265Probe ? 0 : 15_000);
             stage = "late-frame-wait";
             saveReceipt(root, receipt);
-            long lateAt = SystemClock.elapsedRealtime() + 15_000;
-            while (SystemClock.elapsedRealtime() < lateAt) {
-                Thread.sleep(Math.max(1L, Math.min(100L, lateAt - SystemClock.elapsedRealtime())));
+            if (original265Probe) {
+                CountDownLatch drawn = new CountDownLatch(1);
+                android.view.ViewTreeObserver.OnDrawListener observer = drawn::countDown;
+                View decor = activity.getWindow().getDecorView();
+                try {
+                    onMain(() -> { decor.getViewTreeObserver().addOnDrawListener(observer); decor.postInvalidateOnAnimation(); return null; });
+                    receipt.put("windowDrawObserved", drawn.await(10, TimeUnit.SECONDS))
+                            .put("windowDrawIsFlutterFrameProof", false);
+                } finally {
+                    onMain(() -> { decor.getViewTreeObserver().removeOnDrawListener(observer); return null; });
+                }
+                receipt.put("startupMetadataAfterLaunch", startupMetadata());
+            } else {
+                long lateAt = SystemClock.elapsedRealtime() + 15_000;
+                while (SystemClock.elapsedRealtime() < lateAt) {
+                    Thread.sleep(Math.max(1L, Math.min(100L, lateAt - SystemClock.elapsedRealtime())));
+                }
             }
             stage = "surface-snapshot";
             Snapshot before = onMain(() -> {
@@ -234,6 +258,30 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             checkSame(before, afterCopy);
             receipt.put("afterSurfaceCopy", afterCopy.json);
             receipt.getJSONObject("surfaceCopy").put("image", savePng(root, "surface.png", destination));
+            if (original265Probe) {
+                stage = "window-copy";
+                Bitmap target = Bitmap.createBitmap(before.displayWidth, before.displayHeight, Bitmap.Config.ARGB_8888);
+                windowBitmap = target;
+                target.eraseColor(0xfff10df1);
+                AtomicInteger status = new AtomicInteger(-1);
+                AtomicLong callbackTime = new AtomicLong();
+                CountDownLatch windowFinished = new CountDownLatch(1);
+                JSONObject copy = new JSONObject().put("method", "PixelCopy.request(Window,Bitmap,listener,Handler)")
+                        .put("submittedNanos", now()).put("destinationSentinelArgb", "fff10df1");
+                receipt.put("windowCopy", copy);
+                windowCopyPending.set(true);
+                onMain(() -> { PixelCopy.request(activity.getWindow(), target, code -> {
+                    status.set(code); callbackTime.set(now()); windowCopyPending.set(false); windowFinished.countDown();
+                }, callbackHandler); return null; });
+                boolean completed = windowFinished.await(3, TimeUnit.SECONDS);
+                copy.put("callbackObserved", completed).put("callbackNanos", callbackTime.get())
+                        .put("callbackReadbackNanos", now()).put("result", status.get());
+                check(completed && status.get() == PixelCopy.SUCCESS, "Window PixelCopy did not succeed");
+                Snapshot afterWindow = onMain(() -> snapshot(activity, surfaceEpoch.get()));
+                checkSame(before, afterWindow);
+                receipt.put("afterWindowCopy", afterWindow.json);
+                copy.put("image", savePng(root, "window.png", target));
+            }
             stage = "compositor-copy";
             Snapshot beforeCompositor = onMain(() -> snapshot(activity, surfaceEpoch.get()));
             checkSame(before, beforeCompositor);
@@ -261,6 +309,8 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                     "Compositor dimensions do not match the actual display");
             receipt.put("afterCompositorCopy", afterCompositor.json);
             receipt.getJSONObject("compositorCopy").put("image", savePng(root, "compositor.png", screenshot));
+            if (original265Probe) receipt.put("startupMetadataAfterCapture", startupMetadata())
+                    .put("semanticSceneAfterCaptures", semanticScene());
             stage = "complete";
             receipt.put("captureCompleted", true).put("status", "captured");
         } catch (Throwable failure) {
@@ -271,7 +321,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
         } finally {
             boolean pending = activeTask != null && !activeTask.isDone();
             boolean mainPending = mainWorkOutstanding.get() != 0 || mainWorkTeardownRequired.get();
-            boolean nativeCopyPending = copyPending && pending;
+            boolean nativeCopyPending = copyPending && pending || windowCopyPending.get();
             JSONObject surfaceCopy = receipt.optJSONObject("surfaceCopy");
             if (surfaceCopy != null) surfaceCopy.put("startNanos", copyStart.get())
                     .put("requestReturnedNanos", copyReturn.get()).put("callbackNanos", copyCallback.get())
@@ -280,12 +330,13 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             if (compositorCopy != null) compositorCopy.put("startNanos", compositorStart.get()).put("endNanos", compositorEnd.get());
             receipt.put("stage", stage).put("finishedElapsedRealtimeNanos", now())
                     .put("workerStillPending", pending).put("pixelCopyStillPending", nativeCopyPending)
-                    .put("resourceCleanup", pending || mainPending || coordinatorTeardownRequired.get()
+                    .put("resourceCleanup", pending || nativeCopyPending || mainPending || coordinatorTeardownRequired.get()
                             ? "pending-runner-process-teardown" : "complete")
                     .put("uiAutomationTeardownOwner", "system Instrumentation/InstrumentationTestRunner");
             try {
                 if (!nativeCopyPending) {
                     if (surfaceBitmap != null) surfaceBitmap.recycle();
+                    if (windowBitmap != null) windowBitmap.recycle();
                     if (callbacks.isAlive()) {
                         callbacks.quitSafely();
                         callbacks.join(1_000);
@@ -328,6 +379,16 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     }
 
     private JSONObject originalIdentity() throws Exception {
+        if (original265Probe) {
+            String apk = "07b9482e3ba7227c4746b11ea55b6eac7c64fe51a1355276686b791fbb14a1cb";
+            check(apk.equals(argument("originalAppApkSha256")) && "36".equals(argument("originalAppVersionCode"))
+                    && ORIGINAL_SIGNER.equals(argument("originalAppSignerSha256")), "Unexpected original265 identity argument");
+            JSONObject identity = installedIdentity(TARGET, apk, ORIGINAL_SIGNER, 36L);
+            check("0.2.0-beta.4".equals(identity.getString("versionName")), "Unexpected original265 versionName");
+            return identity.put("source", "4190ff45f8eedc6734fa666e2658b71abf147479")
+                    .put("tree", "8ca6fb6bc19867e9302923ba9bea8d289972a8b6")
+                    .put("buildRun", "42066278567").put("buildAttempt", "1");
+        }
         if ("34".equals(argument("originalAppVersionCode"))) {
             String original257 = "c58aed2e2cddc15b5e8a1953bac88bef3b60feddbbd1621e822a230bc28e9a64";
             check(original257.equals(argument("originalAppApkSha256")), "Unexpected original257 APK argument");
@@ -346,6 +407,45 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                 .put("source", "2a38627ca1c224f6ebf71c3e42052912699decdb")
                 .put("buildRun", "41779045595").put("buildAttempt", "1")
                 .put("provenance", "fixed original identity; host must retain actual archive/API binding");
+    }
+
+    private JSONObject startupMetadata() throws Exception {
+        File root = new File(context.getApplicationInfo().dataDir).getAbsoluteFile();
+        File canonical = root.getCanonicalFile();
+        return new JSONObject().put("trustedDataRootAlias", !root.equals(canonical))
+                .put("originalInput", inputMetadata(root)).put("canonicalRootInput", inputMetadata(canonical));
+    }
+
+    private JSONObject semanticScene() throws Exception {
+        android.view.accessibility.AccessibilityNodeInfo root = instrumentation.getUiAutomation().getRootInActiveWindow();
+        boolean[] labels = new boolean[2];
+        int[] count = new int[1];
+        scanLabels(root, labels, count, 0);
+        return new JSONObject().put("observedAfterPixelCopies", true).put("nodeCount", count[0])
+                .put("activePackageIsTarget", root != null && TARGET.contentEquals(root.getPackageName() == null ? "" : root.getPackageName()))
+                .put("visibleAgree", labels[0]).put("visibleTools", labels[1]);
+    }
+
+    private static void scanLabels(android.view.accessibility.AccessibilityNodeInfo node,
+                                   boolean[] labels, int[] count, int depth) {
+        if (node == null) return;
+        check(depth < 80 && ++count[0] <= 4000, "Accessibility observation exceeds traversal bound");
+        if (node.isVisibleToUser() && TARGET.contentEquals(node.getPackageName() == null ? "" : node.getPackageName())) {
+            String text = node.getText() == null ? "" : node.getText().toString();
+            String description = node.getContentDescription() == null ? "" : node.getContentDescription().toString();
+            labels[0] |= "Agree".equals(text) || "Agree".equals(description);
+            labels[1] |= "Tools".equals(text) || "Tools".equals(description);
+        }
+        for (int index = 0; index < node.getChildCount(); index++) scanLabels(node.getChild(index), labels, count, depth + 1);
+    }
+
+    private static JSONObject inputMetadata(File root) throws Exception {
+        File parent = new File(root, "shared_prefs");
+        File file = new File(parent, "FlutterSharedPreferences.xml");
+        return new JSONObject().put("isFile", file.isFile())
+                .put("canonicalEqualsAbsolute", file.getCanonicalFile().equals(file.getAbsoluteFile()))
+                .put("leafSymlink", Files.isSymbolicLink(file.toPath()))
+                .put("parentIsDirectory", parent.isDirectory()).put("parentSymlink", Files.isSymbolicLink(parent.toPath()));
     }
 
     private JSONObject harnessIdentity() throws Exception {

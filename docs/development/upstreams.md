@@ -312,6 +312,8 @@ Lite Flutter Android 黑盒 API 候选 QA93 另只读核对 AndroidX 固定 `c86
 
 Lite Android 复制验收驱动另只读参考同固定 SDK 的 [`AccessibilityBridge.performAction`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/engine/src/flutter/shell/platform/android/io/flutter/view/AccessibilityBridge.java)、`SemanticsOwner.performAction`、`RenderEditable` 与 `SelectableText`：只执行节点实际声明的焦点、选择和复制动作，等待读回真实选择或菜单，保留完整剪贴板等值验收。未复制框架实现、改变生产控件或新增依赖。
 
+同一固定 SDK 的 [`BaseRoleConfigurator.configureLabelAndValue`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/engine/src/flutter/shell/platform/android/io/flutter/view/BaseRoleConfigurator.java) 另用于核对普通文字的 Android 语义：文本框与普通节点分别使用 text 和 contentDescription。Lite 光学锚点复用驱动既有两者匹配口径，保留可见性、唯一性、区域、几何及像素断言；仅修正测试定位，不把语义存在视为像素或材质验收通过。未复制框架实现或新增依赖。
+
 组织名单行适配复用公开 `TextPainter`、`TextScaler`、`GlassText` 和项目既有 `DashboardFitText` 测量方式；连续圆角背景裁剪另只读参考同固定 SDK 的 [`RenderClipPath.paint`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/proxy_box.dart) 与 `PaintingContext.pushClipPath` 的图层复用行为，采用现有 `AppShape.getOuterPath`。未复制框架实现或新增依赖，BSD-3-Clause 与 Flutter Authors 署名保持。
 
 两版关于页品牌图标复用同固定 SDK 的 [`ClipRSuperellipse`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/widgets/basic.dart)、`ColoredBox` 与现有 `AppRadius`，直接呈现连续圆角矩形，去掉外层表面及内缩边框。标准版复用现有透明裸飘带与固定品牌底色，避免旧图片自身烘焙的外沿；Lite 复用现有已归一化前景，保持两版飘带占比一致。未重画或重导出品牌素材、复制框架实现或增加依赖；BSD-3-Clause 与 Flutter Authors 署名保持。
@@ -1446,6 +1448,8 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 同一 `android-13.0.0_r1` 来源另只读核对 [`SQLiteSession.executeSpecial`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteSession.java#L821-L831) 将 BEGIN 改为独占事务；[`SQLiteDatabaseConfiguration`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteDatabaseConfiguration.java) 与 [`SQLiteConnectionPool`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteConnectionPool.java) 的只读单连接配置，以及 [`SQLiteDatabase.OpenParams`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/database/sqlite/SQLiteDatabase.java) 的显式无限 idle timeout。结合 [SQLite 官方 data_version 文档](https://www.sqlite.org/pragma.html#pragma_data_version)，迁移和业务来源核验复用系统只读连接并比较同一连接的读取前后版本，拒绝并发提交造成的混合读；不修改系统设置或使用隐藏 API。仅参考平台代码与公开接口，未复制实现或新增依赖；保留 AOSP 2006/2011 版权与 Apache-2.0 许可。参考 tag 不作为实际运行镜像的源码身份。
 
 同一 API33 固定来源的 [`ContextImpl.getFilesDir`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/app/ContextImpl.java#L731-L737) 另用于核对平台私有路径由 dataDir 构造、没有 canonical 保证。Lite 仅规范化可信 Context 根，复用现有私域门；不复制 AOSP 实现或将参考版本冒充手机系统来源。
+
+原生只读 Flutter 偏好入口同样复用项目已验证的可信根规范化规则：先解析系统 dataDir，再对 shared_prefs 和 XML 保持普通目录／文件、无链接、规范路径与归属检查，并以 NOFOLLOW_LINKS 打开。系统用户零别名另只读参照固定 [`Zygote.cpp`（efa0fa985d6ee60ef00b3e14bca8c2a95ef8dc57）](https://android.googlesource.com/platform/frameworks/base/+/efa0fa985d6ee60ef00b3e14bca8c2a95ef8dc57/core/jni/com_android_internal_os_Zygote.cpp) 的数据目录链接建立逻辑；仅作平台行为参考，不复制实现、不放宽子路径边界，也不把参考提交当作实际设备源码。实际首次启动仍须由 Android 读回验证。
 
 #### [AOSP libcore](https://android.googlesource.com/platform/libcore/)
 

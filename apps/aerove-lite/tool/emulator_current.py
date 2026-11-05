@@ -625,6 +625,9 @@ def guard_guest_angle_phase(phase, runtime, sample=None):
 
 def flutter_ui_inputs(directory, runtime):
     """Require the inspected BUILD_INFO in the same verified transport before starting an emulator."""
+    if os.environ.get('AEROVE_LITE265_SURFACE_PROBE') == '1':
+        from lite265_surface_probe import original_inputs
+        return original_inputs(directory, runtime)
     guard_flutter_phase('flutter-ui', runtime=runtime)
     directory = Path(directory)
     info_path = directory / 'BUILD_INFO.json'
@@ -651,6 +654,18 @@ def flutter_ui_inputs(directory, runtime):
 
 
 def phase_acceptance_command(phase, directory, flutter_inputs=None):
+    if os.environ.get('AEROVE_LITE265_SURFACE_PROBE') == '1':
+        from lite265_recheck import enabled
+        if phase != 'flutter-ui' or not enabled() or flutter_inputs is None:
+            raise ValueError('Fixed original265 Surface probe requires its verified representative runtime')
+        return [sys.executable, str(Path(__file__).with_name('lite265_surface_probe.py')),
+                '--apk', str(flutter_inputs['apk']), '--test-apk', str(flutter_inputs['test_apk']),
+                '--build-info', str(flutter_inputs['build_info']), '--serial', 'emulator-5554',
+                '--adb', str(Path(os.environ['ANDROID_HOME']) / 'platform-tools/adb'),
+                '--apksigner', str(Path(os.environ['ANDROID_HOME']) / 'build-tools/37.0.0/apksigner'),
+                '--harness', os.environ['AEROVE_LITE265_SURFACE_HARNESS'],
+                '--harness-info', os.environ['AEROVE_LITE265_SURFACE_HARNESS_INFO'],
+                '--output', str(Path(directory) / 'surface-probe')]
     if phase not in ('flutter-ui', 'flutter-platform', 'flutter-full'):
         return ['bash', 'apps/aerove-lite/tool/emulator_acceptance.sh', phase]
     if flutter_inputs is None:
