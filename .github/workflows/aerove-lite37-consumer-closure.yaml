@@ -22,8 +22,9 @@ jobs:
     timeout-minutes: 60
     env:
       GH_TOKEN: ${{ github.token }}
-      CLOSURE_OUT: ${{ runner.temp }}/lite37-consumer-closure
     steps:
+      - name: Set the owned runner evidence directory
+        run: echo "CLOSURE_OUT=$RUNNER_TEMP/lite37-consumer-closure" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
