@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find and validate an unchanged Aerove Android build for promotion."""
+"""Validate unchanged Android builds, including fixed Std55/74/124/130 original-APK rechecks."""
 
 from __future__ import annotations
 
@@ -441,6 +441,45 @@ RECHECK_POLICY_124 = dict(
 )
 
 
+RECHECK_RUN_130 = 41958446662
+RECHECK_DESCRIPTION_130 = 'Immutable original APK run to recheck (reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 only)'
+RECHECK_POLICY_130 = dict(
+    run_id=41958446662,
+    run_number=130,
+    source='baea420b1ec6e42ecdd3f9e2610c3dc2346b326c',
+    tree='6b15d9ae6b20d85f324bff38855523f5a26d0375',
+    test='apps/aerove/test/widgets/uncovered_views_test.dart',
+    test_blobs=('6bf1e615a909e1e9f399b15144bc427cb4be6044', '1cdfbfaf85050cbbc4244643c58c25e16a12e9c0'),
+    workflow_blob='7db195284a9b4ec42f27df7685ea7199bc9f98c9',
+    reviewed_wiring={
+        'apps/aerove/test/common/native_lite_loader89_widget_test.dart': ('8cd93aa17d3b34932022f19a8de1d5a7eba99a9d', '8ec08d4b519a7f6bc3857d2672880e5e0fdb0030'),
+    },
+    artifacts={
+        'Aerove-android-arm64': (13384792605, 64885164,
+            'sha256:f81ffca8ad570edce0f344f087f30050247c9394baa0c27bc547dbfbb0339d9f'),
+        'xclash-generated': (13384675109, 341, 'sha256:85629411804abbacb0ad6eca95a15e7ef1b3867a3ae11e2e00a0d9eb0953393c'),
+    },
+    payloads={
+        'Aerove-android-arm64.apk': (66670952, 'b0f7dc55d0eafd02fe112a09982d7c593d2b7b7a99176d851d53d2b10c4c9349'),
+        'SHA256SUMS': (173, '8f1fc9d24506c4462db5ee19034a135f2facc5a42f1bb484b123ae6aea5b24fe'),
+        'BUILD_INFO.json': (650, '2af10815218074fbeab41b1839b59a3b5dca6f598b519cacb1fee168add8fc37'),
+        'xclash-generated.patch': (0, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+        'xclash-verified-tree.txt': (41, '3b3cc9b22589a7302b0e4e3c2e487c8de6b73290346d819be4c1f9b6df69ef5d'),
+    },
+    created_at={
+        'Aerove-android-arm64': '2026-11-05T03:14:21Z',
+        'xclash-generated': '2026-11-05T02:59:56Z',
+    },
+    producers={
+        'prep': dict(id=127018924097, started_at='2026-11-05T02:57:09Z', completed_at='2026-11-05T03:00:40Z'),
+        'apk': dict(id=127020101725, started_at='2026-11-05T03:00:42Z', completed_at='2026-11-05T03:15:14Z'),
+    },
+    signer='0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60',
+    version='0.13.0-beta.1+2026102330',
+    promotion_request=True,
+)
+
+
 def _recheck_policy(build_run: int, repository: str = 'IvanSolis1989/Aerove') -> dict[str, Any]:
     _positive(build_run, 'reviewed original build run')
     if repository != 'IvanSolis1989/Aerove':
@@ -454,6 +493,8 @@ def _recheck_policy(build_run: int, repository: str = 'IvanSolis1989/Aerove') ->
         return RECHECK_POLICY_74
     if build_run == RECHECK_RUN_124:
         return RECHECK_POLICY_124
+    if build_run == RECHECK_RUN_130:
+        return RECHECK_POLICY_130
     raise ArtifactError('Only explicitly reviewed original APK runs are approved')
 
 
@@ -529,6 +570,11 @@ def _recheck_jobs(repository: str, run: dict[str, Any], *, final: bool, build_ru
 def _workflow_inputs_unchanged(before: str, after: str, *, build_run: int = RECHECK_RUN) -> None:
     policy = _recheck_policy(build_run)
     old_description = 'Immutable original APK run to recheck (40488925368 only)'
+    if build_run == RECHECK_RUN_130:
+        if (before.count(RECHECK_DESCRIPTION_124) != 1 or after.count(RECHECK_DESCRIPTION_130) != 1
+                or before.replace(RECHECK_DESCRIPTION_124, RECHECK_DESCRIPTION_130) != after):
+            raise ArtifactError('Std130 recheck changed protected workflow beyond its exact input description')
+        return
     if build_run == RECHECK_RUN_124:
         if before.count(RECHECK_DESCRIPTION) != 1 or after.count(RECHECK_DESCRIPTION_124) != 1:
             raise ArtifactError('Std124 recheck requires its exact reviewed description')
@@ -596,6 +642,8 @@ def recheck_inputs(root: Path, source: str, build_run: int = RECHECK_RUN) -> lis
         result.append(dict(path=path, before=before, after=after))
     if policy['test'] not in {row['path'] for row in result}:
         raise ArtifactError('Recheck must contain the exact reviewed original-run test fix')
+    if build_run == RECHECK_RUN_130 and not reviewed.keys() <= {row['path'] for row in result}:
+        raise ArtifactError('Std130 recheck requires both exact reviewed test corrections')
     workflow_blob = _git(root, 'rev-parse', f'{source}:{WORKFLOW}')
     if build_run == RECHECK_RUN_124:
         publisher_paths = reviewed.keys() & {row['path'] for row in result}
@@ -626,8 +674,8 @@ def original_recheck_build(repository: str, build_run: int) -> dict[str, Any]:
     if (run['id'] != build_run or run['run_number'] != policy['run_number'] or run['run_attempt'] != 1
             or run.get('status') != 'completed' or run.get('conclusion') not in ('failure', 'success')):
         raise ArtifactError('Original run must retain its completed first attempt')
-    if build_run == RECHECK_RUN_124 and run.get('conclusion') != 'failure':
-        raise ArtifactError('Std124 must retain its original failed terminal; only the separate recheck may pass')
+    if build_run in (RECHECK_RUN_124, RECHECK_RUN_130) and run.get('conclusion') != 'failure':
+        raise ArtifactError(f'Std{policy["run_number"]} must retain its original failed terminal; only the separate recheck may pass')
     jobs = _api_items(f'repos/{repository}/actions/runs/{build_run}/attempts/1/jobs', 'jobs')
     apk = [job for job in jobs if job.get('name') == 'apk']
     if (len(apk) != 1 or apk[0].get('status') != 'completed' or apk[0].get('conclusion') != 'success'
@@ -836,7 +884,7 @@ def find_rechecked_artifacts(*, root: Path, repository: str, source: str, exclud
                 or receipt.get('signer_sha256') != policy['signer'] or receipt.get('files') != hashes):
             raise ArtifactError('Recheck receipt identity/input map mismatch')
         return {**expected, 'recheck_run': run['id'], 'receipt': receipt}
-    for build_run in (RECHECK_RUN, RECHECK_RUN_74, RECHECK_RUN_124):
+    for build_run in (RECHECK_RUN, RECHECK_RUN_74, RECHECK_RUN_124, RECHECK_RUN_130):
         try:
             recheck_inputs(root, source, build_run)
         except ArtifactError:
@@ -860,7 +908,7 @@ def accepted_build(*, root: Path, repository: str, source: str, build_run: int,
     _positive(release_run, 'release_run')
     if build_run == release_run:
         raise ArtifactError('Promotion requires an independently accepted original run')
-    if build_run in (RECHECK_RUN, RECHECK_RUN_74, RECHECK_RUN_124):
+    if build_run in (RECHECK_RUN, RECHECK_RUN_74, RECHECK_RUN_124, RECHECK_RUN_130):
         _recheck_policy(build_run, repository)
         return accepted_rechecked_build(root=root, repository=repository, source=source,
             build_run=build_run, release_run=release_run)

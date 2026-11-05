@@ -360,7 +360,7 @@ class OriginalApkRecheckWorkflowTest(unittest.TestCase):
 
     def test_recheck_has_explicit_original_run_and_cannot_build_or_publish(self):
         self.assertIn('original_build_run:', FULL)
-        self.assertIn('reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 only', FULL)
+        self.assertIn('reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 only', FULL)
         origin = run_block('Select the explicit original APK for a verification recheck')
         for guard in ('test "$GITHUB_EVENT_NAME" = workflow_dispatch', 'test "$BUILD_APK" = false',
                       'test "$PUBLISH_RELEASE" = false', 'test "$PREPARE_SOURCES" = false'):
