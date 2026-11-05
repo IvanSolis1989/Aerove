@@ -123,6 +123,9 @@ class Diagnostic:
     def __init__(self, args):
         self.args = args
         self.original257 = getattr(args, "original_run_number", 236) == 257
+        self.app_renderer = getattr(args, "app_renderer", "default")
+        require(self.app_renderer in ("default", "skia") and (self.app_renderer == "default" or self.original257),
+                "GPU Skia is restricted to the fixed original257 Surface diagnosis")
         self.app = APP_257 if self.original257 else APP
         self.apk_sha = APK_SHA_257 if self.original257 else APK_SHA
         self.info_sha = INFO_SHA_257 if self.original257 else INFO_SHA
@@ -144,6 +147,27 @@ class Diagnostic:
             disableQueueSubmitWithCommands=args.disable_queue_submit_with_commands,
             executorScriptSha256=sha(__file__), ownerPid=os.getpid(), deviceSerial=SERIAL,
             interruptSignals=[], commands=[], frames=[], cleanupErrors=[], unexpectedEmulatorExit=False)
+        if self.app_renderer == "skia":
+            self.receipt["appRenderer"] = dict(requested="skia", launcherEnableImpellerExtra=False,
+                backendConfirmation="backend-unconfirmed", runtimeBackendChangeRequested=True, diagnosticOnly=True)
+
+    def record_app_renderer(self):
+        # No explicit Skia startup message exists in the pinned Android backend.
+        # Absence of an Impeller message is not affirmative Skia evidence.
+        if self.app_renderer != "skia":
+            return
+        path = self.args.output / "scene-logcat.out"
+        pids = {self.receipt.get("appPid"), self.receipt.get("surfaceCapture", {}).get("appPid")} - {None}
+        lines = []
+        if path.is_file():
+            for line in path.read_text(errors="replace").splitlines():
+                match = re.match(r"^\S+\s+\S+\s+(\d+)\s+\d+\s+\S\s+flutter\s*:", line)
+                if (match and int(match[1]) in pids
+                        and "Using the Impeller rendering backend" in line):
+                    lines.append(line)
+        self.receipt["appRenderer"].update(backendConfirmation="backend-unconfirmed",
+            observationPids=sorted(pids), observedImpeller=bool(lines), engineStartupLines=lines[:8],
+            evidenceFile="scene-logcat.out", absenceIsNotSkiaConfirmation=True)
 
     def surface_capture(self):
         args = self.args
@@ -167,6 +191,8 @@ class Diagnostic:
             originalAppVersionCode="34" if self.original257 else "28", harnessApkSha256=harness["apkSha256"], harnessSignerSha256=SIGNER,
             harnessSourceSha=args.source, harnessBuildRun=args.run, harnessBuildAttempt=args.attempt,
             executorSourceSha=args.source, executionRun=args.run, executionAttempt=args.attempt)
+        if self.app_renderer == "skia":
+            values["appRenderer"] = "skia"
         selector = "dev.aerove.lite.SurfacePixelDiagnosticTest#testCaptureLateSurfaceAndCompositor"
         command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", selector]
         for key, value in values.items():
@@ -201,6 +227,11 @@ class Diagnostic:
             require(capture[key]["image"]["sha256"] == sha(directory / filename), "Captured original pixels changed")
         self.receipt["surfaceCapture"] = dict(receiptSha256=sha(directory / "receipt.json"),
             directory="surface-capture", captureCompleted=True, visualApproved=False, atomicSameFrame=False)
+        if self.app_renderer == "skia":
+            require(capture.get("appRenderer", {}).get("requested") == "skia" and
+                    capture["appRenderer"].get("launcherEnableImpellerExtra") is False,
+                    "Surface launcher did not record the requested GPU Skia experiment")
+            self.receipt["surfaceCapture"]["appPid"] = capture["pid"]
 
     def check(self, _receipt=None):
         if self.receipt["interruptSignals"] and not self.cleaning:
@@ -418,7 +449,8 @@ class Diagnostic:
         locale, _ = self.adb_command("read-locale-en-US", "shell", "cmd", "locale", "get-app-locales", PACKAGE, "--user", "0")
         require("[en-US]" in locale.decode(), "Actual App locale readback is not en-US")
         launch, launch_row = self.adb_command("launcher-start-W", "shell", "am", "start", "-W", "-a", "android.intent.action.MAIN",
-            "-c", "android.intent.category.LAUNCHER", "-n", LAUNCHER, timeout=60)
+            "-c", "android.intent.category.LAUNCHER", "-n", LAUNCHER,
+            *(["--ez", "enable-impeller", "false"] if self.app_renderer == "skia" else []), timeout=60)
         require(re.search(rb"(?m)^Status: ok\s*$", launch) is not None and b"Error:" not in launch,
                 "Official launcher did not return successful am start -W")
         self.receipt["launchMonotonicEnd"] = launch_row["monotonicEnd"]
@@ -569,6 +601,11 @@ class Diagnostic:
                         ownerReaped=True)
                 except BaseException as error:
                     self.receipt["cleanupErrors"].append(repr(error))
+            if self.app_renderer == "skia":
+                try:
+                    self.record_app_renderer()
+                except Exception as error:
+                    self.receipt.setdefault("diagnosticErrors", []).append(repr(error))
             if self.emulator is not None:
                 try:
                     code = finish_emulator(self.emulator, self.receipt, code)
@@ -607,6 +644,7 @@ def main():
     parser.add_argument("--avd", default="test")
     parser.add_argument("--disable-queue-submit-with-commands", action="store_true")
     parser.add_argument("--original-run-number", type=int, choices=(236, 257), default=236)
+    parser.add_argument("--app-renderer", choices=("default", "skia"), default="default")
     parser.add_argument("--surface-test-apk", type=Path)
     parser.add_argument("--surface-test-info", type=Path)
     args = parser.parse_args()

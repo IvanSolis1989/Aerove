@@ -301,6 +301,7 @@ jobs:
           extra+=(--surface-test-apk "$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness/surface-test.apk"
                   --surface-test-info "$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness/HARNESS-INFO.json")
         fi
+        if [[ "$PIXEL_ORIGINAL_NUMBER" == 257 ]]; then extra+=(--app-renderer skia); fi
         python3 apps/aerove-lite/tool/lite236_pixel_diagnostic.py \
           --runtime-directory "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/unpacked" \
           --archive "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/official.zip" \

@@ -167,6 +167,17 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                     "Cannot resolve Launcher");
             check(TARGET.equals(resolved.packageName) && LAUNCHER.equals(resolved.name)
                     && TARGET.equals(resolved.processName), "Unexpected Launcher component or process");
+            String appRenderer = arguments.getString("appRenderer", "default");
+            check("default".equals(appRenderer) || ("skia".equals(appRenderer)
+                    && "34".equals(argument("originalAppVersionCode"))),
+                    "GPU Skia is restricted to the fixed original257 Surface diagnosis");
+            if ("skia".equals(appRenderer)) {
+                launch.putExtra("enable-impeller", false);
+                receipt.put("appRenderer", new JSONObject().put("requested", "skia")
+                        .put("launcherEnableImpellerExtra", false)
+                        .put("backendConfirmation", "backend-unconfirmed")
+                        .put("observation", "Launcher request only; inspect original App engine logcat"));
+            }
             receipt.put("launcherSubmittedNanos", now());
             Future<Activity> launchTask = worker.submit((Callable<Activity>) () -> instrumentation.startActivitySync(launch));
             activeTask = launchTask;

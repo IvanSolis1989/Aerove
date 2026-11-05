@@ -187,52 +187,71 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
     final appLocalizations = context.appLocalizations;
     final density = DashboardDensityScope.of(context);
     final mobile = !density.isDesktop;
-    final summary = ValueListenableBuilder(
-      valueListenable: _memoryStateNotifier,
-      builder: (_, memory, _) => memory == null
-          ? const SizedBox.shrink()
-          : InteractionPaced(
-              revision: memory,
-              builder: (_) => _MemorySummary(memory: memory, density: density),
-            ),
-    );
-    final card = DashboardCard(
-      semanticLabel: appLocalizations.memoryInfo,
-      onTap: mobile ? _showDetail : null,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: mobile ? MainAxisSize.min : MainAxisSize.max,
-        children: [
-          DashboardCardHeader(
-            glyph: AppGlyphs.memory,
-            title: appLocalizations.memoryInfo,
-            chevron: mobile,
-            trailing: [
-              if (!mobile)
-                Transform.translate(
-                  offset: const Offset(8, 0),
-                  child: DashboardIconButton(
-                    glyph: AppGlyphs.chevronForward,
-                    tooltip: appLocalizations.details(
-                      appLocalizations.memoryInfo,
+    return ViewportVisibility(
+      visible: _inViewport,
+      child: ValueListenableBuilder(
+        valueListenable: _memoryStateNotifier,
+        builder: (_, memory, _) {
+          final summary = memory == null
+              ? Visibility(
+                  visible: false,
+                  maintainSize: true,
+                  maintainAnimation: true,
+                  maintainState: true,
+                  child: TickerMode(
+                    enabled: false,
+                    child: _MemorySummary(
+                      memory: ClientProduct.current.expectedCoreId == 'meow-rs'
+                          ? const MemorySnapshot.sharedProcess(rss: 0)
+                          : const MemorySnapshot(),
+                      density: density,
                     ),
-                    onPressed: _showDetail,
                   ),
+                )
+              : InteractionPaced(
+                  revision: memory,
+                  builder: (_) =>
+                      _MemorySummary(memory: memory, density: density),
+                );
+          return DashboardCard(
+            semanticLabel: appLocalizations.memoryInfo,
+            onTap: mobile && memory != null ? _showDetail : null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: mobile ? MainAxisSize.min : MainAxisSize.max,
+              children: [
+                DashboardCardHeader(
+                  glyph: AppGlyphs.memory,
+                  title: appLocalizations.memoryInfo,
+                  chevron: mobile,
+                  trailing: [
+                    if (!mobile)
+                      Transform.translate(
+                        offset: const Offset(8, 0),
+                        child: DashboardIconButton(
+                          glyph: AppGlyphs.chevronForward,
+                          tooltip: appLocalizations.details(
+                            appLocalizations.memoryInfo,
+                          ),
+                          onPressed: memory != null ? _showDetail : null,
+                        ),
+                      ),
+                  ],
                 ),
-            ],
-          ),
-          SizedBox(
-            height: mobile
-                ? 12
-                : density.isCompact
-                ? 4
-                : 6,
-          ),
-          if (mobile) summary else Expanded(child: summary),
-        ],
+                SizedBox(
+                  height: mobile
+                      ? 12
+                      : density.isCompact
+                      ? 4
+                      : 6,
+                ),
+                if (mobile) summary else Expanded(child: summary),
+              ],
+            ),
+          );
+        },
       ),
     );
-    return ViewportVisibility(visible: _inViewport, child: card);
   }
 }
 

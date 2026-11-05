@@ -109,6 +109,36 @@ class FixedSelectionTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fixture asset changed"):
             seal.native_migration_binding(info, test, defined, fixture)
 
+    def test_fixed257_skia_request_is_scoped_and_log_absence_is_not_confirmation(self):
+        from lite236_pixel_diagnostic import Diagnostic
+        args = Namespace(sdk=Path("sdk"), output=self.root, source="a"*40, run="123", attempt="1",
+                         disable_queue_submit_with_commands=False, original_run_number=236,
+                         app_renderer="skia")
+        with self.assertRaisesRegex(ValueError, "fixed original257"):
+            Diagnostic(args)
+        args.original_run_number = 257
+        producer = Diagnostic(args)
+        producer.receipt["appPid"] = 3198
+        producer.receipt["surfaceCapture"] = dict(appPid=4144)
+        log = self.root / "scene-logcat.out"
+        shell = "11-05 07:03:37.915  3198  3272 I flutter : Using the Impeller rendering backend (OpenGLES)."
+        instrumentation = "11-05 07:04:13.815  4144  4423 I flutter : Using the Impeller rendering backend (OpenGLES)."
+        unrelated = "11-05 07:04:14.000  9999  9999 I flutter : Using the Impeller rendering backend (OpenGLES)."
+        log.write_text("\n".join((shell, instrumentation, unrelated)))
+        producer.record_app_renderer()
+        observation = producer.receipt["appRenderer"]
+        self.assertEqual(observation["requested"], "skia")
+        self.assertEqual(observation["engineStartupLines"], [shell, instrumentation])
+        self.assertTrue(observation["observedImpeller"])
+        self.assertEqual(observation["backendConfirmation"], "backend-unconfirmed")
+        log.write_text("11-05 07:04:16.582  4144  4144 I flutter : connectivityChanged")
+        producer.record_app_renderer()
+        self.assertFalse(observation["observedImpeller"])
+        self.assertEqual(observation["backendConfirmation"], "backend-unconfirmed")
+        self.assertFalse(producer.receipt["accepted"])
+        args.original_run_number, args.app_renderer = 236, "default"
+        self.assertNotIn("appRenderer", Diagnostic(args).receipt)
+
     def test_surface_cancellation_pulls_existing_evidence_before_owned_uninstall(self):
         from unittest.mock import Mock
         from lite236_pixel_diagnostic import Diagnostic
