@@ -199,16 +199,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             stage = "late-frame-wait";
             saveReceipt(root, receipt);
             if (original265Probe) {
-                CountDownLatch drawn = new CountDownLatch(1);
-                android.view.ViewTreeObserver.OnDrawListener observer = drawn::countDown;
-                View decor = activity.getWindow().getDecorView();
-                try {
-                    onMain(() -> { decor.getViewTreeObserver().addOnDrawListener(observer); decor.postInvalidateOnAnimation(); return null; });
-                    receipt.put("windowDrawObserved", drawn.await(10, TimeUnit.SECONDS))
-                            .put("windowDrawIsFlutterFrameProof", false);
-                } finally {
-                    onMain(() -> { decor.getViewTreeObserver().removeOnDrawListener(observer); return null; });
-                }
+                awaitFocusedWindowDraw(activity, receipt);
                 receipt.put("startupMetadataAfterLaunch", startupMetadata());
             } else {
                 long lateAt = SystemClock.elapsedRealtime() + 15_000;
@@ -374,6 +365,84 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                 if (captured && cleanupFailed) receipt.put("status", "failed").put("failureClass", IllegalStateException.class.getName());
                 saveReceipt(root, receipt);
                 if (captured && cleanupFailed) throw new IllegalStateException("Diagnostic resource cleanup incomplete");
+            }
+        }
+    }
+
+    private void awaitFocusedWindowDraw(Activity activity, JSONObject receipt) throws Exception {
+        View decor = activity.getWindow().getDecorView();
+        CountDownLatch ready = new CountDownLatch(1);
+        AtomicLong focusNanos = new AtomicLong();
+        AtomicLong drawNanos = new AtomicLong();
+        AtomicReference<Object> focusedToken = new AtomicReference<>();
+        AtomicInteger unfocusedDraws = new AtomicInteger();
+        AtomicReference<android.view.ViewTreeObserver> registeredTree = new AtomicReference<>();
+        android.view.ViewTreeObserver.OnDrawListener draw = () -> {
+            if (!activity.isFinishing() && !activity.isDestroyed() && activity.hasWindowFocus()
+                    && decor.isAttachedToWindow() && decor.getWindowToken() != null) {
+                drawNanos.compareAndSet(0, now());
+                focusedToken.compareAndSet(null, decor.getWindowToken());
+                ready.countDown();
+            } else {
+                unfocusedDraws.incrementAndGet();
+            }
+        };
+        android.view.ViewTreeObserver.OnWindowFocusChangeListener focus = hasFocus -> {
+            if (hasFocus && !activity.isFinishing() && !activity.isDestroyed() && ready.getCount() != 0) {
+                focusNanos.compareAndSet(0, now());
+                decor.postInvalidateOnAnimation();
+            }
+        };
+        JSONObject observation = new JSONObject().put("budgetSeconds", 10).put("startedNanos", now())
+                .put("activityIdentity", System.identityHashCode(activity)).put("decorIdentity", System.identityHashCode(decor))
+                .put("testRequestsWindowDraw", true).put("isFlutterFrameProof", false);
+        receipt.put("focusedWindowObservation", observation).put("windowDrawIsFlutterFrameProof", false);
+        try {
+            boolean initiallyFocused = onMain(() -> {
+                android.view.ViewTreeObserver tree = decor.getViewTreeObserver();
+                registeredTree.set(tree);
+                tree.addOnWindowFocusChangeListener(focus);
+                tree.addOnDrawListener(draw);
+                boolean focused = activity.hasWindowFocus();
+                if (focused) focus.onWindowFocusChanged(true);
+                return focused;
+            });
+            observation.put("initialWindowFocus", initiallyFocused);
+            boolean observed = ready.await(10, TimeUnit.SECONDS);
+            JSONObject finalState = onMain(() -> new JSONObject()
+                    .put("finishing", activity.isFinishing()).put("destroyed", activity.isDestroyed())
+                    .put("windowFocused", activity.hasWindowFocus()).put("decorAttached", decor.isAttachedToWindow())
+                    .put("hasWindowToken", decor.getWindowToken() != null)
+                    .put("tokenMatchesFocusedDraw", decor.getWindowToken() == focusedToken.get()));
+            observation.put("finishedNanos", now()).put("firstFocusNanos", focusNanos.get())
+                    .put("focusedDrawNanos", drawNanos.get()).put("unfocusedDraws", unfocusedDraws.get())
+                    .put("focusedDrawObserved", observed).put("finalState", finalState);
+            receipt.put("windowDrawObserved", observed);
+            check(observed, "Live focused target window did not draw within observation budget");
+            check(finalState.getBoolean("tokenMatchesFocusedDraw"), "Window token changed after focused draw");
+        } finally {
+            boolean interrupted = Thread.interrupted();
+            try {
+                onMain(() -> {
+                    android.view.ViewTreeObserver tree = registeredTree.get();
+                    if (tree != null && tree.isAlive()) {
+                        tree.removeOnDrawListener(draw);
+                        tree.removeOnWindowFocusChangeListener(focus);
+                    }
+                    android.view.ViewTreeObserver current = decor.getViewTreeObserver();
+                    if (current != tree && current.isAlive()) {
+                        current.removeOnDrawListener(draw);
+                        current.removeOnWindowFocusChangeListener(focus);
+                    }
+                    return null;
+                });
+                observation.put("listenersRemoved", true);
+            } catch (Exception failure) {
+                mainWorkTeardownRequired.set(true);
+                observation.put("listenersRemoved", false);
+                throw failure;
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt();
             }
         }
     }
