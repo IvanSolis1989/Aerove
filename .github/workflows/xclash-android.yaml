@@ -171,7 +171,9 @@ jobs:
           require(identity == '0.13.0+2026102340' and info['appEnv'] == 'stable',
                   'Original is not the requested stable product identity')
 
-          log = command(['gh', 'api', f'repos/{repository}/actions/jobs/127292807887/logs']).decode('utf-8')
+          log = command(['gh', 'api', f'repos/{repository}/actions/jobs/127292807887/logs',
+                         '--allow-escape-sequences']).decode('utf-8')
+          log = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', log)
           lines = [re.sub(r'^\S+Z\s+', '', line).strip() for line in log.splitlines()]
           certificates = [line for line in lines if re.match(r'^(?:Signer |V2 Signer:)', line)
                           and 'certificate SHA-256 digest:' in line]
