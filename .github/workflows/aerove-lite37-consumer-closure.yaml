@@ -1,0 +1,115 @@
+name: Lite37 fixed run277 consumer closure (no APK)
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/lite37-consumer-closure]
+    paths:
+      - .github/workflows/aerove-lite37-consumer-closure.yaml
+      - apps/aerove-lite/tool/lite37_consumer_closure.py
+permissions:
+  contents: read
+  actions: read
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+concurrency:
+  group: lite37-consumer-closure-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  consumers:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && github.repository == 'IvanSolis1989/Aerove' && github.repository_owner == 'IvanSolis1989' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite37-consumer-closure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLOSURE_OUT: ${{ runner.temp }}/lite37-consumer-closure
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 1cd4f0a9600a38ceeef93282455f70d3418485d7
+          path: original
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify and restore only the fixed original run277 fixture bytes
+        run: python3 apps/aerove-lite/tool/lite37_consumer_closure.py prepare --root original --out "$CLOSURE_OUT"
+      - uses: ./original/.github/actions/flutter
+        with:
+          flutter-version: 3.47.6
+          cache: true
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - run: sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.98.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: 1.27.1
+          cache-dependency-path: original/apps/aerove-lite/regexp2/go.sum
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: 9.6.0
+          cache-read-only: true
+      - name: Resolve fixed source dependencies and existing production host hooks
+        working-directory: original
+        run: |
+          (cd packages/aerove_client && flutter pub get --enforce-lockfile)
+          (cd apps/aerove && flutter pub get --enforce-lockfile)
+          (cd apps/aerove && python3 tool/mihomo_source.py prepare)
+          python3 apps/aerove-lite/tool/ci_artifacts.py host-helper \
+            --go "$(go env GOROOT)/bin/go" \
+            --directory "$RUNNER_TEMP/lite37-host-helper/staging" \
+            --destination "$RUNNER_TEMP/lite37-host-helper/bin" \
+            --receipt "$CLOSURE_OUT/host-helper.json"
+      - name: Produce only the missing same-source Geo95 fixture
+        working-directory: original/apps/aerove
+        env:
+          AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite37-host-helper/bin/hostverify
+        run: |
+          node_binary="$(command -v node)"
+          "$node_binary" --version | tee "$CLOSURE_OUT/node-version.txt"
+          export AEROVE_TEST_NODE="$node_binary"
+          geo_args=(flutter test --no-pub --concurrency 1 \
+            --dart-define="GEO_ORIGIN_FIXTURE=$CLOSURE_OUT/producer-fixtures.json" \
+            test/common/native_lite_geo_origin95_test.dart)
+          printf '%q ' "${geo_args[@]}" > "$CLOSURE_OUT/geo-command.txt"
+          printf '\n' >> "$CLOSURE_OUT/geo-command.txt"
+          "${geo_args[@]}" 2>&1 | tee "$CLOSURE_OUT/geo-producer.log"
+      - name: Guard the exact three consumer tasks before execution
+        working-directory: original/apps/aerove-lite
+        run: |
+          gradle --no-daemon --console=plain :app:testReleaseUnitTest \
+            --tests dev.aerove.lite.data.GeoOrigin95Test.actualTaskProducerIsStrictlyConsumedPersistedAndRebasedWithoutCoveringProfileIntent \
+            --tests dev.aerove.lite.data.MeowDns99StageTest.actualGetProfileDefaultsAndSingleJsOutputPassCompleteStageForBothRootIpv6States \
+            --tests dev.aerove.lite.data.MeowTunReconciliation90Test.actualTaskYamlTraversesSameSealerAndStageWithoutGrantingStartAuthority \
+            --dry-run 2>&1 | tee "$CLOSURE_OUT/consumer-graph.txt"
+          python3 "$GITHUB_WORKSPACE/apps/aerove-lite/tool/lite37_consumer_closure.py" graph --root "$GITHUB_WORKSPACE/original" --out "$CLOSURE_OUT"
+      - name: Run original consumers with explicit properties in the actual JVM worker
+        working-directory: original/apps/aerove-lite
+        env:
+          AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite37-host-helper/bin/hostverify
+        run: |
+          export JAVA_TOOL_OPTIONS="-Dorigin95.fixture=$CLOSURE_OUT/producer-fixtures.json -Ddns99.fixture=$CLOSURE_OUT/flutter/_temp/lite-flutter-host/dart-closure/dns-meow.json -Dtun90.fixture=$RUNNER_TEMP/lite-client-fixtures/resource"
+          gradle --no-daemon --console=plain --rerun-tasks --no-build-cache :app:testReleaseUnitTest \
+            --tests dev.aerove.lite.data.GeoOrigin95Test.actualTaskProducerIsStrictlyConsumedPersistedAndRebasedWithoutCoveringProfileIntent \
+            --tests dev.aerove.lite.data.MeowDns99StageTest.actualGetProfileDefaultsAndSingleJsOutputPassCompleteStageForBothRootIpv6States \
+            --tests dev.aerove.lite.data.MeowTunReconciliation90Test.actualTaskYamlTraversesSameSealerAndStageWithoutGrantingStartAuthority \
+            2>&1 | tee "$CLOSURE_OUT/consumers.log"
+      - name: Read back exactly three non-skipped results and prove no APK exists
+        run: python3 apps/aerove-lite/tool/lite37_consumer_closure.py finish --root original --out "$CLOSURE_OUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ always() }}
+        with:
+          name: Lite37-run277-consumer-closure-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lite37-consumer-closure/
+          if-no-files-found: error
