@@ -360,7 +360,7 @@ class OriginalApkRecheckWorkflowTest(unittest.TestCase):
 
     def test_recheck_has_explicit_original_run_and_cannot_build_or_publish(self):
         self.assertIn('original_build_run:', FULL)
-        self.assertIn('reviewed Std55 40488925368 or Std74 40797508485 only', FULL)
+        self.assertIn('reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 only', FULL)
         origin = run_block('Select the explicit original APK for a verification recheck')
         for guard in ('test "$GITHUB_EVENT_NAME" = workflow_dispatch', 'test "$BUILD_APK" = false',
                       'test "$PUBLISH_RELEASE" = false', 'test "$PREPARE_SOURCES" = false'):
@@ -384,6 +384,10 @@ class OriginalApkRecheckWorkflowTest(unittest.TestCase):
         self.assertIn('test "$(jq -r .source dist/BUILD_INFO.json)" = "$BUILD_SOURCE"', release)
         self.assertIn('--target "$RELEASE_SOURCE"', release)
         self.assertNotIn('> dist/BUILD_INFO.json', release)
+        notes = run_block('Publish verified APK to Releases')
+        self.assertIn('--repo "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID"', notes)
+        self.assertIn('--source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE"', notes)
+        self.assertIn('--build-source "$RELEASE_SOURCE" --source "$main"', notes)
         self.assertIn('apksigner" verify --print-certs', release)
 
     def test_main_push_source_sync_graph_skips_all_app_jobs_and_publication(self):
