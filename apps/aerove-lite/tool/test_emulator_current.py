@@ -83,6 +83,46 @@ class GuestAngleEvidenceTests(unittest.TestCase):
                         self.assertRaises(ValueError):
                     current.guest_angle_evidence(directory, {}, startup)
 
+    def test_fixed_lavapipe_diagnosis_binds_the_same_actual_mesa_device(self):
+        device = 'llvmpipe (LLVM 18.1.8, 256 bits)'
+        modes = 'vulkan_mode_selected:lavapipe gles_mode_selected:swangle'
+        selected = 'Selecting Vulkan device: ' + device + ', Version: 1.3.0'
+        startup = modes + '\n' + selected
+        guest = ('GLES: Google Inc., ANGLE (Mesa, Vulkan 1.3.0 (' + device
+                 + ' (0x00000000))), OpenGL ES 3.1.0')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=guest)):
+                route = current.guest_angle_evidence(directory, {}, startup, vulkan_backend='lavapipe')
+            self.assertEqual(route['route'], 'guest-angle-vulkan-lavapipe')
+            self.assertEqual(route['hostVulkanBackend'], 'lavapipe')
+            self.assertEqual(route['guestRenderer'], [guest])
+            self.assertEqual(route['hostVulkanDevice'], [selected])
+            self.assertEqual((directory / 'guest-angle-surfaceflinger.out').read_text(), guest)
+            self.assertEqual((directory / 'guest-angle-host-vulkan.out').read_text(), selected + '\n')
+            # Formal/default callers still require the original SwiftShader evidence.
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=guest)), \
+                    self.assertRaises(ValueError):
+                current.guest_angle_evidence(directory, {}, startup)
+            with patch.object(current.subprocess, 'run',
+                              side_effect=self.outputs(guest=guest.replace('3.1.0', '3.2.0'))):
+                self.assertEqual(current.guest_angle_evidence(directory, {}, startup,
+                    vulkan_backend='lavapipe')['route'], 'guest-angle-vulkan-lavapipe')
+            for responses, host in (
+                    (self.outputs(guest=guest), self.startup),
+                    (self.outputs(guest=guest), selected),
+                    (self.outputs(guest=guest), startup.replace('gles_mode_selected:swangle', 'gles_mode_selected:llvmpipe')),
+                    (self.outputs(), startup),
+                    (self.outputs(guest=guest.replace('LLVM 18.1.8', 'LLVM 17.0.0')), startup),
+                    (self.outputs(guest=guest.replace('3.1.0', '3.0.0')), startup),
+                    (self.outputs(guest=guest), startup + '\n' + self.startup),
+                    (self.outputs(guest=guest, overrides='\n'), startup),
+                    (self.outputs(guest=guest, api='37\n'), startup)):
+                with self.subTest(host=host), \
+                        patch.object(current.subprocess, 'run', side_effect=responses), \
+                        self.assertRaises(ValueError):
+                    current.guest_angle_evidence(directory, {}, host, vulkan_backend='lavapipe')
+
     def test_missing_original_image_library_retains_failure_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

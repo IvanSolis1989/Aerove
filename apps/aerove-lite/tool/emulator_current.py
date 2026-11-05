@@ -112,7 +112,7 @@ GUEST_ANGLE_READS = (
 )
 
 
-def guest_angle_route(outputs, startup):
+def guest_angle_route(outputs, startup, *, vulkan_backend='swiftshader'):
     if outputs['api-level'].strip() != '33':
         raise ValueError('Guest ANGLE requires the actual API33 image')
     if any(outputs[name].strip() != 'angle' for name in ('boot-egl', 'hardware-egl')):
@@ -121,6 +121,34 @@ def guest_angle_route(outputs, startup):
         raise ValueError('Guest ANGLE host-query-reset compatibility override changed during boot')
     if 'DUMP TIMEOUT' in outputs['surfaceflinger']:
         raise ValueError('SurfaceFlinger dump timed out before renderer evidence completed')
+    if vulkan_backend not in ('swiftshader', 'lavapipe'):
+        raise ValueError('Unsupported Guest ANGLE Vulkan diagnostic backend')
+    if vulkan_backend == 'lavapipe':
+        # Only the fixed257 Surface diagnosis opts in; formal proof stays SwiftShader.
+        if not re.search(r'vulkan_mode_selected:lavapipe\s+gles_mode_selected:swangle\b', startup):
+            raise ValueError('Requested Lavapipe Vulkan and SwANGLE GLES modes were not selected')
+        host = [line for line in startup.splitlines() if 'Selecting Vulkan device:' in line]
+        devices = {line.split('Selecting Vulkan device:', 1)[1].split(', Version:', 1)[0].strip()
+                   for line in host}
+        if len(devices) != 1:
+            raise ValueError('Lavapipe diagnosis requires one actual host Vulkan device')
+        device = next(iter(devices))
+        if not re.match(r'(?i)^(?:llvmpipe|lavapipe)\b', device):
+            raise ValueError('Requested Lavapipe Vulkan device was not selected')
+        guest = []
+        for line in outputs['surfaceflinger'].splitlines():
+            version = re.search(r'OpenGL ES\s+(\d+)\.(\d+)\b', line)
+            if (re.search(r'\bGLES:', line) and version
+                    and tuple(map(int, version.groups())) >= (3, 1)
+                    and all(word in line.upper() for word in ('ANGLE', 'VULKAN'))
+                    and device in line):
+                guest.append(line)
+        if not guest:
+            raise ValueError('Guest ANGLE GLES3.1 and the same host Mesa Vulkan device were not observed')
+        return dict(route='guest-angle-vulkan-lavapipe', apiLevel=33,
+                    bootEgl='angle', hardwareEgl='angle', hostVulkanBackend='lavapipe',
+                    angleFeatureOverridesDisabled=outputs['angle-overrides-disabled'].strip(),
+                    guestRenderer=guest, hostVulkanDevice=host)
     guest = [line for line in outputs['surfaceflinger'].splitlines()
              if re.search(r'\bGLES:', line) and re.search(r'OpenGL ES\s+3\.1\b', line)
              and all(word in line.upper() for word in ('ANGLE', 'VULKAN', 'SWIFTSHADER'))]
@@ -140,7 +168,7 @@ def guest_angle_file_hashes(directory):
     return {name: sha(directory / name) for name in names}
 
 
-def guest_angle_evidence(directory, receipt, startup):
+def guest_angle_evidence(directory, receipt, startup, *, vulkan_backend='swiftshader'):
     """Confirm the original image actually selected guest ANGLE over Vulkan."""
     outputs = {}
     for name, arguments in GUEST_ANGLE_READS:
@@ -154,7 +182,7 @@ def guest_angle_evidence(directory, receipt, startup):
         result.check_returncode()
         outputs[name] = result.stdout
     check_cancelled(receipt)
-    route = guest_angle_route(outputs, startup)
+    route = guest_angle_route(outputs, startup, vulkan_backend=vulkan_backend)
     # Emulator stdout remains live; seal only the actual boot-time Vulkan selection lines.
     (directory / 'guest-angle-host-vulkan.out').write_text('\n'.join(route['hostVulkanDevice']) + '\n')
     return route

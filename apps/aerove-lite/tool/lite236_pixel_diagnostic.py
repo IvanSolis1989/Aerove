@@ -369,7 +369,7 @@ class Diagnostic:
         if args.disable_queue_submit_with_commands:
             features += ",-VulkanQueueSubmitWithCommands"
         command = [str(args.sdk / "emulator/emulator"), "-port", "5554", "-avd", args.avd,
-            "-no-window", "-gpu", GPU_BACKEND, "-no-snapshot", "-noaudio", "-no-boot-anim", "-feature", features]
+            "-no-window", "-gpu", "lavapipe" if self.original257 else GPU_BACKEND, "-no-snapshot", "-noaudio", "-no-boot-anim", "-feature", features]
         self.receipt.update(emulatorCommand=command, avd=args.avd)
         with (args.output / "emulator.stdout.log").open("wb") as out, (args.output / "emulator.stderr.log").open("wb") as err:
             self.emulator = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=err,
@@ -382,7 +382,8 @@ class Diagnostic:
         abi, _ = self.adb_command("owned-device-abi", "shell", "getprop", "ro.product.cpu.abi")
         require(abi.strip() == b"x86_64", "Requires the existing x86_64 image")
         self.receipt["guestGraphicsRoute"] = guest_angle_evidence(args.output, self.receipt,
-            (args.output / "emulator.stdout.log").read_text(errors="replace"))
+            (args.output / "emulator.stdout.log").read_text(errors="replace"),
+            vulkan_backend="lavapipe" if self.original257 else "swiftshader")
         if args.disable_queue_submit_with_commands:
             host = (args.output / "emulator.stdout.log").read_text(errors="replace")
             require(re.search(r"Feature 'VulkanQueueSubmitWithCommands' \([0-9]+\) is overridden to 'disabled'", host),
