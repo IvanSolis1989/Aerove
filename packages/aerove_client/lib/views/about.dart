@@ -136,6 +136,7 @@ class _AboutHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.colorScheme;
     final appLocalizations = context.appLocalizations;
+    final resources = ClientProduct.current.resources;
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
       child: Column(
@@ -144,10 +145,13 @@ class _AboutHero extends StatelessWidget {
             onEnterDeveloperMode: onEnterDeveloperMode,
             child: ClipRSuperellipse(
               borderRadius: AppRadius.all(AppCorner.fit(_logoSize)),
-              child: Image.asset(
-                ClientProduct.current.resources.iconAsset,
-                width: _logoSize,
-                height: _logoSize,
+              child: ColoredBox(
+                color: Color(resources.iconBackgroundColor),
+                child: Image.asset(
+                  resources.iconAsset,
+                  width: _logoSize,
+                  height: _logoSize,
+                ),
               ),
             ),
           ),

@@ -314,7 +314,7 @@ Lite Android 复制验收驱动另只读参考同固定 SDK 的 [`AccessibilityB
 
 组织名单行适配复用公开 `TextPainter`、`TextScaler`、`GlassText` 和项目既有 `DashboardFitText` 测量方式；连续圆角背景裁剪另只读参考同固定 SDK 的 [`RenderClipPath.paint`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/proxy_box.dart) 与 `PaintingContext.pushClipPath` 的图层复用行为，采用现有 `AppShape.getOuterPath`。未复制框架实现或新增依赖，BSD-3-Clause 与 Flutter Authors 署名保持。
 
-两版关于页品牌图标复用同固定 SDK 的 [`ClipRSuperellipse`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/widgets/basic.dart) 与现有 `AppRadius`，直接裁剪原品牌图片为连续圆角矩形，去掉外层表面及内缩边框。未改品牌素材、复制框架实现或增加依赖；BSD-3-Clause 与 Flutter Authors 署名保持。
+两版关于页品牌图标复用同固定 SDK 的 [`ClipRSuperellipse`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/widgets/basic.dart)、`ColoredBox` 与现有 `AppRadius`，直接呈现连续圆角矩形，去掉外层表面及内缩边框。标准版复用现有透明裸飘带与固定品牌底色，避免旧图片自身烘焙的外沿；Lite 复用现有已归一化前景，保持两版飘带占比一致。未重画或重导出品牌素材、复制框架实现或增加依赖；BSD-3-Clause 与 Flutter Authors 署名保持。
 
 Lite 桌面飘带校正复用本仓 `generate_xclash_icon.ps1` 的 System.Drawing 导出链和原 Lite 图，参考 [Android AdaptiveIconDrawable 层与 viewport 说明](https://developer.android.com/reference/android/graphics/drawable/AdaptiveIconDrawable)及 [.NET Bitmap 官方源码文档](https://github.com/dotnet/dotnet-api-docs/blob/main/xml/System.Drawing/Bitmap.xml)的像素读取/绘制 API。只适配现有素材的布局，不引入图标库、复制文档示例或重新绘制品牌；Android 文档为 API 参考，.NET 文档为持续维护的参考页，不推测固定提交。像素边界对齐不代表已通过手机桌面验收。
 

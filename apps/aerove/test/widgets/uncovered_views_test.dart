@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/l10n_labels.dart';
@@ -21,6 +22,7 @@ import 'package:fl_clash/views/profiles/extend/standard.dart';
 import 'package:fl_clash/views/proxies/proxies.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -454,6 +456,93 @@ void main() {
       }
     }
   });
+
+  testWidgets(
+    'about brand artwork has a flat background without a baked border',
+    (tester) async {
+      final container = _containerFor(tester);
+      final capture = GlobalKey();
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: TestApp(
+            child: RepaintBoundary(key: capture, child: const AboutView()),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final logo = find.byWidgetPredicate(
+        (widget) => widget.runtimeType.toString() == '_DeveloperModeDetector',
+      );
+      final clip = find.descendant(
+        of: logo,
+        matching: find.byType(ClipRSuperellipse),
+      );
+      expect(clip, findsOneWidget);
+      expect(tester.getSize(clip), const Size(96, 96));
+      final imageFinder = find.descendant(
+        of: clip,
+        matching: find.byType(Image),
+      );
+      final imageWidget = tester.widget<Image>(imageFinder);
+      expect(
+        (imageWidget.image as AssetImage).assetName,
+        'assets_source/images/icon/aerove-ribbon.png',
+      );
+      await tester.runAsync(() async {
+        await precacheImage(imageWidget.image, tester.element(imageFinder));
+      });
+      await tester.pump();
+      final gesture = tester.widget<GestureDetector>(
+        find.descendant(of: logo, matching: find.byType(GestureDetector)).first,
+      );
+      expect(gesture.onTap, isNotNull);
+
+      final boundary =
+          capture.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+      final origin =
+          tester.getTopLeft(clip) - boundary.localToGlobal(Offset.zero);
+      await tester.runAsync(() async {
+        final image = await boundary.toImage();
+        try {
+          final bytes = (await image.toByteData(
+            format: ui.ImageByteFormat.rawRgba,
+          ))!.buffer.asUint8List();
+          Color pixel(int x, int y) {
+            final index =
+                ((origin.dy.round() + y) * image.width +
+                    origin.dx.round() +
+                    x) *
+                4;
+            return Color.fromARGB(
+              bytes[index + 3],
+              bytes[index],
+              bytes[index + 1],
+              bytes[index + 2],
+            );
+          }
+
+          const background = Color(0xFF0E1115);
+          for (final point in [(48, 4), (48, 8), (48, 88), (4, 48), (91, 48)]) {
+            expect(
+              pixel(point.$1, point.$2),
+              background,
+              reason: 'flat logo edge at $point',
+            );
+          }
+          expect(
+            pixel(48, 48),
+            isNot(background),
+            reason: 'ribbon remains visible',
+          );
+        } finally {
+          image.dispose();
+        }
+      });
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('about view shows progress while checking for updates', (
     tester,

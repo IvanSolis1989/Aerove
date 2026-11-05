@@ -33,7 +33,8 @@ final standardProduct = ProductSpec(
         '1c692381d0069d89edab73a31a43afa13e1d2079e2c58eb0852597e498df1e14',
     defaultScriptUrl: standardDefaultScriptUrl,
     legacyScriptUrls: standardLegacyScriptUrls,
-    iconAsset: 'assets/images/icon.png',
+    iconAsset: 'assets_source/images/icon/aerove-ribbon.png',
+    iconBackgroundColor: 0xFF0E1115,
     trustedRootsAsset: 'core/Clash.Meta/component/ca/ca-certificates.crt',
     geoAssets: {
       'GEOIP.metadb': 'assets/data/GEOIP.metadb',

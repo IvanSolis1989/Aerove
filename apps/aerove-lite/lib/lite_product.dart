@@ -23,6 +23,7 @@ final liteProduct = ProductSpec(
         'refs/heads/main/Meow%E5%86%85%E6%A0%B8%E7%B3%BB/Aerove%20Lite/'
         'AeroveLite(meow).js',
     legacyScriptUrls: const {},
-    iconAsset: 'app/src/main/res/drawable-nodpi/aerove_lite_icon.png',
+    iconAsset: 'app/src/main/res/drawable-nodpi/aerove_lite_launcher_art.png',
+    iconBackgroundColor: 0xFFFFFFFF,
   ),
 );

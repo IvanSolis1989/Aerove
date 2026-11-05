@@ -10,7 +10,7 @@
 
 图标采用原版飘带的反色逻辑：**白底、黑飘带**，保留折叠层次，不加字母或Lite文字。源母版为`aerove-lite-icon-tile.png`，通过内置imagegen编辑原版`../aerove-icon-tile.png`生成。完整提示见`aerove-lite-icon.prompt.txt`。完整版图标未修改。
 
-当前导出入口为 `apps/aerove/tool/generate_xclash_icon.ps1 -Edition Lite`（从仓库根执行）。关于页直接复用原 Lite 母版；桌面前景保留其颜色与纹理，将显著飘带边界对齐标准版实际透明前景，再复用标准版的 adaptive inset。生成物为 Lite 的 `aerove_lite_icon.png`、`aerove_lite_launcher_art.png` 与 `aerove_lite_launcher_foreground.xml`，不要手改生成物。亮暗素材的低对比边缘不同，静态边界对齐仍须经同机桌面实际显示验收。
+当前导出入口为 `apps/aerove/tool/generate_xclash_icon.ps1 -Edition Lite`（从仓库根执行）。桌面前景保留母版颜色与纹理，将显著飘带边界对齐标准版实际透明前景，再复用标准版的 adaptive inset；共享 Flutter 关于页也复用已对齐的 `aerove_lite_launcher_art.png`，保持两版飘带占比一致。生成物为 Lite 的 `aerove_lite_icon.png`、`aerove_lite_launcher_art.png` 与 `aerove_lite_launcher_foreground.xml`，不要手改生成物。亮暗素材的低对比边缘不同，静态边界对齐仍须经同机实际显示验收。
 
 ## 启动资源与验收
 

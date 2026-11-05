@@ -149,7 +149,7 @@ if ($Edition -eq 'Lite') {
     $foreground = [System.IO.File]::ReadAllText((Join-Path $standardResources 'drawable/ic_launcher_foreground.xml'))
     $foreground = $foreground.Replace('@drawable/xclash_liquid_glass', '@drawable/aerove_lite_launcher_art')
     [System.IO.File]::WriteAllText((Join-Path $liteResources 'drawable/aerove_lite_launcher_foreground.xml'), $foreground)
-    Write-Output 'Lite material retained; adaptive ribbon bounds and inset aligned to Standard. About uses the original Lite tile.'
+    Write-Output 'Lite material retained; ribbon bounds aligned to Standard for launcher and About; adaptive inset retained.'
     return
 }
 

@@ -10,6 +10,7 @@ class ProductResources {
     required this.defaultScriptUrl,
     required Set<String> legacyScriptUrls,
     required this.iconAsset,
+    this.iconBackgroundColor = 0x00000000,
     Map<String, String> geoAssets = const {},
     this.trustedRootsAsset,
   }) : legacyScriptUrls = Set.unmodifiable(legacyScriptUrls),
@@ -20,6 +21,7 @@ class ProductResources {
   final String defaultScriptUrl;
   final Set<String> legacyScriptUrls;
   final String iconAsset;
+  final int iconBackgroundColor;
   final Map<String, String> geoAssets;
   final String? trustedRootsAsset;
 }
