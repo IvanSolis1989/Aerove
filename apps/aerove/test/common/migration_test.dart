@@ -505,6 +505,49 @@ void main() {
       });
     });
 
+    test(
+      'current legacy-shaped settings keep their strict migration fallback',
+      () async {
+        for (final damaged in [false, true]) {
+          final configMap = _createConfigMap()
+            ..['proxiesStyle'] = <String, Object?>{}
+            ..['currentProfileId'] = 7;
+          if (damaged) configMap['excludeSSIDs'] = 'invalid';
+          final store = _FakeMigrationStore(
+            configMap: configMap,
+            version: Migration.currentVersion,
+          );
+          var migrations = 0;
+          final config = await Migration(
+            store: store,
+            migrateV0: (_) async {
+              migrations++;
+              store.events.add('migrateV0');
+              return MigrationData(
+                configMap: _createConfigMap()..['currentProfileId'] = 9,
+              );
+            },
+          ).run();
+          expect(migrations, damaged ? 1 : 0);
+          expect(config.currentProfileId, damaged ? 9 : 7);
+          expect(
+            store.events,
+            damaged
+                ? [
+                    'getConfigMap',
+                    'getVersion',
+                    'getClashConfigMap',
+                    'migrateV0',
+                    'restore',
+                    'saveConfig',
+                    'setVersion',
+                  ]
+                : ['getConfigMap', 'getVersion'],
+          );
+        }
+      },
+    );
+
     test('keeps what it can read of a damaged current config', () async {
       final configMap = _createConfigMap()
         ..['currentProfileId'] = 7

@@ -1364,6 +1364,7 @@ jobs:
           test/common/initial_theme_test.dart \
           test/common/preferences_test.dart \
           test/common/migration_test.dart \
+          test/models/config_test.dart \
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/initial-theme-dart.log"
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: always()

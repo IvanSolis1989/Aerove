@@ -2,7 +2,7 @@ name: aerove_lite
 description: AEROVE Lite shared Flutter client with the independent Meow Android host.
 publish_to: 'none'
 # Synced from version.properties by android/sync_product.py.
-version: 0.2.0-beta.3+35
+version: 0.2.0-beta.4+36
 environment:
   sdk: '>=3.10.0 <4.0.0'
 

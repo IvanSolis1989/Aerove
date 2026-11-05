@@ -65,6 +65,31 @@ class MeowCompatibilityValidatorTest {
         catch (e: ConfigValidationException) { assertTrue(e.issues.single().reason.contains("Core supports trusttunnel")) }
     }
     @Test fun rejectsAbsentCoreProtocolAtExactPath() = rejects("$.proxies[0].type", "proxies: [{name: t, type: tuic}]")
+    @Test fun rejectsMieruWithItsCoreLimitationWithoutDroppingOrMutatingNodes() {
+        val source = ConfigYaml.parse("""
+            proxies:
+              - {name: direct, type: direct}
+              - {name: synthetic-mieru, type: mieru, server: example.invalid, port: 443, username: synthetic, password: synthetic, transport: TCP, udp: true}
+        """.trimIndent())
+        val before = ConfigYaml.dump(source)
+        for (sourceAdmission in listOf(true, false)) {
+            try {
+                MeowCompatibilityValidator.normalize(source, features, sourceAdmission)
+                fail("Mieru must remain rejected by the fixed core")
+            } catch (error: ConfigValidationException) {
+                assertEquals("$.proxies[1].type", error.issues.single().path)
+                assertEquals("No outbound implementation in fixed Meow v0.26.1: mieru", error.issues.single().reason)
+            }
+            assertEquals(before, ConfigYaml.dump(source))
+        }
+    }
+    @Test fun unrecognizedProtocolsKeepTheirUnknownTypeDiagnostic() {
+        try { normalize("proxies: [{name: synthetic, type: invented}]"); fail("Unknown protocol accepted") }
+        catch (error: ConfigValidationException) {
+            assertEquals("$.proxies[0].type", error.issues.single().path)
+            assertEquals("Unknown proxy type or spelling", error.issues.single().reason)
+        }
+    }
     @Test fun rejectsWrongScalarTypes() {
         rejects("$.ipv6", "ipv6: yes")
         rejects("$.proxies[0].udp", "proxies: [{name: t, type: anytls, server: example.com, port: 443, password: secret, udp: 1}]")

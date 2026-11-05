@@ -143,7 +143,10 @@ class Migration {
     if (oldVersion == currentVersion) {
       if (configMap != null && _isV0(configMap)) {
         try {
-          config = Config.strictFromJson(configMap);
+          config = Config.strictFromJson(
+            configMap,
+            coreId: ClientProduct.current.expectedCoreId,
+          );
         } catch (_) {
           oldVersion = 0;
         }

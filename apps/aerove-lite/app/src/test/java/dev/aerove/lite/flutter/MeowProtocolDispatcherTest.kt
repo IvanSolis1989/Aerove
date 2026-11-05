@@ -1,5 +1,7 @@
 package dev.aerove.lite.flutter
 
+import dev.aerove.lite.data.ConfigIssue
+import dev.aerove.lite.data.ConfigValidationException
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
@@ -65,6 +67,47 @@ class MeowProtocolDispatcherTest {
             assertEquals("dns", diagnostic.getJSONObject("details").getString("field"))
             assertTrue(dispatcher.missingMethods.contains("getConfig"))
             assertFalse(dispatcher.missingMethods.contains("message"))
+        } finally { dispatcher.closeAndJoin(); home.deleteRecursively() }
+    }
+
+    @Test fun setupValidationFailureKeepsItsFieldAndReasonsInsteadOfBecomingGeneric() = runBlocking {
+        val home = home()
+        val issues = listOf(ConfigIssue("$.tun.stack", "The fixed Meow core uses lwIP"),
+            ConfigIssue("$.tun.mtu", "Invalid typed TUN value"))
+        val dispatcher = MeowProtocolDispatcher(home, mapOf("setupConfig" to MeowProtocolMethod {
+            throw ConfigValidationException(issues)
+        }))
+        try {
+            val response = row(dispatcher.invoke(call("setup", "setupConfig")))
+            assertEquals("setup", response.getString("id"))
+            assertTrue(response.isNull("result"))
+            val failure = response.getJSONObject("error")
+            assertEquals("bad_argument", failure.getString("code"))
+            assertEquals("$.tun.stack: The fixed Meow core uses lwIP\n$.tun.mtu: Invalid typed TUN value", failure.getString("message"))
+            assertEquals("$.tun.stack", failure.getJSONObject("details").getString("field"))
+        } finally { dispatcher.closeAndJoin(); home.deleteRecursively() }
+    }
+
+    @Test fun unclassifiedFailureKeepsTheOriginalErrorEnvelopeWithoutRequestOrExceptionMessages() = runBlocking {
+        val home = home()
+        val secret = "private-request-and-exception-content"
+        val dispatcher = MeowProtocolDispatcher(home, mapOf("initClash" to MeowProtocolMethod {
+            throw IllegalStateException(secret, IllegalArgumentException(secret))
+        }))
+        try {
+            val response = row(dispatcher.invoke(call("startup", "initClash", secret)))
+            assertEquals(setOf("id", "result", "error"), response.keys().asSequence().toSet())
+            assertEquals("startup", response.getString("id"))
+            assertTrue(response.isNull("result"))
+            val failure = response.getJSONObject("error")
+            assertEquals(setOf("code", "message", "details"), failure.keys().asSequence().toSet())
+            assertEquals("method_failed", failure.getString("code"))
+            assertEquals("Meow method failed", failure.getString("message"))
+            val details = failure.getJSONObject("details")
+            assertEquals(setOf("method", "cause"), details.keys().asSequence().toSet())
+            assertEquals("initClash", details.getString("method"))
+            assertEquals("IllegalStateException", details.getString("cause"))
+            assertFalse(response.toString().contains(secret))
         } finally { dispatcher.closeAndJoin(); home.deleteRecursively() }
     }
 

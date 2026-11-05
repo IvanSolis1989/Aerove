@@ -34,8 +34,10 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
     override val coreVersion = "meow-rs/0.26.1/727ddcd06f592e2f12c5222c4de6cce328df808c"
     private val features by lazy { verifiedFeatures().toSet() }
 
-    override fun resourceInput(yaml: String): MutableMap<String, Any?> {
-        val (root, namedListeners) = MeowSourceConfig.input(yaml, tunReconciliation)
+    override fun resourceInput(yaml: String): MutableMap<String, Any?> = resourceInput(yaml, sourceAdmission = false)
+
+    private fun resourceInput(yaml: String, sourceAdmission: Boolean): MutableMap<String, Any?> {
+        val (root, namedListeners) = MeowSourceConfig.input(yaml, tunReconciliation, sourceAdmission)
         if (namedListeners.isNotEmpty()) root["listeners"] = namedListeners
         return root
     }
@@ -46,7 +48,7 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
     override fun providerDownloadInput(yaml: String): String = ConfigYaml.dump(engineView(yaml))
 
     private fun engineView(yaml: String, sourceAdmission: Boolean = false): MutableMap<String, Any?> {
-        val root = resourceInput(yaml)
+        val root = resourceInput(yaml, sourceAdmission)
         root.remove("listeners")
         for (key in listOf("unified-delay", "tcp-concurrent", "check-certificate")) root.remove(key)?.let {
             if (it !is Boolean) fail("$.$key", "Expected Boolean host policy")

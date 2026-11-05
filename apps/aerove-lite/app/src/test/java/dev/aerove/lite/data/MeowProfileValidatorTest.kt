@@ -82,6 +82,49 @@ class MeowProfileValidatorTest {
         assertEquals(1, calls)
     }
 
+    @Test fun sourceTunAdmissionDefersOnlyTheRuntimeBuilderReceipt() = runBlocking {
+        var nativeCalls = 0
+        val validator = MeowProfileValidator(NativeConfigValidator { yaml ->
+            nativeCalls++
+            assertEquals(mapOf("enable" to false, "auto-route" to false), ConfigYaml.parse(yaml)["tun"])
+            null
+        }, NativePreparedConfigValidator { _, _ -> fail("Unreconciled runtime reached prepared Native"); null },
+            temporary.root, { emptySet() })
+        val source = "tun: {enable: true, stack: lwip, mtu: 1500, auto-route: true, dns-hijack: ['any:53']}"
+        validator.validate(source, false, null, sourceAdmission = true)
+        assertEquals(1, nativeCalls)
+        for ((managed, bundle, admission) in listOf(
+            Triple(false, null, false), Triple(true, null, true),
+            Triple(true, temporary.root, true), Triple(false, temporary.root, true))) {
+            try {
+                validator.validate(source, managed, bundle, sourceAdmission = admission)
+                fail("Runtime accepted source TUN without a Builder receipt")
+            } catch (error: ConfigValidationException) { assertEquals("$.tun.enable", error.issues.first().path) }
+        }
+        assertEquals(1, nativeCalls)
+    }
+
+    @Test fun sourceTunAdmissionKeepsCapabilityFieldAndNetworkValidation() = runBlocking {
+        val validator = MeowProfileValidator(NativeConfigValidator { fail("Invalid source reached Native"); null },
+            NativePreparedConfigValidator { _, _ -> fail("Invalid source reached prepared Native"); null },
+            temporary.root, { emptySet() })
+        for ((tun, path) in listOf(
+            "stack: system" to "$.tun.stack",
+            "stack: gvisor" to "$.tun.stack",
+            "stack: mixed" to "$.tun.stack",
+            "stack: lwip, unknown: true" to "$.tun.unknown",
+            "stack: lwip, mtu: 1" to "$.tun.mtu",
+            "stack: lwip, route-address: [invalid]" to "$.tun.route-address",
+            "stack: lwip, dns-hijack: ['invalid']" to "$.tun.dns-hijack")) {
+            try { validator.validate("tun: {$tun}", false, null, sourceAdmission = true); fail("Invalid TUN accepted") }
+            catch (error: ConfigValidationException) { assertEquals(path, error.issues.first().path) }
+        }
+        try { validator.validate("sourceAdmission: true\ntun: {stack: lwip}", false, null); fail("Input flag bypassed runtime gate") }
+        catch (error: ConfigValidationException) { assertEquals("$.tun.stack", error.issues.first().path) }
+        try { validator.validate("sourceAdmission: true\ntun: {stack: lwip}", false, null, sourceAdmission = true); fail("Input admission flag accepted") }
+        catch (error: ConfigValidationException) { assertEquals("$.sourceAdmission", error.issues.first().path) }
+    }
+
     @Test fun sourceTunEnableRequiresHostReconciliation() {
         val failure = assertThrows(ConfigValidationException::class.java) { schema().managedBlocking("tun: {enable: true}") }
         assertEquals("$.tun.enable", failure.issues.single().path)

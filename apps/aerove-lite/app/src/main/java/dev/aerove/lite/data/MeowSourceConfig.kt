@@ -3,7 +3,7 @@ package dev.aerove.lite.data
 /** The source-side TUN/listener/resource ownership gate shared by profile admission and composition. */
 internal object MeowSourceConfig {
     private fun invalid(path: String, reason: String): Nothing = throw ConfigValidationException(listOf(ConfigIssue(path, reason)))
-    fun input(source: String, tunReconciliation: MeowTunReconciliation? = null): Pair<MutableMap<String, Any?>, List<Any?>> {
+    fun input(source: String, tunReconciliation: MeowTunReconciliation? = null, sourceAdmission: Boolean = false): Pair<MutableMap<String, Any?>, List<Any?>> {
         val root = ConfigYaml.parse(source)
         MeowGeoPolicy.read(root, dev.aerove.lite.resources.GeoResourcePreferences())
         MeowGeoOrigin.read(root)
@@ -12,7 +12,7 @@ internal object MeowSourceConfig {
         listOf("firewall", "udp", "udp-timeout").forEach { if (root.containsKey(it)) invalid("$.$it", "Meow warns and ignores this root field") }
         val policy = MeowTunReconciliation.sourcePolicy(source)
         val explicit = policy.keys.firstOrNull { it != "enable" || policy[it] == true }
-        if (explicit != null) {
+        if (explicit != null && !sourceAdmission) {
             if (tunReconciliation == null) invalid("$.tun.$explicit", "Explicit source TUN policy requires Android Builder reconciliation before activation")
             tunReconciliation.verify(source)
         }

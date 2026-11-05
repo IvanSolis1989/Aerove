@@ -1188,6 +1188,138 @@ void main() {
       ]);
     });
 
+    test('partial Meow settings fill only absent core TUN defaults', () {
+      for (final patch in [
+        null,
+        <String, Object?>{},
+        <String, Object?>{'tun': <String, Object?>{}},
+        <String, Object?>{
+          'tun': <String, Object?>{'mtu': 1480},
+        },
+      ]) {
+        final raw = <String, Object?>{
+          'themeProps': const ThemeProps(
+            themeMode: ThemeMode.dark,
+            auroraEnabled: false,
+          ).toJson(),
+          'appSettingProps': {'openLogs': true},
+          if (patch != null) 'patchClashConfig': patch,
+        };
+        final before = jsonEncode(raw);
+        final result = Config.realFromJson(raw, coreId: 'meow-rs');
+        expect(Config.strictFromJson(raw, coreId: 'meow-rs'), result);
+        expect(result.patchClashConfig.tun.stack, TunStack.lwip);
+        expect(result.patchClashConfig.tun.congestionController, 'builtin');
+        expect(result.patchClashConfig.tun.device, '');
+        expect(result.themeProps.themeMode, ThemeMode.dark);
+        expect(result.themeProps.auroraEnabled, false);
+        expect(result.appSettingProps.openLogs, true);
+        if ((patch?['tun'] as Map?)?.containsKey('mtu') == true) {
+          expect(result.patchClashConfig.tun.mtu, 1480);
+        }
+        expect(jsonEncode(raw), before);
+        expect(
+          Config.realFromJson(raw).toJson(),
+          Config.fromJson(raw).toJson(),
+        );
+        expect(Config.strictFromJson(raw), Config.fromJson(raw));
+      }
+    });
+
+    test('Meow settings preserve explicit TUN values and null decoding', () {
+      for (final (key, value) in <(String, Object?)>[
+        ('stack', 'system'),
+        ('stack', null),
+        ('congestion-controller', 'bbr'),
+        ('congestion-controller', null),
+        ('device', 'user-tun'),
+        ('device', null),
+      ]) {
+        final raw = <String, Object?>{
+          'themeProps': const ThemeProps().toJson(),
+          'patchClashConfig': {
+            'tun': {key: value},
+          },
+        };
+        final original = Config.fromJson(raw).patchClashConfig.tun.toJson();
+        final actual = Config.realFromJson(
+          raw,
+          coreId: 'meow-rs',
+        ).patchClashConfig.tun.toJson();
+        expect(
+          Config.strictFromJson(
+            raw,
+            coreId: 'meow-rs',
+          ).patchClashConfig.tun.toJson(),
+          actual,
+        );
+        expect(actual[key], original[key]);
+        for (final entry in const {
+          'stack': 'lwip',
+          'congestion-controller': 'builtin',
+          'device': '',
+        }.entries) {
+          if (entry.key != key) expect(actual[entry.key], entry.value);
+        }
+      }
+    });
+
+    test(
+      'Meow settings keep malformed or null TUN containers on the existing decoder',
+      () {
+        for (final patch in <Object?>[
+          null,
+          42,
+          {'tun': null},
+          {'tun': 42},
+        ]) {
+          final raw = <String, Object?>{
+            'themeProps': const ThemeProps().toJson(),
+            'patchClashConfig': patch,
+          };
+          expect(
+            Config.realFromJson(raw, coreId: 'meow-rs').toJson(),
+            Config.fromJson(raw).toJson(),
+          );
+        }
+      },
+    );
+
+    test(
+      'strict Meow decoding still rejects malformed containers and root values',
+      () {
+        for (final invalid in <Map<String, Object?>>[
+          {'excludeSSIDs': 'invalid'},
+          {'patchClashConfig': 42},
+          {
+            'patchClashConfig': {'tun': 42},
+          },
+        ]) {
+          final raw = <String, Object?>{
+            'themeProps': const ThemeProps().toJson(),
+            ...invalid,
+          };
+          expect(
+            () => Config.strictFromJson(raw, coreId: 'meow-rs'),
+            throwsA(isA<TypeError>()),
+          );
+        }
+        for (final patch in <Object?>[
+          null,
+          {'tun': null},
+        ]) {
+          final raw = <String, Object?>{
+            'themeProps': const ThemeProps().toJson(),
+            'patchClashConfig': patch,
+          };
+          expect(
+            Config.strictFromJson(raw, coreId: 'meow-rs'),
+            Config.strictFromJson(raw),
+          );
+        }
+      },
+    );
+
     test('realFromJson handles null', () {
       final result = Config.realFromJson(null);
       expect(result.appSettingProps.onlyStatisticsProxy, true);

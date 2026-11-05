@@ -1,4 +1,5 @@
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/core_capabilities.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/color.dart';
 import 'package:flutter/services.dart';
@@ -531,11 +532,13 @@ abstract class Config with _$Config {
   factory Config.fromJson(Map<String, Object?> json) =>
       decodeSalvaging('config', json, Config.strictFromJson);
 
-  factory Config.strictFromJson(Map<String, Object?> json) =>
-      _withLegacyOverrideDns(
-        _$ConfigFromJson(_withLegacyRouteMode(json)),
-        json,
-      );
+  factory Config.strictFromJson(
+    Map<String, Object?> json, {
+    String coreId = 'mihomo',
+  }) => _withLegacyOverrideDns(
+    _$ConfigFromJson(_withLegacyRouteMode(_withCoreTunDefaults(json, coreId))),
+    json,
+  );
 
   factory Config.realFromJson(
     Map<String, Object?>? json, {
@@ -551,8 +554,36 @@ abstract class Config with _$Config {
         ),
       );
     }
-    return Config.fromJson(json);
+    return Config.fromJson(_withCoreTunDefaults(json, coreId));
   }
+}
+
+Map<String, Object?> _withCoreTunDefaults(
+  Map<String, Object?> json,
+  String coreId,
+) {
+  if (coreId != CoreCapabilities.meow.coreId) return json;
+  final rawPatch = json['patchClashConfig'];
+  if (rawPatch is! Map<String, Object?> &&
+      json.containsKey('patchClashConfig')) {
+    return json;
+  }
+  final patch = rawPatch as Map<String, Object?>? ?? const {};
+  final rawTun = patch['tun'];
+  if (rawTun is! Map<String, Object?> && patch.containsKey('tun')) return json;
+  final tun = rawTun as Map<String, Object?>? ?? const {};
+  final defaults = newPatchClashConfig(coreId).tun.toJson();
+  return {
+    ...json,
+    'patchClashConfig': {
+      ...patch,
+      'tun': {
+        for (final key in const ['stack', 'congestion-controller', 'device'])
+          if (!tun.containsKey(key)) key: defaults[key],
+        ...tun,
+      },
+    },
+  };
 }
 
 const _legacyOverrideDnsKey = 'overrideDns';

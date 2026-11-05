@@ -31,7 +31,7 @@ internal object MeowCompatibilityValidator {
 
     private fun proxy(p: MutableMap<String, Any?>, path: String, features: Set<String>) {
         val type = string(p["type"], "$path.type")
-        if (type in setOf("tuic", "ssh", "wireguard", "tailscale", "shadowquic")) fail("$path.type", "No outbound implementation in fixed Meow v0.26.1")
+        if (type in setOf("tuic", "ssh", "wireguard", "tailscale", "shadowquic", "mieru")) fail("$path.type", "No outbound implementation in fixed Meow v0.26.1: $type")
         if (type in setOf("ss", "trojan", "anytls", "vmess", "vless", "hysteria2", "snell", "trusttunnel") && type !in features)
             fail("$path.type", "Core supports $type; native feature verification required: $type")
         MeowProxySchema.validateDialer(p, path)

@@ -67,11 +67,19 @@ mixed 端口、经 Meow DIRECT 到回环 HTTP 服务、实际流量快照、取�
 ## 固定核心差异
 
 当前固定 SHA 的封闭代理 factory、导出模块与 Cargo feature 表均无 `tuic`、`ssh`、`wireguard`、
-`tailscale`、`shadowquic` 出站实现。依据为同一提交的
+`tailscale`、`shadowquic`、`mieru` 出站实现。依据为同一提交的
 [proxy_parser.rs](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-config/src/proxy_parser.rs)、
 [代理模块](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-proxy/src/lib.rs) 和
 [feature 声明](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-config/Cargo.toml)。
-这五项按核心例外记录；导入含对应 `$.proxies[i].type` 的配置须指出具体节点、字段及原因，禁止静默删除或转换。
+这六项按核心例外记录；导入含对应 `$.proxies[i].type` 的配置须指出具体节点、字段及原因，禁止静默删除或转换。
+
+Mieru 的证据固定于 `727ddcd06f592e2f12c5222c4de6cce328df808c`：
+`crates/meow-config/src/proxy_parser.rs` 的 `parse_proxy_with_dialer` 没有 `mieru` 分支，
+最终返回 `unsupported proxy type`；上述代理模块与 feature 声明也没有对应实现或开关。
+2026-11-05 的本地导入样本在 `$.proxies[114].type` 为 `mieru` 时被拒绝，属于这一核心限制。
+内置 Smart-Config-Kit `v6.0.21-meow.8` 只进行既有节点筛选、路由及规则资源投影，没有按 Mieru 类型过滤或转换。
+导入校验先于默认脚本关联和执行，但将该样本推迟到脚本之后校验仍不能获得 Mieru 支持；
+保留字段与协议的明确拒绝，不静默删除节点，也不以导入成功代替最终配置和真实运行验收。
 
 `trusttunnel` 已有实现，只是未纳入官方 `full`，须显式启用并验证。DNS redir-host、nameserver-policy
 列表及 UID / IN-USER 规则也已有实现，不得沿用旧核心的 blanket 拒绝。其他传输或选项差异仍须逐字段核对，

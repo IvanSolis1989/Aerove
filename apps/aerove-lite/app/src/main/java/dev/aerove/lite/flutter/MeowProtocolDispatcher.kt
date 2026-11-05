@@ -1,5 +1,6 @@
 package dev.aerove.lite.flutter
 
+import dev.aerove.lite.data.ConfigValidationException
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -170,8 +171,16 @@ class MeowProtocolDispatcher(
                 is MeowProtocolFailure -> failure
                 is MeowConfigProtocolException -> MeowProtocolFailure(failure.code,
                     failure.message ?: "Configuration request failed", failure.details, failure)
-                else -> translateFailure(failure) ?: MeowProtocolFailure("method_failed",
-                    "Meow method failed", mapOf("method" to call.method, "cause" to failure.javaClass.simpleName), failure)
+                is ConfigValidationException -> {
+                    logFailure(call.method, failure)
+                    MeowProtocolFailure("bad_argument", failure.message.orEmpty(),
+                        mapOf("field" to (failure.issues.firstOrNull()?.path ?: "$")), failure)
+                }
+                else -> translateFailure(failure) ?: run {
+                    logFailure(call.method, failure)
+                    MeowProtocolFailure("method_failed", "Meow method failed",
+                        mapOf("method" to call.method, "cause" to failure.javaClass.simpleName), failure)
+                }
             }
             return response(call.id, null, error, files = files).also { responseCompleted = true }
         } finally {
@@ -179,6 +188,16 @@ class MeowProtocolDispatcher(
                 if (!responseCompleted) withContext(NonCancellable + Dispatchers.IO) { files.discardUndelivered() }
             } finally { if (!delivered && result != null) discardResult(call.method, result) }
         }
+    }
+
+    private fun logFailure(method: String, failure: Exception) {
+        val causes = generateSequence<Throwable>(failure) { it.cause }.take(3).joinToString(" <- ") { cause ->
+            val frames = cause.stackTrace.take(3).joinToString(",") { frame ->
+                "${frame.className.take(96)}.${frame.methodName.take(64)}:${frame.lineNumber}"
+            }
+            "${cause.javaClass.name.take(128)}[$frames]"
+        }
+        android.util.Log.w("MeowFlutter", "method_failure method=$method causes=$causes")
     }
 
     private suspend fun response(id: String?, result: Any?, error: MeowProtocolFailure?, method: String? = null,
