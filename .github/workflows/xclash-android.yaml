@@ -46,11 +46,11 @@ on:
         type: boolean
         default: false
       verification_recheck:
-        description: Recheck test fixes only; ignored when building or publishing an APK
+        description: Recheck reviewed test fixes or fixed Std140 dependency integrity; never build or publish an APK
         type: boolean
         default: false
       original_build_run:
-        description: Immutable original APK run to recheck (reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 or Std133 41990578294 or Std136 42023232876 only)
+        description: Immutable original APK run to recheck (reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 or Std133 41990578294 or Std136 42023232876 or Std140 42040809724 only)
         type: string
         default: ''
       build_apk:

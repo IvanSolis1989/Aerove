@@ -1495,6 +1495,117 @@ class OriginalApk133RecheckTest(unittest.TestCase):
                 source=self.harness, exclude_run=999)
 
 
+class OriginalApk140IntegrityRecheckTest(unittest.TestCase):
+    def setUp(self):
+        self.fixture = OriginalApkRecheckTest()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.module, self.root = self.fixture.module, self.fixture.root
+        self.run_id = self.module.RECHECK_RUN_140
+        self.fixed_policy = copy.deepcopy(self.module.RECHECK_POLICY_140)
+        self.policy = copy.deepcopy(self.fixed_policy)
+        self.baseline = self.fixture.workflow.read_text(encoding='utf-8').replace(
+            'Immutable original APK run to recheck (40488925368 only)', self.module.RECHECK_DESCRIPTION_136)
+        self.baseline = self.baseline.replace('jobs:\n',
+            'description: Recheck test fixes only; ignored when building or publishing an APK\njobs:\n')
+        self.fixture.workflow.write_text(self.baseline, encoding='utf-8')
+        self.fixture.commit()
+        self.original = self.fixture.git('rev-parse', 'HEAD')
+        self.publisher = 'apps/aerove/tool/aerove_artifact.py'
+        self.policy['publisher_before'] = self.fixture.git('rev-parse', f'HEAD:{self.publisher}')
+        before = {path: self.fixture.git('rev-parse', f'HEAD:{path}') for path in self.policy['reviewed_wiring']}
+        for path in {self.publisher} | before.keys():
+            (self.root / path).write_text('reviewed publisher integrity policy\n', encoding='utf-8')
+        self.fixture.workflow.write_text(self.baseline.replace(
+            self.module.RECHECK_DESCRIPTION_136, self.module.RECHECK_DESCRIPTION_140).replace(
+            'Recheck test fixes only; ignored when building or publishing an APK', self.module.RECHECK_MODE_140),
+            encoding='utf-8')
+        self.fixture.commit()
+        self.harness = self.fixture.git('rev-parse', 'HEAD')
+        self.policy.update(source=self.original, tree=self.fixture.git('rev-parse', self.original + '^{tree}'),
+            reviewed_wiring={path: (blob, self.fixture.git('rev-parse', f'HEAD:{path}')) for path, blob in before.items()},
+            workflow_blob=self.fixture.git('rev-parse', f'HEAD:{self.module.WORKFLOW}'))
+        patch.object(self.module, 'RECHECK_POLICY_140', self.policy).start()
+        self.run = dict(id=self.run_id, run_number=140, run_attempt=1, head_sha=self.original,
+            path=self.module.WORKFLOW, event='workflow_dispatch', status='completed', conclusion='failure',
+            repository=dict(full_name=REPOSITORY), head_repository=dict(full_name=REPOSITORY))
+        self.producers = [dict(**pin, name=name, run_id=self.run_id, head_sha=self.original,
+            run_attempt=1, status='completed', conclusion='success') for name, pin in self.policy['producers'].items()]
+        self.failures = [dict(id=identity, name=name, run_id=self.run_id, head_sha=self.original,
+            run_attempt=1, status='completed', conclusion='failure') for name, identity in self.policy['failures'].items()]
+        self.producers.extend(self.failures)
+        self.artifacts = [dict(id=pin[0], name=name, size_in_bytes=pin[1], digest=pin[2], expired=False,
+            created_at=self.policy['created_at'][name], workflow_run=dict(id=self.run_id, head_sha=self.original))
+            for name, pin in self.policy['artifacts'].items()]
+
+    inputs = OriginalApk124RecheckTest.inputs
+    original_build = OriginalApk124RecheckTest.original_build
+
+    def test_fixed140_readback_identity_has_no_fictitious_business_test_fix(self):
+        policy = self.fixed_policy
+        self.assertEqual((policy['run_id'], policy['run_number'], policy['source'], policy['tree']),
+            (42040809724, 140, '0b938396afbda83efef427a0b401d0682a404c93',
+             'a5782454e82b65577b639194169ef76e278ef342'))
+        self.assertIsNone(policy['test'])
+        self.assertEqual(policy['test_blobs'], ())
+        self.assertEqual(policy['version'], '0.13.0+2026102340')
+        self.assertEqual(policy['payloads']['Aerove-android-arm64.apk'],
+            (67280131, 'da6d4c34ede0ea4829528e5d49b0783382f3318ad4957ca19e29240dbe373faa'))
+        self.assertEqual(policy['failures'],
+            {'regressions (regression-software 2)': 127293990774, 'verify': 127299367972})
+        self.assertEqual({row['path'] for row in self.inputs()}, self.module.RECHECK_WIRING)
+        for run_id in (42040809723, 42040809725):
+            with self.subTest(run_id=run_id), self.assertRaises(self.module.ArtifactError):
+                self.module._recheck_policy(run_id)
+
+    def test_app_business_tests_hooks_and_unreviewed_publisher_edits_are_rejected(self):
+        for path in ('apps/aerove/lib/main.dart', 'packages/aerove_client/lib/common/task.dart',
+                     'apps/aerove/test/widgets/memory_info_test.dart', 'apps/aerove/pubspec.lock',
+                     'packages/aerove_client/pubspec.yaml', 'apps/aerove/hook/build.dart',
+                     'docs/development/unreviewed.md', *self.policy['reviewed_wiring']):
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('unreviewed change\n', encoding='utf-8')
+            self.fixture.commit()
+            with self.subTest(path=path), self.assertRaises(self.module.ArtifactError):
+                self.inputs()
+            self.fixture.git('reset', '--hard', self.harness)
+
+    def test_only_two_descriptions_may_change_in_workflow(self):
+        accepted = self.fixture.workflow.read_text(encoding='utf-8')
+        for old, new in [('preserved-apk', 'rebuild-apk'), ('preserved-verify', 'skip-verify'),
+                         ('fail-fast: false', 'fail-fast: true'), ('name: fixture', 'SDK: changed')]:
+            with self.subTest(old=old), self.assertRaises(self.module.ArtifactError):
+                self.module._workflow_inputs_unchanged(self.baseline, accepted.replace(old, new), build_run=self.run_id)
+        with self.assertRaises(self.module.ArtifactError):
+            self.module._workflow_inputs_unchanged(self.baseline, accepted + '\nSDK_VERSION: changed\n', build_run=self.run_id)
+
+    def test_original_integrity_failures_cannot_be_relabelled_as_success(self):
+        self.assertEqual(self.original_build()['build_conclusion'], 'failure')
+        for row in self.failures:
+            for field, value in [('id', 1), ('run_attempt', 2), ('conclusion', 'success')]:
+                with self.subTest(field=field), patch.dict(row, {field: value}), self.assertRaises(self.module.ArtifactError):
+                    self.original_build()
+
+    def test_original_cannot_be_promoted_without_a_successful_recheck_receipt(self):
+        with patch.object(self.module, 'original_recheck_build', return_value=self.original_build()), \
+                patch.object(self.module, '_api_items', return_value=[]), self.assertRaisesRegex(
+                    self.module.ArtifactError, 'no accepted hard recheck'):
+            self.module.accepted_build(root=self.root, repository=REPOSITORY, source=self.harness,
+                build_run=self.run_id, release_run=999)
+
+    test_original_failure_and_exact_successful_producers_remain_required = (
+        OriginalApk133RecheckTest.test_original_failure_and_exact_successful_producers_remain_required)
+    test_all_verification_jobs_required_and_apk_must_be_skipped = (
+        OriginalApk133RecheckTest.test_all_verification_jobs_required_and_apk_must_be_skipped)
+    test_explicit_selection_requires_unchanged_recheck_receipt = (
+        OriginalApk133RecheckTest.test_explicit_selection_requires_unchanged_recheck_receipt)
+    test_no_current_matrix_job_can_be_missing = OriginalApk133RecheckTest.test_no_current_matrix_job_can_be_missing
+    test_original_payload_bytes_cannot_be_replaced = OriginalApk133RecheckTest.test_original_payload_bytes_cannot_be_replaced
+    test_no_accepted_receipt_must_not_rebuild = (
+        OriginalApk133RecheckTest.test_test_only_source_without_an_accepted_receipt_must_not_rebuild)
+
+
 class OriginalApk136RecheckTest(unittest.TestCase):
     policy_number = 136
     previous_policy = 133
