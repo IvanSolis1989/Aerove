@@ -130,7 +130,6 @@ def guest_angle_route(outputs, startup, *, vulkan_backend='swiftshader'):
     if vulkan_backend not in ('swiftshader', 'lavapipe'):
         raise ValueError('Unsupported Guest ANGLE Vulkan diagnostic backend')
     if vulkan_backend == 'lavapipe':
-        # Only the fixed257 Surface diagnosis opts in; formal proof stays SwiftShader.
         if not re.search(r'vulkan_mode_selected:lavapipe\s+gles_mode_selected:swangle\b', startup):
             raise ValueError('Requested Lavapipe Vulkan and SwANGLE GLES modes were not selected')
         host = [line for line in startup.splitlines() if 'Selecting Vulkan device:' in line]
@@ -194,8 +193,8 @@ def guest_angle_evidence(directory, receipt, startup, *, vulkan_backend='swiftsh
         outputs[name] = result.stdout
     check_cancelled(receipt)
     route = guest_angle_route(outputs, startup, vulkan_backend=vulkan_backend)
-    # Emulator stdout remains live; seal only the actual boot-time Vulkan selection lines.
-    (directory / 'guest-angle-host-vulkan.out').write_text('\n'.join(route['hostVulkanDevice']) + '\n')
+    # Seal the admission snapshot: live stdout can grow before the proof is replayed.
+    (directory / 'guest-angle-host-vulkan.out').write_text(startup)
     return route
 
 

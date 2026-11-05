@@ -99,7 +99,7 @@ class GuestAngleEvidenceTests(unittest.TestCase):
             self.assertEqual(route['guestRenderer'], [guest])
             self.assertEqual(route['hostVulkanDevice'], [selected])
             self.assertEqual((directory / 'guest-angle-surfaceflinger.out').read_text(), guest)
-            self.assertEqual((directory / 'guest-angle-host-vulkan.out').read_text(), selected + '\n')
+            self.assertEqual((directory / 'guest-angle-host-vulkan.out').read_text(), startup)
             # Formal/default callers still require the original SwiftShader evidence.
             with patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=guest)), \
                     self.assertRaises(ValueError):
@@ -147,6 +147,51 @@ class GuestAngleEvidenceTests(unittest.TestCase):
                         patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=changed)), \
                         self.assertRaises(ValueError):
                     current.guest_angle_evidence(directory, {}, host, vulkan_backend='lavapipe')
+
+    def test_lavapipe_admission_snapshot_replays_and_rejects_missing_modes_or_changed_devices(self):
+        import lite265_recheck as recheck
+        modes = 'INFO | emuglConfig_init: vulkan_mode_selected:lavapipe gles_mode_selected:swangle'
+        selected = 'Selecting Vulkan device: llvmpipe (LLVM 21.0.0, 256 bits), Version: 1.3.0'
+        startup = 'INFO | startup context\n' + modes + '\n' + selected + '\n'
+        guest = ('GLES: Google (Mesa), ANGLE (Mesa, Vulkan 1.3.0 '
+                 '(llvmpipe (LLVM 21.0.0 256 bits))), OpenGL ES 3.1.0')
+        runtime = dict(identity={'producer': 'original265'}, original265Recheck=True,
+                       harnessIdentity={'executor': 'current-run'})
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=guest)):
+                route = current.guest_angle_evidence(directory, {}, startup, vulkan_backend='lavapipe')
+            host_file = directory / 'guest-angle-host-vulkan.out'
+            self.assertEqual(host_file.read_text(), startup)
+            proof = dict(runtime, schema=1, owner='emulator_current.py', phase='flutter-ui',
+                         runtimeDirectory='original-runtime', deviceSerial='emulator-5554',
+                         gpuBackend='lavapipe', rendererBackend=recheck.BACKEND,
+                         rendererEvidence=route['guestRenderer'] + route['hostVulkanDevice'],
+                         guestGraphicsRoute=route,
+                         guestGraphicsEvidence=current.guest_angle_file_hashes(directory))
+            proof_file = directory / 'proof.json'
+            proof_file.write_text(json.dumps(proof))
+            with patch.dict(os.environ, {'AEROVE_GUEST_ANGLE': '1', 'ANDROID_SERIAL': 'emulator-5554'}, clear=True), \
+                    patch.object(recheck, 'enabled', return_value=True), \
+                    patch.object(current, 'verify_current_runtime', return_value=runtime):
+                self.assertEqual(current.validate_renderer_proof(proof_file), proof)
+                for name, changed, failure in (
+                        ('host-vulkan.out', startup.replace(modes + '\n', ''), 'modes were not selected'),
+                        ('host-vulkan.out', startup.replace('21.0.0', '20.0.0'), 'same host Mesa'),
+                        ('surfaceflinger.out', guest.replace('21.0.0', '20.0.0'), 'same host Mesa')):
+                    path = directory / ('guest-angle-' + name)
+                    original = path.read_text()
+                    path.write_text(changed)
+                    try:
+                        with self.subTest(raw=name, changed=changed), self.assertRaisesRegex(ValueError, 'raw evidence changed'):
+                            current.validate_renderer_proof(proof_file)
+                        resealed = dict(proof, guestGraphicsEvidence=current.guest_angle_file_hashes(directory))
+                        proof_file.write_text(json.dumps(resealed))
+                        with self.subTest(resealed=name, changed=changed), self.assertRaisesRegex(ValueError, failure):
+                            current.validate_renderer_proof(proof_file)
+                    finally:
+                        path.write_text(original)
+                        proof_file.write_text(json.dumps(proof))
 
     def test_missing_original_image_library_retains_failure_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
