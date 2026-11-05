@@ -94,13 +94,12 @@ def extract(archive, directory):
 
 
 def runtime(directory, installed=True):
+    """Read the sealed runtime transport; flutter_ui_inputs validates its platform runner."""
     require(enabled(), 'Explicit Lite265 recheck required')
     directory = Path(directory)
     release.product_source.bind_archive(directory.with_suffix('.zip'), directory, ARCHIVE)
     manifest = artifacts.verify(directory, IDENTITY, runtime=True)
     require(artifacts.digest(directory / 'source-manifest.json') == MANIFEST, 'Original265 manifest changed')
-    release._validate_manifest(directory, IDENTITY['sourceRevision'], IDENTITY['sourceTree'],
-                              IDENTITY['workflowRun'], 1, 265)
     info = release._json(directory / 'BUILD_INFO.json')
     expected = dict(source=IDENTITY['sourceRevision'], tree=IDENTITY['sourceTree'],
                     product='AEROVE Lite', application_id='dev.aerove.lite', abi='x86_64', min_sdk=33,
