@@ -37,6 +37,9 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.MessageDigest;
@@ -72,6 +75,8 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     private Bundle arguments;
     private Context context;
     private boolean original265Probe;
+    private View firstFrameView;
+    private Method firstFrameRead;
 
     public void testOriginal265SurfaceWindowAndStartupMetadata() throws Exception {
         original265Probe = true;
@@ -370,6 +375,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     }
 
     private void awaitFocusedWindowDraw(Activity activity, JSONObject receipt) throws Exception {
+        long deadline = now() + TimeUnit.SECONDS.toNanos(10);
         View decor = activity.getWindow().getDecorView();
         CountDownLatch ready = new CountDownLatch(1);
         AtomicLong focusNanos = new AtomicLong();
@@ -408,7 +414,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                 return focused;
             });
             observation.put("initialWindowFocus", initiallyFocused);
-            boolean observed = ready.await(10, TimeUnit.SECONDS);
+            boolean observed = ready.await(Math.max(0L, deadline - now()), TimeUnit.NANOSECONDS);
             JSONObject finalState = onMain(() -> new JSONObject()
                     .put("finishing", activity.isFinishing()).put("destroyed", activity.isDestroyed())
                     .put("windowFocused", activity.hasWindowFocus()).put("decorAttached", decor.isAttachedToWindow())
@@ -420,6 +426,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             receipt.put("windowDrawObserved", observed);
             check(observed, "Live focused target window did not draw within observation budget");
             check(finalState.getBoolean("tokenMatchesFocusedDraw"), "Window token changed after focused draw");
+            observeFirstFlutterFrame(activity, receipt, deadline);
         } finally {
             boolean interrupted = Thread.interrupted();
             try {
@@ -443,6 +450,106 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                 throw failure;
             } finally {
                 if (interrupted) Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void observeFirstFlutterFrame(Activity activity, JSONObject receipt, long deadline) throws Exception {
+        JSONObject observation = new JSONObject().put("status", "public-api-unavailable")
+                .put("sharesFocusedWindowDeadline", true).put("privateAccessUsed", false)
+                .put("listenerCallbackObserved", false).put("nativeFrameObserved", false);
+        receipt.put("flutterFirstFrameObservation", observation);
+        AtomicReference<Method> add = new AtomicReference<>();
+        AtomicReference<Method> remove = new AtomicReference<>();
+        AtomicReference<Class<?>> listenerType = new AtomicReference<>();
+        onMain(() -> {
+            try {
+                ClassLoader loader = activity.getClassLoader();
+                Class<?> type = Class.forName("io.flutter.embedding.android.FlutterView", false, loader);
+                Class<?> listener = Class.forName("io.flutter.embedding.engine.renderer.FlutterUiDisplayListener", false, loader);
+                if (!Modifier.isPublic(type.getModifiers()) || !Modifier.isPublic(listener.getModifiers())
+                        || !listener.isInterface()) {
+                    observation.put("unavailableReason", "non-public-types");
+                    return null;
+                }
+                List<View> views = new ArrayList<>();
+                findFlutterViews(activity.getWindow().getDecorView(), type, views, new int[1], 0);
+                if (views.size() != 1) {
+                    observation.put("matchingFlutterViewCount", views.size());
+                    return null;
+                }
+                Method read = type.getMethod("hasRenderedFirstFrame");
+                Method register = type.getMethod("addOnFirstFrameRenderedListener", listener);
+                Method unregister = type.getMethod("removeOnFirstFrameRenderedListener", listener);
+                if (read.getReturnType() != boolean.class || register.getReturnType() != void.class
+                        || unregister.getReturnType() != void.class
+                        || listener.getMethod("onFlutterUiDisplayed").getReturnType() != void.class
+                        || listener.getMethod("onFlutterUiNoLongerDisplayed").getReturnType() != void.class) {
+                    observation.put("unavailableReason", "public-signatures-differ");
+                    return null;
+                }
+                observation.put("lookupHasRenderedFirstFrame", (Boolean) read.invoke(views.get(0)));
+                firstFrameView = views.get(0);
+                firstFrameRead = read;
+                add.set(register); remove.set(unregister); listenerType.set(listener);
+                observation.put("status", "public-api-available").put("viewIdentity", System.identityHashCode(firstFrameView));
+            } catch (ClassNotFoundException | NoSuchMethodException | IllegalAccessException | SecurityException unavailable) {
+                observation.put("unavailableClass", unavailable.getClass().getName());
+            }
+            return null;
+        });
+        if (firstFrameRead == null) return;
+        CountDownLatch displayed = new CountDownLatch(1);
+        AtomicLong callbackNanos = new AtomicLong();
+        Object listener = Proxy.newProxyInstance(listenerType.get().getClassLoader(), new Class<?>[]{listenerType.get()},
+                (proxy, method, values) -> {
+                    if (method.getDeclaringClass() == Object.class) {
+                        if ("hashCode".equals(method.getName())) return System.identityHashCode(proxy);
+                        if ("equals".equals(method.getName())) return proxy == values[0];
+                        return "Original265FirstFrameObserver";
+                    }
+                    if ("onFlutterUiDisplayed".equals(method.getName())) {
+                        callbackNanos.compareAndSet(0L, now());
+                        displayed.countDown();
+                    }
+                    return null;
+                });
+        boolean registrationAttempted = false;
+        try {
+            registrationAttempted = true;
+            boolean initial = onMain(() -> {
+                add.get().invoke(firstFrameView, listener);
+                return (Boolean) firstFrameRead.invoke(firstFrameView);
+            });
+            observation.put("initialHasRenderedFirstFrame", initial);
+            if (!initial) displayed.await(Math.max(0L, deadline - now()), TimeUnit.NANOSECONDS);
+            boolean after = onMain(() -> (Boolean) firstFrameRead.invoke(firstFrameView));
+            observation.put("finalHasRenderedFirstFrame", after).put("callbackNanos", callbackNanos.get())
+                    .put("listenerCallbackObserved", callbackNanos.get() != 0)
+                    .put("nativeFrameObserved", after).put("finishedNanos", now())
+                    .put("status", after ? "native-first-frame-observed" : "native-first-frame-not-observed-within-budget");
+        } finally {
+            boolean interrupted = Thread.interrupted();
+            try {
+                if (registrationAttempted) onMain(() -> { remove.get().invoke(firstFrameView, listener); return null; });
+                observation.put("listenerRemoved", true);
+            } catch (Exception failure) {
+                mainWorkTeardownRequired.set(true);
+                observation.put("listenerRemoved", false);
+                throw failure;
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private static void findFlutterViews(View view, Class<?> type, List<View> found, int[] count, int depth) {
+        check(depth < 80 && ++count[0] <= 4000, "Flutter view observation exceeds traversal bound");
+        if (type.isInstance(view)) found.add(view);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) {
+                findFlutterViews(group.getChildAt(index), type, found, count, depth + 1);
             }
         }
     }
@@ -592,6 +699,21 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                 .put("screenX", location[0]).put("screenY", location[1]).put("globalVisibleRect", rect(visible))
                 .put("displayWidth", displaySize.x).put("displayHeight", displaySize.y).put("rotation", display.getRotation())
                 .put("locales", context.getResources().getConfiguration().getLocales().toLanguageTags());
+        if (original265Probe && firstFrameRead != null) {
+            check(firstFrameView.isAttachedToWindow() && firstFrameView.getWindowToken() == decor.getWindowToken(),
+                    "Observed FlutterView no longer belongs to the captured window");
+            View owner = view;
+            for (int depth = 0; depth < 80 && owner != firstFrameView; depth++) {
+                if (!(owner.getParent() instanceof View)) break;
+                owner = (View) owner.getParent();
+            }
+            check(owner == firstFrameView, "Captured Surface no longer belongs to the observed FlutterView");
+            json.put("flutterFirstFramePublicApiAvailable", true)
+                    .put("flutterViewIdentity", System.identityHashCode(firstFrameView))
+                    .put("flutterHasRenderedFirstFrame", (Boolean) firstFrameRead.invoke(firstFrameView));
+        } else if (original265Probe) {
+            json.put("flutterFirstFramePublicApiAvailable", false);
+        }
         return new Snapshot(view, surface, lifecycleEpoch, frame.width(), frame.height(),
                 displaySize.x, displaySize.y, display.getRotation(), json);
     }
