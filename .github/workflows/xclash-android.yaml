@@ -85,6 +85,7 @@ jobs:
                             "<IPv6 redacted>", text)
               text = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "<MAC redacted>", text)
               text = re.sub(r"\bemulator-[0-9]+\b", "<device serial redacted>", text)
+              text = re.sub(r"(?i)(serialno\s*[:=]\s*|adb\.pubkey\s*[:=]\s*)[^\n]+", r"\1<redacted>", text)
               text = re.sub(r"(?i)(serial(?:number)?\s*[:=]\s*)[^\s,;]+", r"\1<redacted>", text)
               return text
 
@@ -282,6 +283,9 @@ jobs:
                   cap_proofs.append({"path": redact(name), "bytes": info.file_size, "sha256": hashlib.sha256(raw).hexdigest(),
                                      "routeFields": selected_fields(doc) if doc is not None else {"parseError": True}})
 
+              acceptance_record = file_record(unique_file("android-acceptance.json", required=True))
+              acceptance_raw = acceptance_record.pop("raw")
+              acceptance_record["topLevel"] = selected_fields(json.loads(acceptance_raw.decode("utf-8")))
               report = {
                   "role": "evidenceReadback", "accepted": False, "compiled": False,
                   "originalRun": {"id": run_id, "attempt": attempt, "source": source,
@@ -292,6 +296,7 @@ jobs:
                                "uncompressedBytes": sum(item.file_size for item in infos)},
                   "emulatorOwner": owner_record,
                   "bootstrap": bootstrap_record,
+                  "androidAcceptance": acceptance_record,
                   "emulatorStderrFull": {**stderr_record, "text": stderr_text},
                   "emulatorStdoutLast100": stdout_tail,
                   "bootstrapGuestLogcatRouteWindows": guest_windows,
