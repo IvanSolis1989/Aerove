@@ -29,68 +29,71 @@ void main() {
       'an unready memory card keeps its final geometry without exposing zero metrics or details: $sharedProcess',
       (tester) async {
         final semantics = tester.ensureSemantics();
-        addTearDown(semantics.dispose);
-        tester.view.physicalSize = const Size(412, 700);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
-        final pending = Completer<MemorySnapshot>();
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.resumed,
-        );
-        await tester.pumpWidget(
-          TestApp(
-            wrapInProviderScope: true,
-            homeBuilder: _scaffoldBody,
-            child: MemoryInfo(memoryReader: () => pending.future),
-          ),
-        );
-        await tester.pump();
-        await tester.pump();
-        final card = find.byType(MemoryInfo);
-        final before = tester.getSize(card);
-        final nodes = <SemanticsNode>[];
-        void collect(SemanticsNode node) {
-          nodes.add(node);
-          node.visitChildren((child) {
-            collect(child);
-            return true;
-          });
+        try {
+          tester.view.physicalSize = const Size(412, 700);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final pending = Completer<MemorySnapshot>();
+          tester.binding.handleAppLifecycleStateChanged(
+            AppLifecycleState.resumed,
+          );
+          await tester.pumpWidget(
+            TestApp(
+              wrapInProviderScope: true,
+              homeBuilder: _scaffoldBody,
+              child: MemoryInfo(memoryReader: () => pending.future),
+            ),
+          );
+          await tester.pump();
+          await tester.pump();
+          final card = find.byType(MemoryInfo);
+          final before = tester.getSize(card);
+          final nodes = <SemanticsNode>[];
+          void collect(SemanticsNode node) {
+            nodes.add(node);
+            node.visitChildren((child) {
+              collect(child);
+              return true;
+            });
+          }
+
+          collect(tester.getSemantics(card));
+          expect(
+            nodes.any((node) => node.getSemanticsData().label.contains('0 B')),
+            isFalse,
+          );
+          expect(
+            nodes.any(
+              (node) => node.getSemanticsData().hasAction(SemanticsAction.tap),
+            ),
+            isFalse,
+          );
+          expect(find.text('0 B').hitTestable(), findsNothing);
+          await tester.tap(card, warnIfMissed: false);
+          await tester.pump();
+          expect(find.byType(MemoryDetailSheet), findsNothing);
+
+          pending.complete(
+            sharedProcess
+                ? const MemorySnapshot.sharedProcess(rss: 96 * 1024 * 1024)
+                : const MemorySnapshot(
+                    app: 64 * 1024 * 1024,
+                    coreTotal: 32 * 1024 * 1024,
+                  ),
+          );
+          await tester.pump();
+          await tester.pump(commonDuration);
+          expect(tester.getSize(card), before);
+          expect(find.text('0 B').hitTestable(), findsNothing);
+          await tester.tap(card);
+          await tester.pumpAndSettle();
+          expect(find.byType(MemoryDetailSheet), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        } finally {
+          semantics.dispose();
         }
-
-        collect(tester.getSemantics(card));
-        expect(
-          nodes.any((node) => node.getSemanticsData().label.contains('0 B')),
-          isFalse,
-        );
-        expect(
-          nodes.any(
-            (node) => node.getSemanticsData().hasAction(SemanticsAction.tap),
-          ),
-          isFalse,
-        );
-        expect(find.text('0 B').hitTestable(), findsNothing);
-        await tester.tap(card, warnIfMissed: false);
-        await tester.pump();
-        expect(find.byType(MemoryDetailSheet), findsNothing);
-
-        pending.complete(
-          sharedProcess
-              ? const MemorySnapshot.sharedProcess(rss: 96 * 1024 * 1024)
-              : const MemorySnapshot(
-                  app: 64 * 1024 * 1024,
-                  coreTotal: 32 * 1024 * 1024,
-                ),
-        );
-        await tester.pump();
-        await tester.pump(commonDuration);
-        expect(tester.getSize(card), before);
-        expect(find.text('0 B').hitTestable(), findsNothing);
-        await tester.tap(card);
-        await tester.pumpAndSettle();
-        expect(find.byType(MemoryDetailSheet), findsOneWidget);
-        expect(tester.takeException(), isNull);
-        await tester.pumpWidget(const SizedBox.shrink());
       },
     );
   }

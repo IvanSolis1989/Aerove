@@ -1343,6 +1343,155 @@ class OriginalApk130RecheckTest(unittest.TestCase):
                 path.write_bytes(data)
 
 
+class OriginalApk133RecheckTest(unittest.TestCase):
+    def setUp(self):
+        self.fixture = OriginalApkRecheckTest()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.module, self.root = self.fixture.module, self.fixture.root
+        self.run_id = self.module.RECHECK_RUN_133
+        self.fixed_policy = copy.deepcopy(self.module.RECHECK_POLICY_133)
+        self.policy = copy.deepcopy(self.fixed_policy)
+        self.test = self.root / self.policy['test']
+        self.test.parent.mkdir(parents=True, exist_ok=True)
+        self.second_path = 'apps/aerove/tool/test_aerove_workflow.py'
+        self.second = self.root / self.second_path
+        self.second_before_text = 'original Std130 description assertion\n'
+        self.baseline = self.fixture.workflow.read_text(encoding='utf-8').replace(
+            'Immutable original APK run to recheck (40488925368 only)', self.module.RECHECK_DESCRIPTION_130)
+        self.fixture.workflow.write_text(self.baseline, encoding='utf-8')
+        self.test.write_text('semantics handle\noriginal business assertions\nteardown cleanup\n', encoding='utf-8')
+        self.second.write_text(self.second_before_text, encoding='utf-8')
+        self.fixture.commit()
+        self.original = self.fixture.git('rev-parse', 'HEAD')
+        before = self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')
+        second_before = self.fixture.git('rev-parse', f'HEAD:{self.second_path}')
+        self.fixture.workflow.write_text(self.baseline.replace(
+            self.module.RECHECK_DESCRIPTION_130, self.module.RECHECK_DESCRIPTION_133), encoding='utf-8')
+        self.test.write_text('semantics handle\ntry\noriginal business assertions\nfinally cleanup\n', encoding='utf-8')
+        self.second.write_text('exact Std133 description assertion\n', encoding='utf-8')
+        self.fixture.commit()
+        self.harness = self.fixture.git('rev-parse', 'HEAD')
+        self.policy.update(source=self.original, tree=self.fixture.git('rev-parse', self.original + '^{tree}'),
+            test_blobs=(before, self.fixture.git('rev-parse', f'HEAD:{self.policy["test"]}')),
+            reviewed_wiring={self.second_path: (second_before, self.fixture.git('rev-parse', f'HEAD:{self.second_path}'))},
+            workflow_blob=self.fixture.git('rev-parse', f'HEAD:{self.module.WORKFLOW}'))
+        patch.object(self.module, 'RECHECK_POLICY_133', self.policy).start()
+        self.run = dict(id=self.run_id, run_number=133, run_attempt=1, head_sha=self.original,
+            path=self.module.WORKFLOW, event='workflow_dispatch', status='completed', conclusion='failure',
+            repository=dict(full_name=REPOSITORY), head_repository=dict(full_name=REPOSITORY))
+        self.producers = [dict(**pin, name=name, run_id=self.run_id, head_sha=self.original,
+            run_attempt=1, status='completed', conclusion='success') for name, pin in self.policy['producers'].items()]
+        self.artifacts = [dict(id=pin[0], name=name, size_in_bytes=pin[1], digest=pin[2], expired=False,
+            created_at=self.policy['created_at'][name], workflow_run=dict(id=self.run_id, head_sha=self.original))
+            for name, pin in self.policy['artifacts'].items()]
+
+    inputs = OriginalApk124RecheckTest.inputs
+    original_build = OriginalApk124RecheckTest.original_build
+
+    def test_fixed133_pins_are_separate_from_all_legacy_originals(self):
+        expected = dict(
+            run_id=41990578294, run_number=133,
+            source='492208e7bf8a27f9528eb8289cc1f0b20c357d72',
+            tree='8d4b05d8bc0193192a6bb2dca5570ec5561f7e6c',
+            test='apps/aerove/test/widgets/memory_info_test.dart',
+            test_blobs=('445df544bd7f8f7c08bbd53a6250018da76c6beb', '5b394f932d2f503716c789fae2cc3f7562af4f44'),
+            workflow_blob='d9ff0d1719b2b829c484f752f492a1642c1100a4',
+            reviewed_wiring={
+                'apps/aerove/tool/test_aerove_workflow.py':
+                    ('88b391b0ff41c909fa85a6362caacfd91bd3cdb0', '36e94c55e0de8010382a7eb9bab4acec2487086f'),
+            },
+            artifacts={
+                'Aerove-android-arm64': (13399210301, 64889419,
+                    'sha256:5101dca326ffbde54a8893ea9dc5317e0022e34be8572edc73843f8dda249898'),
+                'xclash-generated': (13398361653, 341,
+                    'sha256:9bf2218dc88d69572e342fb96e6bca809b60298ff488a93ede40b3ebc027c20c'),
+            },
+            payloads={
+                'Aerove-android-arm64.apk': (66674692, 'f511652db81caaa7d52f8684fe37291072e3f64000d6e3bc20494c245171319e'),
+                'BUILD_INFO.json': (650, '33ea2eb204ceeb8abf5c1adf958ccd2605e5935665076bdbe82c8a1cf0303985'),
+                'SHA256SUMS': (173, '016c762572f290503bbecf270801c35243066e75865165010e4e9f1c1479799b'),
+                'xclash-generated.patch': (0, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'),
+                'xclash-verified-tree.txt': (41, 'eb309248a7425de4cdb1c62f4d164f859995fcf3f6066d23e66c3ebe82b3f8e6'),
+            },
+            created_at={'Aerove-android-arm64': '2026-11-05T08:06:30Z', 'xclash-generated': '2026-11-05T07:58:18Z'},
+            producers={
+                'prep': dict(id=127121691778, started_at='2026-11-05T07:55:20Z', completed_at='2026-11-05T07:58:26Z'),
+                'apk': dict(id=127122873478, started_at='2026-11-05T07:58:28Z', completed_at='2026-11-05T08:06:37Z'),
+            },
+            signer='0fc82c3b7b089b6244d9ed167b352ff76185417d07689853caca286fbdeb6e60',
+            version='0.13.0-beta.3+2026102333', promotion_request=True,
+        )
+        self.assertEqual(self.fixed_policy, expected)
+        for run, number in ((self.module.RECHECK_RUN, 55), (self.module.RECHECK_RUN_74, 74),
+                            (self.module.RECHECK_RUN_124, 124), (self.module.RECHECK_RUN_130, 130)):
+            self.assertEqual(self.module._recheck_policy(run)['run_number'], number)
+        with patch.object(self.module, '_api_object') as api, patch.object(self.module, '_git') as git:
+            for run in (41990578293, 41990578295):
+                with self.subTest(run=run), self.assertRaises(self.module.ArtifactError):
+                    self.module.recheck_plan(root=self.root, repository=REPOSITORY, source=self.harness, build_run=run)
+            api.assert_not_called()
+            git.assert_not_called()
+
+    def test_both_exact_test_corrections_and_description_are_required(self):
+        self.assertEqual({row['path'] for row in self.inputs()},
+                         {self.policy['test'], self.second_path, self.module.WORKFLOW})
+        before, after = self.policy['reviewed_wiring'][self.second_path]
+        for pair in (('a' * 40, after), (before, 'a' * 40)):
+            with patch.dict(self.policy['reviewed_wiring'], {self.second_path: pair}), self.assertRaisesRegex(
+                    self.module.ArtifactError, 'exact reviewed original-run delta'):
+                self.inputs()
+        accepted = self.fixture.workflow.read_text(encoding='utf-8')
+        for old, new in [('preserved-apk', 'changed-apk'), ('preserved-verify', 'bypass-verify'),
+                         ('fail-fast: false', 'fail-fast: true'), ('name: fixture', 'name: changed')]:
+            with self.subTest(workflow=old), self.assertRaises(self.module.ArtifactError):
+                self.module._workflow_inputs_unchanged(self.baseline, accepted.replace(old, new), build_run=self.run_id)
+        self.second.write_text(self.second_before_text, encoding='utf-8')
+        self.fixture.commit()
+        with self.assertRaisesRegex(self.module.ArtifactError, 'both exact reviewed'):
+            self.inputs()
+        self.fixture.git('reset', '--hard', self.harness)
+        for path in (self.policy['test'], self.second_path, 'packages/aerove_client/lib/common/task.dart',
+                     'apps/aerove/lib/main.dart', 'apps/aerove/pubspec.lock', 'apps/aerove/assets/logo.png'):
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text('unreviewed delta\n', encoding='utf-8')
+            self.fixture.commit()
+            with self.subTest(path=path), self.assertRaises(self.module.ArtifactError):
+                self.inputs()
+            self.fixture.git('reset', '--hard', self.harness)
+
+    def test_original_failure_and_exact_successful_producers_remain_required(self):
+        self.assertEqual(self.original_build()['build_conclusion'], 'failure')
+        for key, value in [('conclusion', 'success'), ('run_attempt', 2), ('head_sha', 'a' * 40),
+                           ('status', 'in_progress'), ('id', self.run_id + 1), ('run_number', 134)]:
+            with patch.dict(self.run, {key: value}), self.subTest(key=key), self.assertRaises(self.module.ArtifactError):
+                self.original_build()
+        for row, changes in [(self.producers[0], dict(id=1)), (self.producers[1], dict(conclusion='failure')),
+                             (self.producers[0], dict(run_attempt=2)),
+                             (self.producers[1], dict(completed_at='2026-11-05T08:06:38Z')),
+                             (self.artifacts[0], dict(created_at='2026-11-05T08:06:31Z')),
+                             (self.artifacts[0], dict(id=13399210302)),
+                             (self.artifacts[0], dict(size_in_bytes=64889420)),
+                             (self.artifacts[0], dict(digest='sha256:' + 'a' * 64)),
+                             (self.artifacts[1], dict(workflow_run=dict(id=self.run_id, head_sha='a' * 40)))]:
+            with patch.dict(row, changes), self.subTest(changes=changes), self.assertRaises(self.module.ArtifactError):
+                self.original_build()
+
+    test_all_verification_jobs_required_and_apk_must_be_skipped = (
+        OriginalApk74RecheckTest.test_promotion_request_and_all_verification_jobs_must_succeed_without_building)
+    test_explicit_selection_requires_unchanged_recheck_receipt = (
+        OriginalApk74RecheckTest.test_explicit_selection_requires_its_own_unchanged_receipt)
+    test_no_current_matrix_job_can_be_missing = OriginalApk130RecheckTest.test_no_current_matrix_job_can_be_missing
+    test_original_payload_bytes_cannot_be_replaced = OriginalApk130RecheckTest.test_original_payload_bytes_cannot_be_replaced
+
+    def test_test_only_source_without_an_accepted_receipt_must_not_rebuild(self):
+        with patch.object(self.module, '_api_items', return_value=[]), self.assertRaisesRegex(
+                self.module.ArtifactError, 'rebuilding is forbidden'):
+            self.module.find_rechecked_artifacts(root=self.root, repository=REPOSITORY,
+                source=self.harness, exclude_run=999)
+
+
 class Original124PublisherHarnessTest(unittest.TestCase):
     def setUp(self):
         self.fixture = OriginalApkRecheckTest()
