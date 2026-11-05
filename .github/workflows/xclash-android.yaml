@@ -1,5 +1,5 @@
-name: Lite270 failure evidence inspection only (no build)
-run-name: Lite270 failure evidence inspection only (no build)
+name: Original recheck failure evidence inspection only (no build)
+run-name: Original recheck failure evidence inspection only (no build)
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ defaults:
 
 jobs:
   inspect_original_failure:
-    name: Lite270 failure evidence inspection only (no build)
+    name: Original recheck failure evidence inspection only (no build)
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'IvanSolis1989/Aerove' &&
@@ -31,16 +31,16 @@ jobs:
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      ORIGINAL_RUN: '42088312836'
+      ORIGINAL_RUN: '42096334521'
       ORIGINAL_ATTEMPT: '1'
-      ORIGINAL_SOURCE: '52c4a7537f58b3de77e70cccdaf1eae2ccc3adca'
+      ORIGINAL_SOURCE: 'd1e6104bdab332f59a8fdb54b9a1a84ff61c909e'
       ORIGINAL_BRANCH: 'codex/lite265-original-recheck'
-      ORIGINAL_ARTIFACT_ID: '13443424355'
+      ORIGINAL_ARTIFACT_ID: '13448197284'
       ORIGINAL_ARTIFACT_NAME: 'Lite265-recheck-flutter-ui-attempt-1'
-      ORIGINAL_ARTIFACT_BYTES: '47650'
-      ORIGINAL_ARTIFACT_SHA256: '6dfce6fcb96abd370560685b307328db9a831a7619b6618e6ee70a91432f657b'
+      ORIGINAL_ARTIFACT_BYTES: '29540460'
+      ORIGINAL_ARTIFACT_SHA256: 'de3b6bd2897904fb5ce2655afd34874adf8f43dfeef16b80f4b6589a36da21d1'
     steps:
-      - name: Verify original failed Lite270 run and read artifact in memory
+      - name: Verify original failed Lite271 run and read artifact in memory
         run: |
           python3 - <<'PY'
           import hashlib
@@ -62,7 +62,7 @@ jobs:
               "digest": "sha256:" + os.environ["ORIGINAL_ARTIFACT_SHA256"],
           }
           temp = Path(os.environ["RUNNER_TEMP"])
-          archive_path = temp / "lite270-failure-artifact.zip"
+          archive_path = temp / "lite271-failure-artifact.zip"
 
           def require(condition, message):
               if not condition:
@@ -75,18 +75,18 @@ jobs:
               return json.loads(result.stdout)
 
           def redact(text):
-              text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
-              text = re.sub(r"https?://[^\s\"']+", "<URL redacted>", text)
-              text = re.sub(r"(?i)\b(bearer|token|authorization|password|passwd|secret|api[_-]?key)\s*[:=]\s*[^\s,;]+",
-                            r"\1=<redacted>", text)
-              text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "<IP redacted>", text)
-              text = re.sub(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){3,}[0-9A-Fa-f]{0,4}(?![\w:])|"
-                            r"(?<![\w:])::[0-9A-Fa-f]{0,4}(?![\w:])|(?<![\w:])[0-9A-Fa-f]{0,4}::(?![\w:])",
-                            "<IPv6 redacted>", text)
-              text = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "<MAC redacted>", text)
+              text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(text))
+              token = os.environ.get("GH_TOKEN", "")
+              if token:
+                  text = text.replace(token, "<token redacted>")
+              text = re.sub(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"'<>]+", "<URL redacted>", text)
+              text = re.sub(r"(?i)(?:\b(?:bearer|basic)\s+[A-Za-z0-9+/=._-]+)", "<auth redacted>", text)
+              text = re.sub(r"(?i)([\"']?(?:serialno|adb\.pubkey|serial(?:number)?|deviceSerial|authorization|token|password|passwd|secret|api[_-]?key)[\"']?\s*[:=]\s*)[^\n]+", r"\1<redacted>", text)
+              text = re.sub(r"(?i)(?<!\S)(?:-s|--serial|--serialno)[ =]+[^\s]+", "<serial argument redacted>", text)
               text = re.sub(r"\bemulator-[0-9]+\b", "<device serial redacted>", text)
-              text = re.sub(r"(?i)(serialno\s*[:=]\s*|adb\.pubkey\s*[:=]\s*)[^\n]+", r"\1<redacted>", text)
-              text = re.sub(r"(?i)(serial(?:number)?\s*[:=]\s*)[^\s,;]+", r"\1<redacted>", text)
+              text = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "<MAC redacted>", text)
+              text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "<IP redacted>", text)
+              text = re.sub(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){3,}[0-9A-Fa-f]{0,4}(?![\w:])|(?<![\w:])::[0-9A-Fa-f]{0,4}(?![\w:])|(?<![\w:])[0-9A-Fa-f]{0,4}::(?![\w:])", "<IPv6 redacted>", text)
               return text
 
           run = gh_json(f"repos/{repo}/actions/runs/{run_id}")
@@ -94,7 +94,14 @@ jobs:
                   and run.get("head_sha") == source and run.get("head_branch") == os.environ["ORIGINAL_BRANCH"]
                   and run.get("status") == "completed" and run.get("conclusion") == "failure"
                   and run.get("repository", {}).get("full_name") == repo,
-                  "Original Lite270 run identity/conclusion mismatch")
+                  "Original Lite271 run identity/conclusion mismatch")
+          jobs = gh_json(f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+          require(jobs.get("total_count") == len(jobs.get("jobs", [])), "Incomplete original job inventory")
+          failures = [job for job in jobs["jobs"] if job.get("id") == 127487286861]
+          require(len(failures) == 1 and failures[0].get("run_id") == run_id
+                  and failures[0].get("run_attempt") == attempt and failures[0].get("head_sha") == source
+                  and failures[0].get("status") == "completed" and failures[0].get("conclusion") == "failure",
+                  "Original271 precheck job identity/terminal mismatch")
           listing = gh_json(f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100")
           rows = listing.get("artifacts")
           require(isinstance(rows, list) and listing.get("total_count") == len(rows),
@@ -131,8 +138,8 @@ jobs:
               infos = archive.infolist()
               names = [item.filename for item in infos]
               require(names and len(names) == len(set(names)), "Empty or duplicate archive paths")
-              require(sum(item.file_size for item in infos) <= 20 * 1024 * 1024,
-                      "Artifact uncompressed content exceeds 20 MiB inspection bound")
+              require(sum(item.file_size for item in infos) <= 512 * 1024 * 1024,
+                      "Artifact uncompressed content exceeds 512 MiB inspection bound")
               for item in infos:
                   posix = PurePosixPath(item.filename)
                   windows = PureWindowsPath(item.filename)
@@ -225,7 +232,7 @@ jobs:
                   stdout_lines = stdout_raw.decode("utf-8", errors="replace").splitlines()
                   stdout_tail = {"path": stdout_record["path"], "bytes": stdout_record["bytes"],
                                  "sha256": stdout_record["sha256"],
-                                 "last100Lines": [redact(line)[:1000] for line in stdout_lines[-100:]]}
+                                 "last100Lines": [redact(line)[:1000] for line in stdout_lines[-40:]]}
 
               guest_sources = []
               def find_guest_logs(value, path):
@@ -258,7 +265,7 @@ jobs:
                   for index, line in enumerate(log_lines):
                       if guest_keywords.search(line):
                           selected.update(range(max(0, index - 10), min(len(log_lines), index + 11)))
-                  positions = sorted(selected)
+                  positions = sorted(selected)[-120:]
                   ranges = []
                   for index in positions:
                       if not ranges or index + 1 > ranges[-1][1] + 1:
@@ -283,31 +290,137 @@ jobs:
                   cap_proofs.append({"path": redact(name), "bytes": info.file_size, "sha256": hashlib.sha256(raw).hexdigest(),
                                      "routeFields": selected_fields(doc) if doc is not None else {"parseError": True}})
 
-              acceptance_record = file_record(unique_file("android-acceptance.json", required=True))
-              acceptance_raw = acceptance_record.pop("raw")
-              acceptance_record["topLevel"] = selected_fields(json.loads(acceptance_raw.decode("utf-8")))
+              def safe_value(value, limit=2048, depth=0):
+                  if depth > 6:
+                      return "<nested value omitted>"
+                  if isinstance(value, str):
+                      return redact(value).encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+                  if isinstance(value, list):
+                      return [safe_value(child, limit, depth + 1) for child in value[-20:]]
+                  if isinstance(value, dict):
+                      return {str(key): ("<redacted>" if re.search(
+                          r"(?i)(serial|adb\.pubkey|authorization|password|passwd|secret|credential|token|ipaddress|macaddress)", str(key))
+                          else safe_value(child, limit, depth + 1)) for key, child in list(value.items())[:80]}
+                  return value
+
+              def optional_record(found):
+                  return file_record(found) if found is not None else {"missing": True}
+
+              def text_tail(basename, count):
+                  record = optional_record(unique_file(basename))
+                  if "raw" in record:
+                      lines = record.pop("raw").decode("utf-8", errors="replace").splitlines()
+                      record.update(totalLines=len(lines), lastLines=[redact(line)[:700] for line in lines[-count:]])
+                  return record
+
+              acceptance_record = optional_record(unique_file("android-acceptance.json"))
+              if "raw" in acceptance_record:
+                  acceptance_doc = json.loads(acceptance_record.pop("raw").decode("utf-8"))
+                  acceptance_record["details"] = safe_value({key: acceptance_doc.get(key) for key in (
+                      "error", "status", "phase", "cleanupStatus", "cleanupErrors", "identity", "executionPassed",
+                      "stage", "matrixImages", "appRenderer", "restartRenderer")}, limit=8192)
+                  commands = acceptance_doc.get("commands", [])
+                  summaries = []
+                  for command in commands[-3:]:
+                      if isinstance(command, dict):
+                          summary = dict(command)
+                          for key in ("command", "args", "argv"):
+                              if isinstance(summary.get(key), list):
+                                  summary[key] = redact(" ".join(map(str, summary[key])))
+                          summaries.append(safe_value(summary, limit=1200))
+                      else:
+                          summaries.append(safe_value(command, limit=1200))
+                  acceptance_record["last3Commands"] = summaries
+                  acceptance_record["commandCount"] = len(commands)
+
+              method_outputs = {}
+              method_receipts = {}
+              for method in ("consentNavigationTheme12", "persistedConsentAfterProcessRestart"):
+                  method_outputs[method] = text_tail(method + ".out", 160)
+                  matches = [(name, info) for name, info in files.items()
+                             if name.endswith("/" + method + "/receipt.json") or name == method + "/receipt.json"]
+                  require(len(matches) <= 1, "Ambiguous method receipt")
+                  record = optional_record(matches[0] if matches else None)
+                  if "raw" in record:
+                      doc = json.loads(record.pop("raw").decode("utf-8"))
+                      record["details"] = safe_value({key: doc.get(key) for key in (
+                          "error", "status", "scenarioPassed", "stage", "step", "steps", "lastSteps",
+                          "failure", "message", "pid", "source", "tree", "apkSha256")}, limit=4096)
+                  method_receipts[method] = record
+
+              final_logcat = optional_record(unique_file("final-logcat.out"))
+              if "raw" in final_logcat:
+                  lines = final_logcat.pop("raw").decode("utf-8", errors="replace").splitlines()
+                  relevant = re.compile(r"(?i)(TestRunner|AndroidRuntime|MeowFlutter|FATAL EXCEPTION|Fatal signal|Unhandled Exception|\[ERROR:flutter/runtime/)")
+                  matches = [index for index, line in enumerate(lines) if relevant.search(line)][-200:]
+                  positions = sorted({near for index in matches for near in range(max(0, index - 3), min(len(lines), index + 4))})
+                  final_logcat.update(totalLines=len(lines), relevantMatches=len(matches),
+                      context=[{"line": index + 1, "text": redact(lines[index])[:400]} for index in positions])
+
+              pngs = []
+              for name, info in files.items():
+                  if PurePosixPath(name).suffix.casefold() == ".png":
+                      pngs.append({"path": redact(name), "bytes": info.file_size,
+                                   "sha256": hashlib.sha256(archive.read(info)).hexdigest()})
+              require(len(pngs) <= 256, "PNG inventory exceeds inspection bound")
               report = {
                   "role": "evidenceReadback", "accepted": False, "compiled": False,
                   "originalRun": {"id": run_id, "attempt": attempt, "source": source,
                                   "branch": run.get("head_branch"), "conclusion": run.get("conclusion"),
                                   "workflowPath": run.get("path")},
+                  "originalFailedJob": {"id": 127487286861, "conclusion": "failure"},
                   "artifact": {"id": row["id"], "name": row["name"], "bytes": row["size_in_bytes"],
                                "sha256": digest, "zipCrcVerified": True,
                                "uncompressedBytes": sum(item.file_size for item in infos)},
                   "emulatorOwner": owner_record,
                   "bootstrap": bootstrap_record,
                   "androidAcceptance": acceptance_record,
-                  "emulatorStderrFull": {**stderr_record, "text": stderr_text},
+                  "methodOutputTails": method_outputs, "methodReceipts": method_receipts,
+                  "finalLogcatRelevantContext": final_logcat, "pngInventory": pngs,
+                  "emulatorStderrFull": {**stderr_record, "text": stderr_text[-8192:]},
                   "emulatorStdoutLast100": stdout_tail,
                   "bootstrapGuestLogcatRouteWindows": guest_windows,
                   "capProofRouteFields": cap_proofs,
+                  "totalEvidenceFiles": len(files),
                   "otherEvidencePaths": [{"path": redact(item.filename), "bytes": item.file_size}
-                                          for item in infos if not item.is_dir()
+                                          for item in infos[:512] if not item.is_dir()
                                           and PurePosixPath(item.filename).name.casefold()
                                           not in {"emulator-owner.json", "bootstrap.json", "emulator.stderr.log"}
                                           and item.filename not in {candidate[0] for candidate in stdout_candidates}
                                           and all(item.filename != candidate[0] for candidate in cap_files)],
               }
+              def fit_section(value, byte_limit):
+                  # Keep all records and hashes; trim the longest prose first.
+                  while len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > byte_limit:
+                      candidates = []
+                      def strings(node):
+                          if isinstance(node, dict):
+                              iterable = node.items()
+                          elif isinstance(node, list):
+                              iterable = enumerate(node)
+                          else:
+                              return
+                          for key, child in iterable:
+                              if isinstance(child, str) and key not in ("error", "path", "source", "branch") and len(child.encode("utf-8")) > 32 and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", child):
+                                  candidates.append((len(child.encode("utf-8")), node, key))
+                              elif isinstance(child, (dict, list)):
+                                  strings(child)
+                      strings(value)
+                      if not candidates:
+                          break
+                      size, parent, key = max(candidates, key=lambda row: row[0])
+                      parent[key] = parent[key].encode("utf-8")[:max(16, size // 2)].decode("utf-8", errors="ignore") + " <truncated>"
+                  return value
+
+              for key, limit in {
+                  "emulatorOwner": 8192, "bootstrap": 8192,
+                  "androidAcceptance": 16384, "methodOutputTails": 36864,
+                  "methodReceipts": 12288, "finalLogcatRelevantContext": 49152,
+                  "emulatorStderrFull": 4096, "emulatorStdoutLast100": 4096,
+                  "bootstrapGuestLogcatRouteWindows": 8192, "capProofRouteFields": 4096,
+                  "otherEvidencePaths": 8192,
+              }.items():
+                  report[key] = fit_section(report[key], limit)
               encoded = json.dumps(report, ensure_ascii=False, separators=(",", ":"))
               require(len(encoded.encode("utf-8")) < 200 * 1024, "Redacted evidence JSON exceeds 200 KiB")
               print(encoded, flush=True)
