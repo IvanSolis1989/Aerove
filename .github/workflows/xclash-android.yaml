@@ -1,903 +1,208 @@
-name: Aerove Android
+name: Lite265 single-slice log transfer pilot (no build)
+run-name: Lite265 single-slice log transfer pilot (no build)
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'README*.md'
-      - AGENTS.md
-      - CLAUDE.md
-      - CHANGELOG.md
-      - 'docs/**'
-      - 'apps/aerove/snapshots/**'
-      - '.agents/**/*.md'
-      - 'apps/aerove/AGENTS.md'
-      - 'apps/aerove/README.md'
-      - 'apps/aerove/assets_source/images/icon/lite/README.md'
-      - 'apps/aerove/plugins/code_forge/README.md'
-      - 'apps/aerove/plugins/proxy/README.md'
-      - 'apps/aerove/plugins/rust_api/README.md'
-      - 'apps/aerove/plugins/tray/README.md'
-      - 'apps/aerove/plugins/window/README.md'
-      - '.github/workflows/xclash-android.yaml'
-      - 'apps/aerove-lite/**'
-      - '.github/workflows/aerove-lite.yaml'
-      - '.github/workflows/aerove-lite-*.yaml'
-      - '.github/workflows/aerove-meow-preflight.yaml'
-      - '.github/workflows/aerove-standard-x86-qa*.yaml'
-      - '.github/workflows/workspace.yaml'
-      - '.github/workflows/pages.yaml'
-      - '.github/workflows/readme-preview.yaml'
-      - '.github/workflows/readme-sync.yaml'
-      - '.github/workflows/sync-upstream.yaml'
-      - '.github/workflows/telegram-release.yml'
-      - '.github/scripts/telegram-*'
-      - '.github/scripts/ai-issue-*'
-      - '.github/workflows/ai-issue-responder.yml'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/actions/**'
-      - 'experiments/**'
-      - 'website/**'
-      - 'tooling/**'
   workflow_dispatch:
-    inputs:
-      prepare_sources:
-        description: Allow regenerated sources and formatting in the exported patch
-        type: boolean
-        default: false
-      verification_recheck:
-        description: Recheck test fixes only; ignored when building or publishing an APK
-        type: boolean
-        default: false
-      original_build_run:
-        description: Immutable original APK run to recheck (reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 or Std133 41990578294 or Std136 42023232876 only)
-        type: string
-        default: ''
-      build_apk:
-        description: Build the Android arm64 APK after verification
-        type: boolean
-        default: true
-      accepted_build_run:
-        description: Explicit fully accepted original build run to promote without rebuilding
-        type: string
-        default: ''
-      publish_release:
-        description: Publish the verified APK to Aerove Releases
-        type: boolean
-        default: false
-
-defaults:
-  run:
-    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-    working-directory: apps/aerove
 
 permissions:
   contents: read
 
 concurrency:
-  group: xclash-android-${{ github.ref }}
+  group: lite265-log-transfer-pilot-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  FLUTTER_VERSION: '3.47.6'
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 
 jobs:
-  promotion_request:
+  transfer_one_original_slice:
+    name: Lite265 byte-transfer pilot index 21 (no build)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'IvanSolis1989/Aerove' &&
+      github.repository_owner == 'IvanSolis1989' &&
+      github.actor == 'IvanSolis1989' &&
+      github.ref == 'refs/heads/codex/lite265-log-transfer'
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     env:
-      ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-      PUBLISH_RELEASE: ${{ inputs.publish_release }}
-      BUILD_APK: ${{ inputs.build_apk }}
-      PREPARE_SOURCES: ${{ inputs.prepare_sources }}
-      VERIFICATION_RECHECK: ${{ inputs.verification_recheck }}
-      ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
-      DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
-      MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
-      QA84_ONLY: ${{ inputs.qa84_only }}
-      QA79_ONLY: ${{ inputs.qa79_only }}
-      CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
-      NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
+      GH_TOKEN: ${{ github.token }}
+      TRANSFER_RUN: '42087750789'
+      TRANSFER_ATTEMPT: '1'
+      TRANSFER_SOURCE: '9c271297042650827182a74933760eda4126fc57'
+      TRANSFER_BRANCH: 'codex/lite265-byte-transfer'
+      ORIGINAL_RUN: '42066278567'
+      ORIGINAL_ATTEMPT: '1'
+      ORIGINAL_SOURCE: '4190ff45f8eedc6734fa666e2658b71abf147479'
+      ORIGINAL_TREE: '8ca6fb6bc19867e9302923ba9bea8d289972a8b6'
+      ORIGINAL_APK_SHA256: 'a7f97bb4bd9026a69319a65e339e8a241c35a6598ee4cc0dd1a4f521a4dc9654'
+      ORIGINAL_ARTIFACT_ID: '13436109593'
+      ORIGINAL_ARTIFACT_NAME: 'AEROVE-Lite-preview-arm64-attempt-1'
+      ORIGINAL_ARTIFACT_SHA256: '4b8064c747418990d476badd5db6f801a91c3dd1d6acbe8ce903dca1f8d3cbc6'
+      SLICE_ARTIFACT_ID: '13443387417'
+      SLICE_ARTIFACT_NAME: 'Lite265-original-byte-part-21-attempt-1'
+      SLICE_ARTIFACT_BYTES: '2097288'
+      SLICE_ARTIFACT_SHA256: '4ce13fe586a56319c1e950b964253ba1a22f008e1ecab9301035c63f4c047635'
+      SLICE_FILE_NAME: 'part-21.bin'
+      SLICE_INDEX: '21'
+      SLICE_OFFSET: '44040192'
+      SLICE_BYTES: '2097152'
+      SLICE_SHA256: '3b8b04d158180e25d8358d5be3d8181f48537c09c312dd78e4d79624c7fc7624'
     steps:
-      - name: Reject ambiguous build and promotion requests before any producer
-        working-directory: ${{ github.workspace }}
+      - name: Validate fixed runs and stream one verified original segment to stdout
         run: |
           python3 - <<'PY'
-          import os, re
-          e = os.environ
-          accepted, publish = e.get('ACCEPTED_BUILD_RUN', ''), e.get('PUBLISH_RELEASE') == 'true'
-          if bool(accepted) != publish:
-              raise SystemExit('Publish requires an explicit accepted_build_run; accepted_build_run cannot start a build')
-          if accepted:
-              if not re.fullmatch(r'[1-9][0-9]*', accepted):
-                  raise SystemExit('accepted_build_run must be a positive original run ID')
-              if e['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or e['GITHUB_REF'] != 'refs/heads/main':
-                  raise SystemExit('Promotion requires an explicit main workflow dispatch')
-              flags = ('BUILD_APK', 'PREPARE_SOURCES', 'VERIFICATION_RECHECK', 'MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'NATIVE_PREFLIGHT')
-              if any(e.get(key) == 'true' for key in flags) or e.get('DIAGNOSTIC_TARGET', '') not in ('', 'none') or e.get('ORIGINAL_BUILD_RUN'):
-                  raise SystemExit('Promotion cannot build, recheck, prepare or diagnose')
-          elif e.get('ORIGINAL_BUILD_RUN') and e.get('VERIFICATION_RECHECK') != 'true':
-              raise SystemExit('original_build_run belongs only to verification_recheck')
-          PY
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath, PureWindowsPath
+          import re
+          import subprocess
+          import zipfile
+          import zlib
 
-  reuse:
-    needs: promotion_request
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      mode: ${{ steps.sync.outputs.mode }}
-      run_id: ${{ steps.selected.outputs.run_id || steps.origin.outputs.run_id || steps.find.outputs.run_id || steps.rechecked.outputs.run_id }}
-      run_number: ${{ steps.selected.outputs.run_number || steps.origin.outputs.run_number || steps.find.outputs.run_number || steps.rechecked.outputs.run_number }}
-      artifact_id: ${{ steps.selected.outputs.artifact_id || steps.origin.outputs.artifact_id || steps.find.outputs.artifact_id || steps.rechecked.outputs.artifact_id }}
-      generated_artifact_id: ${{ steps.selected.outputs.generated_artifact_id || steps.origin.outputs.generated_artifact_id || steps.find.outputs.generated_artifact_id || steps.rechecked.outputs.generated_artifact_id }}
-      build_source: ${{ steps.selected.outputs.build_source || steps.origin.outputs.build_source || steps.rechecked.outputs.build_source }}
-      recheck_run: ${{ steps.selected.outputs.recheck_run || steps.rechecked.outputs.recheck_run }}
-      test_harness_source: ${{ steps.selected.outputs.test_harness_source || steps.rechecked.outputs.test_harness_source }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Record source sync without selecting, building or publishing an application
-        id: sync
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        run: |
-          echo 'mode=source-sync' >> "$GITHUB_OUTPUT"
-          echo 'Source synchronized. App jobs are skipped; promotion awaits an explicit accepted_build_run dispatch. This run is not application acceptance.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Select the explicit original APK for a verification recheck
-        id: origin
-        if: ${{ inputs.verification_recheck }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BUILD_APK: ${{ inputs.build_apk }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          PREPARE_SOURCES: ${{ inputs.prepare_sources }}
-          ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
-        run: |
-          test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$BUILD_APK" = false && test "$PUBLISH_RELEASE" = false && test "$PREPARE_SOURCES" = false
-          python3 tool/aerove_artifact.py recheck-plan \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --build-run "$ORIGINAL_BUILD_RUN" --output "$GITHUB_OUTPUT"
-      - name: Select the explicit fully accepted original product build
-        id: selected
-        if: ${{ inputs.accepted_build_run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          BUILD_APK: ${{ inputs.build_apk }}
-          PREPARE_SOURCES: ${{ inputs.prepare_sources }}
-          VERIFICATION_RECHECK: ${{ inputs.verification_recheck }}
-        run: |
-          test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$GITHUB_REF" = refs/heads/main
-          test "$PUBLISH_RELEASE" = true && test "$BUILD_APK" = false
-          test "$PREPARE_SOURCES" = false && test "$VERIFICATION_RECHECK" = false
-          python3 tool/aerove_artifact.py select-build \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
-      - name: Find a successful build of this exact commit
-        id: find
-        if: >-
-          github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
-          !inputs.accepted_build_run && !inputs.verification_recheck && !inputs.prepare_sources && github.event_name == 'workflow_dispatch' && inputs.publish_release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 tool/aerove_artifact.py find \
-            --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
+          repo = "IvanSolis1989/Aerove"
+          transfer_run = int(os.environ["TRANSFER_RUN"])
+          transfer_attempt = int(os.environ["TRANSFER_ATTEMPT"])
+          original_run = int(os.environ["ORIGINAL_RUN"])
+          original_attempt = int(os.environ["ORIGINAL_ATTEMPT"])
+          slice_id = int(os.environ["SLICE_ARTIFACT_ID"])
+          temp = Path(os.environ["RUNNER_TEMP"])
+          archive_path = temp / "lite265-original-part-21.zip"
 
-      - name: Find an accepted independent verification recheck
-        id: rechecked
-        if: >-
-          github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
-          !inputs.accepted_build_run && !inputs.verification_recheck && !inputs.prepare_sources &&
-          github.event_name == 'workflow_dispatch' && inputs.publish_release && steps.find.outputs.run_id == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 tool/aerove_artifact.py find-rechecked \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
 
-      - name: Refuse a publish request without an accepted original artifact
-        if: ${{ inputs.publish_release }}
-        env:
-          SELECTED_RUN: ${{ steps.selected.outputs.run_id || steps.find.outputs.run_id || steps.rechecked.outputs.run_id }}
-        run: |
-          test -n "$SELECTED_RUN" || { echo '::error::No accepted original artifact; publish never rebuilds.'; exit 1; }
+          def api(route):
+              try:
+                  result = subprocess.run(["gh", "api", route], stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, timeout=45, check=False)
+              except subprocess.TimeoutExpired:
+                  raise SystemExit("GitHub API metadata request timed out") from None
+              require(result.returncode == 0, "GitHub API metadata request failed")
+              try:
+                  return json.loads(result.stdout)
+              except json.JSONDecodeError:
+                  raise SystemExit("GitHub API metadata was not valid JSON") from None
 
-  prep:
-    needs: reuse
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (inputs.verification_recheck || needs.reuse.outputs.run_id == '') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    outputs:
-      render_matrix: ${{ steps.matrices.outputs.render_matrix }}
-      regressions_matrix: ${{ steps.matrices.outputs.regressions_matrix }}
-      generated_artifact_id: ${{ steps.generated.outputs.artifact-id }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - name: Check workspace layout
-        working-directory: .
-        run: python3 tooling/workspace.py check
-      - name: Check fork download links
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: python3 tool/sync_fork_readme.py --root "$GITHUB_WORKSPACE" --repository "$REPOSITORY" --check
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
-      - name: Test repository commit hooks
-        run: bash ../../tooling/hooks/test.sh
-      - name: Test product version, provenance and artifact promotion
-        run: python3 -m unittest tool.test_aerove_version tool.test_xclash_version tool.test_aerove_release_notes tool.test_aerove_artifact tool.test_aerove_workflow tool.test_ci_verify -v
-      - name: Generate and format sources
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
-          cp ../../packages/aerove_client/pubspec.yaml "$RUNNER_TEMP/xclash-shared-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml; cp "$RUNNER_TEMP/xclash-shared-pubspec.yaml" ../../packages/aerove_client/pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml ../../packages/aerove_client/pubspec.yaml
-          (cd ../../packages/aerove_client && dart run intl_utils:generate)
-          (cd ../../packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)
-          dart format ../../packages/aerove_client/lib lib test
-          python3 tool/mihomo_source.py prepare
-          (cd core && go mod tidy)
-          gofmt -w core/*.go
-          cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
-          cp "$RUNNER_TEMP/xclash-shared-pubspec.yaml" ../../packages/aerove_client/pubspec.yaml
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          git -C "$GITHUB_WORKSPACE" diff --cached --binary -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock > "$RUNNER_TEMP/xclash-generated.patch"
-          git -C "$GITHUB_WORKSPACE" write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        id: generated
-        if: always()
-        with:
-          name: xclash-generated
-          path: |
-            ${{ runner.temp }}/xclash-generated.patch
-            ${{ runner.temp }}/xclash-verified-tree.txt
-      - name: Require committed generated sources
-        if: ${{ !inputs.prepare_sources }}
-        run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git -C "$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}')"
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-        with:
-          system-fonts: 'false'
-          save-cache: 'true'
-      - name: Export verification matrices
-        id: matrices
-        run: python3 tool/ci_verify.py matrices
-
-  static:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') }}
-    needs: prep
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
-      - name: Verify Core background telemetry
-        working-directory: apps/aerove/core
-        env:
-          CGO_ENABLED: '0'
-        run: |
-          python3 ../tool/mihomo_source.py prepare --root ..
-          go test . -run UiTelemetry -count=2
-          go test .
-      - name: Analyze
-        id: analyze
-        run: |
-          (cd ../../packages/aerove_client && flutter analyze --no-pub --no-fatal-infos)
-          flutter analyze --no-pub --no-fatal-infos
-
-  native:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') }}
-    needs: prep
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-          targets: x86_64-unknown-linux-gnu
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/aerove/.dart_tool/hooks_runner/rust_api
-            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
-          key: ${{ runner.os }}-aerove-rust-host-v2-1.99.0-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-      - name: Build shared host Rust assets and check update behavior
-        run: python3 tool/ci_verify.py warmup --evidence "$RUNNER_TEMP/update-smoke"
-      - name: Verify producer host Rust output
-        run: python3 tool/ci_verify.py host-assets --record
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: xclash-update-smoke
-          path: ${{ runner.temp }}/update-smoke
-          if-no-files-found: ignore
-
-  render:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.prep.result == 'success') }}
-    name: render (${{ matrix.suite }} ${{ matrix.shard }})
-    needs: prep
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 11
-      matrix: ${{ fromJSON(needs.prep.outputs.render_matrix) }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-      - name: Prepare official Core source for DNS contract tests
-        if: ${{ matrix.suite == 'luminous' }}
-        run: python3 tool/mihomo_source.py prepare
-      - name: Run preserved verification combination
-        run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: xclash-${{ matrix.suite }}-${{ matrix.shard }}
-          path: ${{ runner.temp }}/xclash-previews
-          if-no-files-found: ignore
-
-  regressions:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.prep.result == 'success' && needs.native.result == 'success') }}
-    name: regressions (${{ matrix.suite }} ${{ matrix.shard }})
-    needs: [prep, native]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix: ${{ fromJSON(needs.prep.outputs.regressions_matrix) }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-          targets: x86_64-unknown-linux-gnu
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: host_rust_cache
-        with:
-          fail-on-cache-miss: true
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/aerove/.dart_tool/hooks_runner/rust_api
-            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
-          key: ${{ runner.os }}-aerove-rust-host-v2-1.99.0-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
-      - name: Require exact producer host Rust cache
-        if: ${{ !cancelled() && steps.host_rust_cache.outcome != 'skipped' }}
-        env:
-          HOST_RUST_CACHE_HIT: ${{ steps.host_rust_cache.outputs.cache-hit }}
-        run: |
-          if test "$HOST_RUST_CACHE_HIT" != true; then
-            echo '::error::Exact host Rust cache unavailable. Rebuild the native producer with a clean host cache, then retry regressions.'
-            exit 1
-          fi
-          python3 tool/ci_verify.py host-assets
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-      - name: Prepare official Core source for DNS contract tests
-        if: ${{ matrix.suite == 'regression-software' }}
-        run: python3 tool/mihomo_source.py prepare
-      - name: Run preserved verification combination
-        run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: xclash-${{ matrix.suite }}-${{ matrix.shard }}
-          path: ${{ runner.temp }}/xclash-previews
-          if-no-files-found: ignore
-
-  verify:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (always() && needs.prep.result != 'skipped') }}
-    needs: [prep, static, render, native, regressions]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      generated_artifact_id: ${{ needs.prep.outputs.generated_artifact_id }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Require every verification job to succeed
-        env:
-          CI_VERIFY_NEEDS: ${{ toJSON(needs) }}
-        run: python3 tool/ci_verify.py gate
-
-  apk:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (!inputs.verification_recheck && (github.event_name == 'push' || inputs.build_apk)) }}
-    needs: prep
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      GRADLE_OPTS: -Dorg.gradle.caching=true
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      artifact_id: ${{ steps.apk_artifact.outputs.artifact-id }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: xclash-generated
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Restore persistent Android test signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.XCLASH_ANDROID_DEBUG_KEYSTORE }}
-        run: |
-          test -n "$KEYSTORE_BASE64" || { echo '::error::Configure XCLASH_ANDROID_DEBUG_KEYSTORE before building.'; exit 1; }
-          install -d -m 700 "$HOME/.android"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey
-      - name: Set version for this Android build
-        id: version
-        run: |
-          python3 tool/aerove_version.py release-plan \
-            --repo "$GITHUB_WORKSPACE" \
-            --metadata "$GITHUB_WORKSPACE/apps/aerove/tool/upstream-version.json" \
-            --pubspec "$GITHUB_WORKSPACE/apps/aerove/pubspec.yaml" \
-            --head "$GITHUB_SHA" \
-            --run-number "$GITHUB_RUN_NUMBER" \
-            > "$RUNNER_TEMP/xclash-version.json"
-          plan="$RUNNER_TEMP/xclash-version.json"
-          printf 'name=%s\nnumber=%s\ntag=%s\napp_env=%s\n' \
-            "$(jq -er .name "$plan")" \
-            "$(jq -er .number "$plan")" \
-            "$(jq -er .tag "$plan")" \
-            "$(jq -er .app_env "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_repository=%s\nupstream_source_commit=%s\n' \
-            "$(jq -er .upstream_repository "$plan")" \
-            "$(jq -er .upstream_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_tag=%s\nupstream_tag_commit=%s\nupstream_pubspec_version=%s\n' \
-            "$(jq -er .upstream_tag "$plan")" \
-            "$(jq -er .upstream_tag_commit "$plan")" \
-            "$(jq -er .upstream_pubspec_version "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_pubspec_source_commit=%s\n' \
-            "$(jq -er .upstream_pubspec_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_source_branches=%s\n' \
-            "$(jq -cer .upstream_source_branches "$plan")" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
-      - uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
-        id: ndk
-        with:
-          ndk-version: r28c
-          link-to-sdk: true
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-          targets: aarch64-linux-android
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/aerove/.dart_tool/hooks_runner/rust_api
-            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
-          key: ${{ runner.os }}-aerove-rust-android-v1-1.99.0-r28c-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-aerove-gradle-v1-jdk17-r28c-${{ hashFiles('apps/aerove/android/**/*.gradle*', 'apps/aerove/android/gradle/wrapper/gradle-wrapper.properties', 'apps/aerove/pubspec.lock') }}
-          restore-keys: ${{ runner.os }}-aerove-gradle-v1-jdk17-r28c-
-      - name: Build Android arm64
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-          VERSION_NUMBER: ${{ steps.version.outputs.number }}
-          APP_ENV: ${{ steps.version.outputs.app_env }}
-          UPSTREAM_REPOSITORY: ${{ steps.version.outputs.upstream_repository }}
-          UPSTREAM_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_source_commit }}
-          UPSTREAM_TAG: ${{ steps.version.outputs.upstream_tag }}
-          UPSTREAM_TAG_COMMIT: ${{ steps.version.outputs.upstream_tag_commit }}
-          UPSTREAM_PUBSPEC_VERSION: ${{ steps.version.outputs.upstream_pubspec_version }}
-          UPSTREAM_PUBSPEC_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_pubspec_source_commit }}
-          UPSTREAM_SOURCE_BRANCHES: ${{ steps.version.outputs.upstream_source_branches }}
-        run: |
-          flutter pub get
-          flutter build apk --no-pub --release --target-platform android-arm64 \
-            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER" \
-            --dart-define=APP_ENV="$APP_ENV"
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/Aerove-android-arm64.apk
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          "$build_tools/apksigner" verify --print-certs dist/Aerove-android-arm64.apk
-          "$build_tools/aapt" dump badging dist/Aerove-android-arm64.apk > "$RUNNER_TEMP/apk-badging.txt"
-          grep -F "package: name='com.follow.clash.dev' versionCode='$VERSION_NUMBER' versionName='$VERSION_NAME'" "$RUNNER_TEMP/apk-badging.txt"
-          jq -n --arg source "$GITHUB_SHA" --arg version "$VERSION_NAME+$VERSION_NUMBER" \
-            --arg app_env "$APP_ENV" \
-            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg upstream_repository "$UPSTREAM_REPOSITORY" \
-            --arg upstream_source_commit "$UPSTREAM_SOURCE_COMMIT" \
-            --arg upstream_tag "$UPSTREAM_TAG" \
-            --arg upstream_tag_commit "$UPSTREAM_TAG_COMMIT" \
-            --arg upstream_pubspec_version "$UPSTREAM_PUBSPEC_VERSION" \
-            --arg upstream_pubspec_source_commit "$UPSTREAM_PUBSPEC_SOURCE_COMMIT" \
-            --argjson upstream_source_branches "$UPSTREAM_SOURCE_BRANCHES" \
-            '{source: $source, version: $version, appEnv: $app_env, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev", upstream: {repository: $upstream_repository, sourceCommit: $upstream_source_commit, tag: $upstream_tag, tagCommit: $upstream_tag_commit, sourceBranches: $upstream_source_branches, pubspecVersion: $upstream_pubspec_version, pubspecSourceCommit: $upstream_pubspec_source_commit}}' \
-            > dist/BUILD_INFO.json
-          (cd dist && sha256sum Aerove-android-arm64.apk BUILD_INFO.json > SHA256SUMS)
-      - name: Android model and service regressions
-        working-directory: apps/aerove/android
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: |
-          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest :fl_clash:testDebugUnitTest \
-            -Ptarget-platform=android-arm64 \
-            -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        id: apk_artifact
-        with:
-          name: Aerove-android-arm64
-          path: apps/aerove/dist/
-
-  recheck:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (!cancelled() && inputs.verification_recheck && needs.verify.result == 'success' && needs.reuse.result == 'success') }}
-    needs: [reuse, verify]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.artifact_id }}
-          run-id: ${{ needs.reuse.outputs.run_id }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/original-apk
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.generated_artifact_id }}
-          run-id: ${{ needs.reuse.outputs.run_id }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/original-generated
-      - name: Accept only the unchanged signed original APK after every required combination
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
-        run: |
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          mkdir -p "$RUNNER_TEMP/original-apk-recheck"
-          python3 tool/aerove_artifact.py recheck-receipt \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --build-run "$ORIGINAL_BUILD_RUN" --run-id "$GITHUB_RUN_ID" \
-            --directory "$RUNNER_TEMP/original-apk" --generated-directory "$RUNNER_TEMP/original-generated" \
-            --apksigner "$build_tools/apksigner" --aapt "$build_tools/aapt" \
-            --output "$RUNNER_TEMP/original-apk-recheck/recheck.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: aerove-original-apk-recheck
-          path: ${{ runner.temp }}/original-apk-recheck/recheck.json
-          if-no-files-found: error
-
-  release:
-    if: >-
-      ${{ !cancelled() && github.repository == 'IvanSolis1989/Aerove' &&
-      github.ref == 'refs/heads/main' && needs.promotion_request.result == 'success' &&
-      needs.reuse.result == 'success' && !inputs.prepare_sources && !inputs.verification_recheck &&
-      github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.accepted_build_run &&
-      needs.reuse.outputs.run_id != '' }}
-    needs: [promotion_request, reuse, verify, apk]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      actions: read
-    env:
-      ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-      RELEASE_SOURCE: ${{ github.sha }}
-      BUILD_SOURCE: ${{ needs.reuse.outputs.build_source || github.sha }}
-      RECHECK_RUN: ${{ needs.reuse.outputs.recheck_run }}
-      TEST_HARNESS_SOURCE: ${{ needs.reuse.outputs.test_harness_source }}
-      BUILD_RUN_ID: ${{ needs.reuse.outputs.run_id || github.run_id }}
-      BUILD_RUN_NUMBER: ${{ needs.reuse.outputs.run_number || github.run_number }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.artifact_id || needs.apk.outputs.artifact_id }}
-          run-id: ${{ env.BUILD_RUN_ID }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: apps/aerove/dist
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.generated_artifact_id || needs.verify.outputs.generated_artifact_id }}
-          run-id: ${{ env.BUILD_RUN_ID }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Verify original build identity and APK
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          recheck_flags=()
-          if test -n "$RECHECK_RUN" && test -z "$ACCEPTED_BUILD_RUN"; then
-            recheck_flags=(--promotion-root "$GITHUB_WORKSPACE" --promotion-source "$GITHUB_SHA" --recheck-run "$RECHECK_RUN")
-          fi
-          python3 tool/aerove_artifact.py validate \
-            --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
-            --source "$BUILD_SOURCE" --tree "$(git -C "$GITHUB_WORKSPACE" rev-parse "$BUILD_SOURCE^{tree}")" \
-            --repository "$GITHUB_REPOSITORY" --run-id "$BUILD_RUN_ID" \
-            --run-number "$BUILD_RUN_NUMBER" --metadata "$GITHUB_WORKSPACE/apps/aerove/tool/upstream-version.json" \
-            --pubspec "$GITHUB_WORKSPACE/apps/aerove/pubspec.yaml" "${recheck_flags[@]}"
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          "$build_tools/apksigner" verify --print-certs dist/Aerove-android-arm64.apk
-          "$build_tools/aapt" dump badging dist/Aerove-android-arm64.apk > "$RUNNER_TEMP/promoted-badging.txt"
-          version=$(jq -r .version dist/BUILD_INFO.json)
-          grep -F "package: name='com.follow.clash.dev' versionCode='${version##*+}' versionName='${version%+*}'" "$RUNNER_TEMP/promoted-badging.txt"
-      - name: Bind original payload bytes to the separate release identity
-        if: ${{ needs.reuse.outputs.run_id != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/product-promotion"
-          python3 tool/aerove_artifact.py promotion-receipt \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" \
-            --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT" \
-            --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
-            --output "$RUNNER_TEMP/product-promotion/promotion.json"
-      - name: Preserve the separate build and release promotion receipt
-        if: ${{ needs.reuse.outputs.run_id != '' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: aerove-product-promotion-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/product-promotion/promotion.json
-          if-no-files-found: error
-      - name: Publish verified APK to Releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test -n "$ACCEPTED_BUILD_RUN" || { echo '::error::Publication requires an accepted original build; never rebuild.'; exit 1; }
-          TAG="v$(jq -er .version dist/BUILD_INFO.json)"
-          check_main_inputs() {
-            git fetch --no-tags --recurse-submodules=no origin main
-            main=$(git rev-parse FETCH_HEAD)
-            if test -n "$RECHECK_RUN"; then
-              if test -z "$ACCEPTED_BUILD_RUN"; then
-                python3 tool/aerove_artifact.py recheck-main \
-                  --root "$GITHUB_WORKSPACE" --harness "$TEST_HARNESS_SOURCE" --source "$main"
-              fi
-            fi
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main"; then
-              echo '::error::The build source is no longer an ancestor of main; publication stopped.'
-              return 1
-            fi
-            python3 tool/aerove_artifact.py source-check \
-              --root "$GITHUB_WORKSPACE" --build-source "$RELEASE_SOURCE" --source "$main"
+          original = api(f"repos/{repo}/actions/runs/{original_run}")
+          require(original.get("id") == original_run and original.get("run_attempt") == original_attempt
+                  and original.get("head_sha") == os.environ["ORIGINAL_SOURCE"]
+                  and original.get("head_branch") == "codex/lite-shared-flutter-complete114"
+                  and original.get("status") == "completed" and original.get("conclusion") == "failure"
+                  and original.get("repository", {}).get("full_name") == repo
+                  and original.get("path") == ".github/workflows/aerove-lite.yaml",
+                  "Original Lite265 run/source/attempt identity mismatch")
+          transfer = api(f"repos/{repo}/actions/runs/{transfer_run}")
+          require(transfer.get("id") == transfer_run and transfer.get("run_attempt") == transfer_attempt
+                  and transfer.get("head_sha") == os.environ["TRANSFER_SOURCE"]
+                  and transfer.get("head_branch") == os.environ["TRANSFER_BRANCH"]
+                  and transfer.get("status") == "completed" and transfer.get("conclusion") == "success"
+                  and transfer.get("repository", {}).get("full_name") == repo
+                  and transfer.get("path") == ".github/workflows/xclash-android.yaml",
+                  "Successful original Lite265 byte-transfer run/source/attempt mismatch")
+          listing = api(f"repos/{repo}/actions/runs/{transfer_run}/artifacts?per_page=100")
+          rows = listing.get("artifacts")
+          require(isinstance(rows, list) and listing.get("total_count") == len(rows) and len(rows) <= 65,
+                  "Lite265 transfer artifact list is incomplete or exceeds its defined bound")
+          names = [row.get("name") for row in rows]
+          require(len(names) == len(set(names)), "Duplicate transfer artifact names")
+          matches = [row for row in rows if row.get("id") == slice_id]
+          require(len(matches) == 1, "Fixed Lite265 slice artifact ID is missing or duplicated")
+          row = matches[0]
+          expected = {
+              "name": os.environ["SLICE_ARTIFACT_NAME"],
+              "size_in_bytes": int(os.environ["SLICE_ARTIFACT_BYTES"]),
+              "digest": "sha256:" + os.environ["SLICE_ARTIFACT_SHA256"],
           }
-          if test -n "$ACCEPTED_BUILD_RUN"; then
-            python3 tool/aerove_artifact.py check-promotion \
-              --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" \
-              --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT" \
-              --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
-              --receipt "$RUNNER_TEMP/product-promotion/promotion.json"
-          fi
-          (cd dist && sha256sum --check SHA256SUMS)
-          test "$(jq -r .source dist/BUILD_INFO.json)" = "$BUILD_SOURCE"
-          check_main_inputs
-          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish 2>/dev/null || true)
-          missing_assets="$RUNNER_TEMP/standard-release-missing-assets.txt"
-          if test -n "$existing"; then
-            python3 tool/aerove_artifact.py release-assets \
-              --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" --tag "$TAG" \
-              --directory dist --allow-missing --output "$missing_assets"
-            test "$(jq -r .targetCommitish <<< "$existing")" = "$RELEASE_SOURCE"
-            if test "$(jq -r .isDraft <<< "$existing")" = false; then
-              echo 'This release is already published; its assets were preserved.' >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          fi
-          python3 -m unittest tool.test_aerove_release_notes -v
-          previous_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
-          python3 tool/aerove_release_notes.py \
-            --repo "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" \
-            --tag "$TAG" --source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE" --previous-tag "$previous_tag" \
-            --build-info dist/BUILD_INFO.json \
-            --output "$RUNNER_TEMP/xclash-release.md"
-          printf '\n\nOriginal build source: `%s`\nRelease source: `%s`\nRelease run: `%s` (attempt `%s`)\n' \
-            "$BUILD_SOURCE" "$RELEASE_SOURCE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$RUNNER_TEMP/xclash-release.md"
-          if test -z "$existing"; then
-            printf '%s\n' Aerove-android-arm64.apk BUILD_INFO.json SHA256SUMS > "$missing_assets"
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_SOURCE" \
-              --title "AEROVE $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
-          fi
-          while IFS= read -r asset; do
-            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "dist/$asset"
-          done < "$missing_assets"
-          python3 tool/aerove_artifact.py release-assets \
-            --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" --tag "$TAG" \
-            --directory dist --output "$missing_assets"
-          check_main_inputs
-          if test "$(jq -er .appEnv dist/BUILD_INFO.json)" = pre; then
-            release_flags=(--prerelease=true --latest=false)
-          else
-            release_flags=(--prerelease=false --latest)
-          fi
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --notes-file "$RUNNER_TEMP/xclash-release.md" --draft=false "${release_flags[@]}"
-          python3 tool/aerove_artifact.py release-assets \
-            --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" --tag "$TAG" \
-            --directory dist --output "$missing_assets"
-          printf 'Original build: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$BUILD_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
-          printf 'Published APK: https://github.com/%s/releases/tag/%s\n' "$GITHUB_REPOSITORY" "$TAG" >> "$GITHUB_STEP_SUMMARY"
+          for key, value in expected.items():
+              require(row.get(key) == value, f"Transfer slice API {key} mismatch")
+          require(row.get("expired") is False and row.get("workflow_run", {}).get("id") == transfer_run
+                  and row.get("workflow_run", {}).get("head_sha") == os.environ["TRANSFER_SOURCE"],
+                  "Transfer slice artifact run/source/expiry mismatch")
+          detail = api(f"repos/{repo}/actions/artifacts/{slice_id}")
+          for key, value in expected.items():
+              require(detail.get(key) == value, f"Transfer slice detail {key} mismatch")
+
+          try:
+              with archive_path.open("wb") as output:
+                  result = subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{slice_id}/zip"],
+                                          stdout=output, stderr=subprocess.PIPE, timeout=90, check=False)
+          except subprocess.TimeoutExpired:
+              archive_path.unlink(missing_ok=True)
+              raise SystemExit("Fixed slice archive download timed out") from None
+          if result.returncode:
+              archive_path.unlink(missing_ok=True)
+              raise SystemExit(f"Fixed slice archive transport failed (exit {result.returncode})")
+          archive_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+          require(archive_path.stat().st_size == int(os.environ["SLICE_ARTIFACT_BYTES"])
+                  and archive_hash == os.environ["SLICE_ARTIFACT_SHA256"],
+                  "Transfer slice ZIP size/SHA-256 mismatch")
+          with zipfile.ZipFile(archive_path) as archive:
+              infos = archive.infolist()
+              require(len(infos) == 1 and infos[0].filename == os.environ["SLICE_FILE_NAME"]
+                      and not infos[0].is_dir() and infos[0].file_size == int(os.environ["SLICE_BYTES"]),
+                      "Transfer ZIP does not contain exactly the expected original part-21.bin")
+              name = PurePosixPath(infos[0].filename)
+              windows = PureWindowsPath(infos[0].filename)
+              mode = infos[0].external_attr >> 16
+              file_type = mode & 0o170000
+              require(not name.is_absolute() and not windows.is_absolute() and not windows.drive
+                      and ".." not in name.parts and "\\" not in infos[0].filename
+                      and file_type != 0o120000 and (not mode or file_type == 0o100000),
+                      "Transfer slice ZIP path/type is unsafe")
+              require(archive.testzip() is None, "Transfer slice ZIP CRC failure")
+              payload = archive.read(infos[0])
+          payload_hash = hashlib.sha256(payload).hexdigest()
+          require(len(payload) == int(os.environ["SLICE_BYTES"])
+                  and payload_hash == os.environ["SLICE_SHA256"],
+                  "Original part 21 payload length/SHA-256 mismatch")
+          compressed = zlib.compress(payload, level=9)
+          compressed_hash = hashlib.sha256(compressed).hexdigest()
+          encoded = base64.b64encode(compressed).decode("ascii")
+          line_capacity = 16 * 1024 - 16
+          chunks = [encoded[index:index + line_capacity] for index in range(0, len(encoded), line_capacity)]
+          require(chunks and all(len(chunk.encode("ascii")) <= 16 * 1024 - 16 for chunk in chunks),
+                  "Encoded payload line bound violated")
+          wire_lines = [f"{sequence:04d}/{len(chunks):04d}:{chunk}"
+                        for sequence, chunk in enumerate(chunks, start=1)]
+          require(all(len(line.encode("ascii")) <= 16 * 1024 for line in wire_lines),
+                  "Sequenced stdout line exceeds 16 KiB")
+          header = {
+              "role": "byteTransferOnly", "accepted": False, "compiled": False,
+              "appApkBuilt": False,
+              "fullCiAccepted": False, "published": False,
+              "original": {"runId": original_run, "runAttempt": original_attempt,
+                           "source": os.environ["ORIGINAL_SOURCE"],
+                           "tree": os.environ["ORIGINAL_TREE"],
+                           "apkSha256": os.environ["ORIGINAL_APK_SHA256"],
+                           "artifactId": int(os.environ["ORIGINAL_ARTIFACT_ID"]),
+                           "artifactName": os.environ["ORIGINAL_ARTIFACT_NAME"],
+                           "artifactArchiveSha256": os.environ["ORIGINAL_ARTIFACT_SHA256"]},
+              "transfer": {"runId": transfer_run, "attempt": transfer_attempt,
+                           "source": os.environ["TRANSFER_SOURCE"],
+                           "branch": os.environ["TRANSFER_BRANCH"]},
+              "slice": {"index": int(os.environ["SLICE_INDEX"]),
+                        "offset": int(os.environ["SLICE_OFFSET"]), "length": len(payload),
+                        "payloadSha256": payload_hash, "artifactId": slice_id,
+                        "artifactName": row["name"], "artifactBytes": row["size_in_bytes"],
+                        "artifactSha256": archive_hash},
+              "encoding": "zlib+base64", "compressedBytes": len(compressed),
+              "compressedSha256": compressed_hash, "lineCount": len(chunks),
+              "base64CharactersPerLine": line_capacity, "wireLineMaxBytes": 16 * 1024,
+          }
+          header_json = json.dumps(header, sort_keys=True, separators=(",", ":"))
+          print("[[LITE265_SLICE_BEGIN]]", flush=True)
+          print(header_json, flush=True)
+          print("[[LITE265_SLICE_DATA_BEGIN]]", flush=True)
+          for line in wire_lines:
+              print(line, flush=True)
+          print("[[LITE265_SLICE_DATA_END]]", flush=True)
+          print("[[LITE265_SLICE_END]]", flush=True)
+          PY
