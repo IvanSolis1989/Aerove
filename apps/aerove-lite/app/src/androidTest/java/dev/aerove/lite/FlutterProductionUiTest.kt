@@ -1155,9 +1155,17 @@ class FlutterProductionUiTest {
                 check(SystemClock.elapsedRealtime() < end) { "Timed out revealing $label" }
                 checkInterrupted()
                 findLabel(label)?.let { return it }
-                val scroller = nodes().filter { n -> n.isVisibleToUser && n.isScrollable && n.packageName?.toString() == PACKAGE }
-                    .maxByOrNull { bounds(it).height() * bounds(it).width() }
-                    ?: error("No production scroll node while revealing $label")
+                var target: AccessibilityNodeInfo? = null
+                var scrollSurface: AccessibilityNodeInfo? = null
+                awaitCondition("production target or scroll surface while revealing $label",
+                    timeoutMs = end - SystemClock.elapsedRealtime(), required = false) {
+                    target = findLabel(label)
+                    scrollSurface = nodes().filter { n -> n.isVisibleToUser && n.isScrollable && n.packageName?.toString() == PACKAGE }
+                        .maxByOrNull { bounds(it).height() * bounds(it).width() }
+                    target != null || scrollSurface != null
+                }
+                target?.let { return it }
+                val scroller = scrollSurface ?: error("No production scroll node while revealing $label")
                 val before = tree().toString()
                 if (!scroller.performAction(direction)) return@repeat
                 action("scroll", scroller, "direction=$direction target=$label")

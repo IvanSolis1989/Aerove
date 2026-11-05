@@ -108,7 +108,7 @@ GUEST_ANGLE_READS = (
     ('angle-overrides-disabled', ['getprop', 'debug.angle.feature_overrides_disabled']),
     ('libraries', ['ls', '-l', '/vendor/lib64/egl/libEGL_angle.so',
                    '/vendor/lib64/egl/libGLESv2_angle.so', '/vendor/lib64/hw/vulkan.ranchu.so']),
-    ('surfaceflinger', ['dumpsys', 'SurfaceFlinger']),
+    ('surfaceflinger', ['dumpsys', '-t', '30', 'SurfaceFlinger']),
 )
 
 
@@ -119,6 +119,8 @@ def guest_angle_route(outputs, startup):
         raise ValueError('Guest ANGLE was requested but the booted EGL driver is not angle')
     if outputs['angle-overrides-disabled'].strip() != 'supportsHostQueryReset':
         raise ValueError('Guest ANGLE host-query-reset compatibility override changed during boot')
+    if 'DUMP TIMEOUT' in outputs['surfaceflinger']:
+        raise ValueError('SurfaceFlinger dump timed out before renderer evidence completed')
     guest = [line for line in outputs['surfaceflinger'].splitlines()
              if re.search(r'\bGLES:', line) and re.search(r'OpenGL ES\s+3\.1\b', line)
              and all(word in line.upper() for word in ('ANGLE', 'VULKAN', 'SWIFTSHADER'))]
@@ -144,7 +146,8 @@ def guest_angle_evidence(directory, receipt, startup):
     for name, arguments in GUEST_ANGLE_READS:
         check_cancelled(receipt)
         result = subprocess.run(['adb', '-s', 'emulator-5554', 'shell', *arguments],
-                                capture_output=True, text=True, timeout=15)
+                                capture_output=True, text=True,
+                                timeout=35 if name == 'surfaceflinger' else 15)
         (directory / ('guest-angle-' + name + '.out')).write_text(result.stdout)
         (directory / ('guest-angle-' + name + '.err')).write_text(result.stderr)
         (directory / ('guest-angle-' + name + '.exit.txt')).write_text(str(result.returncode) + '\n')

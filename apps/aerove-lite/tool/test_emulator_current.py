@@ -91,6 +91,34 @@ class GuestAngleEvidenceTests(unittest.TestCase):
                 current.guest_angle_evidence(directory, {}, self.startup)
             self.assertEqual((directory / 'guest-angle-libraries.err').read_text(), 'missing')
 
+    def test_surfaceflinger_service_budget_outlives_its_default_and_stays_inside_adb(self):
+        responses = iter(self.outputs())
+        def device_read(command, **kwargs):
+            response = next(responses)
+            if command[-1] == 'SurfaceFlinger':
+                if '-t' not in command:
+                    return subprocess.CompletedProcess(command, 0,
+                        "*** SERVICE 'SurfaceFlinger' DUMP TIMEOUT (10000ms) EXPIRED ***\n", '')
+                service_seconds = int(command[command.index('-t') + 1])
+                self.assertGreater(service_seconds, 10)
+                self.assertGreater(kwargs['timeout'], service_seconds)
+            else:
+                self.assertEqual(kwargs['timeout'], 15)
+            return response
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(current.subprocess, 'run', side_effect=device_read):
+            value = current.guest_angle_evidence(Path(temporary), {}, self.startup)
+        self.assertEqual(value['guestRenderer'], [self.guest])
+
+    def test_partial_surfaceflinger_timeout_never_qualifies_the_renderer(self):
+        timed_out = self.guest + "\n*** SERVICE 'SurfaceFlinger' DUMP TIMEOUT (10000ms) EXPIRED ***\n"
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=timed_out)), \
+                    self.assertRaises(ValueError):
+                current.guest_angle_evidence(directory, {}, self.startup)
+            self.assertEqual((directory / 'guest-angle-surfaceflinger.out').read_text(), timed_out)
+
     def test_owner_cancellation_does_not_start_more_adb_reads(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(current.subprocess, 'run') as adb, \
                 self.assertRaises(InterruptedError):

@@ -1200,6 +1200,8 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 原233已在47.3秒内真实完成启动并读回 guest ANGLE／Vulkan／SwiftShader／OpenGL ES3.1；随后原 host GLES 日志校验阻止了 App 执行，该失败保留。共用 owner 为 Guest 路线使用独立渲染标识，从同次 API33、EGL、兼容属性、原镜像库和 SurfaceFlinger 读回及宿主 Vulkan 选择行形成绑定的原始证据；原 host GLES 路线继续使用原严格校验。当前 Flutter preview、platform、full 三阶段接入同一路线并各自验证当前封存 APK，诊断 callback 仍只用于旧208；启动和渲染路线资格不替代当前两 ABI 构建、App、十二图、真机与用户验收。
 
+原255完整UI已完成boot，但SurfaceFlinger的默认10秒服务dump超时，未进入App。只读参照[Android官方dumpsys参数](https://developer.android.com/tools/dumpsys)和AOSP `frameworks/native` 固定 `5549004ed039df3f9efc5bc7d203fa68806266c8` 的 [`cmds/dumpsys/dumpsys.cpp`](https://android.googlesource.com/platform/frameworks/native/+/5549004ed039df3f9efc5bc7d203fa68806266c8/cmds/dumpsys/dumpsys.cpp)（blob `32277499a6e0f2675929ce434186d9a274518883`），复用现成 `-t 30` 单次服务预算和35秒ADB截止；其他读数、boot预算、renderer及UI门保持。含内部dump超时的部分输出仍拒绝，不重试或把exit0当完整取证。该公开参考不冒称实际API33源码身份；文件头2009 The Android Open Source Project / Apache-2.0，未复制实现、增加APP依赖或改变画质。
+
 **许可证、署名与证据：** 所引 QEMU 文件 GPLv2，Goldfish 配置与 OpenGL HAL Apache-2.0，ANGLE BSD-3-Clause；保留原 SDK 各组件 NOTICE，无新增 APP 依赖或第三方二进制分发。
 
 #### [KhronosGroup/Vulkan-Loader](https://github.com/KhronosGroup/Vulkan-Loader)

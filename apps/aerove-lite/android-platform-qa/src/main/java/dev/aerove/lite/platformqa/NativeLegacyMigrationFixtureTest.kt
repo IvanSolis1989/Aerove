@@ -1,6 +1,7 @@
 package dev.aerove.lite.platformqa
 
 import dev.aerove.lite.flutter.withNativeLiteReadOnlyDatabase
+import android.util.Base64
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -199,6 +200,43 @@ class NativeLegacyMigrationFixtureTest {
         }
     }
 
+    // Test reference for models/common.dart's v1 accidental-disclosure format, not encryption.
+    private fun decodeSharedDavPassword(value: String): String {
+        val parts = value.split('.')
+        check(parts.size == 3 && parts[0] == "v1") { "Invalid shared DAV password format" }
+        fun decode(part: String): ByteArray {
+            val bytes = Base64.decode(part, Base64.URL_SAFE or Base64.NO_WRAP)
+            check(Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_WRAP) == part) { "Invalid shared DAV password encoding" }
+            return bytes
+        }
+        val nonce = decode(parts[1])
+        check(nonce.size == 16) { "Invalid shared DAV password nonce" }
+        val encoded = decode(parts[2])
+        check(encoded.isNotEmpty()) { "Invalid shared DAV password payload" }
+        val mask = intArrayOf(
+            0x9d,
+            0x42,
+            0xe7,
+            0x1b,
+            0x68,
+            0xb4,
+            0x35,
+            0xca,
+            0x7f,
+            0x20,
+            0xd1,
+            0x56,
+            0x83,
+            0xfa,
+            0x0c,
+            0xa9,
+        )
+        val decoded = ByteArray(encoded.size) { index ->
+            (encoded[index].toInt() xor nonce[index % nonce.size].toInt() xor mask[index % mask.size]).toByte()
+        }
+        return text(decoded)
+    }
+
     private fun runScenario(recoverReceiptPath: Boolean) {
         val token = argument("qaToken", "[a-zA-Z0-9_-]{1,80}")
         val output = File(requireNotNull(target.getExternalFilesDir(null)).canonicalFile, "native-legacy-fixture-qa/$token")
@@ -390,7 +428,9 @@ class NativeLegacyMigrationFixtureTest {
                 preferences.getLong("flutter.upgradeVersion", -1) == proof.getLong("upgradeVersion"))
             val config = JSONObject(configText)
             check(config.getJSONObject("appSettingProps").getInt("acceptedDisclaimerVersion") == 0)
-            check(config.getJSONObject("davProps").getString("password") == "fixture-only")
+            val expectedDavPassword = JSONObject(text(assetBytes("payload/backups/webdav.json"))).getString("password")
+            val storedDavPassword = config.getJSONObject("davProps").getString("password")
+            check(decodeSharedDavPassword(storedDavPassword) == expectedDavPassword)
             val defaultsFile = privateFile(root, "xclash-defaults.json")
             check(digest(defaultsFile) == proof.getString("defaultsSha256"))
             val defaults = json(defaultsFile)
