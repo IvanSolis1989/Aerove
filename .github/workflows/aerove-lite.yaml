@@ -159,7 +159,7 @@ jobs:
               text = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "<MAC redacted>", text)
               text = re.sub(r"\bemulator-[0-9]+\b", "<device serial redacted>", text)
               text = re.sub(r"(?i)(serial(?:number)?\s*[:=]\s*)[^\s,;]+", r"\1<redacted>", text)
-              return text[:360]
+              return text
 
           run = gh_json(f"repos/{repo}/actions/runs/{run_id}")
           require(run.get("id") == run_id and run.get("run_attempt") == attempt
@@ -213,8 +213,9 @@ jobs:
           preview_name = "AEROVE-Lite-Flutter-UI-preview-attempt-1"
           preview_rows = [item for item in artifact_rows if item.get("name") == preview_name]
           require(len(preview_rows) == 1, "Expected one preview UI artifact row")
-          preview = artifact_row(artifact_rows, preview_rows[0].get("id"), preview_name,
-                                 preview_rows[0].get("size_in_bytes"))
+          require(preview_rows[0].get("id") == 13436893896, "Fixed original preview artifact ID differs")
+          preview = artifact_row(artifact_rows, 13436893896, preview_name, 63540,
+                                 "6505f200c37f7235541c1a7c4071688a0370dd7e9049748b316d9e2a2db6c537")
 
           arm_zip, arm_archive, arm_infos = safe_archive(arm, "arm64-producer")
           arm_files = {item.filename: item for item in arm_infos if not item.is_dir()}
@@ -246,108 +247,88 @@ jobs:
           preview_zip, preview_archive, preview_infos = safe_archive(preview, "flutter-preview")
           evidence = []
           pngs = []
-          meow = []
           receipts = []
           install_markers = []
           launch_markers = []
           emulator_exit_markers = []
           runner_markers = []
-          scan_pattern = re.compile(
-              r"(?i)(owned emulator|emulator exited|fatal signal|fatal exception|uncaught exception|"
-              r"instrumentation_status_code|instrumentation_code|test failed|runner.*(?:fail|crash|exception)|"
-              r"install.*dev\.aerove\.lite|displayed dev\.aerove\.lite|activitytaskmanager.*dev\.aerove\.lite|"
-              r"exception|stacktrace|process completed with exit code|flutter.*(?:error|exception|crash)|"
-              r"meowflutter|meow.*flutter|flutter.*meow|INSTALL(?:ING|_FAILED)?|performing streamed install)"
-          )
-          install_pattern = re.compile(r"(?i)(install(?:ing|ed)?[^\n]*dev\.aerove\.lite|"
-                                       r"performing streamed install|success[^\n]*dev\.aerove\.lite)")
-          launch_pattern = re.compile(r"(?i)(activitytaskmanager[^\n]*(?:start|displayed)[^\n]*dev\.aerove\.lite|"
-                                      r"displayed dev\.aerove\.lite|flutter engine.*dev\.aerove\.lite)")
-          emulator_pattern = re.compile(r"(?i)(owned emulator exited|emulator.*(?:exit|crash|fatal|stderr)|"
-                                        r"qemu.*(?:exit|crash|fatal)|fatal signal)")
-          runner_pattern = re.compile(r"(?i)(instrumentation_status_code|instrumentation_code|"
-                                      r"test failed|runner.*(?:fail|crash|exception)|flutterproductionuitest)")
-          meow_pattern = re.compile(r"(?i)(meowflutter|meow.{0,20}flutter|flutter.{0,20}meow)")
+          meow = []
+          screenshot_found = False
+
+          def sanitized(value):
+              if isinstance(value, dict):
+                  return {key: ("<redacted>" if re.search(r"(?i)(password|passwd|secret|api[_-]?key|authorization|token|serial)", key)
+                                else sanitized(child)) for key, child in value.items()}
+              if isinstance(value, list):
+                  return [sanitized(child) for child in value]
+              return redacted(value) if isinstance(value, str) else value
 
           for label, archive, infos in (("flutter-full", full_archive, full_infos),
                                         ("flutter-preview", preview_archive, preview_infos)):
               for item in infos:
                   if item.is_dir():
                       continue
-                  lower = item.filename.lower()
-                  if lower.endswith(".png"):
+                  name = item.filename
+                  lower = name.lower()
+                  if label == "flutter-full" and name == "consentNavigationTheme12/failure.png":
                       raw = archive.read(item)
-                      pngs.append({"artifact": label, "path": item.filename, "bytes": len(raw),
-                                   "sha256": sha_bytes(raw)})
+                      require(len(raw) == 14964 and sha_bytes(raw) == "d2d5d3c070d270fac37b01e132d61676d58a2b012a156246e8d95ade7082fbef",
+                              "Original failure screenshot identity mismatch")
+                      (root / "failure.png").write_bytes(raw)
+                      screenshot_found = True
+                      pngs.append({"artifact": label, "path": name, "bytes": len(raw), "sha256": sha_bytes(raw)})
                       continue
-                  if not lower.endswith((".log", ".txt", ".out", ".json", ".xml")) or item.file_size > 24 * 1024 * 1024:
+                  is_full_log = label == "flutter-full" and name == "final-logcat.out"
+                  is_runner = label == "flutter-full" and name == "consentNavigationTheme12.out"
+                  is_preview_stdout = label == "flutter-preview" and lower.endswith("emulator.stdout.log")
+                  is_preview_stderr = label == "flutter-preview" and (lower.endswith((".stderr", ".err", ".stderr.log", ".stderr.txt")))
+                  is_preview_json = label == "flutter-preview" and lower.endswith(("bootstrap.json", "emulator-owner.json"))
+                  if not any((is_full_log, is_runner, is_preview_stdout, is_preview_stderr, is_preview_json)):
                       continue
+                  require(item.file_size <= (24 * 1024 * 1024 if is_full_log else 2 * 1024 * 1024),
+                          "Focused source file exceeds its bounded readback limit: " + name)
                   raw = archive.read(item)
-                  file_hash = sha_bytes(raw)
                   text = raw.decode("utf-8", errors="replace")
-                  if lower.endswith(".json"):
-                      try:
-                          payload = json.loads(text)
-                      except json.JSONDecodeError:
-                          payload = None
-                      allowed = {"phase", "status", "executionPassed", "applicationId", "productionVersionCode",
-                                 "productionVersionName", "versionCode", "versionName", "source", "tree", "runner",
-                                 "method", "apkSha256", "appApkSha256", "failureType", "exitCode", "processExitCode",
-                                 "error", "failure", "cancelled", "started", "completed", "instrumentationCode"}
-                      facts = {}
-                      def collect_facts(value):
-                          if isinstance(value, dict):
-                              for key, child in value.items():
-                                  if key in allowed and isinstance(child, (str, int, float, bool, type(None))):
-                                      facts[key] = redacted(str(child))
-                                  elif isinstance(child, (dict, list)):
-                                      collect_facts(child)
-                          elif isinstance(value, list):
-                              for child in value:
-                                  collect_facts(child)
-                      if payload is not None:
-                          collect_facts(payload)
-                      if facts:
-                          receipts.append({"artifact": label, "path": item.filename, "bytes": item.file_size,
-                                           "sha256": file_hash, "facts": facts})
+                  entry = {"artifact": label, "path": name, "bytes": len(raw), "sha256": sha_bytes(raw)}
+                  if is_preview_json:
+                      entry["sanitizedPayload"] = sanitized(json.loads(text))
+                      receipts.append(entry)
                       continue
                   lines = text.splitlines()
-                  matching = [index for index, line in enumerate(lines) if scan_pattern.search(line)]
-                  for index, line in enumerate(lines):
-                      if install_pattern.search(line):
-                          install_markers.append({"artifact": label, "path": item.filename, "line": index + 1})
-                      if launch_pattern.search(line):
-                          launch_markers.append({"artifact": label, "path": item.filename, "line": index + 1})
-                      if emulator_pattern.search(line):
-                          emulator_exit_markers.append({"artifact": label, "path": item.filename, "line": index + 1,
-                                                        "excerpt": redacted(line)})
-                      if runner_pattern.search(line):
-                          runner_markers.append({"artifact": label, "path": item.filename, "line": index + 1,
-                                                 "excerpt": redacted(line)})
-                      if meow_pattern.search(line):
-                          meow.append({"artifact": label, "path": item.filename, "line": index + 1,
-                                       "excerpt": redacted(line)})
-                  if not matching:
-                      continue
                   selected = set()
-                  for index in matching:
-                      for position in range(max(0, index - 2), min(len(lines), index + 3)):
-                          selected.add(position)
-                  excerpt = [{"line": index + 1, "text": redacted(lines[index])}
-                             for index in sorted(selected) if not re.search(r"(?i)(password|secret|api[_-]?key|authorization)", lines[index])]
+                  if is_full_log:
+                      require(len(lines) >= 3950, "Original full log is shorter than the fixed crash window")
+                      selected.update(range(3499, 3950))
+                      timestamp = re.compile(r"^11-05 17:25:(?:[012][0-9]|30)\.")
+                      relevant = re.compile(r"(?i)(surfaceflinger|screenshot|capture|graphic|vulkan|gfxstream|angle|flutter|meow|dev\.aerove|AndroidRuntime|DEBUG|libc|ActivityTaskManager|WindowManager|BufferQueue|RenderEngine|HWUI|(?:^|\s)[EF]\s)")
+                      centers = [i for i, line in enumerate(lines) if timestamp.search(line) and relevant.search(line)]
+                      for i in centers:
+                          selected.update(range(max(0, i - 20), min(len(lines), i + 21)))
+                      entry["selection"] = {"fixedCrashLines": [3500, 3950], "timedWindow": "11-05 17:25:00–17:25:30", "contextLines": 20, "timedMatchCount": len(centers)}
+                  elif is_preview_stdout:
+                      selected.update(range(max(0, len(lines) - 100), len(lines)))
+                  else:
+                      selected.update(range(len(lines)))
                   positions = sorted(selected)
                   ranges = []
-                  for position in positions:
-                      if not ranges or position > ranges[-1][1] + 1:
-                          ranges.append([position + 1, position + 1])
+                  for index in positions:
+                      if not ranges or index + 1 > ranges[-1][1] + 1:
+                          ranges.append([index + 1, index + 1])
                       else:
-                          ranges[-1][1] = position + 1
-                  evidence.append({"artifact": label, "path": item.filename, "bytes": item.file_size,
-                                   "sha256": file_hash, "selectedLineRanges": ranges,
-                                   "excerpt": excerpt[:80]})
-
-          require(sum(len(json.dumps(row)) for row in evidence) < 140_000,
-                  "Selected evidence exceeds the bounded report size")
+                          ranges[-1][1] = index + 1
+                  entry["selectedLineRanges"] = ranges
+                  entry["excerpt"] = [{"line": i + 1, "text": redacted(lines[i])} for i in positions
+                                      if not re.search(r"(?i)(password|secret|api[_-]?key|authorization)", lines[i])]
+                  entry["suppressedSensitiveLineCount"] = len(positions) - len(entry["excerpt"])
+                  entry["totalLines"] = len(lines)
+                  evidence.append(entry)
+          require(screenshot_found, "Original failure screenshot not found")
+          require(any(row["path"] == "final-logcat.out" for row in evidence), "Focused full log missing")
+          require(any(row["path"].lower().endswith("emulator.stdout.log") for row in evidence), "Preview stdout missing")
+          require(any(row["path"].lower().endswith("bootstrap.json") for row in receipts)
+                  and any(row["path"].lower().endswith("emulator-owner.json") for row in receipts), "Preview owner/bootstrap JSON missing")
+          require(sum(len(json.dumps(row)) for row in evidence + receipts) < 3 * 1024 * 1024,
+                  "Focused evidence exceeds 3 MiB; no silent truncation allowed")
           report = {
               "role": "evidenceReadback", "accepted": False, "compiled": False,
               "appApkBuilt": False, "fullCiAccepted": False,
@@ -379,7 +360,7 @@ jobs:
           full_archive.close()
           preview_archive.close()
           report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-          require(report_path.stat().st_size <= 200_000, "Evidence report exceeds 200 KiB")
+          require(report_path.stat().st_size <= 4 * 1024 * 1024, "Focused report exceeds 4 MiB")
           print(f"Evidence readback report prepared ({report_path.stat().st_size} bytes); acceptance remains false.")
           PY
 
@@ -387,6 +368,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Lite265-evidence-readback-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/lite265-readback/report.json
+          path: |
+            ${{ runner.temp }}/lite265-readback/report.json
+            ${{ runner.temp }}/lite265-readback/failure.png
           if-no-files-found: error
           compression-level: 6
