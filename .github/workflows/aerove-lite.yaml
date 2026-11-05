@@ -1993,7 +1993,7 @@ jobs:
         persist-credentials: false
     - name: Validate fixed original265 tools on canonical Linux checkout
       working-directory: apps/aerove-lite/tool
-      run: python3 -B -m unittest test_lite265_recheck test_emulator_current test_ci_artifacts test_prebuilt_android_runtime
+      run: env -u AEROVE_LITE265_RECHECK -u AEROVE_GUEST_ANGLE -u AEROVE_CLEAR_FRAME_TRACE -u AEROVE_GLASS_CONSUMER_RECEIPT -u ANDROID_SERIAL python3 -B -m unittest test_lite265_recheck test_emulator_current test_ci_artifacts test_prebuilt_android_runtime
     - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
       with:
         distribution: temurin
