@@ -317,6 +317,17 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     }
 
     private JSONObject originalIdentity() throws Exception {
+        if ("34".equals(argument("originalAppVersionCode"))) {
+            String original257 = "c58aed2e2cddc15b5e8a1953bac88bef3b60feddbbd1621e822a230bc28e9a64";
+            check(original257.equals(argument("originalAppApkSha256")), "Unexpected original257 APK argument");
+            check(ORIGINAL_SIGNER.equals(argument("originalAppSignerSha256")), "Unexpected original257 signer argument");
+            JSONObject identity = installedIdentity(TARGET, original257, ORIGINAL_SIGNER, 34L);
+            check("0.2.0-beta.1".equals(identity.getString("versionName")), "Unexpected original257 versionName");
+            return identity.put("source", "baea420b1ec6e42ecdd3f9e2610c3dc2346b326c")
+                    .put("tree", "6b15d9ae6b20d85f324bff38855523f5a26d0375")
+                    .put("buildRun", "41958443583").put("buildAttempt", "1")
+                    .put("provenance", "fixed original identity; host must retain actual archive/API binding");
+        }
         check(ORIGINAL_APK.equals(argument("originalAppApkSha256")), "Unexpected original APK argument");
         check(ORIGINAL_SIGNER.equals(argument("originalAppSignerSha256")), "Unexpected original signer argument");
         check("28".equals(argument("originalAppVersionCode")), "Unexpected original versionCode argument");
