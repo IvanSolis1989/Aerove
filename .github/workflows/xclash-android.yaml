@@ -1,5 +1,5 @@
-name: Original recheck failure evidence inspection only (no build)
-run-name: Original recheck failure evidence inspection only (no build)
+name: Lite265 R8 mapping evidence inspection only
+run-name: Lite265 R8 mapping evidence inspection only
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: lite270-failure-inspector-${{ github.ref }}
+  group: lite265-r8-mapping-inspector-${{ github.ref }}
   cancel-in-progress: false
 
 defaults:
@@ -16,8 +16,8 @@ defaults:
     shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 
 jobs:
-  inspect_original_failure:
-    name: Original recheck failure evidence inspection only (no build)
+  inspect_original_runtime_mapping:
+    name: Lite265 original R8 mapping evidence only (no build)
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'IvanSolis1989/Aerove' &&
@@ -25,22 +25,24 @@ jobs:
       github.actor == 'IvanSolis1989' &&
       github.ref == 'refs/heads/codex/lite270-failure-inspector'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: read
       actions: read
     env:
       GH_TOKEN: ${{ github.token }}
-      ORIGINAL_RUN: '42096334521'
+      ORIGINAL_RUN: '42066278567'
       ORIGINAL_ATTEMPT: '1'
-      ORIGINAL_SOURCE: 'd1e6104bdab332f59a8fdb54b9a1a84ff61c909e'
-      ORIGINAL_BRANCH: 'codex/lite265-original-recheck'
-      ORIGINAL_ARTIFACT_ID: '13448197284'
-      ORIGINAL_ARTIFACT_NAME: 'Lite265-recheck-flutter-ui-attempt-1'
-      ORIGINAL_ARTIFACT_BYTES: '29540460'
-      ORIGINAL_ARTIFACT_SHA256: 'de3b6bd2897904fb5ce2655afd34874adf8f43dfeef16b80f4b6589a36da21d1'
+      ORIGINAL_SOURCE: '4190ff45f8eedc6734fa666e2658b71abf147479'
+      ORIGINAL_TREE: '8ca6fb6bc19867e9302923ba9bea8d289972a8b6'
+      ORIGINAL_BRANCH: 'codex/lite-shared-flutter-complete114'
+      RUNTIME_ARTIFACT_ID: '13436773990'
+      RUNTIME_ARTIFACT_NAME: 'AEROVE-Lite-runtime-contract-attempt-1'
+      RUNTIME_ARTIFACT_BYTES: '59451889'
+      RUNTIME_ARTIFACT_SHA256: '49e50eb6317d8993bd6137956c88c9167ea8012653040fb182d8825a8ef79a9c'
+      SOURCE_MANIFEST_SHA256: '7d868f81e8ec430a6be1a74bd79a164adea270c0aa1b94f6e4816f0f5bf24f0f'
     steps:
-      - name: Verify original failed Lite271 run and read artifact in memory
+      - name: Verify immutable Lite265 runtime artifact and print bounded R8 mapping evidence
         run: |
           python3 - <<'PY'
           import hashlib
@@ -55,402 +57,246 @@ jobs:
           run_id = int(os.environ["ORIGINAL_RUN"])
           attempt = int(os.environ["ORIGINAL_ATTEMPT"])
           source = os.environ["ORIGINAL_SOURCE"]
+          tree = os.environ["ORIGINAL_TREE"]
+          artifact_id = int(os.environ["RUNTIME_ARTIFACT_ID"])
           expected_artifact = {
-              "id": int(os.environ["ORIGINAL_ARTIFACT_ID"]),
-              "name": os.environ["ORIGINAL_ARTIFACT_NAME"],
-              "size_in_bytes": int(os.environ["ORIGINAL_ARTIFACT_BYTES"]),
-              "digest": "sha256:" + os.environ["ORIGINAL_ARTIFACT_SHA256"],
+              "id": artifact_id,
+              "name": os.environ["RUNTIME_ARTIFACT_NAME"],
+              "size_in_bytes": int(os.environ["RUNTIME_ARTIFACT_BYTES"]),
+              "digest": "sha256:" + os.environ["RUNTIME_ARTIFACT_SHA256"],
           }
-          temp = Path(os.environ["RUNNER_TEMP"])
-          archive_path = temp / "lite271-failure-artifact.zip"
+          archive_path = Path(os.environ["RUNNER_TEMP"]) / "lite265-runtime-contract.zip"
 
           def require(condition, message):
               if not condition:
                   raise SystemExit(message)
 
-          def gh_json(route):
-              result = subprocess.run(["gh", "api", route], check=True,
-                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                      text=True, timeout=45)
-              return json.loads(result.stdout)
+          def api(route):
+              try:
+                  result = subprocess.run(["gh", "api", route], stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, timeout=90, check=False)
+              except subprocess.TimeoutExpired:
+                  raise SystemExit("GitHub API metadata request timed out") from None
+              require(result.returncode == 0, "GitHub API metadata request failed")
+              try:
+                  return json.loads(result.stdout)
+              except json.JSONDecodeError:
+                  raise SystemExit("GitHub API metadata was not valid JSON") from None
+
+          def sha(data):
+              return hashlib.sha256(data).hexdigest()
 
           def redact(text):
-              text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(text))
-              token = os.environ.get("GH_TOKEN", "")
-              if token:
-                  text = text.replace(token, "<token redacted>")
-              text = re.sub(r"(?i)\b[a-z][a-z0-9+.-]*://[^\s\"'<>]+", "<URL redacted>", text)
-              text = re.sub(r"(?i)(?:\b(?:bearer|basic)\s+[A-Za-z0-9+/=._-]+)", "<auth redacted>", text)
-              text = re.sub(r"(?i)([\"']?(?:serialno|adb\.pubkey|serial(?:number)?|deviceSerial|authorization|token|password|passwd|secret|api[_-]?key)[\"']?\s*[:=]\s*)[^\n]+", r"\1<redacted>", text)
-              text = re.sub(r"(?i)(?<!\S)(?:-s|--serial|--serialno)[ =]+[^\s]+", "<serial argument redacted>", text)
-              text = re.sub(r"\bemulator-[0-9]+\b", "<device serial redacted>", text)
-              text = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "<MAC redacted>", text)
+              text = re.sub(r"https?://[^\s\"']+", "<URL redacted>", text)
+              text = re.sub(r"(?i)\b(bearer|token|authorization|password|passwd|secret|api[_-]?key)\s*[:=]\s*[^\s,;]+",
+                            r"\1=<redacted>", text)
               text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "<IP redacted>", text)
-              text = re.sub(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){3,}[0-9A-Fa-f]{0,4}(?![\w:])|(?<![\w:])::[0-9A-Fa-f]{0,4}(?![\w:])|(?<![\w:])[0-9A-Fa-f]{0,4}::(?![\w:])", "<IPv6 redacted>", text)
-              return text
+              text = re.sub(r"(?<![\w:])(?:[0-9A-Fa-f]{0,4}:){3,}[0-9A-Fa-f]{0,4}(?![\w:])|"
+                            r"(?<![\w:])::[0-9A-Fa-f]{0,4}(?![\w:])|(?<![\w:])[0-9A-Fa-f]{0,4}::(?![\w:])",
+                            "<IPv6 redacted>", text)
+              text = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "<MAC redacted>", text)
+              text = re.sub(r"\bemulator-[0-9]+\b", "<device serial redacted>", text)
+              text = re.sub(r"(?i)(serial(?:number)?\s*[:=]\s*)[^\s,;]+", r"\1<redacted>", text)
+              return text[:2000]
 
-          run = gh_json(f"repos/{repo}/actions/runs/{run_id}")
+          run = api(f"repos/{repo}/actions/runs/{run_id}")
           require(run.get("id") == run_id and run.get("run_attempt") == attempt
-                  and run.get("head_sha") == source and run.get("head_branch") == os.environ["ORIGINAL_BRANCH"]
+                  and run.get("run_number") == 265 and run.get("head_sha") == source
+                  and run.get("head_branch") == os.environ["ORIGINAL_BRANCH"]
+                  and run.get("path") == ".github/workflows/aerove-lite.yaml"
                   and run.get("status") == "completed" and run.get("conclusion") == "failure"
                   and run.get("repository", {}).get("full_name") == repo,
-                  "Original Lite271 run identity/conclusion mismatch")
-          jobs = gh_json(f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
-          require(jobs.get("total_count") == len(jobs.get("jobs", [])), "Incomplete original job inventory")
-          failures = [job for job in jobs["jobs"] if job.get("id") == 127487286861]
-          require(len(failures) == 1 and failures[0].get("run_id") == run_id
-                  and failures[0].get("run_attempt") == attempt and failures[0].get("head_sha") == source
-                  and failures[0].get("status") == "completed" and failures[0].get("conclusion") == "failure",
-                  "Original271 precheck job identity/terminal mismatch")
-          listing = gh_json(f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100")
+                  "Original Lite265 producer run identity/conclusion mismatch")
+
+          jobs_payload = api(f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+          jobs = jobs_payload.get("jobs")
+          require(isinstance(jobs, list) and jobs_payload.get("total_count") == len(jobs),
+                  "Original producer job API listing is incomplete")
+          producer_jobs = {
+              127401476340: "build (arm64-v8a) / package",
+              127401036780: "build (x86_64) / package",
+              127396763516: "build (arm64-v8a) / rust",
+              127396763933: "build (arm64-v8a) / helper",
+              127396763976: "build (x86_64) / rust",
+              127396763696: "build (x86_64) / helper",
+          }
+          by_job_id = {job.get("id"): job for job in jobs}
+          producer_summary = []
+          for job_id, name in producer_jobs.items():
+              job = by_job_id.get(job_id)
+              require(job is not None and job.get("name") == name and job.get("run_id") == run_id
+                      and job.get("run_attempt") == attempt and job.get("head_sha") == source
+                      and job.get("status") == "completed" and job.get("conclusion") == "success",
+                      f"Original producer job mismatch: {job_id}")
+              producer_summary.append({"jobId": job_id, "name": name, "conclusion": "success"})
+
+          listing = api(f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100")
           rows = listing.get("artifacts")
           require(isinstance(rows, list) and listing.get("total_count") == len(rows),
-                  "Original artifact listing is incomplete")
-          matches = [row for row in rows if row.get("id") == expected_artifact["id"]]
-          require(len(matches) == 1, "Expected exactly one fixed Lite265 original failure artifact")
+                  "Runtime artifact API listing is incomplete")
+          matches = [row for row in rows if row.get("id") == artifact_id]
+          require(len(matches) == 1, "Expected exactly one pinned runtime-contract artifact")
           row = matches[0]
           for key, value in expected_artifact.items():
-              require(row.get(key) == value, f"Original artifact {key} mismatch")
+              require(row.get(key) == value, f"Runtime artifact {key} mismatch")
           require(row.get("expired") is False and row.get("workflow_run", {}).get("id") == run_id
                   and row.get("workflow_run", {}).get("head_sha") == source,
-                  "Original artifact run/source/expiry binding mismatch")
-          detail = gh_json(f"repos/{repo}/actions/artifacts/{row['id']}")
+                  "Runtime artifact source/expiry binding mismatch")
+          detail = api(f"repos/{repo}/actions/artifacts/{artifact_id}")
           for key, value in expected_artifact.items():
-              require(detail.get(key) == value, f"Artifact detail {key} mismatch")
+              require(detail.get(key) == value, f"Runtime artifact detail {key} mismatch")
 
           try:
               with archive_path.open("wb") as output:
                   result = subprocess.run(
-                      ["gh", "api", f"repos/{repo}/actions/artifacts/{row['id']}/zip"],
-                      stdout=output, stderr=subprocess.PIPE, check=True, timeout=120)
-          except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                      ["gh", "api", f"repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+                      stdout=output, stderr=subprocess.PIPE, timeout=300, check=False)
+          except subprocess.TimeoutExpired:
               archive_path.unlink(missing_ok=True)
-              raw = getattr(error, "stderr", b"") or b""
-              message = raw.decode(errors="replace") if isinstance(raw, bytes) else raw
-              message = redact(message)
-              raise SystemExit(f"Original failure artifact transport failed: {message[:1000]}") from None
-          digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-          require(archive_path.stat().st_size == expected_artifact["size_in_bytes"]
-                  and digest == os.environ["ORIGINAL_ARTIFACT_SHA256"],
-                  "Original artifact ZIP size/SHA-256 mismatch")
+              raise SystemExit("Pinned runtime artifact transport timed out") from None
+          if result.returncode:
+              archive_path.unlink(missing_ok=True)
+              raise SystemExit(f"Pinned runtime artifact transport failed (exit {result.returncode})")
+          archive_bytes = archive_path.read_bytes()
+          archive_sha = sha(archive_bytes)
+          require(len(archive_bytes) == expected_artifact["size_in_bytes"]
+                  and archive_sha == os.environ["RUNTIME_ARTIFACT_SHA256"],
+                  "Pinned runtime artifact ZIP size/SHA-256 mismatch")
 
           with zipfile.ZipFile(archive_path) as archive:
               infos = archive.infolist()
               names = [item.filename for item in infos]
-              require(names and len(names) == len(set(names)), "Empty or duplicate archive paths")
+              require(names and len(names) == len(set(names)), "Empty or duplicate runtime archive paths")
               require(sum(item.file_size for item in infos) <= 512 * 1024 * 1024,
-                      "Artifact uncompressed content exceeds 512 MiB inspection bound")
+                      "Runtime artifact exceeds the 512 MiB uncompressed inspection bound")
               for item in infos:
                   posix = PurePosixPath(item.filename)
                   windows = PureWindowsPath(item.filename)
                   mode = item.external_attr >> 16
                   require(not posix.is_absolute() and not windows.is_absolute() and not windows.drive
                           and ".." not in posix.parts and "\\" not in item.filename and posix.parts,
-                          "Unsafe artifact path")
+                          "Unsafe runtime artifact path")
                   file_type = mode & 0o170000
                   require(file_type != 0o120000 and (not mode or file_type in (0o100000, 0o040000)),
-                          "Artifact contains a non-regular entry")
-              require(not any(PurePosixPath(item.filename).suffix.casefold() == ".apk" for item in infos),
-                      "Unexpected APK entry in failure evidence artifact; refusing to read APK bytes")
-              require(archive.testzip() is None, "Original artifact ZIP CRC failure")
+                          "Runtime artifact contains a non-regular entry")
+              require(archive.testzip() is None, "Runtime artifact ZIP CRC failure")
               files = {item.filename: item for item in infos if not item.is_dir()}
-              by_basename = {}
-              for name, info in files.items():
-                  by_basename.setdefault(PurePosixPath(name).name.casefold(), []).append((name, info))
+              manifest_info = files.get("source-manifest.json")
+              sums_info = files.get("SHA256SUMS")
+              require(manifest_info is not None and sums_info is not None,
+                      "Runtime artifact lacks its manifest or checksum list")
+              manifest_bytes = archive.read(manifest_info)
+              require(sha(manifest_bytes) == os.environ["SOURCE_MANIFEST_SHA256"],
+                      "Runtime source-manifest SHA-256 mismatch")
+              source_manifest = json.loads(manifest_bytes.decode("utf-8", errors="strict"))
+              require(source_manifest.get("sourceRevision") == source
+                      and source_manifest.get("sourceTree") == tree
+                      and str(source_manifest.get("workflowRun")) == str(run_id)
+                      and source_manifest.get("runNumber") == 265
+                      and source_manifest.get("runAttempt") == attempt
+                      and source_manifest.get("abi") == "x86_64"
+                      and source_manifest.get("prebuiltApks") is True
+                      and source_manifest.get("apkInspectorOutcome") == "success",
+                      "Runtime source-manifest source/tree/run/ABI/inspection binding mismatch")
+              source_files = source_manifest.get("files")
+              require(isinstance(source_files, list) and source_files,
+                      "Runtime source-manifest file list is missing")
+              manifest_by_name = {}
+              for item in source_files:
+                  path = item.get("path")
+                  posix = PurePosixPath(str(path))
+                  windows = PureWindowsPath(str(path))
+                  require(isinstance(path, str) and path not in manifest_by_name
+                          and not posix.is_absolute() and not windows.is_absolute() and not windows.drive
+                          and ".." not in posix.parts and "\\" not in path and str(posix) == path
+                          and type(item.get("bytes")) is int and item["bytes"] >= 0
+                          and re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", ""))) is not None,
+                          "Runtime source-manifest file row is invalid")
+                  manifest_by_name[path] = item
+              require(set(files) == set(manifest_by_name) | {"source-manifest.json", "SHA256SUMS"},
+                      "Runtime archive file set differs from its source manifest")
+              for path, item in manifest_by_name.items():
+                  info = files[path]
+                  h = hashlib.sha256()
+                  count = 0
+                  with archive.open(info) as stream:
+                      for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                          h.update(chunk)
+                          count += len(chunk)
+                  require(count == item["bytes"] and h.hexdigest() == item["sha256"],
+                          f"Runtime manifest payload hash/size mismatch: {path}")
+              sums_text = archive.read(sums_info).decode("utf-8", errors="strict")
+              expected_sums = "".join(f"{item['sha256']}  {item['path']}\n" for item in source_files)
+              require(sums_text == expected_sums, "Runtime artifact SHA256SUMS full content mismatch")
 
-              def unique_file(basename, required=False):
-                  found = by_basename.get(basename.casefold(), [])
-                  if required:
-                      require(len(found) == 1, f"Expected one {basename} evidence file")
-                  return found[0] if len(found) == 1 else None
+              mapping_infos = [(path, info) for path, info in files.items()
+                               if PurePosixPath(path).name.casefold().endswith("mapping.txt")]
+              require(mapping_infos, "No R8 mapping files found in the verified runtime manifest")
+              targets = {"n2", "xy3"}
+              found_targets = {name: [] for name in targets}
+              mapping_report = []
+              class_line = re.compile(r"^([^#\s].*?) -> (\S+):$")
+              for path, info in sorted(mapping_infos):
+                  data = archive.read(info)
+                  require(len(data) == manifest_by_name[path]["bytes"]
+                          and sha(data) == manifest_by_name[path]["sha256"],
+                          f"Mapping file differs from source manifest: {path}")
+                  text = data.decode("utf-8", errors="replace")
+                  lines = text.splitlines()
+                  first_class = next((index for index, line in enumerate(lines) if class_line.match(line)), len(lines))
+                  headers = [redact(line) for line in lines[:first_class]
+                             if "compiler" in line.casefold() or "pg_map_id" in line.casefold()]
+                  blocks = []
+                  current = None
+                  for line_number, line in enumerate(lines, start=1):
+                      match = class_line.match(line)
+                      if match:
+                          if current is not None:
+                              blocks.append(current)
+                          obfuscated = match.group(2)
+                          current = ({"obfuscatedClass": obfuscated, "startLine": line_number,
+                                      "lines": [{"line": line_number, "text": redact(line)}]}
+                                     if obfuscated in targets else None)
+                      elif current is not None:
+                          current["lines"].append({"line": line_number, "text": redact(line)})
+                  if current is not None:
+                      blocks.append(current)
+                  target_blocks = [block for block in blocks if block["obfuscatedClass"] in targets]
+                  for block in target_blocks:
+                      block["path"] = path
+                      block["endLine"] = block["lines"][-1]["line"]
+                      found_targets[block["obfuscatedClass"]].append(block)
+                  mapping_report.append({"path": path, "bytes": len(data),
+                                         "sha256": manifest_by_name[path]["sha256"], "headers": headers,
+                                         "targetBlocks": target_blocks})
 
-              def file_record(found):
-                  if found is None:
-                      return None
-                  name, info = found
-                  raw = archive.read(info)
-                  return {"path": redact(name), "bytes": info.file_size,
-                          "sha256": hashlib.sha256(raw).hexdigest(), "raw": raw}
-
-              def selected_fields(doc):
-                  if not isinstance(doc, dict):
-                      return {"topLevelType": type(doc).__name__}
-                  wanted = re.compile(
-                      r"(?i)(error|ready|cleanup|exit|command|guestangle|angle|route|renderer|backend|"
-                      r"api|sdk|status|state|phase|reason|failure|message|owner|process|emulator|"
-                      r"stderr|stdout|started|finished|result|outcome|signal|code|booted|bootcomplete)"
-                  )
-                  def safe(value, depth=0):
-                      if depth > 3:
-                          return "<nested value omitted>"
-                      if isinstance(value, str):
-                          return redact(value)[:800]
-                      if isinstance(value, (int, float, bool)) or value is None:
-                          return value
-                      if isinstance(value, list):
-                          return [safe(item, depth + 1) for item in value[:20]]
-                      if isinstance(value, dict):
-                          result = {}
-                          for key, child in list(value.items())[:40]:
-                              if not re.search(r"(?i)(token|secret|password|credential|config|profile|address|serial|mac)", str(key)) and wanted.search(str(key).replace("_", "")):
-                                  result[str(key)] = safe(child, depth + 1)
-                          return result
-                      return f"<{type(value).__name__}>"
-                  result = {}
-                  for key, value in doc.items():
-                      if not re.search(r"(?i)(token|secret|password|credential|config|profile|address|serial|mac)", str(key)) and wanted.search(str(key).replace("_", "")):
-                          result[str(key)] = safe(value)
-                  return result
-
-              evidence_files = []
-              owner = unique_file("EMULATOR-OWNER.json", required=True)
-              bootstrap = unique_file("BOOTSTRAP.json", required=True)
-              owner_record = file_record(owner)
-              bootstrap_record = file_record(bootstrap)
-              for name, record in (("EMULATOR-OWNER.json", owner_record), ("BOOTSTRAP.json", bootstrap_record)):
-                  raw = record.pop("raw")
-                  try:
-                      doc = json.loads(raw.decode("utf-8", errors="strict"))
-                  except (UnicodeDecodeError, json.JSONDecodeError):
-                      doc = None
-                  record["topLevel"] = selected_fields(doc) if doc is not None else {"parseError": True}
-                  record["role"] = name
-                  evidence_files.append(record)
-
-              stderr_file = unique_file("emulator.stderr.log", required=True)
-              stderr_record = file_record(stderr_file)
-              stderr_raw = stderr_record.pop("raw")
-              stderr_text = redact(stderr_raw.decode("utf-8", errors="replace"))
-              stdout_candidates = [(name, info) for name, info in files.items()
-                                   if "stdout" in PurePosixPath(name).name.casefold()
-                                   and "emulator" in PurePosixPath(name).name.casefold()]
-              require(len(stdout_candidates) <= 1, "Multiple emulator stdout files are ambiguous")
-              stdout_record = file_record(stdout_candidates[0]) if stdout_candidates else None
-              stdout_tail = None
-              if stdout_record is not None:
-                  stdout_raw = stdout_record.pop("raw")
-                  stdout_lines = stdout_raw.decode("utf-8", errors="replace").splitlines()
-                  stdout_tail = {"path": stdout_record["path"], "bytes": stdout_record["bytes"],
-                                 "sha256": stdout_record["sha256"],
-                                 "last100Lines": [redact(line)[:1000] for line in stdout_lines[-40:]]}
-
-              guest_sources = []
-              def find_guest_logs(value, path):
-                  if isinstance(value, dict):
-                      for key, child in value.items():
-                          next_path = path + "." + str(key)
-                          normalized = str(key).casefold().replace("_", "")
-                          if isinstance(child, str) and ("guestlogcat" in normalized or ("guestlogcat" in next_path.casefold().replace("_", "") and str(key).casefold() in ("stdout", "text", "log"))):
-                              guest_sources.append((next_path, child))
-                          else:
-                              find_guest_logs(child, next_path)
-                  elif isinstance(value, list):
-                      for index, child in enumerate(value[:100]):
-                          find_guest_logs(child, f"{path}[{index}]")
-              # Re-read the already CRC-checked bootstrap member in memory for guest logcat fields.
-              if bootstrap is not None:
-                  bootstrap_text = archive.read(bootstrap[1]).decode("utf-8", errors="replace")
-                  try:
-                      bootstrap_doc = json.loads(bootstrap_text)
-                  except json.JSONDecodeError:
-                      bootstrap_doc = None
-              if bootstrap_doc is not None:
-                  find_guest_logs(bootstrap_doc, "BOOTSTRAP.json")
-              guest_keywords = re.compile(r"(?i)(ANGLE|EGL|SurfaceFlinger|FATAL|SIGABRT|abort|crash|"
-                                          r"OpenGL|Vulkan|GFXSTREAM|SwiftShader|Lavapipe)")
-              guest_windows = []
-              for source_path, log_text in guest_sources:
-                  log_lines = log_text.splitlines()
-                  selected = set()
-                  for index, line in enumerate(log_lines):
-                      if guest_keywords.search(line):
-                          selected.update(range(max(0, index - 10), min(len(log_lines), index + 11)))
-                  positions = sorted(selected)[-120:]
-                  ranges = []
-                  for index in positions:
-                      if not ranges or index + 1 > ranges[-1][1] + 1:
-                          ranges.append([index + 1, index + 1])
-                      else:
-                          ranges[-1][1] = index + 1
-                  guest_windows.append({"source": redact(source_path), "lineRanges": ranges,
-                                        "lines": [{"line": index + 1, "text": redact(log_lines[index])[:1000]}
-                                                  for index in positions]})
-
-              cap_files = [(name, info) for name, info in files.items()
-                           if "cap" in PurePosixPath(name).name.casefold()
-                           and "proof" in PurePosixPath(name).name.casefold()]
-              require(len(cap_files) <= 4, "Too many candidate CAP proof files")
-              cap_proofs = []
-              for name, info in cap_files:
-                  raw = archive.read(info)
-                  try:
-                      doc = json.loads(raw.decode("utf-8", errors="strict"))
-                  except (UnicodeDecodeError, json.JSONDecodeError):
-                      doc = None
-                  cap_proofs.append({"path": redact(name), "bytes": info.file_size, "sha256": hashlib.sha256(raw).hexdigest(),
-                                     "routeFields": selected_fields(doc) if doc is not None else {"parseError": True}})
-
-              def safe_value(value, limit=2048, depth=0):
-                  if depth > 6:
-                      return "<nested value omitted>"
-                  if isinstance(value, str):
-                      return redact(value).encode("utf-8")[:limit].decode("utf-8", errors="ignore")
-                  if isinstance(value, list):
-                      return [safe_value(child, limit, depth + 1) for child in value[-20:]]
-                  if isinstance(value, dict):
-                      return {str(key): ("<redacted>" if re.search(
-                          r"(?i)(serial|adb\.pubkey|authorization|password|passwd|secret|credential|token|ipaddress|macaddress)", str(key))
-                          else safe_value(child, limit, depth + 1)) for key, child in list(value.items())[:80]}
-                  return value
-
-              def optional_record(found):
-                  return file_record(found) if found is not None else {"missing": True}
-
-              def text_tail(basename, count):
-                  record = optional_record(unique_file(basename))
-                  if "raw" in record:
-                      lines = record.pop("raw").decode("utf-8", errors="replace").splitlines()
-                      record.update(totalLines=len(lines), lastLines=[redact(line)[:700] for line in lines[-count:]])
-                  return record
-
-              acceptance_record = optional_record(unique_file("android-acceptance.json"))
-              if "raw" in acceptance_record:
-                  acceptance_doc = json.loads(acceptance_record.pop("raw").decode("utf-8"))
-                  acceptance_record["details"] = safe_value({key: acceptance_doc.get(key) for key in (
-                      "error", "status", "phase", "cleanupStatus", "cleanupErrors", "identity", "executionPassed",
-                      "stage", "matrixImages", "appRenderer", "restartRenderer")}, limit=8192)
-                  commands = acceptance_doc.get("commands", [])
-                  summaries = []
-                  for command in commands[-3:]:
-                      if isinstance(command, dict):
-                          summary = dict(command)
-                          for key in ("command", "args", "argv"):
-                              if isinstance(summary.get(key), list):
-                                  summary[key] = redact(" ".join(map(str, summary[key])))
-                          summaries.append(safe_value(summary, limit=1200))
-                      else:
-                          summaries.append(safe_value(command, limit=1200))
-                  acceptance_record["last3Commands"] = summaries
-                  acceptance_record["commandCount"] = len(commands)
-
-              method_outputs = {}
-              method_receipts = {}
-              for method in ("consentNavigationTheme12", "persistedConsentAfterProcessRestart"):
-                  method_outputs[method] = text_tail(method + ".out", 160)
-                  matches = [(name, info) for name, info in files.items()
-                             if name.endswith("/" + method + "/receipt.json") or name == method + "/receipt.json"]
-                  require(len(matches) <= 1, "Ambiguous method receipt")
-                  record = optional_record(matches[0] if matches else None)
-                  if "raw" in record:
-                      doc = json.loads(record.pop("raw").decode("utf-8"))
-                      record["details"] = safe_value({key: doc.get(key) for key in (
-                          "error", "status", "scenarioPassed", "stage", "step", "steps", "lastSteps",
-                          "failure", "message", "pid", "source", "tree", "apkSha256")}, limit=4096)
-                  method_receipts[method] = record
-
-              final_logcat = optional_record(unique_file("final-logcat.out"))
-              if "raw" in final_logcat:
-                  lines = final_logcat.pop("raw").decode("utf-8", errors="replace").splitlines()
-                  relevant = re.compile(r"(?i)(TestRunner|AndroidRuntime|MeowFlutter|FATAL EXCEPTION|Fatal signal|Unhandled Exception|\[ERROR:flutter/runtime/)")
-                  matches = [index for index, line in enumerate(lines) if relevant.search(line)][-200:]
-                  positions = sorted({near for index in matches for near in range(max(0, index - 3), min(len(lines), index + 4))})
-                  final_logcat.update(totalLines=len(lines), relevantMatches=len(matches),
-                      context=[{"line": index + 1, "text": redact(lines[index])[:400]} for index in positions])
-
-              pngs = []
-              for name, info in files.items():
-                  if PurePosixPath(name).suffix.casefold() == ".png":
-                      pngs.append({"path": redact(name), "bytes": info.file_size,
-                                   "sha256": hashlib.sha256(archive.read(info)).hexdigest()})
-              require(len(pngs) <= 256, "PNG inventory exceeds inspection bound")
+              require(all(found_targets[name] for name in targets),
+                      "One or more requested obfuscated R8 classes are absent from verified mappings")
+              apk_rows = []
+              for path, item in sorted(manifest_by_name.items()):
+                  if PurePosixPath(path).suffix.casefold() == ".apk":
+                      apk_rows.append({"path": path, "bytes": item["bytes"], "sha256": item["sha256"]})
+              x86_app = [item for item in apk_rows if item["path"] == "apks/app-release.apk"]
+              x86_test = [item for item in apk_rows if item["path"] == "apks/app-release-androidTest.apk"]
+              require(len(x86_app) == 1 and x86_app[0]["sha256"] ==
+                      "07b9482e3ba7227c4746b11ea55b6eac7c64fe51a1355276686b791fbb14a1cb"
+                      and len(x86_test) == 1 and x86_test[0]["sha256"] == '8abed1e675d6c0e10b1c530b38f0bf26689ed80f65f759390b6d1d614da03ec7',
+                      "Runtime APK manifest entry hash identity mismatch")
               report = {
                   "role": "evidenceReadback", "accepted": False, "compiled": False,
-                  "originalRun": {"id": run_id, "attempt": attempt, "source": source,
-                                  "branch": run.get("head_branch"), "conclusion": run.get("conclusion"),
-                                  "workflowPath": run.get("path")},
-                  "originalFailedJob": {"id": 127487286861, "conclusion": "failure"},
-                  "artifact": {"id": row["id"], "name": row["name"], "bytes": row["size_in_bytes"],
-                               "sha256": digest, "zipCrcVerified": True,
-                               "uncompressedBytes": sum(item.file_size for item in infos)},
-                  "emulatorOwner": owner_record,
-                  "bootstrap": bootstrap_record,
-                  "androidAcceptance": acceptance_record,
-                  "methodOutputTails": method_outputs, "methodReceipts": method_receipts,
-                  "finalLogcatRelevantContext": final_logcat, "pngInventory": pngs,
-                  "emulatorStderrFull": {**stderr_record, "text": stderr_text[-8192:]},
-                  "emulatorStdoutLast100": stdout_tail,
-                  "bootstrapGuestLogcatRouteWindows": guest_windows,
-                  "capProofRouteFields": cap_proofs,
-                  "totalEvidenceFiles": len(files),
-                  "otherEvidencePaths": [{"path": redact(item.filename), "bytes": item.file_size}
-                                          for item in infos[:512] if not item.is_dir()
-                                          and PurePosixPath(item.filename).name.casefold()
-                                          not in {"emulator-owner.json", "bootstrap.json", "emulator.stderr.log"}
-                                          and item.filename not in {candidate[0] for candidate in stdout_candidates}
-                                          and all(item.filename != candidate[0] for candidate in cap_files)],
+                  "originalRun": {"id": run_id, "attempt": attempt, "runNumber": 265,
+                                  "source": source, "tree": tree, "branch": run.get("head_branch"),
+                                  "conclusion": run.get("conclusion")},
+                  "producerJobs": producer_summary,
+                  "runtimeArtifact": {"id": artifact_id, "name": row["name"],
+                                      "bytes": row["size_in_bytes"], "sha256": archive_sha,
+                                      "uncompressedBytes": sum(item.file_size for item in infos),
+                                      "sourceManifestSha256": sha(manifest_bytes)},
+                  "apkManifestEntries": apk_rows,
+                  "r8Mappings": mapping_report,
               }
-              def fit_section(value, byte_limit):
-                  # Keep all records and hashes; trim the longest prose first.
-                  while len(json.dumps(value, ensure_ascii=False).encode("utf-8")) > byte_limit:
-                      candidates = []
-                      def strings(node):
-                          if isinstance(node, dict):
-                              iterable = node.items()
-                          elif isinstance(node, list):
-                              iterable = enumerate(node)
-                          else:
-                              return
-                          for key, child in iterable:
-                              if isinstance(child, str) and key not in ("error", "path", "source", "branch") and len(child.encode("utf-8")) > 32 and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", child):
-                                  candidates.append((len(child.encode("utf-8")), node, key))
-                              elif isinstance(child, (dict, list)):
-                                  strings(child)
-                      strings(value)
-                      if not candidates:
-                          break
-                      size, parent, key = max(candidates, key=lambda row: row[0])
-                      parent[key] = parent[key].encode("utf-8")[:max(16, size // 2)].decode("utf-8", errors="ignore") + " <truncated>"
-                  return value
-
-              for key, limit in {
-                  "emulatorOwner": 8192, "bootstrap": 8192,
-                  "androidAcceptance": 16384, "methodOutputTails": 36864,
-                  "methodReceipts": 12288, "finalLogcatRelevantContext": 49152,
-                  "emulatorStderrFull": 4096, "emulatorStdoutLast100": 4096,
-                  "bootstrapGuestLogcatRouteWindows": 8192, "capProofRouteFields": 4096,
-                  "otherEvidencePaths": 8192,
-              }.items():
-                  report[key] = fit_section(report[key], limit)
               encoded = json.dumps(report, ensure_ascii=False, separators=(",", ":"))
-              require(len(encoded.encode("utf-8")) < 200 * 1024, "Redacted evidence JSON exceeds 200 KiB")
+              require(len(encoded.encode("utf-8")) < 200 * 1024,
+                      "R8 mapping evidence exceeds the 200 KiB stdout limit")
               print(encoded, flush=True)
-
-              import base64
-              import zlib
-              members = [('production-ui/consentNavigationTheme12/first-consent.png', 7886, '29bc6a61371fddd745e60fb26c87d7787d27704d68aada6fe44830dd7c9a4b59'), ('production-ui/consentNavigationTheme12/matrix-clear-shimmer-living-aurora-light.png', 7881, '459bdbee95dd1990a00b98ee8e3f8692bcdf4dcfdd26b615b63cdbe646e29d48'), ('production-ui/consentNavigationTheme12/optical-app-after-animation-restore.png', 26928, '0e181c6210426841be05283d5fafc093306ed401bf46d7555627549f4531334d'), ('production-ui/consentNavigationTheme12/optical-remove-animations-restored.png', 110427, '461f0341f652488d9ec1af803dd24d50946cc95afd7d9b805328bf0bb167dcf0'), ('production-ui/consentNavigationTheme12/failure.png', 7893, '987e417a280e4c527dab1e03bb7366da9eddb21372a71053f602cfe40bf019ae'), ('production-ui/consentNavigationTheme12/receipt.json', 189873, 'e8c0136612445f2e1271298b6294f0bd128258fc6a9509d482444899447264a9')]
-              members.extend([('production-ui/consentNavigationTheme12/matrix-plain-solid-classic-monochrome-light.png', 7881, '459bdbee95dd1990a00b98ee8e3f8692bcdf4dcfdd26b615b63cdbe646e29d48'), ('production-ui/consentNavigationTheme12/matrix-plain-solid-classic-monochrome-dark.png', 12831, '59abcf78989928ca5a7f6aa98c0b4b535a37d5633a4ab0f8d77c70b27044d15b'), ('production-ui/consentNavigationTheme12/optical-collection-failure.png', 7881, '459bdbee95dd1990a00b98ee8e3f8692bcdf4dcfdd26b615b63cdbe646e29d48'), ('production-ui/consentNavigationTheme12/optical-theme-settings.png', 7881, '459bdbee95dd1990a00b98ee8e3f8692bcdf4dcfdd26b615b63cdbe646e29d48')])
-              for additional_path, expected_size in [('production-ui/consentNavigationTheme12/optical-collection-failure-hierarchy.json', 15846), ('production-ui/consentNavigationTheme12/optical-collection-failure-window-insets.txt', 47950), ('production-ui/consentNavigationTheme12/optical-theme-settings-hierarchy.json', 13708), ('production-ui/consentNavigationTheme12/optical-theme-settings-window-insets.txt', 47950), ('production-ui/consentNavigationTheme12/optical-app-after-animation-restore-hierarchy.json', 15499), ('production-ui/consentNavigationTheme12/settings-3-hierarchy.json', 12346), ('production-ui/consentNavigationTheme12/settings-3-window-insets.txt', 39458), ('production-ui/consentNavigationTheme12/settings-5-hierarchy.json', 12346), ('production-ui/consentNavigationTheme12/settings-5-window-insets.txt', 39352)]:
-                  require(additional_path in files and files[additional_path].file_size == expected_size,
-                          "Missing fixed hierarchy/window diagnostic")
-                  additional_raw = archive.read(files[additional_path])
-                  members.append((additional_path, expected_size, hashlib.sha256(additional_raw).hexdigest()))
-              require(len(members) == len({item[0] for item in members}), "Duplicate diagnostic member")
-              for member_path, byte_count, expected_sha in members:
-                  require(member_path in files, "Missing fixed diagnostic member")
-                  raw_member = archive.read(files[member_path])
-                  require(len(raw_member) == byte_count and hashlib.sha256(raw_member).hexdigest() == expected_sha,
-                          "Diagnostic member bytes/hash changed")
-                  compressed = zlib.compress(raw_member, level=9)
-                  wire = base64.b64encode(compressed).decode("ascii")
-                  chunks = [wire[i:i + 16368] for i in range(0, len(wire), 16368)]
-                  header = dict(role="originalEvidenceByteReadback", accepted=False, compiled=False,
-                                originalRun=run_id, originalSource=source, artifactId=row["id"],
-                                artifactSha256=digest, path=member_path, bytes=byte_count, sha256=expected_sha,
-                                compressedBytes=len(compressed), compressedSha256=hashlib.sha256(compressed).hexdigest(),
-                                lineCount=len(chunks), encoding="zlib+base64")
-                  print("[[LITE271_MEMBER_BEGIN]]", flush=True)
-                  print(json.dumps(header, separators=(",", ":")), flush=True)
-                  for number, chunk in enumerate(chunks, 1):
-                      print(f"{number:04d}/{len(chunks):04d}:{chunk}", flush=True)
-                  print("[[LITE271_MEMBER_END]]", flush=True)
           PY
