@@ -424,4 +424,26 @@ jobs:
               encoded = json.dumps(report, ensure_ascii=False, separators=(",", ":"))
               require(len(encoded.encode("utf-8")) < 200 * 1024, "Redacted evidence JSON exceeds 200 KiB")
               print(encoded, flush=True)
+
+              import base64
+              import zlib
+              members = [('production-ui/consentNavigationTheme12/first-consent.png', 7886, '29bc6a61371fddd745e60fb26c87d7787d27704d68aada6fe44830dd7c9a4b59'), ('production-ui/consentNavigationTheme12/matrix-clear-shimmer-living-aurora-light.png', 7881, '459bdbee95dd1990a00b98ee8e3f8692bcdf4dcfdd26b615b63cdbe646e29d48'), ('production-ui/consentNavigationTheme12/optical-app-after-animation-restore.png', 26928, '0e181c6210426841be05283d5fafc093306ed401bf46d7555627549f4531334d'), ('production-ui/consentNavigationTheme12/optical-remove-animations-restored.png', 110427, '461f0341f652488d9ec1af803dd24d50946cc95afd7d9b805328bf0bb167dcf0'), ('production-ui/consentNavigationTheme12/failure.png', 7893, '987e417a280e4c527dab1e03bb7366da9eddb21372a71053f602cfe40bf019ae'), ('production-ui/consentNavigationTheme12/receipt.json', 189873, 'e8c0136612445f2e1271298b6294f0bd128258fc6a9509d482444899447264a9')]
+              for member_path, byte_count, expected_sha in members:
+                  require(member_path in files, "Missing fixed diagnostic member")
+                  raw_member = archive.read(files[member_path])
+                  require(len(raw_member) == byte_count and hashlib.sha256(raw_member).hexdigest() == expected_sha,
+                          "Diagnostic member bytes/hash changed")
+                  compressed = zlib.compress(raw_member, level=9)
+                  wire = base64.b64encode(compressed).decode("ascii")
+                  chunks = [wire[i:i + 16368] for i in range(0, len(wire), 16368)]
+                  header = dict(role="originalEvidenceByteReadback", accepted=False, compiled=False,
+                                originalRun=run_id, originalSource=source, artifactId=row["id"],
+                                artifactSha256=digest, path=member_path, bytes=byte_count, sha256=expected_sha,
+                                compressedBytes=len(compressed), compressedSha256=hashlib.sha256(compressed).hexdigest(),
+                                lineCount=len(chunks), encoding="zlib+base64")
+                  print("[[LITE271_MEMBER_BEGIN]]", flush=True)
+                  print(json.dumps(header, separators=(",", ":")), flush=True)
+                  for number, chunk in enumerate(chunks, 1):
+                      print(f"{number:04d}/{len(chunks):04d}:{chunk}", flush=True)
+                  print("[[LITE271_MEMBER_END]]", flush=True)
           PY
