@@ -1,903 +1,499 @@
-name: Aerove Android
+name: Standard140 byte transfer only (no build)
+run-name: Standard140 byte transfer only (no build)
 
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'README*.md'
-      - AGENTS.md
-      - CLAUDE.md
-      - CHANGELOG.md
-      - 'docs/**'
-      - 'apps/aerove/snapshots/**'
-      - '.agents/**/*.md'
-      - 'apps/aerove/AGENTS.md'
-      - 'apps/aerove/README.md'
-      - 'apps/aerove/assets_source/images/icon/lite/README.md'
-      - 'apps/aerove/plugins/code_forge/README.md'
-      - 'apps/aerove/plugins/proxy/README.md'
-      - 'apps/aerove/plugins/rust_api/README.md'
-      - 'apps/aerove/plugins/tray/README.md'
-      - 'apps/aerove/plugins/window/README.md'
-      - '.github/workflows/xclash-android.yaml'
-      - 'apps/aerove-lite/**'
-      - '.github/workflows/aerove-lite.yaml'
-      - '.github/workflows/aerove-lite-*.yaml'
-      - '.github/workflows/aerove-meow-preflight.yaml'
-      - '.github/workflows/aerove-standard-x86-qa*.yaml'
-      - '.github/workflows/workspace.yaml'
-      - '.github/workflows/pages.yaml'
-      - '.github/workflows/readme-preview.yaml'
-      - '.github/workflows/readme-sync.yaml'
-      - '.github/workflows/sync-upstream.yaml'
-      - '.github/workflows/telegram-release.yml'
-      - '.github/scripts/telegram-*'
-      - '.github/scripts/ai-issue-*'
-      - '.github/workflows/ai-issue-responder.yml'
-      - '.github/ISSUE_TEMPLATE/**'
-      - '.github/actions/**'
-      - 'experiments/**'
-      - 'website/**'
-      - 'tooling/**'
   workflow_dispatch:
-    inputs:
-      prepare_sources:
-        description: Allow regenerated sources and formatting in the exported patch
-        type: boolean
-        default: false
-      verification_recheck:
-        description: Recheck reviewed test fixes or fixed Std140 dependency integrity; never build or publish an APK
-        type: boolean
-        default: false
-      original_build_run:
-        description: Immutable original APK run to recheck (reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 or Std133 41990578294 or Std136 42023232876 or Std140 42040809724 only)
-        type: string
-        default: ''
-      build_apk:
-        description: Build the Android arm64 APK after verification
-        type: boolean
-        default: true
-      accepted_build_run:
-        description: Explicit fully accepted original build run to promote without rebuilding
-        type: string
-        default: ''
-      publish_release:
-        description: Publish the verified APK to Aerove Releases
-        type: boolean
-        default: false
-
-defaults:
-  run:
-    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-    working-directory: apps/aerove
 
 permissions:
   contents: read
 
-concurrency:
-  group: xclash-android-${{ github.ref }}
-  cancel-in-progress: false
-
-env:
-  FLUTTER_VERSION: '3.47.6'
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 
 jobs:
-  promotion_request:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    env:
-      ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-      PUBLISH_RELEASE: ${{ inputs.publish_release }}
-      BUILD_APK: ${{ inputs.build_apk }}
-      PREPARE_SOURCES: ${{ inputs.prepare_sources }}
-      VERIFICATION_RECHECK: ${{ inputs.verification_recheck }}
-      ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
-      DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
-      MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
-      QA84_ONLY: ${{ inputs.qa84_only }}
-      QA79_ONLY: ${{ inputs.qa79_only }}
-      CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
-      NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
-    steps:
-      - name: Reject ambiguous build and promotion requests before any producer
-        working-directory: ${{ github.workspace }}
-        run: |
-          python3 - <<'PY'
-          import os, re
-          e = os.environ
-          accepted, publish = e.get('ACCEPTED_BUILD_RUN', ''), e.get('PUBLISH_RELEASE') == 'true'
-          if bool(accepted) != publish:
-              raise SystemExit('Publish requires an explicit accepted_build_run; accepted_build_run cannot start a build')
-          if accepted:
-              if not re.fullmatch(r'[1-9][0-9]*', accepted):
-                  raise SystemExit('accepted_build_run must be a positive original run ID')
-              if e['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or e['GITHUB_REF'] != 'refs/heads/main':
-                  raise SystemExit('Promotion requires an explicit main workflow dispatch')
-              flags = ('BUILD_APK', 'PREPARE_SOURCES', 'VERIFICATION_RECHECK', 'MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'NATIVE_PREFLIGHT')
-              if any(e.get(key) == 'true' for key in flags) or e.get('DIAGNOSTIC_TARGET', '') not in ('', 'none') or e.get('ORIGINAL_BUILD_RUN'):
-                  raise SystemExit('Promotion cannot build, recheck, prepare or diagnose')
-          elif e.get('ORIGINAL_BUILD_RUN') and e.get('VERIFICATION_RECHECK') != 'true':
-              raise SystemExit('original_build_run belongs only to verification_recheck')
-          PY
-
-  reuse:
-    needs: promotion_request
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      mode: ${{ steps.sync.outputs.mode }}
-      run_id: ${{ steps.selected.outputs.run_id || steps.origin.outputs.run_id || steps.find.outputs.run_id || steps.rechecked.outputs.run_id }}
-      run_number: ${{ steps.selected.outputs.run_number || steps.origin.outputs.run_number || steps.find.outputs.run_number || steps.rechecked.outputs.run_number }}
-      artifact_id: ${{ steps.selected.outputs.artifact_id || steps.origin.outputs.artifact_id || steps.find.outputs.artifact_id || steps.rechecked.outputs.artifact_id }}
-      generated_artifact_id: ${{ steps.selected.outputs.generated_artifact_id || steps.origin.outputs.generated_artifact_id || steps.find.outputs.generated_artifact_id || steps.rechecked.outputs.generated_artifact_id }}
-      build_source: ${{ steps.selected.outputs.build_source || steps.origin.outputs.build_source || steps.rechecked.outputs.build_source }}
-      recheck_run: ${{ steps.selected.outputs.recheck_run || steps.rechecked.outputs.recheck_run }}
-      test_harness_source: ${{ steps.selected.outputs.test_harness_source || steps.rechecked.outputs.test_harness_source }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Record source sync without selecting, building or publishing an application
-        id: sync
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        run: |
-          echo 'mode=source-sync' >> "$GITHUB_OUTPUT"
-          echo 'Source synchronized. App jobs are skipped; promotion awaits an explicit accepted_build_run dispatch. This run is not application acceptance.' >> "$GITHUB_STEP_SUMMARY"
-      - name: Select the explicit original APK for a verification recheck
-        id: origin
-        if: ${{ inputs.verification_recheck }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BUILD_APK: ${{ inputs.build_apk }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          PREPARE_SOURCES: ${{ inputs.prepare_sources }}
-          ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
-        run: |
-          test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$BUILD_APK" = false && test "$PUBLISH_RELEASE" = false && test "$PREPARE_SOURCES" = false
-          python3 tool/aerove_artifact.py recheck-plan \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --build-run "$ORIGINAL_BUILD_RUN" --output "$GITHUB_OUTPUT"
-      - name: Select the explicit fully accepted original product build
-        id: selected
-        if: ${{ inputs.accepted_build_run }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          BUILD_APK: ${{ inputs.build_apk }}
-          PREPARE_SOURCES: ${{ inputs.prepare_sources }}
-          VERIFICATION_RECHECK: ${{ inputs.verification_recheck }}
-        run: |
-          test "$GITHUB_EVENT_NAME" = workflow_dispatch
-          test "$GITHUB_REF" = refs/heads/main
-          test "$PUBLISH_RELEASE" = true && test "$BUILD_APK" = false
-          test "$PREPARE_SOURCES" = false && test "$VERIFICATION_RECHECK" = false
-          python3 tool/aerove_artifact.py select-build \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
-      - name: Find a successful build of this exact commit
-        id: find
-        if: >-
-          github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
-          !inputs.accepted_build_run && !inputs.verification_recheck && !inputs.prepare_sources && github.event_name == 'workflow_dispatch' && inputs.publish_release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 tool/aerove_artifact.py find \
-            --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
-
-      - name: Find an accepted independent verification recheck
-        id: rechecked
-        if: >-
-          github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/main' &&
-          !inputs.accepted_build_run && !inputs.verification_recheck && !inputs.prepare_sources &&
-          github.event_name == 'workflow_dispatch' && inputs.publish_release && steps.find.outputs.run_id == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 tool/aerove_artifact.py find-rechecked \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --exclude-run "$GITHUB_RUN_ID" --output "$GITHUB_OUTPUT"
-
-      - name: Refuse a publish request without an accepted original artifact
-        if: ${{ inputs.publish_release }}
-        env:
-          SELECTED_RUN: ${{ steps.selected.outputs.run_id || steps.find.outputs.run_id || steps.rechecked.outputs.run_id }}
-        run: |
-          test -n "$SELECTED_RUN" || { echo '::error::No accepted original artifact; publish never rebuilds.'; exit 1; }
-
-  prep:
-    needs: reuse
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (inputs.verification_recheck || needs.reuse.outputs.run_id == '') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    outputs:
-      render_matrix: ${{ steps.matrices.outputs.render_matrix }}
-      regressions_matrix: ${{ steps.matrices.outputs.regressions_matrix }}
-      generated_artifact_id: ${{ steps.generated.outputs.artifact-id }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - name: Check workspace layout
-        working-directory: .
-        run: python3 tooling/workspace.py check
-      - name: Check fork download links
-        env:
-          REPOSITORY: ${{ github.repository }}
-        run: python3 tool/sync_fork_readme.py --root "$GITHUB_WORKSPACE" --repository "$REPOSITORY" --check
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
-      - name: Test repository commit hooks
-        run: bash ../../tooling/hooks/test.sh
-      - name: Test product version, provenance and artifact promotion
-        run: python3 -m unittest tool.test_aerove_version tool.test_xclash_version tool.test_aerove_release_notes tool.test_aerove_artifact tool.test_aerove_workflow tool.test_ci_verify -v
-      - name: Generate and format sources
-        run: |
-          cp pubspec.yaml "$RUNNER_TEMP/xclash-pubspec.yaml"
-          cp ../../packages/aerove_client/pubspec.yaml "$RUNNER_TEMP/xclash-shared-pubspec.yaml"
-          trap 'cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml; cp "$RUNNER_TEMP/xclash-shared-pubspec.yaml" ../../packages/aerove_client/pubspec.yaml' EXIT
-          sed -i 's/build_assets: true/build_assets: false/g' pubspec.yaml ../../packages/aerove_client/pubspec.yaml
-          (cd ../../packages/aerove_client && dart run intl_utils:generate)
-          (cd ../../packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)
-          dart format ../../packages/aerove_client/lib lib test
-          python3 tool/mihomo_source.py prepare
-          (cd core && go mod tidy)
-          gofmt -w core/*.go
-          cp "$RUNNER_TEMP/xclash-pubspec.yaml" pubspec.yaml
-          cp "$RUNNER_TEMP/xclash-shared-pubspec.yaml" ../../packages/aerove_client/pubspec.yaml
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          git -C "$GITHUB_WORKSPACE" diff --cached --binary -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock > "$RUNNER_TEMP/xclash-generated.patch"
-          git -C "$GITHUB_WORKSPACE" write-tree > "$RUNNER_TEMP/xclash-verified-tree.txt"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        id: generated
-        if: always()
-        with:
-          name: xclash-generated
-          path: |
-            ${{ runner.temp }}/xclash-generated.patch
-            ${{ runner.temp }}/xclash-verified-tree.txt
-      - name: Require committed generated sources
-        if: ${{ !inputs.prepare_sources }}
-        run: test "$(cat "$RUNNER_TEMP/xclash-verified-tree.txt")" = "$(git -C "$GITHUB_WORKSPACE" rev-parse 'HEAD^{tree}')"
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-        with:
-          system-fonts: 'false'
-          save-cache: 'true'
-      - name: Export verification matrices
-        id: matrices
-        run: python3 tool/ci_verify.py matrices
-
-  static:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') }}
-    needs: prep
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
-      - name: Verify Core background telemetry
-        working-directory: apps/aerove/core
-        env:
-          CGO_ENABLED: '0'
-        run: |
-          python3 ../tool/mihomo_source.py prepare --root ..
-          go test . -run UiTelemetry -count=2
-          go test .
-      - name: Analyze
-        id: analyze
-        run: |
-          (cd ../../packages/aerove_client && flutter analyze --no-pub --no-fatal-infos)
-          flutter analyze --no-pub --no-fatal-infos
-
-  native:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') }}
-    needs: prep
+  prepare_and_upload:
+    name: Standard140 byte transfer only (no build)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'IvanSolis1989/Aerove' &&
+      github.repository_owner == 'IvanSolis1989' &&
+      github.actor == 'IvanSolis1989' &&
+      github.ref == 'refs/heads/codex/standard140-byte-transfer'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-          targets: x86_64-unknown-linux-gnu
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/aerove/.dart_tool/hooks_runner/rust_api
-            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
-          key: ${{ runner.os }}-aerove-rust-host-v2-1.99.0-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-      - name: Build shared host Rust assets and check update behavior
-        run: python3 tool/ci_verify.py warmup --evidence "$RUNNER_TEMP/update-smoke"
-      - name: Verify producer host Rust output
-        run: python3 tool/ci_verify.py host-assets --record
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: xclash-update-smoke
-          path: ${{ runner.temp }}/update-smoke
-          if-no-files-found: ignore
-
-  render:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.prep.result == 'success') }}
-    name: render (${{ matrix.suite }} ${{ matrix.shard }})
-    needs: prep
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 11
-      matrix: ${{ fromJSON(needs.prep.outputs.render_matrix) }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-      - name: Prepare official Core source for DNS contract tests
-        if: ${{ matrix.suite == 'luminous' }}
-        run: python3 tool/mihomo_source.py prepare
-      - name: Run preserved verification combination
-        run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: xclash-${{ matrix.suite }}-${{ matrix.shard }}
-          path: ${{ runner.temp }}/xclash-previews
-          if-no-files-found: ignore
-
-  regressions:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.prep.result == 'success' && needs.native.result == 'success') }}
-    name: regressions (${{ matrix.suite }} ${{ matrix.shard }})
-    needs: [prep, native]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix: ${{ fromJSON(needs.prep.outputs.regressions_matrix) }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prep.outputs.generated_artifact_id }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - name: Install dependencies
-        run: |
-          flutter pub get
-          (cd ../../packages/aerove_client && flutter pub get)
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-          targets: x86_64-unknown-linux-gnu
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        id: host_rust_cache
-        with:
-          fail-on-cache-miss: true
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/aerove/.dart_tool/hooks_runner/rust_api
-            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
-          key: ${{ runner.os }}-aerove-rust-host-v2-1.99.0-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
-      - name: Require exact producer host Rust cache
-        if: ${{ !cancelled() && steps.host_rust_cache.outcome != 'skipped' }}
-        env:
-          HOST_RUST_CACHE_HIT: ${{ steps.host_rust_cache.outputs.cache-hit }}
-        run: |
-          if test "$HOST_RUST_CACHE_HIT" != true; then
-            echo '::error::Exact host Rust cache unavailable. Rebuild the native producer with a clean host cache, then retry regressions.'
-            exit 1
-          fi
-          python3 tool/ci_verify.py host-assets
-      - uses: ./.github/actions/aerove-test-font
-        timeout-minutes: 10
-      - name: Prepare official Core source for DNS contract tests
-        if: ${{ matrix.suite == 'regression-software' }}
-        run: python3 tool/mihomo_source.py prepare
-      - name: Run preserved verification combination
-        run: python3 tool/ci_verify.py run "${{ matrix.suite }}" --shard "${{ matrix.shard }}" --evidence "$RUNNER_TEMP/xclash-previews"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: xclash-${{ matrix.suite }}-${{ matrix.shard }}
-          path: ${{ runner.temp }}/xclash-previews
-          if-no-files-found: ignore
-
-  verify:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (always() && needs.prep.result != 'skipped') }}
-    needs: [prep, static, render, native, regressions]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      generated_artifact_id: ${{ needs.prep.outputs.generated_artifact_id }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Require every verification job to succeed
-        env:
-          CI_VERIFY_NEEDS: ${{ toJSON(needs) }}
-        run: python3 tool/ci_verify.py gate
-
-  apk:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (!inputs.verification_recheck && (github.event_name == 'push' || inputs.build_apk)) }}
-    needs: prep
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      GRADLE_OPTS: -Dorg.gradle.caching=true
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      artifact_id: ${{ steps.apk_artifact.outputs.artifact-id }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          submodules: recursive
-          fetch-depth: 0
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: xclash-generated
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Apply verified generated sources
-        run: |
-          patch="$RUNNER_TEMP/xclash-generated/xclash-generated.patch"
-          if test -s "$patch"; then git -C "$GITHUB_WORKSPACE" apply "$patch"; fi
-          git -C "$GITHUB_WORKSPACE" add -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-          test "$(git -C "$GITHUB_WORKSPACE" write-tree)" = "$(cat "$RUNNER_TEMP/xclash-generated/xclash-verified-tree.txt")"
-          git -C "$GITHUB_WORKSPACE" restore --staged -- packages/aerove_client/lib packages/aerove_client/pubspec.lock apps/aerove/lib apps/aerove/test ':(glob)apps/aerove/core/*.go' apps/aerove/core/go.mod apps/aerove/core/go.sum apps/aerove/pubspec.lock
-      - uses: ./.github/actions/flutter
-        with:
-          channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-          cache-read-only: true
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - name: Restore persistent Android test signing key
-        env:
-          KEYSTORE_BASE64: ${{ secrets.XCLASH_ANDROID_DEBUG_KEYSTORE }}
-        run: |
-          test -n "$KEYSTORE_BASE64" || { echo '::error::Configure XCLASH_ANDROID_DEBUG_KEYSTORE before building.'; exit 1; }
-          install -d -m 700 "$HOME/.android"
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          chmod 600 "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey
-      - name: Set version for this Android build
-        id: version
-        run: |
-          python3 tool/aerove_version.py release-plan \
-            --repo "$GITHUB_WORKSPACE" \
-            --metadata "$GITHUB_WORKSPACE/apps/aerove/tool/upstream-version.json" \
-            --pubspec "$GITHUB_WORKSPACE/apps/aerove/pubspec.yaml" \
-            --head "$GITHUB_SHA" \
-            --run-number "$GITHUB_RUN_NUMBER" \
-            > "$RUNNER_TEMP/xclash-version.json"
-          plan="$RUNNER_TEMP/xclash-version.json"
-          printf 'name=%s\nnumber=%s\ntag=%s\napp_env=%s\n' \
-            "$(jq -er .name "$plan")" \
-            "$(jq -er .number "$plan")" \
-            "$(jq -er .tag "$plan")" \
-            "$(jq -er .app_env "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_repository=%s\nupstream_source_commit=%s\n' \
-            "$(jq -er .upstream_repository "$plan")" \
-            "$(jq -er .upstream_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_tag=%s\nupstream_tag_commit=%s\nupstream_pubspec_version=%s\n' \
-            "$(jq -er .upstream_tag "$plan")" \
-            "$(jq -er .upstream_tag_commit "$plan")" \
-            "$(jq -er .upstream_pubspec_version "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_pubspec_source_commit=%s\n' \
-            "$(jq -er .upstream_pubspec_source_commit "$plan")" >> "$GITHUB_OUTPUT"
-          printf 'upstream_source_branches=%s\n' \
-            "$(jq -cer .upstream_source_branches "$plan")" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
-        with:
-          go-version: '1.27.1'
-          cache: false
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-aerove-go-v1-1.27.1-${{ hashFiles('apps/aerove/core/go.sum') }}
-      - uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
-        id: ndk
-        with:
-          ndk-version: r28c
-          link-to-sdk: true
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: '1.99.0'
-          targets: aarch64-linux-android
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            apps/aerove/.dart_tool/hooks_runner/rust_api
-            apps/aerove/.dart_tool/hooks_runner/shared/rust_api
-          key: ${{ runner.os }}-aerove-rust-android-v1-1.99.0-r28c-${{ hashFiles('apps/aerove/plugins/rust_api/**', 'apps/aerove/pubspec.lock') }}
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-aerove-gradle-v1-jdk17-r28c-${{ hashFiles('apps/aerove/android/**/*.gradle*', 'apps/aerove/android/gradle/wrapper/gradle-wrapper.properties', 'apps/aerove/pubspec.lock') }}
-          restore-keys: ${{ runner.os }}-aerove-gradle-v1-jdk17-r28c-
-      - name: Build Android arm64
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-          VERSION_NAME: ${{ steps.version.outputs.name }}
-          VERSION_NUMBER: ${{ steps.version.outputs.number }}
-          APP_ENV: ${{ steps.version.outputs.app_env }}
-          UPSTREAM_REPOSITORY: ${{ steps.version.outputs.upstream_repository }}
-          UPSTREAM_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_source_commit }}
-          UPSTREAM_TAG: ${{ steps.version.outputs.upstream_tag }}
-          UPSTREAM_TAG_COMMIT: ${{ steps.version.outputs.upstream_tag_commit }}
-          UPSTREAM_PUBSPEC_VERSION: ${{ steps.version.outputs.upstream_pubspec_version }}
-          UPSTREAM_PUBSPEC_SOURCE_COMMIT: ${{ steps.version.outputs.upstream_pubspec_source_commit }}
-          UPSTREAM_SOURCE_BRANCHES: ${{ steps.version.outputs.upstream_source_branches }}
-        run: |
-          flutter pub get
-          flutter build apk --no-pub --release --target-platform android-arm64 \
-            --build-name "$VERSION_NAME" --build-number "$VERSION_NUMBER" \
-            --dart-define=APP_ENV="$APP_ENV"
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/Aerove-android-arm64.apk
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          "$build_tools/apksigner" verify --print-certs dist/Aerove-android-arm64.apk
-          "$build_tools/aapt" dump badging dist/Aerove-android-arm64.apk > "$RUNNER_TEMP/apk-badging.txt"
-          grep -F "package: name='com.follow.clash.dev' versionCode='$VERSION_NUMBER' versionName='$VERSION_NAME'" "$RUNNER_TEMP/apk-badging.txt"
-          jq -n --arg source "$GITHUB_SHA" --arg version "$VERSION_NAME+$VERSION_NUMBER" \
-            --arg app_env "$APP_ENV" \
-            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            --arg upstream_repository "$UPSTREAM_REPOSITORY" \
-            --arg upstream_source_commit "$UPSTREAM_SOURCE_COMMIT" \
-            --arg upstream_tag "$UPSTREAM_TAG" \
-            --arg upstream_tag_commit "$UPSTREAM_TAG_COMMIT" \
-            --arg upstream_pubspec_version "$UPSTREAM_PUBSPEC_VERSION" \
-            --arg upstream_pubspec_source_commit "$UPSTREAM_PUBSPEC_SOURCE_COMMIT" \
-            --argjson upstream_source_branches "$UPSTREAM_SOURCE_BRANCHES" \
-            '{source: $source, version: $version, appEnv: $app_env, workflow: $run, signing: "persistent Android test key", applicationId: "com.follow.clash.dev", upstream: {repository: $upstream_repository, sourceCommit: $upstream_source_commit, tag: $upstream_tag, tagCommit: $upstream_tag_commit, sourceBranches: $upstream_source_branches, pubspecVersion: $upstream_pubspec_version, pubspecSourceCommit: $upstream_pubspec_source_commit}}' \
-            > dist/BUILD_INFO.json
-          (cd dist && sha256sum Aerove-android-arm64.apk BUILD_INFO.json > SHA256SUMS)
-      - name: Android model and service regressions
-        working-directory: apps/aerove/android
-        env:
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
-        run: |
-          ./gradlew :common:testDebugUnitTest :service:testDebugUnitTest :app:testDebugUnitTest :fl_clash:testDebugUnitTest \
-            -Ptarget-platform=android-arm64 \
-            -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        id: apk_artifact
-        with:
-          name: Aerove-android-arm64
-          path: apps/aerove/dist/
-
-  recheck:
-    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (!cancelled() && inputs.verification_recheck && needs.verify.result == 'success' && needs.reuse.result == 'success') }}
-    needs: [reuse, verify]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
     permissions:
       contents: read
       actions: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.artifact_id }}
-          run-id: ${{ needs.reuse.outputs.run_id }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/original-apk
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.generated_artifact_id }}
-          run-id: ${{ needs.reuse.outputs.run_id }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/original-generated
-      - name: Accept only the unchanged signed original APK after every required combination
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
-        run: |
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          mkdir -p "$RUNNER_TEMP/original-apk-recheck"
-          python3 tool/aerove_artifact.py recheck-receipt \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$GITHUB_SHA" \
-            --build-run "$ORIGINAL_BUILD_RUN" --run-id "$GITHUB_RUN_ID" \
-            --directory "$RUNNER_TEMP/original-apk" --generated-directory "$RUNNER_TEMP/original-generated" \
-            --apksigner "$build_tools/apksigner" --aapt "$build_tools/aapt" \
-            --output "$RUNNER_TEMP/original-apk-recheck/recheck.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: aerove-original-apk-recheck
-          path: ${{ runner.temp }}/original-apk-recheck/recheck.json
-          if-no-files-found: error
-
-  release:
-    if: >-
-      ${{ !cancelled() && github.repository == 'IvanSolis1989/Aerove' &&
-      github.ref == 'refs/heads/main' && needs.promotion_request.result == 'success' &&
-      needs.reuse.result == 'success' && !inputs.prepare_sources && !inputs.verification_recheck &&
-      github.event_name == 'workflow_dispatch' && inputs.publish_release && inputs.accepted_build_run &&
-      needs.reuse.outputs.run_id != '' }}
-    needs: [promotion_request, reuse, verify, apk]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-      actions: read
     env:
-      ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-      RELEASE_SOURCE: ${{ github.sha }}
-      BUILD_SOURCE: ${{ needs.reuse.outputs.build_source || github.sha }}
-      RECHECK_RUN: ${{ needs.reuse.outputs.recheck_run }}
-      TEST_HARNESS_SOURCE: ${{ needs.reuse.outputs.test_harness_source }}
-      BUILD_RUN_ID: ${{ needs.reuse.outputs.run_id || github.run_id }}
-      BUILD_RUN_NUMBER: ${{ needs.reuse.outputs.run_number || github.run_number }}
+      GH_TOKEN: ${{ github.token }}
+      ORIGINAL_RUN: '42040809724'
+      ORIGINAL_ATTEMPT: '1'
+      ORIGINAL_SOURCE: '0b938396afbda83efef427a0b401d0682a404c93'
+      EXPECTED_TREE: 'a5782454e82b65577b639194169ef76e278ef342'
+      ORIGINAL_ARTIFACT_ID: '13423896234'
+      ORIGINAL_ARTIFACT_NAME: 'Aerove-android-arm64'
+      ORIGINAL_ARTIFACT_BYTES: '65423786'
+      ORIGINAL_ARTIFACT_SHA256: '559398a14dac923915ece388411a1215cac2c1ddf643e962880d3aaf4259e032'
+      APK_NAME: 'Aerove-android-arm64.apk'
+      APK_BYTES: '67280131'
+      APK_SHA256: 'da6d4c34ede0ea4829528e5d49b0783382f3318ad4957ca19e29240dbe373faa'
+      BUILD_INFO_BYTES: '646'
+      BUILD_INFO_SHA256: 'c3baa18541c1f48dc2b57f588275ed6182b961d88ec8937233d20a2a01f0a08b'
+      SHA256SUMS_BYTES: '173'
+      SHA256SUMS_SHA256: 'dcb7c9274ff5947a321fd89eae502fdb9828ca3b2ee97fc8fe613e7ffbf37483'
+      PART_BYTES: '2097152'
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout immutable Standard140 source identity
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
+          ref: 0b938396afbda83efef427a0b401d0682a404c93
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.artifact_id || needs.apk.outputs.artifact_id }}
-          run-id: ${{ env.BUILD_RUN_ID }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: apps/aerove/dist
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.reuse.outputs.generated_artifact_id || needs.verify.outputs.generated_artifact_id }}
-          run-id: ${{ env.BUILD_RUN_ID }}
-          github-token: ${{ github.token }}
-          merge-multiple: true
-          path: ${{ runner.temp }}/xclash-generated
-      - name: Verify original build identity and APK
-        env:
-          GH_TOKEN: ${{ github.token }}
+          submodules: false
+          fetch-depth: 1
+
+      - name: Verify and split original APK bytes without rebuilding
         run: |
-          recheck_flags=()
-          if test -n "$RECHECK_RUN" && test -z "$ACCEPTED_BUILD_RUN"; then
-            recheck_flags=(--promotion-root "$GITHUB_WORKSPACE" --promotion-source "$GITHUB_SHA" --recheck-run "$RECHECK_RUN")
-          fi
-          python3 tool/aerove_artifact.py validate \
-            --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
-            --source "$BUILD_SOURCE" --tree "$(git -C "$GITHUB_WORKSPACE" rev-parse "$BUILD_SOURCE^{tree}")" \
-            --repository "$GITHUB_REPOSITORY" --run-id "$BUILD_RUN_ID" \
-            --run-number "$BUILD_RUN_NUMBER" --metadata "$GITHUB_WORKSPACE/apps/aerove/tool/upstream-version.json" \
-            --pubspec "$GITHUB_WORKSPACE/apps/aerove/pubspec.yaml" "${recheck_flags[@]}"
-          build_tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
-          "$build_tools/apksigner" verify --print-certs dist/Aerove-android-arm64.apk
-          "$build_tools/aapt" dump badging dist/Aerove-android-arm64.apk > "$RUNNER_TEMP/promoted-badging.txt"
-          version=$(jq -r .version dist/BUILD_INFO.json)
-          grep -F "package: name='com.follow.clash.dev' versionCode='${version##*+}' versionName='${version%+*}'" "$RUNNER_TEMP/promoted-badging.txt"
-      - name: Bind original payload bytes to the separate release identity
-        if: ${{ needs.reuse.outputs.run_id != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/product-promotion"
-          python3 tool/aerove_artifact.py promotion-receipt \
-            --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" \
-            --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT" \
-            --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
-            --output "$RUNNER_TEMP/product-promotion/promotion.json"
-      - name: Preserve the separate build and release promotion receipt
-        if: ${{ needs.reuse.outputs.run_id != '' }}
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath, PureWindowsPath
+          import re
+          import subprocess
+          import zipfile
+
+          repo = "IvanSolis1989/Aerove"
+          run_id = int(os.environ["ORIGINAL_RUN"])
+          attempt = int(os.environ["ORIGINAL_ATTEMPT"])
+          source = os.environ["ORIGINAL_SOURCE"]
+          tree = os.environ["EXPECTED_TREE"]
+          root = Path(os.environ["RUNNER_TEMP"]) / "standard140-byte-transfer"
+          parts_dir = root / "parts"
+          parts_dir.mkdir(parents=True)
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          def gh_json(route):
+              result = subprocess.run(["gh", "api", route], check=True, capture_output=True,
+                                      text=True, timeout=90)
+              return json.loads(result.stdout)
+
+          def gh_archive(artifact_id, destination):
+              try:
+                  with destination.open("wb") as output:
+                      subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+                                     stdout=output, stderr=subprocess.PIPE, check=True, timeout=300)
+              except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                  destination.unlink(missing_ok=True)
+                  raw = getattr(error, "stderr", b"") or b""
+                  message = raw.decode(errors="replace") if isinstance(raw, bytes) else raw
+                  message = re.sub(r"https?://[^\s\"']+", "<URL redacted>", message)
+                  message = re.sub(r"(?i)(token|authorization|password|secret)=\S+", r"\1=<redacted>", message)
+                  raise SystemExit(f"Original artifact transfer failed: {message[:1200]}") from None
+
+          def sha_file(path):
+              h = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for block in iter(lambda: stream.read(1024 * 1024), b""):
+                      h.update(block)
+              return h.hexdigest()
+
+          require(subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == source
+                  and subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip() == tree,
+                  "Immutable source/tree checkout mismatch")
+          original_run = gh_json(f"repos/{repo}/actions/runs/{run_id}")
+          require(original_run.get("id") == run_id and original_run.get("run_attempt") == attempt
+                  and original_run.get("head_sha") == source and original_run.get("status") == "completed"
+                  and original_run.get("conclusion") == "failure"
+                  and original_run.get("repository", {}).get("full_name") == repo,
+                  "Original Standard140 run identity/conclusion mismatch")
+          listing = gh_json(f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100")
+          rows = listing.get("artifacts")
+          require(isinstance(rows, list) and listing.get("total_count") == len(rows),
+                  "Artifact API listing is incomplete")
+          matches = [row for row in rows if row.get("id") == int(os.environ["ORIGINAL_ARTIFACT_ID"])]
+          require(len(matches) == 1, "Expected exactly one fixed original APK artifact")
+          row = matches[0]
+          expected_digest = "sha256:" + os.environ["ORIGINAL_ARTIFACT_SHA256"]
+          require(row.get("name") == os.environ["ORIGINAL_ARTIFACT_NAME"]
+                  and row.get("size_in_bytes") == int(os.environ["ORIGINAL_ARTIFACT_BYTES"])
+                  and row.get("digest") == expected_digest and row.get("expired") is False
+                  and row.get("workflow_run", {}).get("id") == run_id
+                  and row.get("workflow_run", {}).get("head_sha") == source,
+                  "Original APK artifact API identity/size/digest mismatch")
+          detail = gh_json(f"repos/{repo}/actions/artifacts/{row['id']}")
+          for key in ("id", "name", "size_in_bytes", "digest", "expired"):
+              require(detail.get(key) == row.get(key), "Artifact detail/list metadata mismatch")
+
+          archive_path = root / "original-artifact.zip"
+          gh_archive(row["id"], archive_path)
+          require(archive_path.stat().st_size == int(os.environ["ORIGINAL_ARTIFACT_BYTES"])
+                  and sha_file(archive_path) == os.environ["ORIGINAL_ARTIFACT_SHA256"],
+                  "Original artifact ZIP byte size/SHA-256 mismatch")
+          with zipfile.ZipFile(archive_path) as archive:
+              infos = archive.infolist()
+              names = [item.filename for item in infos]
+              require(names and len(names) == len(set(names)), "Empty or duplicate paths in original ZIP")
+              require(sum(item.file_size for item in infos) <= 100 * 1024 * 1024,
+                      "Original artifact exceeds the bounded uncompressed size")
+              for item in infos:
+                  posix = PurePosixPath(item.filename)
+                  windows = PureWindowsPath(item.filename)
+                  mode = item.external_attr >> 16
+                  require(not posix.is_absolute() and not windows.is_absolute() and not windows.drive
+                          and ".." not in posix.parts and "\\" not in item.filename and posix.parts,
+                          "Unsafe path in original artifact ZIP")
+                  file_type = mode & 0o170000
+                  require(not (file_type == 0o120000)
+                          and (not mode or file_type in (0o100000, 0o040000)),
+                          "Non-regular entry in original artifact ZIP")
+              require(archive.testzip() is None, "Original artifact ZIP CRC failure")
+              files = {item.filename: item for item in infos if not item.is_dir()}
+              apk_name = os.environ["APK_NAME"]
+              require(set(files) == {apk_name, "BUILD_INFO.json", "SHA256SUMS"},
+                      "Unexpected original artifact file set")
+              build_info_bytes = archive.read(files["BUILD_INFO.json"])
+              sums_bytes = archive.read(files["SHA256SUMS"])
+              require(len(build_info_bytes) == int(os.environ["BUILD_INFO_BYTES"])
+                      and hashlib.sha256(build_info_bytes).hexdigest() == os.environ["BUILD_INFO_SHA256"],
+                      "Original BUILD_INFO size/SHA-256 mismatch")
+              require(len(sums_bytes) == int(os.environ["SHA256SUMS_BYTES"])
+                      and hashlib.sha256(sums_bytes).hexdigest() == os.environ["SHA256SUMS_SHA256"],
+                      "Original SHA256SUMS size/SHA-256 mismatch")
+              build_info = json.loads(build_info_bytes)
+              require(build_info.get("source") == source and build_info.get("version") == "0.13.0+2026102340"
+                      and build_info.get("appEnv") == "stable"
+                      and build_info.get("applicationId") == "com.follow.clash.dev"
+                      and build_info.get("workflow") == f"https://github.com/{repo}/actions/runs/{run_id}",
+                      "Original BUILD_INFO source/version/package/workflow binding mismatch")
+              apk_info = files[apk_name]
+              require(apk_info.file_size == int(os.environ["APK_BYTES"]), "Original APK entry size mismatch")
+              sums_text = sums_bytes.decode("utf-8")
+              expected_sums = (f"{os.environ['APK_SHA256']}  {apk_name}\n"
+                               f"{os.environ['BUILD_INFO_SHA256']}  BUILD_INFO.json\n")
+              require(sums_text == expected_sums, "Original SHA256SUMS content mismatch")
+              apk_hash = hashlib.sha256()
+              total_apk_bytes = 0
+              chunk_size = int(os.environ["PART_BYTES"])
+              parts = []
+              with archive.open(apk_info) as source_apk:
+                  index = 0
+                  offset = 0
+                  while True:
+                      chunk = source_apk.read(chunk_size)
+                      if not chunk:
+                          break
+                      part_name = f"part-{index:02d}.bin"
+                      part_path = parts_dir / part_name
+                      part_path.write_bytes(chunk)
+                      part_hash = hashlib.sha256(chunk).hexdigest()
+                      parts.append({"index": index, "artifactName": f"Std140-original-byte-part-{index:02d}-attempt-1",
+                                    "fileName": part_name, "offset": offset, "length": len(chunk),
+                                    "sha256": part_hash})
+                      apk_hash.update(chunk)
+                      total_apk_bytes += len(chunk)
+                      offset += len(chunk)
+                      index += 1
+              require(total_apk_bytes == int(os.environ["APK_BYTES"])
+                      and apk_hash.hexdigest() == os.environ["APK_SHA256"],
+                      "Reassembled original APK stream does not match the pinned source APK hash")
+              require(len(parts) == 33 and parts[-1]["length"] == 171267
+                      and all(part["length"] == chunk_size for part in parts[:-1]),
+                      "Unexpected 2 MiB segmentation geometry")
+              manifest = {
+                  "role": "byteTransferOnly", "accepted": False, "compiled": False,
+                  "fullCiAccepted": False, "appApkBuilt": False, "published": False,
+                  "repository": repo,
+                  "transfer": {"runId": os.environ["GITHUB_RUN_ID"], "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                               "workflowSource": os.environ["GITHUB_SHA"]},
+                  "original": {"runId": run_id, "runAttempt": attempt, "source": source, "tree": tree,
+                               "runConclusion": "failure", "artifactId": row["id"], "artifactName": row["name"],
+                               "artifactBytes": row["size_in_bytes"], "artifactSha256": os.environ["ORIGINAL_ARTIFACT_SHA256"]},
+                  "apk": {"fileName": apk_name, "bytes": total_apk_bytes, "sha256": apk_hash.hexdigest(),
+                          "parts": parts},
+                  "buildInfo": build_info,
+                  "sha256Sums": sums_text,
+                  "buildInfoBytes": len(build_info_bytes), "buildInfoSha256": hashlib.sha256(build_info_bytes).hexdigest(),
+                  "sha256SumsBytes": len(sums_bytes), "sha256SumsFileSha256": hashlib.sha256(sums_bytes).hexdigest(),
+                  "reassembly": "Concatenate part files in ascending index order; verify each part hash and final APK SHA-256."
+              }
+              (root / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+              require((root / "manifest.json").stat().st_size < 100_000, "Transfer manifest unexpectedly large")
+          print(f"Prepared {len(parts)} immutable APK byte segments; no build or acceptance performed.")
+          PY
+
+      - name: Upload original APK bytes 00 of 33
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: aerove-product-promotion-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/product-promotion/promotion.json
+          name: Std140-original-byte-part-00-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-00.bin
           if-no-files-found: error
-      - name: Publish verified APK to Releases
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test -n "$ACCEPTED_BUILD_RUN" || { echo '::error::Publication requires an accepted original build; never rebuild.'; exit 1; }
-          TAG="v$(jq -er .version dist/BUILD_INFO.json)"
-          check_main_inputs() {
-            git fetch --no-tags --recurse-submodules=no origin main
-            main=$(git rev-parse FETCH_HEAD)
-            if test -n "$RECHECK_RUN"; then
-              if test -z "$ACCEPTED_BUILD_RUN"; then
-                python3 tool/aerove_artifact.py recheck-main \
-                  --root "$GITHUB_WORKSPACE" --harness "$TEST_HARNESS_SOURCE" --source "$main"
-              fi
-            fi
-            if ! git merge-base --is-ancestor "$GITHUB_SHA" "$main"; then
-              echo '::error::The build source is no longer an ancestor of main; publication stopped.'
-              return 1
-            fi
-            python3 tool/aerove_artifact.py source-check \
-              --root "$GITHUB_WORKSPACE" --build-source "$RELEASE_SOURCE" --source "$main"
-          }
-          if test -n "$ACCEPTED_BUILD_RUN"; then
-            python3 tool/aerove_artifact.py check-promotion \
-              --root "$GITHUB_WORKSPACE" --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" \
-              --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT" \
-              --directory dist --generated-directory "$RUNNER_TEMP/xclash-generated" \
-              --receipt "$RUNNER_TEMP/product-promotion/promotion.json"
-          fi
-          (cd dist && sha256sum --check SHA256SUMS)
-          test "$(jq -r .source dist/BUILD_INFO.json)" = "$BUILD_SOURCE"
-          check_main_inputs
-          existing=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,targetCommitish 2>/dev/null || true)
-          missing_assets="$RUNNER_TEMP/standard-release-missing-assets.txt"
-          if test -n "$existing"; then
-            python3 tool/aerove_artifact.py release-assets \
-              --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" --tag "$TAG" \
-              --directory dist --allow-missing --output "$missing_assets"
-            test "$(jq -r .targetCommitish <<< "$existing")" = "$RELEASE_SOURCE"
-            if test "$(jq -r .isDraft <<< "$existing")" = false; then
-              echo 'This release is already published; its assets were preserved.' >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-          fi
-          python3 -m unittest tool.test_aerove_release_notes -v
-          previous_tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
-          python3 tool/aerove_release_notes.py \
-            --repo "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --release-run "$GITHUB_RUN_ID" \
-            --tag "$TAG" --source "$BUILD_SOURCE" --changelog-source "$RELEASE_SOURCE" --previous-tag "$previous_tag" \
-            --build-info dist/BUILD_INFO.json \
-            --output "$RUNNER_TEMP/xclash-release.md"
-          printf '\n\nOriginal build source: `%s`\nRelease source: `%s`\nRelease run: `%s` (attempt `%s`)\n' \
-            "$BUILD_SOURCE" "$RELEASE_SOURCE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$RUNNER_TEMP/xclash-release.md"
-          if test -z "$existing"; then
-            printf '%s\n' Aerove-android-arm64.apk BUILD_INFO.json SHA256SUMS > "$missing_assets"
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_SOURCE" \
-              --title "AEROVE $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
-          fi
-          while IFS= read -r asset; do
-            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "dist/$asset"
-          done < "$missing_assets"
-          python3 tool/aerove_artifact.py release-assets \
-            --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" --tag "$TAG" \
-            --directory dist --output "$missing_assets"
-          check_main_inputs
-          if test "$(jq -er .appEnv dist/BUILD_INFO.json)" = pre; then
-            release_flags=(--prerelease=true --latest=false)
-          else
-            release_flags=(--prerelease=false --latest)
-          fi
-          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --notes-file "$RUNNER_TEMP/xclash-release.md" --draft=false "${release_flags[@]}"
-          python3 tool/aerove_artifact.py release-assets \
-            --repository "$GITHUB_REPOSITORY" --source "$RELEASE_SOURCE" --tag "$TAG" \
-            --directory dist --output "$missing_assets"
-          printf 'Original build: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$BUILD_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
-          printf 'Published APK: https://github.com/%s/releases/tag/%s\n' "$GITHUB_REPOSITORY" "$TAG" >> "$GITHUB_STEP_SUMMARY"
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 01 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-01-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-01.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 02 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-02-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-02.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 03 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-03-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-03.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 04 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-04-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-04.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 05 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-05-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-05.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 06 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-06-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-06.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 07 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-07-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-07.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 08 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-08-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-08.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 09 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-09-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-09.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 10 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-10-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-10.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 11 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-11-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-11.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 12 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-12-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-12.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 13 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-13-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-13.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 14 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-14-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-14.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 15 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-15-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-15.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 16 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-16-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-16.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 17 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-17-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-17.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 18 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-18-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-18.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 19 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-19-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-19.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 20 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-20-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-20.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 21 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-21-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-21.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 22 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-22-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-22.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 23 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-23-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-23.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 24 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-24-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-24.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 25 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-25-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-25.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 26 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-26-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-26.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 27 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-27-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-27.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 28 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-28-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-28.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 29 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-29-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-29.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 30 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-30-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-30.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 31 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-31-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-31.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload original APK bytes 32 of 33
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-part-32-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/parts/part-32.bin
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Upload byte-transfer manifest only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: Std140-original-byte-manifest-attempt-1
+          path: ${{ runner.temp }}/standard140-byte-transfer/manifest.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
