@@ -358,9 +358,23 @@ class OriginalApkRecheckWorkflowTest(unittest.TestCase):
     def job(self, name):
         return re.search(rf'(?ms)^  {name}:\n(.*?)(?=^  [a-z][a-z_-]*:|\Z)', FULL)[1]
 
+    def test_std140_integrity_exception_preserves_sdk_matrix_commands_and_permissions(self):
+        from tool import aerove_artifact as artifact
+        baseline = FULL.replace(artifact.RECHECK_DESCRIPTION_140, artifact.RECHECK_DESCRIPTION_136).replace(
+            artifact.RECHECK_MODE_140, 'Recheck test fixes only; ignored when building or publishing an APK')
+        artifact._workflow_inputs_unchanged(baseline, FULL, build_run=artifact.RECHECK_RUN_140)
+        for old, new in [("FLUTTER_VERSION: '3.47.6'", "FLUTTER_VERSION: 'changed'"),
+                         ('fail-fast: false', 'fail-fast: true'), ('contents: read', 'contents: write'),
+                         ('python3 tool/ci_verify.py gate', 'true')]:
+            self.assertIn(old, FULL)
+            with self.subTest(old=old), self.assertRaises(artifact.ArtifactError):
+                artifact._workflow_inputs_unchanged(baseline, FULL.replace(old, new), build_run=artifact.RECHECK_RUN_140)
+
     def test_recheck_has_explicit_original_run_and_cannot_build_or_publish(self):
         self.assertIn('original_build_run:', FULL)
-        self.assertIn('reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 or Std133 41990578294 or Std136 42023232876 only', FULL)
+        self.assertIn('Recheck reviewed test fixes or fixed Std140 dependency integrity; never build or publish an APK', FULL)
+        self.assertNotIn('inspect-original140', FULL)
+        self.assertIn('reviewed Std55 40488925368 or Std74 40797508485 or Std124 41657833826 or Std130 41958446662 or Std133 41990578294 or Std136 42023232876 or Std140 42040809724 only', FULL)
         origin = run_block('Select the explicit original APK for a verification recheck')
         for guard in ('test "$GITHUB_EVENT_NAME" = workflow_dispatch', 'test "$BUILD_APK" = false',
                       'test "$PUBLISH_RELEASE" = false', 'test "$PREPARE_SOURCES" = false'):
