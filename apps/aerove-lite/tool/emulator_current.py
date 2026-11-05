@@ -20,6 +20,9 @@ APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
 
 def verify_current_runtime(directory):
+    from lite265_recheck import enabled, runtime
+    if enabled():
+        return runtime(directory)
     if os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF'):
         from emulator_original84 import verify_original_runtime
         return verify_original_runtime(directory)
@@ -44,15 +47,17 @@ GUEST_RENDERER_LABEL = 'Guest ANGLE (Vulkan + SwiftShader)'
 
 
 def validate_renderer_proof(path):
+    from lite265_recheck import enabled, BACKEND
+    original265 = enabled()
     guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
     if not guest_angle and (os.environ.get('AEROVE_ORIGINAL84_PROOF') or os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF')):
         from emulator_original84 import validate_original_renderer
         return validate_original_renderer(path)
     proof = json.loads(Path(path).read_text())
-    expected_renderer = GUEST_RENDERER_LABEL if guest_angle else RENDERER_LABEL
+    expected_renderer = BACKEND if original265 else GUEST_RENDERER_LABEL if guest_angle else RENDERER_LABEL
     if (proof.get('schema') != 1 or proof.get('owner') != 'emulator_current.py'
             or proof.get('deviceSerial') != os.environ.get('ANDROID_SERIAL')
-            or proof.get('gpuBackend') != GPU_BACKEND
+            or proof.get('gpuBackend') != ('lavapipe' if original265 else GPU_BACKEND)
             or proof.get('rendererBackend') != expected_renderer):
         raise ValueError('Invalid current-run renderer proof')
     actual = verify_current_runtime(proof['runtimeDirectory'])
@@ -68,7 +73,8 @@ def validate_renderer_proof(path):
         for name, _ in GUEST_ANGLE_READS:
             if (directory / ('guest-angle-' + name + '.exit.txt')).read_text().strip() != '0':
                 raise ValueError('Guest ANGLE device read did not succeed')
-        route = guest_angle_route(outputs, (directory / 'guest-angle-host-vulkan.out').read_text())
+        route = guest_angle_route(outputs, (directory / 'guest-angle-host-vulkan.out').read_text(),
+                                  vulkan_backend='lavapipe' if original265 else 'swiftshader')
         if (proof.get('guestGraphicsRoute') != route
                 or proof.get('rendererEvidence') != route['guestRenderer'] + route['hostVulkanDevice']):
             raise ValueError('Guest ANGLE route differs from its original device evidence')
@@ -664,6 +670,8 @@ def phase_acceptance_command(phase, directory, flutter_inputs=None):
 
 
 def main():
+    from lite265_recheck import enabled, BACKEND
+    original265 = enabled()
     parser = argparse.ArgumentParser()
     parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample', 'flutter-ui', 'flutter-platform', 'flutter-full'])
     parser.add_argument('--runtime-directory', type=Path, required=True)
@@ -696,7 +704,7 @@ def main():
             raise ValueError('Current Flutter target cannot execute legacy Compose matrix/remaining; use flutter-platform/flutter-full')
     directory = Path(os.environ['RUNNER_TEMP']) / 'lite-diagnostics' / args.phase
     directory.mkdir(parents=True, exist_ok=True)
-    emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']
+    emulator_command = [str(Path(os.environ['ANDROID_HOME']) / 'emulator/emulator'), '-port', '5554', '-avd', 'test', '-no-window', '-gpu', 'lavapipe' if original265 else GPU_BACKEND, '-no-snapshot', '-noaudio', '-no-boot-anim']
     if guest_angle:
         emulator_command.extend(['-feature', 'GuestAngle,Vulkan'])
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
@@ -743,7 +751,8 @@ def main():
             check_cancelled(receipt)
             if guest_angle:
                 receipt['guestGraphicsRoute'] = guest_angle_evidence(
-                    directory, receipt, (directory / 'emulator.stdout.log').read_text(errors='replace'))
+                    directory, receipt, (directory / 'emulator.stdout.log').read_text(errors='replace'),
+                    vulkan_backend='lavapipe' if original265 else 'swiftshader')
             if derived_host:
                 receipt['derivedSdkHost'] = derived_host_evidence(derived_host, emulator.pid, directory)
             if forensic:
@@ -761,8 +770,8 @@ def main():
                 receipt['rendererEvidence'] = renderer_evidence((directory / 'emulator.stdout.log').read_text(errors='replace'))
             proof = dict(current, schema=1, owner='emulator_current.py',
                          runtimeDirectory=str(args.runtime_directory.resolve()),
-                         deviceSerial='emulator-5554', gpuBackend=GPU_BACKEND,
-                         rendererBackend=GUEST_RENDERER_LABEL if guest_angle else RENDERER_LABEL,
+                         deviceSerial='emulator-5554', gpuBackend='lavapipe' if original265 else GPU_BACKEND,
+                         rendererBackend=BACKEND if original265 else GUEST_RENDERER_LABEL if guest_angle else RENDERER_LABEL,
                          rendererEvidence=receipt['rendererEvidence'])
             if guest_angle:
                 proof['phase'] = args.phase
