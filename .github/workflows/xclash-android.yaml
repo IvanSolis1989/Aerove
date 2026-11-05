@@ -1,5 +1,5 @@
-name: Lite265 single-slice log transfer pilot (no build)
-run-name: Lite265 single-slice log transfer pilot (no build)
+name: Lite265 missing byte slices (log transfer only)
+run-name: Lite265 missing byte slices (log transfer only)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: lite265-log-transfer-pilot-${{ github.ref }}
+  group: lite265-log-transfer-batch-${{ github.ref }}
   cancel-in-progress: false
 
 defaults:
@@ -16,8 +16,8 @@ defaults:
     shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 
 jobs:
-  transfer_one_original_slice:
-    name: Lite265 byte-transfer pilot index 21 (no build)
+  transfer_missing_slices:
+    name: Lite265 byte slice ${{ matrix.part.index_label }} (no build)
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository == 'IvanSolis1989/Aerove' &&
@@ -29,12 +29,365 @@ jobs:
     permissions:
       contents: read
       actions: read
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - part:
+              index: 22
+              index_label: '22'
+              offset: '46137344'
+              length: '2097152'
+              payload_sha256: 'c0dd501aeb63503fc25bf0edf9f258a3dad79048bed0af0388b1c45dad9366e3'
+              file_name: 'part-22.bin'
+              artifact_id: '13443117978'
+              artifact_name: 'Lite265-original-byte-part-22-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '14127ea5b68a160534011efbc562f0c51b942413759371ef9ada2431c1b1f25f'
+          - part:
+              index: 23
+              index_label: '23'
+              offset: '48234496'
+              length: '2097152'
+              payload_sha256: '9df66b904ac1a17a267341b1a58f0a606f2614e280545f47f739337283a6c153'
+              file_name: 'part-23.bin'
+              artifact_id: '13443058250'
+              artifact_name: 'Lite265-original-byte-part-23-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '82205393c0f5370cfe41072e3f92b2dd5c757c8118e20b7f8f5f3a05aaa88b60'
+          - part:
+              index: 24
+              index_label: '24'
+              offset: '50331648'
+              length: '2097152'
+              payload_sha256: '703ccb660021e559f8a2c1acae5f35db20ab6ce050be99ca00f474448a92dcd8'
+              file_name: 'part-24.bin'
+              artifact_id: '13443003352'
+              artifact_name: 'Lite265-original-byte-part-24-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'b90b834278baadf3b409e3017461fc511e50d176daaadaebd4e34fb39bcc6ba8'
+          - part:
+              index: 27
+              index_label: '27'
+              offset: '56623104'
+              length: '2097152'
+              payload_sha256: '677e502c3fccca9b01c00c02559091f9af03e6fa42c90b404ee8f9c9e00d731f'
+              file_name: 'part-27.bin'
+              artifact_id: '13442663534'
+              artifact_name: 'Lite265-original-byte-part-27-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'e9423fd284c2c9c4967b6081bf762f12063d7de516be0d8075da432adf2b18d8'
+          - part:
+              index: 28
+              index_label: '28'
+              offset: '58720256'
+              length: '2097152'
+              payload_sha256: '1df7b34fb4dfa752ff7296fc2e218ad9113363fbd21a1efbcd4c645f96e992be'
+              file_name: 'part-28.bin'
+              artifact_id: '13442863252'
+              artifact_name: 'Lite265-original-byte-part-28-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'd76e17d6a4b06c55b9f4dc66715f8621fa8272f31549ad7a119eb5c4615c9b89'
+          - part:
+              index: 29
+              index_label: '29'
+              offset: '60817408'
+              length: '2097152'
+              payload_sha256: '77ee9ffbe514d71ba8cae993442719690949de0e3aff678f4351d76ceeb45347'
+              file_name: 'part-29.bin'
+              artifact_id: '13443117992'
+              artifact_name: 'Lite265-original-byte-part-29-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'ede2ae41c156108644ad65879329516efd23dfcf29c3377c7a81e58e47566730'
+          - part:
+              index: 30
+              index_label: '30'
+              offset: '62914560'
+              length: '2097152'
+              payload_sha256: 'ebdc58d15270e5d9494dcd57ae95d4d23b485c9b98abd8900c69f8ac035dfd34'
+              file_name: 'part-30.bin'
+              artifact_id: '13442918365'
+              artifact_name: 'Lite265-original-byte-part-30-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '670c2d88939b94894b933d5b73660147f332530c39875daaf514a06598ea945f'
+          - part:
+              index: 31
+              index_label: '31'
+              offset: '65011712'
+              length: '2097152'
+              payload_sha256: 'fc4475f57e8cd316cb272e8cfa174dbb689966f1b2dfc0ec1cd2ca4b5a5ae7ac'
+              file_name: 'part-31.bin'
+              artifact_id: '13442808637'
+              artifact_name: 'Lite265-original-byte-part-31-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '0c002b93e3c4e16b870c9a5a8e9a0b165dfe7dedb820c0c07eaf1795edc575f2'
+          - part:
+              index: 32
+              index_label: '32'
+              offset: '67108864'
+              length: '2097152'
+              payload_sha256: '6b30f495765c5245a6fbbb9527198f0b44e99c0ccf905737bd2aaabe0f5f03eb'
+              file_name: 'part-32.bin'
+              artifact_id: '13442808641'
+              artifact_name: 'Lite265-original-byte-part-32-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '55f239c8261b3d899ce65057d36534c8b2ab8a59ce35061ebbf16d9a5059ef2d'
+          - part:
+              index: 33
+              index_label: '33'
+              offset: '69206016'
+              length: '2097152'
+              payload_sha256: '632e33d271aa8df42a676bce00b87458a35f6ba57300411071a09e4c43379ff9'
+              file_name: 'part-33.bin'
+              artifact_id: '13442998416'
+              artifact_name: 'Lite265-original-byte-part-33-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '4ef80e0ad0c422b451da56e5e1e6983a69ba8cfb6f6dbb947b6968c773abd8ef'
+          - part:
+              index: 34
+              index_label: '34'
+              offset: '71303168'
+              length: '2097152'
+              payload_sha256: '6995cad3dd52b867fce478cdcabd909043e4c3e303e8e8d8ecdb61e57219fe3e'
+              file_name: 'part-34.bin'
+              artifact_id: '13442998419'
+              artifact_name: 'Lite265-original-byte-part-34-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '625703931c3610dc2ce386f183169b713d30023991d476e63bc3ab88985fc70f'
+          - part:
+              index: 35
+              index_label: '35'
+              offset: '73400320'
+              length: '2097152'
+              payload_sha256: '270ccc152ca6fd212c617b6e3a4a5cc2a78771c543b9564eebb635ef3d10d6b2'
+              file_name: 'part-35.bin'
+              artifact_id: '13443213149'
+              artifact_name: 'Lite265-original-byte-part-35-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '7901191cf61a1fa40c5507caff62d1675a755e2ce3b317a3120ad2cb7cd94ed8'
+          - part:
+              index: 36
+              index_label: '36'
+              offset: '75497472'
+              length: '2097152'
+              payload_sha256: '371761260ebcfacd85da8f7df61ba7db55b37778b71fdaf4d6766b906b17a3a4'
+              file_name: 'part-36.bin'
+              artifact_id: '13442663563'
+              artifact_name: 'Lite265-original-byte-part-36-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '9166a89e9c10b007e7ae5762a90acc8dcf6f9f4870b740b7c5d6eda2dd7b1959'
+          - part:
+              index: 37
+              index_label: '37'
+              offset: '77594624'
+              length: '2097152'
+              payload_sha256: 'befb3e8a9d282beab8cfba7dbdfd6cf6966acee464a72ed836257d50a96f561c'
+              file_name: 'part-37.bin'
+              artifact_id: '13443013149'
+              artifact_name: 'Lite265-original-byte-part-37-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '70a1ddd4d73e674a0ee6691be6bd82c4e7260448d49234afccb2120fe38d8990'
+          - part:
+              index: 38
+              index_label: '38'
+              offset: '79691776'
+              length: '2097152'
+              payload_sha256: '5fc720342b6129ec8939d6e1cec1542ce344d1df2e01bb803448edd7bf7241dc'
+              file_name: 'part-38.bin'
+              artifact_id: '13442693881'
+              artifact_name: 'Lite265-original-byte-part-38-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '0415acde2a7fee26f081fd0456a1f425bde058b4e84408dfc3e2867bb9251b90'
+          - part:
+              index: 39
+              index_label: '39'
+              offset: '81788928'
+              length: '2097152'
+              payload_sha256: '6b106198d0f853b1d08d379812ebd8cd5c6e9415c37d63a283dd88b820c15f05'
+              file_name: 'part-39.bin'
+              artifact_id: '13442913386'
+              artifact_name: 'Lite265-original-byte-part-39-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '02bc8c3c8aa837d1a3fc5cb001bf63f4bdde477fe8235e2d73bf09e8f2d14683'
+          - part:
+              index: 40
+              index_label: '40'
+              offset: '83886080'
+              length: '2097152'
+              payload_sha256: '174f846aa7795670e9a69795c1b582334675a5b32409e2c8591a67009c2fc3cd'
+              file_name: 'part-40.bin'
+              artifact_id: '13442713684'
+              artifact_name: 'Lite265-original-byte-part-40-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'b5c98d4b90a102a87e5f64fe87c80bda6e0a370f1688af2332cf1c26a7bc5140'
+          - part:
+              index: 41
+              index_label: '41'
+              offset: '85983232'
+              length: '2097152'
+              payload_sha256: '416b4576e9af388454211daf51f8ddfb2d778579c940347340e986ae8d224b39'
+              file_name: 'part-41.bin'
+              artifact_id: '13443502064'
+              artifact_name: 'Lite265-original-byte-part-41-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '53742af344bf0e3aa19361998c11d9f897a34c5826f9add2e25f715335d74f2c'
+          - part:
+              index: 42
+              index_label: '42'
+              offset: '88080384'
+              length: '2097152'
+              payload_sha256: '7a8334ab890e1671e68a63d9a23d600869dfce28ed9723a4d21d6346bd3121f0'
+              file_name: 'part-42.bin'
+              artifact_id: '13443641909'
+              artifact_name: 'Lite265-original-byte-part-42-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'e5ba45a5e24208b81bcc6e3a780ffcea9ccee730666af7190002a6767db4271e'
+          - part:
+              index: 43
+              index_label: '43'
+              offset: '90177536'
+              length: '2097152'
+              payload_sha256: '7eafea49b27bc8ff26487c82314112dfe7a44d2a29018b369128639ab1c13a9c'
+              file_name: 'part-43.bin'
+              artifact_id: '13444276195'
+              artifact_name: 'Lite265-original-byte-part-43-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '94babba7cd0b9f84655ae97bd07fe5e5d92cd48fd5a3dfd9df326972e08fb0a5'
+          - part:
+              index: 44
+              index_label: '44'
+              offset: '92274688'
+              length: '2097152'
+              payload_sha256: '251ba348bbdafada7fd2dc03a0b333eb73045cda80850fff3dea6e710baa4484'
+              file_name: 'part-44.bin'
+              artifact_id: '13444296152'
+              artifact_name: 'Lite265-original-byte-part-44-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '04a6326adff2da6879d1e48b4ad29cbd4f33ee00193326ca574b0dfe361e7d17'
+          - part:
+              index: 45
+              index_label: '45'
+              offset: '94371840'
+              length: '2097152'
+              payload_sha256: 'e73ba2a6a8bbf110390e3c6302e3b9bcfe4a8e08847f3d213b71753117280ce9'
+              file_name: 'part-45.bin'
+              artifact_id: '13442549221'
+              artifact_name: 'Lite265-original-byte-part-45-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '1c1f2647a59073d8149d3c77ae854a3a23152ea9576cd4c69cfd0c3be0f7bbc1'
+          - part:
+              index: 46
+              index_label: '46'
+              offset: '96468992'
+              length: '2097152'
+              payload_sha256: '3730e3c0e31e80e28e451ad4089d18fabc31dded337d9b6888a6a079395e0140'
+              file_name: 'part-46.bin'
+              artifact_id: '13444186281'
+              artifact_name: 'Lite265-original-byte-part-46-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '9162c0defa487e3252123b38d070244bb8a212ce30b949d4412f413a7d66f366'
+          - part:
+              index: 47
+              index_label: '47'
+              offset: '98566144'
+              length: '2097152'
+              payload_sha256: '3d8de1be0992308ec8ead5158e5b8aea55ed404fa40be0e98249e76154f39a5d'
+              file_name: 'part-47.bin'
+              artifact_id: '13444650909'
+              artifact_name: 'Lite265-original-byte-part-47-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '0a4d1504a416427e642daa6d64a9e25336d8853c68fcd25987f151abf5bb363e'
+          - part:
+              index: 48
+              index_label: '48'
+              offset: '100663296'
+              length: '2097152'
+              payload_sha256: 'f1647342cbb5d29fc68d38674c111a3aad8f048ca26a9c24b428788fa05881a6'
+              file_name: 'part-48.bin'
+              artifact_id: '13444186286'
+              artifact_name: 'Lite265-original-byte-part-48-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '99d6c672e6885f016eb248e445ad4ecc503842fc30f0cd9a2f7c67ff89ce7030'
+          - part:
+              index: 49
+              index_label: '49'
+              offset: '102760448'
+              length: '2097152'
+              payload_sha256: '6fc773ab311cd4d86d7d808ec700fd5406f6a626aeac8846a5d68bf538ec1aba'
+              file_name: 'part-49.bin'
+              artifact_id: '13444650919'
+              artifact_name: 'Lite265-original-byte-part-49-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '7571f9da8ebdeb5972f1ac08f955eb8cdba6c35273651382ae81c60e4cda12be'
+          - part:
+              index: 50
+              index_label: '50'
+              offset: '104857600'
+              length: '2097152'
+              payload_sha256: '6bbacedc7279ee2d62daaa4661218b4c3949b68df11e7af329f0e8d04d5384f2'
+              file_name: 'part-50.bin'
+              artifact_id: '13444326223'
+              artifact_name: 'Lite265-original-byte-part-50-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '052efcc3fc963e73138c41e9bc27b46b0fb6cd5c430df9de157e027dfdfc731f'
+          - part:
+              index: 51
+              index_label: '51'
+              offset: '106954752'
+              length: '2097152'
+              payload_sha256: 'bf2f0768aea33b97a1db2e75d9f8db3b8e4b216afadc3b7e12ccab263e3b06a5'
+              file_name: 'part-51.bin'
+              artifact_id: '13444266150'
+              artifact_name: 'Lite265-original-byte-part-51-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '5c45fa5dd7fae727385e88743ba4bc99d865aec2695b608dd00dc9b2c22b107f'
+          - part:
+              index: 52
+              index_label: '52'
+              offset: '109051904'
+              length: '2097152'
+              payload_sha256: 'ca26b48bb7e889ed87f36bc0f378f2574e87fc50ac7d8deb59773db8c59618aa'
+              file_name: 'part-52.bin'
+              artifact_id: '13444740556'
+              artifact_name: 'Lite265-original-byte-part-52-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'ebd0292b86ae441851dbb07d21da9068af9764aba68701d019656225f277ff45'
+          - part:
+              index: 53
+              index_label: '53'
+              offset: '111149056'
+              length: '2097152'
+              payload_sha256: '36ee8d8ceccfe19140152a2851b73a5980cf1b2ad0e88cae8450dee7d973c2eb'
+              file_name: 'part-53.bin'
+              artifact_id: '13444026434'
+              artifact_name: 'Lite265-original-byte-part-53-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: '733e4f62976398aba101d02b714ea39fe273093af700010451a4e88024715cbd'
+          - part:
+              index: 54
+              index_label: '54'
+              offset: '113246208'
+              length: '2097152'
+              payload_sha256: 'ab92786acaf2e84338864fbc37d3c4be2bedac0e1a1179591e1e0ad5b3a8cf00'
+              file_name: 'part-54.bin'
+              artifact_id: '13443816502'
+              artifact_name: 'Lite265-original-byte-part-54-attempt-1'
+              artifact_bytes: '2097288'
+              artifact_sha256: 'bafa5537bbe756688b4a88521ed70e0f9db7c408407d69b0302f006315a2f9fa'
+          - part:
+              index: 55
+              index_label: '55'
+              offset: '115343360'
+              length: '1086963'
+              payload_sha256: 'ad6025fbb3183431539e18ddcb7415a19f0e35cd6167576f1d626e8af4e0cb73'
+              file_name: 'part-55.bin'
+              artifact_id: '13444526047'
+              artifact_name: 'Lite265-original-byte-part-55-attempt-1'
+              artifact_bytes: '1087099'
+              artifact_sha256: '4accc039f6a2db6bb420a0524e76fb04b4077ac62d7ecfb4121b6c82ad33d305'
     env:
       GH_TOKEN: ${{ github.token }}
-      TRANSFER_RUN: '42087750789'
-      TRANSFER_ATTEMPT: '1'
-      TRANSFER_SOURCE: '9c271297042650827182a74933760eda4126fc57'
-      TRANSFER_BRANCH: 'codex/lite265-byte-transfer'
       ORIGINAL_RUN: '42066278567'
       ORIGINAL_ATTEMPT: '1'
       ORIGINAL_SOURCE: '4190ff45f8eedc6734fa666e2658b71abf147479'
@@ -43,17 +396,26 @@ jobs:
       ORIGINAL_ARTIFACT_ID: '13436109593'
       ORIGINAL_ARTIFACT_NAME: 'AEROVE-Lite-preview-arm64-attempt-1'
       ORIGINAL_ARTIFACT_SHA256: '4b8064c747418990d476badd5db6f801a91c3dd1d6acbe8ce903dca1f8d3cbc6'
-      SLICE_ARTIFACT_ID: '13443387417'
-      SLICE_ARTIFACT_NAME: 'Lite265-original-byte-part-21-attempt-1'
-      SLICE_ARTIFACT_BYTES: '2097288'
-      SLICE_ARTIFACT_SHA256: '4ce13fe586a56319c1e950b964253ba1a22f008e1ecab9301035c63f4c047635'
-      SLICE_FILE_NAME: 'part-21.bin'
-      SLICE_INDEX: '21'
-      SLICE_OFFSET: '44040192'
-      SLICE_BYTES: '2097152'
-      SLICE_SHA256: '3b8b04d158180e25d8358d5be3d8181f48537c09c312dd78e4d79624c7fc7624'
+      TRANSFER_RUN: '42087750789'
+      TRANSFER_ATTEMPT: '1'
+      TRANSFER_SOURCE: '9c271297042650827182a74933760eda4126fc57'
+      ORIGINAL_TRANSFER_BRANCH: 'codex/lite265-byte-transfer'
+      BATCH_RUN_ID: ${{ github.run_id }}
+      BATCH_RUN_ATTEMPT: ${{ github.run_attempt }}
+      BATCH_SOURCE: ${{ github.sha }}
+      BATCH_BRANCH: ${{ github.ref_name }}
+      PART_INDEX: ${{ matrix.part.index }}
+      PART_INDEX_LABEL: ${{ matrix.part.index_label }}
+      PART_OFFSET: ${{ matrix.part.offset }}
+      PART_LENGTH: ${{ matrix.part.length }}
+      PART_PAYLOAD_SHA256: ${{ matrix.part.payload_sha256 }}
+      PART_FILE_NAME: ${{ matrix.part.file_name }}
+      PART_ARTIFACT_ID: ${{ matrix.part.artifact_id }}
+      PART_ARTIFACT_NAME: ${{ matrix.part.artifact_name }}
+      PART_ARTIFACT_BYTES: ${{ matrix.part.artifact_bytes }}
+      PART_ARTIFACT_SHA256: ${{ matrix.part.artifact_sha256 }}
     steps:
-      - name: Validate fixed runs and stream one verified original segment to stdout
+      - name: Validate one fixed Lite265 part and emit bounded log transport
         run: |
           python3 - <<'PY'
           import base64
@@ -67,13 +429,14 @@ jobs:
           import zlib
 
           repo = "IvanSolis1989/Aerove"
-          transfer_run = int(os.environ["TRANSFER_RUN"])
-          transfer_attempt = int(os.environ["TRANSFER_ATTEMPT"])
           original_run = int(os.environ["ORIGINAL_RUN"])
-          original_attempt = int(os.environ["ORIGINAL_ATTEMPT"])
-          slice_id = int(os.environ["SLICE_ARTIFACT_ID"])
+          transfer_run = int(os.environ["TRANSFER_RUN"])
+          batch_run = int(os.environ["BATCH_RUN_ID"])
+          index = int(os.environ["PART_INDEX"])
+          payload_length = int(os.environ["PART_LENGTH"])
+          artifact_id = int(os.environ["PART_ARTIFACT_ID"])
           temp = Path(os.environ["RUNNER_TEMP"])
-          archive_path = temp / "lite265-original-part-21.zip"
+          zip_path = temp / f"lite265-part-{index:02d}.zip"
 
           def require(condition, message):
               if not condition:
@@ -84,124 +447,117 @@ jobs:
                   result = subprocess.run(["gh", "api", route], stdout=subprocess.PIPE,
                                           stderr=subprocess.PIPE, timeout=45, check=False)
               except subprocess.TimeoutExpired:
-                  raise SystemExit("GitHub API metadata request timed out") from None
-              require(result.returncode == 0, "GitHub API metadata request failed")
+                  raise SystemExit("GitHub API request timed out") from None
+              require(result.returncode == 0, "GitHub API request failed")
               try:
                   return json.loads(result.stdout)
               except json.JSONDecodeError:
-                  raise SystemExit("GitHub API metadata was not valid JSON") from None
+                  raise SystemExit("GitHub API response was not valid JSON") from None
 
           original = api(f"repos/{repo}/actions/runs/{original_run}")
-          require(original.get("id") == original_run and original.get("run_attempt") == original_attempt
+          require(original.get("id") == original_run and original.get("run_attempt") == 1
                   and original.get("head_sha") == os.environ["ORIGINAL_SOURCE"]
                   and original.get("head_branch") == "codex/lite-shared-flutter-complete114"
                   and original.get("status") == "completed" and original.get("conclusion") == "failure"
                   and original.get("repository", {}).get("full_name") == repo
                   and original.get("path") == ".github/workflows/aerove-lite.yaml",
-                  "Original Lite265 run/source/attempt identity mismatch")
+                  "Original Lite265 producer identity mismatch")
           transfer = api(f"repos/{repo}/actions/runs/{transfer_run}")
-          require(transfer.get("id") == transfer_run and transfer.get("run_attempt") == transfer_attempt
+          require(transfer.get("id") == transfer_run and transfer.get("run_attempt") == 1
                   and transfer.get("head_sha") == os.environ["TRANSFER_SOURCE"]
-                  and transfer.get("head_branch") == os.environ["TRANSFER_BRANCH"]
+                  and transfer.get("head_branch") == os.environ["ORIGINAL_TRANSFER_BRANCH"]
                   and transfer.get("status") == "completed" and transfer.get("conclusion") == "success"
                   and transfer.get("repository", {}).get("full_name") == repo
                   and transfer.get("path") == ".github/workflows/xclash-android.yaml",
-                  "Successful original Lite265 byte-transfer run/source/attempt mismatch")
+                  "Original Lite265 byte-transfer producer run identity mismatch")
+          require(os.environ["BATCH_BRANCH"] == "codex/lite265-log-transfer"
+                  and batch_run > 0 and re.fullmatch(r"[0-9a-f]{40}", os.environ["BATCH_SOURCE"]),
+                  "Batch transfer dispatch identity malformed")
           listing = api(f"repos/{repo}/actions/runs/{transfer_run}/artifacts?per_page=100")
           rows = listing.get("artifacts")
           require(isinstance(rows, list) and listing.get("total_count") == len(rows) and len(rows) <= 65,
-                  "Lite265 transfer artifact list is incomplete or exceeds its defined bound")
-          names = [row.get("name") for row in rows]
-          require(len(names) == len(set(names)), "Duplicate transfer artifact names")
-          matches = [row for row in rows if row.get("id") == slice_id]
-          require(len(matches) == 1, "Fixed Lite265 slice artifact ID is missing or duplicated")
-          row = matches[0]
-          expected = {
-              "name": os.environ["SLICE_ARTIFACT_NAME"],
-              "size_in_bytes": int(os.environ["SLICE_ARTIFACT_BYTES"]),
-              "digest": "sha256:" + os.environ["SLICE_ARTIFACT_SHA256"],
-          }
+                  "Original transfer artifact listing is incomplete or over limit")
+          require(len({row.get("name") for row in rows}) == len(rows), "Duplicate transfer artifact names")
+          found = [row for row in rows if row.get("id") == artifact_id]
+          require(len(found) == 1, f"Slice artifact ID mismatch for index {index}")
+          row = found[0]
+          expected = {"name": os.environ["PART_ARTIFACT_NAME"],
+                      "size_in_bytes": int(os.environ["PART_ARTIFACT_BYTES"]),
+                      "digest": "sha256:" + os.environ["PART_ARTIFACT_SHA256"]}
           for key, value in expected.items():
-              require(row.get(key) == value, f"Transfer slice API {key} mismatch")
+              require(row.get(key) == value, f"Slice artifact API {key} mismatch at index {index}")
           require(row.get("expired") is False and row.get("workflow_run", {}).get("id") == transfer_run
                   and row.get("workflow_run", {}).get("head_sha") == os.environ["TRANSFER_SOURCE"],
-                  "Transfer slice artifact run/source/expiry mismatch")
-          detail = api(f"repos/{repo}/actions/artifacts/{slice_id}")
+                  f"Slice artifact source/expiry mismatch at index {index}")
+          detail = api(f"repos/{repo}/actions/artifacts/{artifact_id}")
           for key, value in expected.items():
-              require(detail.get(key) == value, f"Transfer slice detail {key} mismatch")
-
+              require(detail.get(key) == value, f"Slice artifact detail {key} mismatch")
           try:
-              with archive_path.open("wb") as output:
-                  result = subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{slice_id}/zip"],
-                                          stdout=output, stderr=subprocess.PIPE, timeout=90, check=False)
+              with zip_path.open("wb") as output:
+                  downloaded = subprocess.run(
+                      ["gh", "api", f"repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+                      stdout=output, stderr=subprocess.PIPE, timeout=90, check=False)
           except subprocess.TimeoutExpired:
-              archive_path.unlink(missing_ok=True)
-              raise SystemExit("Fixed slice archive download timed out") from None
-          if result.returncode:
-              archive_path.unlink(missing_ok=True)
-              raise SystemExit(f"Fixed slice archive transport failed (exit {result.returncode})")
-          archive_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-          require(archive_path.stat().st_size == int(os.environ["SLICE_ARTIFACT_BYTES"])
-                  and archive_hash == os.environ["SLICE_ARTIFACT_SHA256"],
-                  "Transfer slice ZIP size/SHA-256 mismatch")
-          with zipfile.ZipFile(archive_path) as archive:
+              raise SystemExit(f"Slice {index} transport timed out") from None
+          require(downloaded.returncode == 0, f"Slice {index} transport failed (exit {downloaded.returncode})")
+          archive_bytes = zip_path.read_bytes()
+          archive_sha = hashlib.sha256(archive_bytes).hexdigest()
+          require(len(archive_bytes) == expected["size_in_bytes"]
+                  and archive_sha == os.environ["PART_ARTIFACT_SHA256"],
+                  f"Slice {index} ZIP size/digest mismatch")
+          with zipfile.ZipFile(zip_path) as archive:
               infos = archive.infolist()
-              require(len(infos) == 1 and infos[0].filename == os.environ["SLICE_FILE_NAME"]
-                      and not infos[0].is_dir() and infos[0].file_size == int(os.environ["SLICE_BYTES"]),
-                      "Transfer ZIP does not contain exactly the expected original part-21.bin")
-              name = PurePosixPath(infos[0].filename)
-              windows = PureWindowsPath(infos[0].filename)
-              mode = infos[0].external_attr >> 16
-              file_type = mode & 0o170000
-              require(not name.is_absolute() and not windows.is_absolute() and not windows.drive
-                      and ".." not in name.parts and "\\" not in infos[0].filename
-                      and file_type != 0o120000 and (not mode or file_type == 0o100000),
-                      "Transfer slice ZIP path/type is unsafe")
-              require(archive.testzip() is None, "Transfer slice ZIP CRC failure")
-              payload = archive.read(infos[0])
-          payload_hash = hashlib.sha256(payload).hexdigest()
-          require(len(payload) == int(os.environ["SLICE_BYTES"])
-                  and payload_hash == os.environ["SLICE_SHA256"],
-                  "Original part 21 payload length/SHA-256 mismatch")
+              require(len(infos) == 1 and infos[0].filename == os.environ["PART_FILE_NAME"]
+                      and not infos[0].is_dir() and infos[0].file_size == payload_length,
+                      f"Slice {index} ZIP file set/size mismatch")
+              info = infos[0]
+              path = PurePosixPath(info.filename)
+              win = PureWindowsPath(info.filename)
+              mode = info.external_attr >> 16
+              kind = mode & 0o170000
+              require(not path.is_absolute() and not win.is_absolute() and not win.drive
+                      and ".." not in path.parts and "\\" not in info.filename
+                      and kind != 0o120000 and (not mode or kind == 0o100000),
+                      f"Slice {index} ZIP path/type is unsafe")
+              require(archive.testzip() is None, f"Slice {index} ZIP CRC failure")
+              payload = archive.read(info)
+          payload_sha = hashlib.sha256(payload).hexdigest()
+          require(len(payload) == payload_length and payload_sha == os.environ["PART_PAYLOAD_SHA256"],
+                  f"Slice {index} payload size/hash mismatch")
           compressed = zlib.compress(payload, level=9)
-          compressed_hash = hashlib.sha256(compressed).hexdigest()
+          compressed_sha = hashlib.sha256(compressed).hexdigest()
           encoded = base64.b64encode(compressed).decode("ascii")
           line_capacity = 16 * 1024 - 16
-          chunks = [encoded[index:index + line_capacity] for index in range(0, len(encoded), line_capacity)]
-          require(chunks and all(len(chunk.encode("ascii")) <= 16 * 1024 - 16 for chunk in chunks),
-                  "Encoded payload line bound violated")
-          wire_lines = [f"{sequence:04d}/{len(chunks):04d}:{chunk}"
-                        for sequence, chunk in enumerate(chunks, start=1)]
-          require(all(len(line.encode("ascii")) <= 16 * 1024 for line in wire_lines),
-                  "Sequenced stdout line exceeds 16 KiB")
+          chunks = [encoded[pos:pos + line_capacity] for pos in range(0, len(encoded), line_capacity)]
+          lines = [f"{sequence:04d}/{len(chunks):04d}:{chunk}"
+                   for sequence, chunk in enumerate(chunks, start=1)]
+          require(chunks and all(len(line.encode("ascii")) <= 16 * 1024 for line in lines),
+                  "Encoded slice line exceeds the 16 KiB bound")
           header = {
               "role": "byteTransferOnly", "accepted": False, "compiled": False,
-              "appApkBuilt": False,
-              "fullCiAccepted": False, "published": False,
-              "original": {"runId": original_run, "runAttempt": original_attempt,
-                           "source": os.environ["ORIGINAL_SOURCE"],
-                           "tree": os.environ["ORIGINAL_TREE"],
+              "appApkBuilt": False, "fullCiAccepted": False, "published": False,
+              "original": {"runId": original_run, "runAttempt": 1,
+                           "source": os.environ["ORIGINAL_SOURCE"], "tree": os.environ["ORIGINAL_TREE"],
                            "apkSha256": os.environ["ORIGINAL_APK_SHA256"],
                            "artifactId": int(os.environ["ORIGINAL_ARTIFACT_ID"]),
                            "artifactName": os.environ["ORIGINAL_ARTIFACT_NAME"],
                            "artifactArchiveSha256": os.environ["ORIGINAL_ARTIFACT_SHA256"]},
-              "transfer": {"runId": transfer_run, "attempt": transfer_attempt,
-                           "source": os.environ["TRANSFER_SOURCE"],
-                           "branch": os.environ["TRANSFER_BRANCH"]},
-              "slice": {"index": int(os.environ["SLICE_INDEX"]),
-                        "offset": int(os.environ["SLICE_OFFSET"]), "length": len(payload),
-                        "payloadSha256": payload_hash, "artifactId": slice_id,
-                        "artifactName": row["name"], "artifactBytes": row["size_in_bytes"],
-                        "artifactSha256": archive_hash},
+              "transfer": {"runId": transfer_run, "attempt": 1,
+                           "source": os.environ["TRANSFER_SOURCE"], "branch": os.environ["ORIGINAL_TRANSFER_BRANCH"]},
+              "batchTransfer": {"runId": batch_run, "attempt": int(os.environ["BATCH_RUN_ATTEMPT"]),
+                                "source": os.environ["BATCH_SOURCE"], "branch": os.environ["BATCH_BRANCH"]},
+              "slice": {"index": index, "offset": int(os.environ["PART_OFFSET"]),
+                        "length": len(payload), "payloadSha256": payload_sha,
+                        "artifactId": artifact_id, "artifactName": row["name"],
+                        "artifactBytes": row["size_in_bytes"], "artifactSha256": archive_sha},
               "encoding": "zlib+base64", "compressedBytes": len(compressed),
-              "compressedSha256": compressed_hash, "lineCount": len(chunks),
-              "base64CharactersPerLine": line_capacity, "wireLineMaxBytes": 16 * 1024,
+              "compressedSha256": compressed_sha, "lineCount": len(lines),
+              "wireLineMaxBytes": 16 * 1024,
           }
-          header_json = json.dumps(header, sort_keys=True, separators=(",", ":"))
           print("[[LITE265_SLICE_BEGIN]]", flush=True)
-          print(header_json, flush=True)
+          print(json.dumps(header, sort_keys=True, separators=(",", ":")), flush=True)
           print("[[LITE265_SLICE_DATA_BEGIN]]", flush=True)
-          for line in wire_lines:
+          for line in lines:
               print(line, flush=True)
           print("[[LITE265_SLICE_DATA_END]]", flush=True)
           print("[[LITE265_SLICE_END]]", flush=True)
