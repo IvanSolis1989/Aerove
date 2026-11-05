@@ -1313,6 +1313,14 @@ jobs:
         (output / 'scope.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert not apks, 'Compile-only preflight unexpectedly packaged an application'
         PY
+    - name: Verify first-install appearance and preserve saved user choices
+      working-directory: apps/aerove
+      run: |
+        flutter test --no-pub --concurrency 1 \
+          test/common/initial_theme_test.dart \
+          test/common/preferences_test.dart \
+          test/common/migration_test.dart \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/initial-theme-dart.log"
     - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       if: always()
       with:

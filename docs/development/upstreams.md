@@ -310,6 +310,10 @@ Lite Android 复制验收驱动另只读参考同固定 SDK 的 [`AccessibilityB
 
 组织名单行适配复用公开 `TextPainter`、`TextScaler`、`GlassText` 和项目既有 `DashboardFitText` 测量方式；连续圆角背景裁剪另只读参考同固定 SDK 的 [`RenderClipPath.paint`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/proxy_box.dart) 与 `PaintingContext.pushClipPath` 的图层复用行为，采用现有 `AppShape.getOuterPath`。未复制框架实现或新增依赖，BSD-3-Clause 与 Flutter Authors 署名保持。
 
+两版关于页品牌图标复用同固定 SDK 的 [`ClipRSuperellipse`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/widgets/basic.dart) 与现有 `AppRadius`，直接裁剪原品牌图片为连续圆角矩形，去掉外层表面及内缩边框。未改品牌素材、复制框架实现或增加依赖；BSD-3-Clause 与 Flutter Authors 署名保持。
+
+Lite 桌面飘带校正复用本仓 `generate_xclash_icon.ps1` 的 System.Drawing 导出链和原 Lite 图，参考 [Android AdaptiveIconDrawable 层与 viewport 说明](https://developer.android.com/reference/android/graphics/drawable/AdaptiveIconDrawable)及 [.NET Bitmap 官方源码文档](https://github.com/dotnet/dotnet-api-docs/blob/main/xml/System.Drawing/Bitmap.xml)的像素读取/绘制 API。只适配现有素材的布局，不引入图标库、复制文档示例或重新绘制品牌；Android 文档为 API 参考，.NET 文档为持续维护的参考页，不推测固定提交。像素边界对齐不代表已通过手机桌面验收。
+
 **许可证、署名与证据：** BSD-3-Clause（Flutter）；字体按原 `roboto_license.txt`；`apps/aerove-lite/app/src/main/assets/optics/NOTICE.md`、`FLUTTER_LICENSE`、`apps/aerove/test/fixtures/fonts/SOURCE.json`
 
 滚动布局优化另只读核对同一固定 SDK 的 `LayoutBuilder` 与 `SliverLayoutBuilder`：仪表盘只依赖可用宽度时，使用既有 box 布局入口，避免将滚动偏移误作卡片配置变化；保留原 Column、卡片身份和编辑交互。未复制框架私有实现或新增依赖。
@@ -317,6 +321,16 @@ Lite Android 复制验收驱动另只读参考同固定 SDK 的 [`AccessibilityB
 前台参数复用另只读核对同一 SDK 的 `FragmentShader.setFloat` 对 `Float32List` 的写入，以及 `setImageSampler` 的独立原生接口，沿用项目已有差量更新方式；后台字体预览复用现有 `AppStateManager`、`RouteMotionHoldMixin` 和 Flutter 的 `TickerMode`、调度器门禁。未复制引擎算法或新增依赖，操作计数与独立微基准不冒充手机帧率或功耗结论。
 
 同轮玻璃来源几何复用另只读参考同一 SDK 的 `TransformLayer` 懒求逆方式，沿用本项目单次捕获的作用域；不跨帧保留来源矩阵，不改变逐面板的采样、稳定与边缘判定。仪表盘装饰绘制复用现有 painter，仅在所有绘图分支均无输出时提前返回，实际玻璃裁剪、聚焦和形变路径保持。未复制框架私有实现或引入新依赖。
+
+#### [fluttercommunity/plus_plugins：device_info_plus](https://github.com/fluttercommunity/plus_plugins/tree/main/packages/device_info_plus/device_info_plus)
+
+**固定版本 / 来源：** 沿用锁定的 `device_info_plus 13.3.0`，包 SHA-256 `ade1c36f8355d6284c98e4a47992ea263887ed3d1acb281e37635dd45f04c4aa`，不升级或新增依赖。
+
+**用途与采用方式：** 首次安装外观复用现有 `System.init()` 的单次设备读取。已核实际锁定包 `AndroidDeviceInfo`、Android `MethodCallHandlerImpl.kt` 的 `totalMem / 1048576`、Windows 物理容量和 Mac `hw.memsize` 来源，分别按 MiB／字节处理；不用进程 RSS、空闲内存或 CPU 核数冒充 GPU 性能。关键词 `device_info_plus physicalRamSize isLowRamDevice`；没有重复实现 RAM 探测器。
+
+Android 能力另复用公开 [`Build.VERSION.MEDIA_PERFORMANCE_CLASS`](https://developer.android.com/reference/android/os/Build.VERSION#MEDIA_PERFORMANCE_CLASS)（API31+，未声明为0），参考[官方性能级说明](https://developer.android.com/topic/performance/performance-class)。共享客户端插件只在首次决策时返回这一系统属性，不引入 GMS、设备名单或性能测试框架。项目的初始选档是保守推荐，不能把媒体性能级当成本应用帧率实测；材质实现与质量不变。
+
+**许可证、署名与证据：** 锁定包 `LICENSE` 为 BSD-3-Clause，保留 2017 The Chromium Authors 署名；仅调用 Android SDK 公开 API，未复制平台或插件实现。
 
 #### [rrousselGit/riverpod](https://github.com/rrousselGit/riverpod)
 

@@ -18,6 +18,8 @@ typedef ProcessRunner =
 class System {
   static System? _instance;
   bool _isTV = false;
+  int? _physicalMemoryMiB;
+  bool _isLowRamDevice = false;
 
   @visibleForTesting
   ProcessRunner runProcess = Process.run;
@@ -41,8 +43,22 @@ class System {
 
   bool get isTV => _isTV;
 
+  int? get physicalMemoryMiB => _physicalMemoryMiB;
+
+  bool get isLowRamDevice => _isLowRamDevice;
+
   Future<int> init() async {
     final deviceInfo = await DeviceInfoPlugin().deviceInfo;
+    // Reuse the existing startup read; available RAM fluctuates with other apps.
+    _physicalMemoryMiB = switch (deviceInfo) {
+      AndroidDeviceInfo(:final physicalRamSize) => physicalRamSize,
+      MacOsDeviceInfo(:final memorySize) => memorySize ~/ (1024 * 1024),
+      WindowsDeviceInfo(:final systemMemoryInMegabytes) =>
+        systemMemoryInMegabytes,
+      _ => null,
+    };
+    _isLowRamDevice =
+        deviceInfo is AndroidDeviceInfo && deviceInfo.isLowRamDevice;
     _isTV = switch (deviceInfo) {
       AndroidDeviceInfo(:final systemFeatures) => systemFeatures.any(
         const {

@@ -84,6 +84,13 @@ class FlutterProductionUiTest {
         }
         check((0 until frames.length()).count { frames.getJSONObject(it).optJSONObject("configuration")?.optBoolean("matrix") == true } == 12)
         captureDockOpticalCandidates()
+        stage = "about-brand-icon"
+        navigate("Tools")
+        click("About", scroll = true)
+        requireLabel("Project")
+        capture("about-brand-icon")
+        check(ui.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
+        navigate("Dashboard")
         stage = "theme12-captured-pending-visual-review"
     }
 

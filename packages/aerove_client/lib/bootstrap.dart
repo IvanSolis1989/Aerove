@@ -7,6 +7,7 @@ import 'package:fl_clash/common/boot_guard.dart';
 import 'package:fl_clash/common/boot_record.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/desktop_emoji.dart';
+import 'package:fl_clash/common/initial_theme.dart';
 import 'package:fl_clash/common/last_page.dart';
 import 'package:fl_clash/common/launch.dart';
 import 'package:fl_clash/common/migration.dart';
@@ -110,7 +111,7 @@ class Bootstrap {
     await runProductDataPrerequisite(ClientProduct.current);
     xclashDefaults = await XClashDefaults.open();
     await xclashDefaults?.prepare(isAndroid: system.isAndroid);
-    var config = await migration.run();
+    var config = await migration.run(initialTheme: resolveInitialTheme);
     config = await xclashDefaults?.initialize(config) ?? config;
     _bootDecision = await bootGuard.evaluate(
       profileId: config.currentProfileId,

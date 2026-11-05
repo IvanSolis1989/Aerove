@@ -1,6 +1,8 @@
 param(
     [string]$RepositoryRoot = (Split-Path -Parent $PSScriptRoot),
-    [string]$PreviewDirectory
+    [string]$PreviewDirectory,
+    [ValidateSet('Standard', 'Lite')]
+    [string]$Edition = 'Standard'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,6 +26,39 @@ public sealed class XClashIconMetrics {
 }
 
 public static class XClashIconExport {
+    // Ignore low-contrast edge noise when aligning the existing light and dark artwork.
+    private static Rectangle RibbonBounds(Bitmap image, bool light) {
+        int left = image.Width, top = image.Height, right = -1, bottom = -1;
+        for (int y = 0; y < image.Height; y++) {
+            for (int x = 0; x < image.Width; x++) {
+                Color color = image.GetPixel(x, y);
+                int contrast = light ? Math.Max(color.R, Math.Max(color.G, color.B))
+                    : 255 - Math.Min(color.R, Math.Min(color.G, color.B));
+                if (color.A <= 128 || contrast <= 32) continue;
+                left = Math.Min(left, x); top = Math.Min(top, y);
+                right = Math.Max(right, x); bottom = Math.Max(bottom, y);
+            }
+        }
+        if (right < left) throw new InvalidOperationException("The ribbon artwork is empty.");
+        return Rectangle.FromLTRB(left, top, right + 1, bottom + 1);
+    }
+
+    public static void ExportAlignedLite(string source, string reference, string destination) {
+        using (var original = new Bitmap(source))
+        using (var standard = new Bitmap(reference))
+        using (var output = new Bitmap(standard.Width, standard.Height, PixelFormat.Format32bppArgb))
+        using (var graphics = Graphics.FromImage(output)) {
+            Rectangle from = RibbonBounds(original, false), to = RibbonBounds(standard, true);
+            float scaleX = (float)to.Width / from.Width, scaleY = (float)to.Height / from.Height;
+            graphics.Clear(Color.White);
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            graphics.DrawImage(original, new RectangleF(to.Left - from.Left * scaleX,
+                to.Top - from.Top * scaleY, original.Width * scaleX, original.Height * scaleY));
+            output.Save(destination, ImageFormat.Png);
+        }
+    }
+
     public static void Export(string source, string destination, int size, float scale, string mask) {
         int samples = size <= 320 ? 4 : 2;
         int workingSize = size * samples;
@@ -100,6 +135,22 @@ public static class XClashIconExport {
     }
 }
 '@
+}
+
+if ($Edition -eq 'Lite') {
+    $liteResources = [System.IO.Path]::GetFullPath((Join-Path $RepositoryRoot '../aerove-lite/app/src/main/res'))
+    $standardResources = Join-Path $RepositoryRoot 'android/app/src/main/res'
+    $liteArt = Join-Path $liteResources 'drawable-nodpi'
+    $liteSource = Join-Path $RepositoryRoot 'assets_source/images/icon/lite/aerove-lite-icon-tile.png'
+    Copy-Item -LiteralPath $liteSource -Destination (Join-Path $liteArt 'aerove_lite_icon.png')
+    [XClashIconExport]::ExportAlignedLite($liteSource,
+        (Join-Path $standardResources 'drawable-nodpi/xclash_liquid_glass.png'),
+        (Join-Path $liteArt 'aerove_lite_launcher_art.png'))
+    $foreground = [System.IO.File]::ReadAllText((Join-Path $standardResources 'drawable/ic_launcher_foreground.xml'))
+    $foreground = $foreground.Replace('@drawable/xclash_liquid_glass', '@drawable/aerove_lite_launcher_art')
+    [System.IO.File]::WriteAllText((Join-Path $liteResources 'drawable/aerove_lite_launcher_foreground.xml'), $foreground)
+    Write-Output 'Lite material retained; adaptive ribbon bounds and inset aligned to Standard. About uses the original Lite tile.'
+    return
 }
 
 $source = Join-Path $RepositoryRoot 'assets_source/images/icon/aerove-ribbon.png'

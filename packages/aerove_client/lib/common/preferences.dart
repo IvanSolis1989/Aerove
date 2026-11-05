@@ -18,6 +18,15 @@ class Preferences {
 
   Future<bool> get isInit async => await _store.value != null;
 
+  Future<bool> get isFirstInstall async {
+    final preferences = await _store.value;
+    return preferences != null &&
+        !preferences.containsKey(configKey) &&
+        !preferences.containsKey(clashConfigKey) &&
+        !preferences.containsKey('version') &&
+        !preferences.containsKey('upgradeVersion');
+  }
+
   Preferences._internal();
 
   static Future<SharedPreferences?> _open() async {

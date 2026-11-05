@@ -252,6 +252,7 @@ CURRENT_IMPELLER_PATHS = [
 ]
 
 CURRENT_REGRESSION_PATHS = [
+    'test/common/initial_theme_test.dart',
     'test/views/font_preview_activity_test.dart',
     'test/product_boundary_test.dart',
     'test/common/preferences_store_skip_test.dart',

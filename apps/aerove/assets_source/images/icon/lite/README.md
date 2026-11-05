@@ -10,9 +10,11 @@
 
 图标采用原版飘带的反色逻辑：**白底、黑飘带**，保留折叠层次，不加字母或Lite文字。源母版为`aerove-lite-icon-tile.png`，通过内置imagegen编辑原版`../aerove-icon-tile.png`生成。完整提示见`aerove-lite-icon.prompt.txt`。完整版图标未修改。
 
+当前导出入口为 `apps/aerove/tool/generate_xclash_icon.ps1 -Edition Lite`（从仓库根执行）。关于页直接复用原 Lite 母版；桌面前景保留其颜色与纹理，将显著飘带边界对齐标准版实际透明前景，再复用标准版的 adaptive inset。生成物为 Lite 的 `aerove_lite_icon.png`、`aerove_lite_launcher_art.png` 与 `aerove_lite_launcher_foreground.xml`，不要手改生成物。亮暗素材的低对比边缘不同，静态边界对齐仍须经同机桌面实际显示验收。
+
 ## 启动资源与验收
 
-Android工程位于`android-lite/`，启动器保留独立白底黑飘带图标。启动页单独使用`aerove-lite-splash.png`透明飘带，由内置imagegen从图标母版去除底图生成，提示见`aerove-lite-splash.prompt.txt`；对应drawable与源图逐字节相同，主题负责全屏纯白及深色系统栏图标。不得运行完整版图标导出脚本覆盖现有资源。真实设备启动与安全区验收仍须记录，透明PNG和XML检查不等于设备渲染通过。
+旧 Android 工程名为`android-lite/`，当前工程位于 `apps/aerove-lite/`，启动器保留独立白底黑飘带图标。启动页单独使用`aerove-lite-splash.png`透明飘带，由内置imagegen从图标母版去除底图生成，提示见`aerove-lite-splash.prompt.txt`；对应drawable与源图逐字节相同，主题负责全屏纯白及深色系统栏图标。Lite 导出必须指定 `-Edition Lite`，默认 Standard 模式不能用于覆盖 Lite 资源。真实设备启动与安全区验收仍须记录，透明PNG和XML检查不等于设备渲染通过。
 
 ## 相关下一步
 

@@ -57,7 +57,7 @@
     "dev.aerove.lite.FlutterProductionUiTest#independentApplicationTcpUdpNativeAttribution"
   ],
   "expectedTerminationSelector": "dev.aerove.lite.FlutterProductionUiTest#prepareImportedRunningSessionForProcessRestart",
-  "uiSourceSha256": "aa2819f319ecddfcffb55c45a64d08972bf1095ba88e105659f86c9103c89037",
+  "uiSourceSha256": "21de28f95929ea3af3e74a191b9511062a9b212a77bcee8901eb917750978c23",
   "stages": [
     "imported-selected",
     "vpn-active",
@@ -89,7 +89,7 @@
     "profile-batch-cancelled",
     "profile-batch-retried"
   ],
-  "uiCandidatePhysicalSha256": "6cbc44c1ad01f1c000c76f9d6905749d91af8be0f6c87932487ac161c1c20a1f",
+  "uiCandidatePhysicalSha256": "21de28f95929ea3af3e74a191b9511062a9b212a77bcee8901eb917750978c23",
   "uiSourceEncoding": "UTF-8; exact canonical LF, only CRLF-to-LF conversion",
   "ownerFixtureSources": {
     "AndroidManifest.xml": "87e53938ea7bab45cb22ebd7ce6be75f2f1925705a1f083deea3980c3b969957",

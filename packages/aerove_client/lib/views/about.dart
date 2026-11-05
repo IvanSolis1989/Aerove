@@ -131,7 +131,6 @@ class _AboutHero extends StatelessWidget {
   });
 
   static const _logoSize = 96.0;
-  static const _logoInset = 14.0;
 
   @override
   Widget build(BuildContext context) {
@@ -143,21 +142,12 @@ class _AboutHero extends StatelessWidget {
         children: [
           _DeveloperModeDetector(
             onEnterDeveloperMode: onEnterDeveloperMode,
-            child: DecoratedBox(
-              decoration: ShapeDecoration(
-                color: LiquidGlassScope.surfaceColorOf(
-                  context,
-                  context.raisedSurfaceLevel.colorOf(colorScheme),
-                ),
-                shape: AppShape.all(AppCorner.fit(_logoSize)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(_logoInset),
-                child: Image.asset(
-                  ClientProduct.current.resources.iconAsset,
-                  width: _logoSize - _logoInset * 2,
-                  height: _logoSize - _logoInset * 2,
-                ),
+            child: ClipRSuperellipse(
+              borderRadius: AppRadius.all(AppCorner.fit(_logoSize)),
+              child: Image.asset(
+                ClientProduct.current.resources.iconAsset,
+                width: _logoSize,
+                height: _logoSize,
               ),
             ),
           ),
