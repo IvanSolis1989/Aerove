@@ -1,2035 +1,392 @@
-name: AEROVE Lite
+name: Lite265 evidence inspection only (no build)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-permissions:
-  contents: read
-concurrency:
-  group: ${{ inputs.publish_release && format('aerove-lite-{0}', github.ref) || format('aerove-lite-{0}-{1}-{2}', github.ref, github.sha, inputs.diagnostic_target && inputs.diagnostic_target != 'none' && format('diagnostic-{0}', inputs.diagnostic_target) || inputs.meow_host_only && 'host' || inputs.client_preflight && 'client' || inputs.qa84_only && 'qa84' || inputs.qa79_only && 'qa79' || inputs.native_preflight && 'native' || 'full') }}
-  cancel-in-progress: false
-env:
-  NDK_VERSION: 28.2.13676358
+
 jobs:
-  promotion_request:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    env:
-      ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-      PUBLISH_RELEASE: ${{ inputs.publish_release }}
-      BUILD_APK: ${{ inputs.build_apk }}
-      PREPARE_SOURCES: ${{ inputs.prepare_sources }}
-      VERIFICATION_RECHECK: ${{ inputs.verification_recheck }}
-      ORIGINAL_BUILD_RUN: ${{ inputs.original_build_run }}
-      DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
-      MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
-      QA84_ONLY: ${{ inputs.qa84_only }}
-      QA79_ONLY: ${{ inputs.qa79_only }}
-      CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
-      NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
-    steps:
-      - name: Reject ambiguous build and promotion requests before any producer
-        working-directory: ${{ github.workspace }}
-        run: |
-          python3 - <<'PY'
-          import os, re
-          e = os.environ
-          accepted, publish = e.get('ACCEPTED_BUILD_RUN', ''), e.get('PUBLISH_RELEASE') == 'true'
-          if bool(accepted) != publish:
-              raise SystemExit('Publish requires an explicit accepted_build_run; accepted_build_run cannot start a build')
-          if accepted:
-              if not re.fullmatch(r'[1-9][0-9]*', accepted):
-                  raise SystemExit('accepted_build_run must be a positive original run ID')
-              if e['GITHUB_EVENT_NAME'] != 'workflow_dispatch' or e['GITHUB_REF'] != 'refs/heads/main':
-                  raise SystemExit('Promotion requires an explicit main workflow dispatch')
-              flags = ('BUILD_APK', 'PREPARE_SOURCES', 'VERIFICATION_RECHECK', 'MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'NATIVE_PREFLIGHT')
-              if any(e.get(key) == 'true' for key in flags) or e.get('DIAGNOSTIC_TARGET', '') not in ('', 'none') or e.get('ORIGINAL_BUILD_RUN'):
-                  raise SystemExit('Promotion cannot build, recheck, prepare or diagnose')
-          elif e.get('ORIGINAL_BUILD_RUN') and e.get('VERIFICATION_RECHECK') != 'true':
-              raise SystemExit('original_build_run belongs only to verification_recheck')
-          PY
-
-  diagnostic_guard:
-    name: Validate prebuilt Android diagnosis only
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (inputs.diagnostic_target != 'none' && (github.event_name == 'workflow_dispatch' || inputs.diagnostic_target)) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-    - name: Validate exclusive immutable Android diagnostic request
-      env:
-        REQUEST_EVENT: ${{ github.event_name }}
-        DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
-        MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
-        QA84_ONLY: ${{ inputs.qa84_only }}
-        QA79_ONLY: ${{ inputs.qa79_only }}
-        CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
-        PUBLISH_RELEASE: ${{ inputs.publish_release }}
-        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
-        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
-        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
-        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
-        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
-      run: |
-        python3 - <<'PY'
-        import os
-        value = os.environ['DIAGNOSTIC_TARGET']
-        conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
-        if os.environ['NATIVE_TEST_FILTER']:
-            conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'gfxstream37-static') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
-            raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
-        PY
-  diagnostic_lite236_pixels:
-    name: Fixed original236/257 untouched pixels (diagnostic only)
-    needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface')) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    permissions:
-      contents: read
-      actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      AEROVE_GUEST_ANGLE: '1'
-      PIXEL_ORIGINAL_NUMBER: ${{ inputs.diagnostic_target == 'lite257-surface' && '257' || '236' }}
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
-      with:
-        distribution: temurin
-        java-version: '17'
-    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-      with:
-        packages: platform-tools
-        log-accepted-android-sdk-licenses: false
-        cmdline-tools-version: '16111833'
-    - name: Fetch the selected fixed original236/257 archive and official API row
-      run: |
-        python3 - <<'PY'
-        import json, os, stat, sys, zipfile
-        from pathlib import Path, PurePosixPath
-        sys.path.insert(0, 'apps/aerove-lite/tool')
-        from lite_release import _gh_json, _gh_binary
-        from lite236_pixel_diagnostic import original
-        from argparse import Namespace
-        number = int(os.environ['PIXEL_ORIGINAL_NUMBER'])
-        artifact = {236: 13300156190, 257: 13385808111}[number]
-        root = Path(os.environ['RUNNER_TEMP']) / f'lite{number}-original'
-        root.mkdir()
-        api = root / 'ARTIFACT-API.json'
-        api.write_text(json.dumps(_gh_json(f'repos/IvanSolis1989/Aerove/actions/artifacts/{artifact}'), indent=2) + '\n')
-        archive = root / 'official.zip'
-        _gh_binary(f'repos/IvanSolis1989/Aerove/actions/artifacts/{artifact}/zip', archive)
-        destination = root / 'unpacked'
-        with zipfile.ZipFile(archive) as source:
-            names = source.namelist()
-            assert names and len(names) == len(set(names))
-            for item in source.infolist():
-                name, mode = PurePosixPath(item.filename), item.external_attr >> 16
-                assert not name.is_absolute() and '..' not in name.parts and '\\' not in item.filename and name.parts
-                assert not stat.S_ISLNK(mode) and (not mode or stat.S_ISREG(mode) or stat.S_ISDIR(mode))
-            source.extractall(destination)
-        original(Namespace(artifact_api=api, archive=archive, runtime_directory=destination, original_run_number=number))
-        PY
-    - name: Existing API33 emulator environment with unchanged configuration
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |
-        set -euo pipefail
-        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/sdk-install"
-        mkdir -p "$sdk_install_dir"
-        for sdk_attempt in 1 2; do
-          sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
-          set +e
-          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
-          sdk_install_status=("${PIPESTATUS[@]}")
-          set -e
-          sdkmanager_rc="${sdk_install_status[0]}"
-          tee_rc="${sdk_install_status[1]}"
-          printf 'sdkmanager_exit=%s\ntee_exit=%s\n' "$sdkmanager_rc" "$tee_rc" > "$sdk_install_dir/attempt-${sdk_attempt}.status.txt"
-          if (( tee_rc != 0 )); then
-            printf 'SDK install log tee failed (exit %s)\n' "$tee_rc" >&2
-            exit "$tee_rc"
-          fi
-          if (( sdkmanager_rc == 0 )); then
-            break
-          fi
-          if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
-            exit "$sdkmanager_rc"
-          fi
-          if (( sdk_attempt == 1 )) &&
-              grep -Eiq 'Failed to download package archive for (emulator|system-images/android-33/google_apis/x86_64): (closed|.*connection reset|.*read (timed out|timeout)|.*EOF(Exception)?|.*unexpected end of (file|stream))([[:space:]:.]|$)' "$sdk_install_log" &&
-              ! grep -Eiq 'LicenseNotAccepted|license.*(not accepted|not been accepted)|no space left on device|insufficient.*(space|storage)|not enough.*space|failed to find package|unknown package|package .*not (found|available)|UnsupportedClassVersionError|requires? (Java|JDK)' "$sdk_install_log"; then
-            printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
-            continue
-          fi
-          exit "$sdkmanager_rc"
-        done
-        mkdir -p "$RUNNER_TEMP/lite-diagnostics/flutter-ui"
-        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger --name-match=kvm
-        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
-        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-        printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
-        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/flutter-ui/avd-config.ini"
-        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
-        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
-        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
-        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
-        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
-        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
-          --output "$emulator_archive" "$emulator_archive_url" \
-          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
-        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
-        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
-        unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
-        test -x "$emulator_stage/extracted/emulator/emulator"
-        test -f "$emulator_stage/extracted/emulator/source.properties"
-        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties"
-        if test -e "$ANDROID_HOME/emulator"; then
-          mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
-        fi
-        mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
-        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
-        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
-        # Only discard this task's replaced SDK and verified archive after the new SDK passes.
-        runner_temp_real="$(realpath -e -- "$RUNNER_TEMP")"
-        emulator_stage_real="$(realpath -e -- "$emulator_stage")"
-        test "$(dirname -- "$emulator_stage_real")" = "$runner_temp_real"
-        case "$(basename -- "$emulator_stage_real")" in
-          lite-emulator-16740729.??????) ;;
-          *) printf 'Refusing cleanup outside the owned emulator staging directory\n' >&2; exit 1 ;;
-        esac
-        cleanup_archive="$(realpath -e -- "$emulator_archive")"
-        test "$cleanup_archive" = "$emulator_stage_real/emulator-linux_x64-16740729.zip"
-        test -f "$cleanup_archive" && test ! -L "$emulator_archive"
-        cleanup_previous="$emulator_stage_real/previous-emulator"
-        df -B1 "$ANDROID_HOME" "$runner_temp_real" "$avd_directory/test.avd" > "$sdk_install_dir/disk-before-owned-cleanup.txt"
-        du -sb -- "$cleanup_archive" > "$sdk_install_dir/owned-staging-bytes.txt"
-        if test -e "$cleanup_previous" || test -L "$cleanup_previous"; then
-          test -d "$cleanup_previous" && test ! -L "$cleanup_previous"
-          test "$(realpath -e -- "$cleanup_previous")" = "$cleanup_previous"
-          du -sb -- "$cleanup_previous" >> "$sdk_install_dir/owned-staging-bytes.txt"
-          if test -f "$cleanup_previous/source.properties"; then
-            cp -- "$cleanup_previous/source.properties" "$sdk_install_dir/previous-emulator-source.properties"
-          fi
-          rm -rf -- "$cleanup_previous"
-          test ! -e "$cleanup_previous" && test ! -L "$cleanup_previous"
-        fi
-        rm -- "$cleanup_archive"
-        test ! -e "$cleanup_archive"
-        df -B1 "$ANDROID_HOME" "$runner_temp_real" "$avd_directory/test.avd" > "$sdk_install_dir/disk-after-owned-cleanup.txt"
-    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
-      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface')
-      with:
-        gradle-version: 9.6.0
-        cache-read-only: false
-    - name: Build only the independent public-API Surface diagnostic runner
-      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface')
-      env:
-        KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
-        AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}
-      run: |
-        sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
-        evidence="$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness"
-        mkdir -p "$evidence"
-        export AEROVE_LITE_KEYSTORE_PATH="$RUNNER_TEMP/lite-surface-signer.p12"
-        trap 'rm -f -- "$AEROVE_LITE_KEYSTORE_PATH"' EXIT
-        python3 - <<'PY'
-        import base64, os
-        from pathlib import Path
-        key = Path(os.environ['AEROVE_LITE_KEYSTORE_PATH'])
-        assert not key.exists() and os.environ['KEYSTORE_BASE64'] and os.environ['AEROVE_LITE_KEYSTORE_PASSWORD']
-        key.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
-        key.chmod(0o600)
-        PY
-        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease --dry-run -PqaDriver=production \
-          > "$evidence/production-task-graph.txt"
-        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease --dry-run -PqaDriver=surface-pixel-diagnostic \
-          > "$evidence/task-graph.txt"
-        python3 - <<'PY'
-        import os, re
-        from pathlib import Path
-        graph = (Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness/task-graph.txt').read_text()
-        tasks = re.findall(r'(?m)^(:\S+) SKIPPED$', graph)
-        assert tasks.count(':assembleRelease') == 1 and tasks.count(':prepareDriverSource') == 1
-        assert all(task.count(':') == 1 and not re.search(r'flutter|meow|helper|r8|minify|kotlin', task, re.I) for task in tasks)
-        production = (Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness/production-task-graph.txt').read_text()
-        assert re.findall(r'(?m)^(:compileReleaseKotlin) SKIPPED$', production) == [':compileReleaseKotlin']
-        PY
-        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease -PqaDriver=surface-pixel-diagnostic \
-          2>&1 | tee "$evidence/build.log"
-        gradle --no-daemon -p apps/aerove-lite/android-qa dependencies --configuration releaseRuntimeClasspath \
-          -PqaDriver=surface-pixel-diagnostic > "$evidence/runtime-classpath.txt"
-        python3 - <<'PY'
-        import hashlib, json, os, re, shutil, subprocess, sys
-        import xml.etree.ElementTree as ET
-        from pathlib import Path
-        sys.path.insert(0, 'apps/aerove-lite/tool')
-        from verify_apk import signing_certificate
-        from seal_platform_runner import classes
-        evidence = Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite236-surface-harness'
-        output = Path('apps/aerove-lite/android-qa/build/outputs/apk/release')
-        metadata = json.loads((output/'output-metadata.json').read_text())
-        rows = metadata['elements']
-        assert metadata['variantName'] == 'release' and len(rows) == 1 and not rows[0]['filters']
-        name = rows[0]['outputFile']
-        assert Path(name).name == name and name.endswith('.apk')
-        apk = output/name
-        assert apk.is_file() and not apk.is_symlink()
-        analyzer = Path(os.environ['ANDROID_SDK_ROOT'])/'cmdline-tools/latest/bin/apkanalyzer'
-        defined = subprocess.check_output([str(analyzer), 'dex', 'packages', '--defined-only', str(apk)], text=True)
-        (evidence/'defined-classes.txt').write_text(defined)
-        actual_classes = classes(defined)
-        assert 'dev.aerove.lite.SurfacePixelDiagnosticTest' in actual_classes
-        assert not any(name.startswith(('kotlin.', 'kotlinx.coroutines.', 'androidx.', 'android.test.', 'junit.')) for name in actual_classes), 'Surface runner duplicated provided runtime classes'
-        manifest_xml = subprocess.check_output([str(analyzer), 'manifest', 'print', str(apk)], text=True)
-        (evidence/'manifest.xml').write_text(manifest_xml)
-        android = '{http://schemas.android.com/apk/res/android}'
-        libraries = ET.fromstring(manifest_xml).find('application').findall('uses-library')
-        assert len(libraries) == 3 and {item.get(android+'name'):item.get(android+'required') for item in libraries} == {
-            'android.test.runner':'true', 'android.test.base':'true', 'android.test.mock':'true'}
-        tools = Path(os.environ['ANDROID_HOME'])/'build-tools/37.0.0'
-        signature = subprocess.check_output([str(tools/'apksigner'),'verify','--verbose','--print-certs',str(apk)], text=True)
-        badging = subprocess.check_output([str(tools/'aapt'),'dump','badging',str(apk)], text=True)
-        manifest = subprocess.check_output([str(tools/'aapt'),'dump','xmltree',str(apk),'AndroidManifest.xml'], text=True)
-        (evidence/'signature.txt').write_text(signature)
-        (evidence/'badging.txt').write_text(badging)
-        (evidence/'manifest.txt').write_text(manifest)
-        signer = signing_certificate(signature)
-        assert signer == '09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'
-        assert re.search(r"^package: name='dev.aerove.lite.test' ", badging, re.M) and 'launchable-activity:' not in badging
-        assert len(re.findall(r'E: instrumentation(?: |$)', manifest, re.M)) == 1
-        assert re.search(r'android:name[^=]*="android.test.InstrumentationTestRunner"', manifest)
-        assert re.search(r'android:targetPackage[^=]*="dev.aerove.lite"', manifest)
-        assert re.search(r'android:testOnly[^=]*=\(type 0x12\)0xffffffff', manifest)
-        staged = evidence/'surface-test.apk'
-        shutil.copyfile(apk, staged)
-        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
-        info = dict(schema=1, diagnosticOnly=True, sourceRevision=os.environ['GITHUB_SHA'],
-            sourceTree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
-            workflowRun=os.environ['GITHUB_RUN_ID'], runAttempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
-            runNumber=int(os.environ['GITHUB_RUN_NUMBER']), apkSha256=digest(staged), signerSha256=signer,
-            appCompiled=False, harnessCompiled=True, taskGraphSha256=digest(evidence/'task-graph.txt'),
-            sourceSha256=digest(Path('apps/aerove-lite/android-qa/src/main/java/dev/aerove/lite/SurfacePixelDiagnosticTest.java')))
-        (evidence/'HARNESS-INFO.json').write_text(json.dumps(info,indent=2)+'\n')
-        PY
-    - name: Capture fixed original pixels in the selected diagnostic order
-      env:
-        DISABLE_DEFERRED_SUBMIT: ${{ inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' }}
-        SURFACE_READBACK: ${{ (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface') }}
-      run: |
-        extra=()
-        if [[ "$DISABLE_DEFERRED_SUBMIT" == true ]]; then
-          extra+=(--disable-queue-submit-with-commands)
-        fi
-        if [[ "$SURFACE_READBACK" == true ]]; then
-          extra+=(--surface-test-apk "$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness/surface-test.apk"
-                  --surface-test-info "$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness/HARNESS-INFO.json")
-        fi
-        if [[ "$PIXEL_ORIGINAL_NUMBER" == 257 ]]; then extra+=(--app-renderer skia); fi
-        df -B1 "$RUNNER_TEMP" "${ANDROID_AVD_HOME:-$HOME/.android/avd}/test.avd" > "$RUNNER_TEMP/lite-diagnostics/sdk-install/disk-before-pixel-launch.txt"
-        python3 apps/aerove-lite/tool/lite236_pixel_diagnostic.py \
-          --runtime-directory "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/unpacked" \
-          --archive "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/official.zip" \
-          --artifact-api "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/ARTIFACT-API.json" \
-          --original-run-number "$PIXEL_ORIGINAL_NUMBER" \
-          --source "$GITHUB_SHA" --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
-          --sdk "$ANDROID_HOME" --avd test --output "$RUNNER_TEMP/lite-diagnostics/lite${PIXEL_ORIGINAL_NUMBER}-pixel" "${extra[@]}"
-    - name: Preserve actual raw pixels and failures without acceptance
-      if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: AEROVE-Lite-original${{ env.PIXEL_ORIGINAL_NUMBER }}-pixels-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-diagnostics/
-        if-no-files-found: error
-
-  diagnostic_gfxstream37_static:
-    name: SDK37.2.13 gfxstream fixed code pages (static diagnosis only)
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'gfxstream37-static') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    env:
-      DEBUGINFOD_URLS: ''
-    steps:
-    - name: Verify the fixed SDK archive and gfxstream ELF without executing SDK code
-      run: |
-        set -euo pipefail
-        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/gfxstream37-static"
-        mkdir -p "$sdk_install_dir"
-        printf 'diagnosticOnly=true\naccepted=false\nperformanceEvidence=false\nsdkExecuted=false\nappExecuted=false\nharnessRevision=%s\nharnessRun=%s\nattempt=%s\nstatus=started\n' \
-          "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > "$sdk_install_dir/receipt.txt"
-        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
-        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
-        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-static-16740729.XXXXXX")"
-        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
-        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
-        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
-          --output "$emulator_archive" "$emulator_archive_url" \
-          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
-        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
-        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
-        timeout --signal=TERM --kill-after=2s 30s \
-          unzip -q "$emulator_archive" 'emulator/lib64/libgfxstream_backend.so' 'emulator/source.properties' -d "$emulator_stage/extracted"
-        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties.txt"
-        gfx="$emulator_stage/extracted/emulator/lib64/libgfxstream_backend.so"
-        stat -c '%s' "$gfx" > "$sdk_install_dir/elf-bytes.txt"
-        sha256sum "$gfx" > "$sdk_install_dir/elf-sha256.txt"
-        test "$(stat -c '%s' "$gfx")" = '15727152'
-        printf '%s  %s\n' '67fa485ebe97369429e283fbefb6db9046024f7264102de60c4bfc70d2628f7e' "$gfx" \
-          | sha256sum --check --strict > "$sdk_install_dir/elf-sha256-check.txt"
-        readelf --version > "$sdk_install_dir/readelf-version.txt"
-        objdump --version > "$sdk_install_dir/objdump-version.txt"
-        timeout --signal=TERM --kill-after=2s 10s \
-          readelf --wide --program-headers --section-headers --notes "$gfx" \
-          > "$sdk_install_dir/layout-and-build-id.txt" 2> "$sdk_install_dir/layout.stderr.txt"
-        grep -E 'Build ID: 49b9fc8e45122f00b3970a89a72eb26101bcffe4$' "$sdk_install_dir/layout-and-build-id.txt" \
-          > "$sdk_install_dir/build-id-check.txt"
-        timeout --signal=TERM --kill-after=2s 10s \
-          readelf --wide --dyn-syms --demangle "$gfx" \
-          > "$sdk_install_dir/dynamic-symbols.txt" 2> "$sdk_install_dir/symbols.stderr.txt"
-        timeout --signal=TERM --kill-after=2s 10s \
-          readelf --string-dump=.gnu_debuglink "$gfx" \
-          > "$sdk_install_dir/debuglink.txt" 2> "$sdk_install_dir/debuglink.stderr.txt"
-        # These are verified ELF VMAs, not file offsets. Retain raw code beside disassembly.
-        for range in 'trap 0x7c3b00 0x7c3f00' 'caller 0x739e80 0x73a000' 'post-trap-call 0x509300 0x509520'; do
-          read -r label begin end <<< "$range"
-          timeout --signal=TERM --kill-after=2s 10s \
-            objdump -WN --full-contents --section=.text --start-address="$begin" --stop-address="$end" "$gfx" \
-            > "$sdk_install_dir/$label.bytes.txt" 2> "$sdk_install_dir/$label.bytes.stderr.txt"
-          timeout --signal=TERM --kill-after=2s 10s \
-            objdump -WN --disassemble --demangle --start-address="$begin" --stop-address="$end" "$gfx" \
-            > "$sdk_install_dir/$label.window.txt" 2> "$sdk_install_dir/$label.window.stderr.txt"
-        done
-        timeout --signal=TERM --kill-after=2s 30s \
-          objdump -WN --disassemble --demangle --start-address=0x728e80 --stop-address=0x73da28 "$gfx" \
-          > "$sdk_install_dir/decode-function.txt" 2> "$sdk_install_dir/decode-function.stderr.txt"
-        # Hidden helpers need an actual unwind boundary to avoid misaligned x86 windows.
-        timeout --signal=TERM --kill-after=2s 20s \
-          readelf --wide -wFN "$gfx" > "$emulator_stage/unwind.txt" 2> "$sdk_install_dir/unwind.stderr.txt"
-        python3 - "$emulator_stage/unwind.txt" "$sdk_install_dir/unwind-targets.txt" "$emulator_stage/ranges.txt" <<'PY'
-        from pathlib import Path
-        import re, sys
-        raw = Path(sys.argv[1]).read_text()
-        matches = list(re.finditer(r'(?m)^[^\n]*\bFDE\b[^\n]*\bpc=([0-9a-fA-F]+)\.\.([0-9a-fA-F]+)', raw))
-        ranges, evidence = [], []
-        for label, pc in [('trap', 0x7c3dad), ('post-trap-call', 0x5093e0)]:
-            candidates = {(int(m[1], 16), int(m[2], 16)) for m in matches if int(m[1], 16) <= pc < int(m[2], 16)}
-            if len(candidates) != 1:
-                raise SystemExit(f'{label}: need one actual FDE range, got {sorted(candidates)}')
-            begin, end = candidates.pop()
-            if not 0 < end - begin <= 262144:
-                raise SystemExit(f'{label}: helper exceeds the bounded 256KiB readback')
-            ranges.append(f'{label} {begin:#x} {end:#x}\n')
-            evidence.append(f'{label} target={pc:#x} FDE={begin:#x}..{end:#x}\n')
-            for index, match in enumerate(matches):
-                if (int(match[1], 16), int(match[2], 16)) == (begin, end):
-                    stop = matches[index + 1].start() if index + 1 < len(matches) else len(raw)
-                    evidence.append(raw[match.start():stop][:65536] + '\n')
-        Path(sys.argv[2]).write_text(''.join(evidence))
-        Path(sys.argv[3]).write_text(''.join(ranges))
-        PY
-        while read -r label begin end; do
-          timeout --signal=TERM --kill-after=2s 30s \
-            objdump -WN --disassemble --demangle --start-address="$begin" --stop-address="$end" "$gfx" \
-            > "$sdk_install_dir/$label.function.txt" 2> "$sdk_install_dir/$label.function.stderr.txt"
-        done < "$emulator_stage/ranges.txt"
-        printf 'status=complete\n' >> "$sdk_install_dir/receipt.txt"
-    - name: Preserve fixed SDK static text diagnostics only
-      if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: AEROVE-Lite-SDK-gfxstream37-static-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-diagnostics/gfxstream37-static/*.txt
-        if-no-files-found: error
-  diagnostic_lite125_test_only:
-    name: Lite125 test-only dry-run task graph (no APK build)
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-test-only') }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite125-test-only-diagnostic.yaml
-  diagnostic_lite125_original_samples:
-    name: Three isolated Lite125 original render samples
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-original-samples') }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite125-original-samples.yaml
-    with:
-      exclusive_mode: true
-  diagnostic_lite94:
-    name: Immutable Lite run94 matrix diagnosis
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite94-matrix' || inputs.diagnostic_target == 'both')) }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite-qa84.yaml
-    with:
-      exclusive_mode: true
-      runtime_target: lite94
-  diagnostic_beta14_profile:
-    name: Immutable beta14 render profile only (no build)
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'beta14-profile-only') }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite-qa84.yaml
-    with:
-      exclusive_mode: true
-      runtime_target: beta14
-  diagnostic_lite208_flutter_ui:
-    name: Lite208 original Flutter representative UI (diagnostic only)
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite208-flutter-ui') }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite-qa84.yaml
-    with:
-      exclusive_mode: true
-      runtime_target: lite208-flutter-ui
-  diagnostic_lite201_flutter_ui:
-    name: Lite201 original Flutter representative UI (diagnostic only)
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite201-flutter-ui') }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite-qa84.yaml
-    with:
-      exclusive_mode: true
-      runtime_target: lite201-flutter-ui
-  diagnostic_lite158_frame_sample:
-    name: Lite158 original first-frame trace (diagnostic only)
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite158-frame-sample') }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite-qa84.yaml
-    with:
-      exclusive_mode: true
-      runtime_target: lite158-frame-sample
-      sample: solid
-  diagnostic_lite141_shards:
-    name: Lite141 original APK remaining shard ${{ matrix.shard_index }}/8 (diagnostic only)
-    needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite141-prebuilt-shards') }}
-    permissions:
-      contents: read
-      actions: read
-    strategy:
-      fail-fast: false
-      matrix:
-        shard_index: [0, 1, 2, 3, 4, 5, 6, 7]
-    uses: ./.github/workflows/aerove-lite-qa84.yaml
-    with:
-      exclusive_mode: true
-      runtime_target: lite141-prebuilt-shards
-      shard_index: ${{ matrix.shard_index }}
-  diagnostic_lite141_aggregate:
-    name: Lite141 diagnostic-only eight-shard aggregate
-    needs: [diagnostic_guard, diagnostic_lite141_shards]
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (always() && needs.diagnostic_guard.result == 'success' && needs.diagnostic_lite141_shards.result != 'skipped') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      actions: read
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - name: Download only current-attempt Lite141 diagnostic shards
-      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-      continue-on-error: true
-      with:
-        pattern: AEROVE-Lite-original141-shard-*-of-8-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite141-shards
-    - name: Verify original-App and independent-harness identities and exact eight-shard union
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      env:
-        GITHUB_SHA: ${{ github.sha }}
-        GITHUB_RUN_ID: ${{ github.run_id }}
-        GITHUB_RUN_NUMBER: ${{ github.run_number }}
-        GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
-      run: >-
-        python3 apps/aerove-lite/tool/lite141_shards_diagnostic.py aggregate
-        --directory "$RUNNER_TEMP/lite141-shards"
-        --output "$RUNNER_TEMP/lite141-diagnostic-aggregate.json"
-    - name: Preserve diagnostic-only aggregate
-      if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: AEROVE-Lite-original141-diagnostic-aggregate-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite141-diagnostic-aggregate.json
-        if-no-files-found: warn
-  qa84:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only))) }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite-qa84.yaml
-    with:
-      exclusive_mode: ${{ !inputs.qa79_only && !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
-  qa79:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only)))) }}
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/aerove-lite-qa79.yaml
-    with:
-      exclusive_mode: ${{ !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
-  legacy_native_diagnosis:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release)))))) }}
-    env:
-      RUSTC_BOOTSTRAP: '1'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-      with:
-        toolchain: 1.99.0
-    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
-      with:
-        workspaces: apps/aerove-lite/native -> target
-        cache-on-failure: ${{ inputs.native_preflight }}
-        cache-workspace-crates: true
-        cache-directories: apps/aerove-lite/native/.upstream
-    - name: Ensure GDB is available for requested native stack capture
-      if: ${{ inputs.native_preflight && inputs.native_test_stacks }}
-      timeout-minutes: 5
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |-
-        set -euo pipefail
-        if ! command -v gdb >/dev/null 2>&1; then
-          sudo -n env DEBIAN_FRONTEND=noninteractive \
-            timeout --signal=TERM --kill-after=10s 90s \
-            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
-            -o Acquire::https::Timeout=20 update
-          sudo -n env DEBIAN_FRONTEND=noninteractive \
-            timeout --signal=TERM --kill-after=10s 150s \
-            apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
-            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
-            install --yes --no-install-recommends gdb
-        fi
-        command -v gdb
-        timeout --signal=TERM --kill-after=5s 10s \
-          gdb -nx -nh --batch -ex 'show version' -ex quit
-    - name: Initialize native lock and run host Rust tests
-      if: ${{ inputs.native_preflight }}
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      env:
-        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
-        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
-        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
-        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
-        RUST_TEST_NOCAPTURE: '1'
-        RUST_BACKTRACE: '1'
-      run: |
-        evidence="$RUNNER_TEMP/lite-native-preflight"
-        mkdir -p "$evidence"
-        python3 - <<'PY' > "$evidence/before.json"
-        import hashlib, json, subprocess
-        from pathlib import Path
-        root = Path('apps/aerove-lite/native')
-        lock = root / 'Cargo.lock'
-        source_lock = subprocess.check_output(['git', 'show', 'HEAD:apps/aerove-lite/native/Cargo.lock'])
-        print(json.dumps({
-            'sourceSha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
-            'sourceTree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
-            'lockSha256Before': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
-            'lockSha256AtSource': hashlib.sha256(source_lock).hexdigest(),
-            'lockPresentBefore': lock.is_file(),
-        }, indent=2))
-        PY
-        if [[ "$NATIVE_TEST_STACKS" == true && -z "$NATIVE_TEST_FILTER" ]]; then
-          echo 'Stack diagnosis requires an explicit host-test filter.' >&2
-          exit 2
-        fi
-        if [[ "$NATIVE_UNDERLAY_TESTS" == true ]]; then
-          if [[ -n "$NATIVE_TEST_FILTER" || "$NATIVE_TEST_STACKS" == true ]]; then
-            echo 'Underlay tests require no core filter or stack capture.' >&2
-            exit 2
-          fi
-          python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
-          cp apps/aerove-lite/native/Cargo.lock "$evidence/underlay-Cargo.lock.before"
-          set +e
-          (cd apps/aerove-lite/native && \
-            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
-            timeout --signal=TERM --kill-after=10s 8m cargo test --locked --offline --manifest-path Cargo.toml \
-            -p aerove-ts-underlay@0.1.0 --test sockets --no-run) 2>&1 | tee "$evidence/native-compile.log"
-          compile_status=${PIPESTATUS[0]}
-          command_status=$compile_status
-          if [[ "$compile_status" == 0 ]]; then
-            (cd apps/aerove-lite/native && \
-              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
-              timeout --signal=TERM --kill-after=10s 120s cargo test --locked --offline --manifest-path Cargo.toml \
-              -p aerove-ts-underlay@0.1.0 --test sockets -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
-            command_status=${PIPESTATUS[0]}
-          fi
-          set -e
-        elif [[ -n "$NATIVE_TEST_FILTER" ]]; then
-          [[ "$NATIVE_TEST_FILTER" =~ ^[[:alnum:]_:]+$ ]] || exit 2
-          python3 apps/aerove-lite/native/build.py --initialize-lock --prepare-only
-          set +e
-          (cd apps/aerove-lite/native && \
-            CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
-            timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run) \
-            2>&1 | tee "$evidence/native-compile.log"
-          compile_status=${PIPESTATUS[0]}
-          command_status=$compile_status
-          if [[ "$compile_status" == 0 ]]; then
-            stack_monitor=''
-            if [[ "$NATIVE_TEST_STACKS" == true ]]; then
-              python3 apps/aerove-lite/tooling/capture_native_stacks.py \
-                --target-dir "$GITHUB_WORKSPACE/apps/aerove-lite/native/target" \
-                --evidence-dir "$evidence/stacks" --filter "$NATIVE_TEST_FILTER" \
-                > "$evidence/stack-monitor.log" 2>&1 &
-              stack_monitor=$!
-            fi
-            (cd apps/aerove-lite/native && \
-              CARGO_TARGET_DIR="$GITHUB_WORKSPACE/apps/aerove-lite/native/target" RUST_BACKTRACE=1 \
-              timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib "$NATIVE_TEST_FILTER" \
-              -- --test-threads=1 --nocapture) 2>&1 | tee "$evidence/native-test.log"
-            command_status=${PIPESTATUS[0]}
-            if [[ -n "$stack_monitor" ]]; then
-              kill -TERM "$stack_monitor" 2>/dev/null || true
-              wait "$stack_monitor" || true
-            fi
-          fi
-          set -e
-        else
-          compile_status=''
-          if [[ "$NATIVE_TEST_SERIAL" == true ]]; then export RUST_TEST_THREADS=1; fi
-          set +e
-          timeout --signal=TERM --kill-after=10s 10m \
-            python3 apps/aerove-lite/native/build.py --initialize-lock --test 2>&1 | tee "$evidence/native-test.log"
-          command_status=${PIPESTATUS[0]}
-          set -e
-        fi
-        python3 - "$command_status" "$compile_status" <<'PY'
-        import hashlib, json, os, re, sys
-        from pathlib import Path
-        evidence = Path(os.environ['RUNNER_TEMP']) / 'lite-native-preflight'
-        before = json.loads((evidence / 'before.json').read_text())
-        lock = Path('apps/aerove-lite/native/Cargo.lock')
-        provenance_path = Path('apps/aerove-lite/native/.upstream/clash-rs/AEROVE_PROVENANCE.json')
-        provenance = json.loads(provenance_path.read_text()) if provenance_path.is_file() else None
-        underlay = os.environ['NATIVE_UNDERLAY_TESTS'] == 'true'
-        selected = underlay or bool(os.environ['NATIVE_TEST_FILTER'])
-        underlay_command = 'cargo test --locked --offline --manifest-path Cargo.toml -p aerove-ts-underlay@0.1.0 --test sockets'
-        result = {
-            **before,
-            'command': ('timeout --signal=TERM --kill-after=10s 120s ' + underlay_command + ' -- --test-threads=1 --nocapture') if underlay else ('timeout --signal=TERM --kill-after=10s 120s cargo test --locked --lib '
-                        + os.environ['NATIVE_TEST_FILTER'] + ' -- --test-threads=1 --nocapture') if os.environ['NATIVE_TEST_FILTER'] else
-                       'timeout --signal=TERM --kill-after=10s 10m python3 apps/aerove-lite/native/build.py --initialize-lock --test',
-            'testSelection': 'aerove-ts-underlay@0.1.0::sockets' if underlay else os.environ['NATIVE_TEST_FILTER'] or 'full-suite',
-            'underlayTestsRequested': underlay,
-            'expectedUnderlayTests': 7 if underlay else None,
-            'stackCaptureRequested': os.environ['NATIVE_TEST_STACKS'] == 'true',
-            'stackCaptureMetadata': 'stacks/capture.json' if (evidence / 'stacks/capture.json').is_file() else None,
-            'testThreads': 1 if selected or os.environ['NATIVE_TEST_SERIAL'] == 'true' else 'default',
-            'workingDirectory': 'apps/aerove-lite/native' if selected else '.',
-            'compileCommand': ('timeout --signal=TERM --kill-after=10s 8m ' + underlay_command + ' --no-run') if underlay else 'timeout --signal=TERM --kill-after=10s 8m cargo test --locked --lib --no-run' if os.environ['NATIVE_TEST_FILTER'] else None,
-            'compileExitCode': int(sys.argv[2]) if sys.argv[2] else None,
-            'compileLog': 'native-compile.log' if selected else None,
-            'commandStage': 'compile' if sys.argv[2] and int(sys.argv[2]) != 0 else 'test',
-            'commandLog': 'native-compile.log' if sys.argv[2] and int(sys.argv[2]) != 0 else 'native-test.log',
-            'commandExitCode': int(sys.argv[1]),
-            'lockSha256After': hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None,
-            'lockChanged': (hashlib.sha256(lock.read_bytes()).hexdigest() if lock.is_file() else None) != before['lockSha256Before'],
-            'stableLockGate': 'not-run-in-native-preflight',
-            'preparedSourceProvenance': provenance,
-        }
-        validation_error = None
-        if underlay and result['commandExitCode'] == 0:
-            helper = Path('apps/aerove-lite/native/.upstream/dependency-protect/aerove-ts-underlay')
-            test_source = helper / 'tests/sockets.rs'
-            names = re.findall(r'#\[tokio::test\]\s+async fn (\w+)\(', test_source.read_text())
-            log = re.sub(r'\x1b\[[0-9;]*m', '', (evidence / 'native-test.log').read_text())
-            passed = [name for name in names if re.search(r'^test ' + re.escape(name) + r' \.\.\. ok\s*$', log, re.MULTILINE)]
-            lock_unchanged = lock.read_bytes() == (evidence / 'underlay-Cargo.lock.before').read_bytes()
-            helper_lock_created = (helper / 'Cargo.lock').exists()
-            complete = bool(re.search(r'^test result: ok\. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out;', log, re.MULTILINE))
-            if len(names) != 7 or len(passed) != 7 or not complete or not lock_unchanged or helper_lock_created:
-                validation_error = 'Underlay tests did not prove seven named passes with the unchanged root lock.'
-            result['underlayTestReceipt'] = {'expectedTests': names, 'passedTests': passed, 'rootLockUnchanged': lock_unchanged, 'helperLockCreated': helper_lock_created, 'testSourceSha256': hashlib.sha256(test_source.read_bytes()).hexdigest()}
-        result['validationError'] = validation_error
-        (evidence / 'after.json').write_text(json.dumps(result, indent=2) + '\n')
-        if result['lockChanged']:
-            print('::notice::Native preflight generated or changed Cargo.lock; this does not pass the normal stable-lock gate.')
-        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-            summary.write('Native-only preflight completed. The normal stable Cargo.lock diff gate and Android verification/APK gates were not run.\n')
-            summary.write(f"Cargo.lock changed during lock initialization: {result['lockChanged']}\n")
-        sys.exit(1 if validation_error else int(sys.argv[1]))
-        PY
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      if: ${{ always() && inputs.native_preflight }}
-      with:
-        name: AEROVE-Lite-native-preflight
-        path: |
-          apps/aerove-lite/native/Cargo.lock
-          ${{ runner.temp }}/lite-native-preflight/
-        if-no-files-found: warn
-  resolve:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    env:
-      CARGO_PROFILE_DEV_DEBUG: 'line-tables-only'
-      CARGO_PROFILE_TEST_DEBUG: 'line-tables-only'
-    steps:
-    - name: Validate exclusive full Meow host-only request
-      if: ${{ inputs.meow_host_only }}
-      env:
-        REQUEST_EVENT: ${{ github.event_name }}
-        QA84_ONLY: ${{ inputs.qa84_only }}
-        QA79_ONLY: ${{ inputs.qa79_only }}
-        CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
-        PUBLISH_RELEASE: ${{ inputs.publish_release }}
-        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
-        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
-        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
-        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
-        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
-      run: |-
-        python3 - <<'PY'
-        import os
-        conflicts = [key for key in ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE',
-                     'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS')
-                     if os.environ[key] == 'true']
-        if os.environ['NATIVE_TEST_FILTER']:
-            conflicts.append('NATIVE_TEST_FILTER')
-        if os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
-            raise SystemExit('meow_host_only requires an exclusive workflow_dispatch request; conflicts: ' + ', '.join(conflicts))
-        PY
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-      with:
-        toolchain: 1.98.1
-        components: rustfmt
-    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
-      with:
-        workspaces: apps/aerove-lite/meow-native -> target
-        key: lite-meow-host-rust1.98.1-lines
-        cache-workspace-crates: true
-        cache-directories: apps/aerove-lite/meow-native/.upstream
-    - name: Stable lock and host production regression
-      env:
-        REQUEST_EVENT: ${{ github.event_name }}
-        MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
-        DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
-        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
-        QA84_ONLY: ${{ inputs.qa84_only }}
-        QA79_ONLY: ${{ inputs.qa79_only }}
-        CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
-        PUBLISH_RELEASE: ${{ inputs.publish_release }}
-        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
-        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
-        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
-        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
-      run: |-
-        set -euo pipefail
-        disk_evidence=apps/aerove-lite/meow-native/build
-        mkdir -p "$disk_evidence"
-        host_disk_report() {
-          df -h . || true
-          if [[ -d apps/aerove-lite/meow-native/target ]]; then
-            du -sh apps/aerove-lite/meow-native/target || true
-          else
-            printf 'Host target directory absent\n'
-          fi
-        }
-        trap 'status=$?; trap - EXIT; host_disk_report > "$disk_evidence/host-disk-exit.txt" 2>&1 || true; cat "$disk_evidence/host-disk-exit.txt" || true; exit "$status"' EXIT
-        host_disk_report > "$disk_evidence/host-disk-start.txt" 2>&1 || true
-        cat "$disk_evidence/host-disk-start.txt" || true
-        python3 apps/aerove-lite/meow-native/test_core_tests.py
-        pending=false
-        if [[ "$MEOW_HOST_ONLY" == true ]]; then
-          pending=$(python3 -c 'import json; print(str(json.load(open("apps/aerove-lite/meow-native/build-policy.json"))["resolveLock"] is True).lower())')
-        fi
-        if [[ "$pending" == true ]]; then
-          evidence=apps/aerove-lite/meow-native/build
-          mkdir -p "$evidence"
-          python3 apps/aerove-lite/tool/ci_artifacts.py admission --host-lock-resolution --phase host > "$evidence/host-lock-resolution-plan.json"
-          cat "$evidence/host-lock-resolution-plan.json"
-          python3 apps/aerove-lite/meow-native/build.py --resolve-lock
-          python3 apps/aerove-lite/tool/ci_artifacts.py host-resolution-result --host-lock-resolution --phase host --receipt "$evidence/host-lock-resolution-plan.json" > "$evidence/host-lock-resolution-readback.json"
-          cat "$evidence/host-lock-resolution-readback.json"
-        else
-          python3 apps/aerove-lite/tool/ci_artifacts.py admission
-          python3 apps/aerove-lite/meow-native/build.py
-          python3 apps/aerove-lite/tool/ci_artifacts.py host
-          git diff --exit-code -- apps/aerove-lite/meow-native/Cargo.lock
-        fi
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      if: always()
-      with:
-        name: AEROVE-Lite-meow-host-attempt-${{ github.run_attempt }}
-        path: |-
-          apps/aerove-lite/meow-native/Cargo.lock
-          apps/aerove-lite/meow-native/build/
-        if-no-files-found: error
-  verify:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)))))) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 50
-    steps:
-    - name: Validate exclusive client-only preflight request
-      if: ${{ inputs.client_preflight }}
-      env:
-        REQUEST_EVENT: ${{ github.event_name }}
-        PUBLISH_RELEASE: ${{ inputs.publish_release }}
-        NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
-        NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
-        NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
-        NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
-        NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
-      run: |-
-        python3 - <<'PY'
-        import os
-        conflicts = [key for key in ('PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL',
-                     'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
-        if os.environ['NATIVE_TEST_FILTER']:
-            conflicts.append('NATIVE_TEST_FILTER')
-        if os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
-            raise SystemExit('client_preflight requires an exclusive workflow_dispatch request; conflicts: ' + ', '.join(conflicts))
-        PY
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        submodules: recursive
-        persist-credentials: false
-    - name: Source preparation and APK inspector regression tests
-      run: |-
-        python3 apps/aerove-lite/meow-native/test_build.py
-        python3 apps/aerove-lite/tool/test_verify_apk.py
-        python3 apps/aerove-lite/tool/test_lite_release.py
-
-        python3 apps/aerove-lite/tool/test_ci_artifacts.py
-        python3 apps/aerove-lite/tool/test_android_acceptance.py
-        python3 apps/aerove-lite/tool/test_profile_cancel_acceptance.py
-    - name: Check workspace layout
-      run: python3 tooling/workspace.py check
-    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
-      with:
-        go-version: 1.27.1
-        cache-dependency-path: |
-          apps/aerove-lite/regexp2/go.sum
-          apps/aerove/core/go.sum
-    - uses: ./.github/actions/flutter
-      with:
-        flutter-version: 3.47.6
-        cache: true
-    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-      with:
-        toolchain: 1.98.1
-    - name: Build the real host filter and age helpers for JVM verification
-      timeout-minutes: 10
-      run: |-
-        python3 apps/aerove-lite/tool/ci_artifacts.py host-helper \
-          --go "$(go env GOROOT)/bin/go" \
-          --directory "$RUNNER_TEMP/lite-client-helper/staging" \
-          --destination "$RUNNER_TEMP/lite-client-helper/bin" \
-          --receipt apps/aerove-lite/app/build/reports/client-host-helper.json
-        test -x "$RUNNER_TEMP/lite-client-helper/bin/hostverify"
-        test -x "$RUNNER_TEMP/lite-client-helper/bin/ageverify"
-    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
-      with:
-        distribution: temurin
-        java-version: '17'
-    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-      with:
-        packages: platform-tools
-        log-accepted-android-sdk-licenses: false
-        cmdline-tools-version: '16111833'
-    - run: |
-        sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
-        test -f "$ANDROID_SDK_ROOT/platforms/android-37.1/android.jar"
-    - name: Compile and inspect the separate-UID socket test dependency
-      id: owner_fixture_checks
-      continue-on-error: true
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |-
-        python3 apps/aerove-lite/tool/build_process_owner_fixture.py \
-          --output apps/aerove-lite/app/build/reports/process-owner-fixture --deadline-seconds 120
-    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
-      with:
-        gradle-version: 9.6.0
-        cache-read-only: false
-    - name: Resolve the existing Standard fixture entry with production hooks enabled
-      working-directory: apps/aerove
-      run: |-
-        flutter pub get --enforce-lockfile
-        python3 tool/mihomo_source.py prepare
-    - name: Produce fresh resource and source-proof inputs through the real Kotlin and Dart paths
-      timeout-minutes: 25
-      env:
-        AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
-      run: |-
-        set -euo pipefail
-        inputs="$RUNNER_TEMP/lite-client-fixtures"
-        gradle --no-daemon -p apps/aerove-lite -Presource89.output="$inputs" :app:prepareResource89NativeFixture
-        (cd apps/aerove && flutter test --no-pub --concurrency 1 \
-          --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
-          --dart-define="RESOURCE89_FIXTURE=$inputs/native-fixture.json" \
-          --dart-define="PROFILE89_BRIDGE=$inputs/profile-bridge.json" \
-          --dart-define="RESOURCE89_OUTPUT=$inputs/resource" test/common/native_lite_resource89_test.dart)
-        (cd apps/aerove && flutter test --no-pub --concurrency 1 \
-          --dart-define="SOURCE_PROOF89_OUTPUT=$inputs/source-proof89.json" test/common/native_lite_source_proof89_test.dart)
-        python3 - <<'PY'
-        import hashlib, json, os
-        from pathlib import Path
-        root = Path(os.environ['RUNNER_TEMP']) / 'lite-client-fixtures'
-        for name in ('resource/ordinary-compiled.yaml', 'source-proof89.json',
-                     'source-proof89.json.resources', 'source-proof89.json.producer.yaml',
-                     'source-proof89.json.empty'):
-            assert (root / name).is_file(), name
-        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
-                       attempt=os.environ['GITHUB_RUN_ATTEMPT'], files={
-                       p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-                       for p in sorted(root.rglob('*')) if p.is_file()})
-        (root / 'FIXTURE-INPUTS.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        PY
-    - name: Kotlin data, lifecycle and UI compilation checks
-      id: kotlin_checks
-      continue-on-error: true
-      working-directory: apps/aerove-lite
-      env:
-        AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
-      run: |-
-        export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Daerove.age.fixtures=\"$GITHUB_WORKSPACE/apps/aerove-lite/regexp2/agebridge/testdata\" -Daerove.age.helper=\"$RUNNER_TEMP/lite-client-helper/bin/ageverify\""
-        gradle --no-daemon --continue \
-          -Dresource.fixture="$RUNNER_TEMP/lite-client-fixtures/resource" \
-          -DsourceProof89.fixture="$RUNNER_TEMP/lite-client-fixtures/source-proof89.json" \
-          --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:checkReleaseAarMetadata :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
-    - name: Inspect Android tasks after verification failure
-      if: ${{ always() && steps.kotlin_checks.outcome == 'failure' }}
-      timeout-minutes: 3
-      working-directory: apps/aerove-lite
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |
-        mkdir -p app/build/reports
-        gradle --no-daemon :app:tasks --all 2>&1 | tee app/build/reports/gradle-tasks.txt
-    - name: Require both independent preflight results
-      if: ${{ always() }}
-      env:
-        OWNER_FIXTURE_OUTCOME: ${{ steps.owner_fixture_checks.outcome }}
-        KOTLIN_CHECKS_OUTCOME: ${{ steps.kotlin_checks.outcome }}
-      run: |
-        python3 - <<'PY'
-        import json, os
-        from pathlib import Path
-        results = {key: os.environ.get(key, '') for key in ('OWNER_FIXTURE_OUTCOME', 'KOTLIN_CHECKS_OUTCOME')}
-        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'], results=results,
-                       appApkBuilt=False, acceptance=False)
-        output = Path('apps/aerove-lite/app/build/reports/client-preflight-results.json')
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(receipt, indent=2) + '\n')
-        assert all(value == 'success' for value in results.values()), results
-        PY
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      if: always()
-      with:
-        name: AEROVE-Lite-Kotlin-verification
-        path: |
-          apps/aerove-lite/app/build/reports/
-          apps/aerove-lite/app/build/test-results/
-          ${{ runner.temp }}/lite-client-fixtures/
-          apps/aerove-lite/app/build/intermediates/androidTestAppKeepRules/
-        if-no-files-found: warn
-  flutter_host_preflight:
-    name: Shared Flutter client verification and Android host compilation (no APK)
-    needs: promotion_request
-    if: ${{ needs.promotion_request.result == 'success' && (inputs.client_preflight || (!inputs.meow_host_only && !inputs.native_preflight && !inputs.qa84_only && !inputs.qa79_only)) && inputs.accepted_build_run == '' && !inputs.publish_release && !inputs.meow_host_only && !inputs.native_preflight && !inputs.qa84_only && !inputs.qa79_only && (inputs.diagnostic_target == 'none' || inputs.diagnostic_target == '') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 50
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        submodules: recursive
-        persist-credentials: false
-    - uses: ./.github/actions/flutter
-      with:
-        flutter-version: 3.47.6
-        cache: true
-    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
-      with:
-        distribution: temurin
-        java-version: '17'
-    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-      with:
-        packages: platform-tools
-        log-accepted-android-sdk-licenses: false
-        cmdline-tools-version: '16111833'
-    - name: Select the existing pinned Android SDK and NDK requirements
-      run: |-
-        sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
-        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
-    - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-      with:
-        toolchain: 1.98.1
-        targets: x86_64-linux-android
-    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
-      with:
-        go-version: 1.27.1
-        cache-dependency-path: |
-          apps/aerove-lite/regexp2/go.sum
-          apps/aerove/core/go.sum
-    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
-      with:
-        gradle-version: 9.6.0
-        cache-read-only: false
-    - name: Resolve the actual Lite Flutter plugin graph
-      working-directory: apps/aerove-lite
-      run: flutter pub get --enforce-lockfile
-    - name: Resolve shared and Standard fixture dependencies with production hooks enabled
-      run: |-
-        (cd packages/aerove_client && flutter pub get --enforce-lockfile)
-        (cd apps/aerove && flutter pub get --enforce-lockfile)
-        python3 - <<'PY'
-        import re
-        from pathlib import Path
-        for filename, hooks in (
-            ('apps/aerove-lite/pubspec.yaml', ('rust_api',)),
-            ('packages/aerove_client/pubspec.yaml', ('rust_api',)),
-            ('apps/aerove/pubspec.yaml', ('setup', 'rust_api')),
-        ):
-            text = Path(filename).read_text()
-            for hook in hooks:
-                assert re.search(r'^    ' + hook + r':\s*\n      build_assets: true\s*$', text, re.M), (filename, hook)
-        PY
-    - name: Prepare the pinned Standard source required by the existing test hooks and assets
-      working-directory: apps/aerove
-      run: python3 tool/mihomo_source.py prepare
-    - name: Compile the Flutter host and actual platform acceptance runner
-      working-directory: apps/aerove-lite
-      run: |-
-        set -euo pipefail
-        mkdir -p "$RUNNER_TEMP/lite-flutter-host/dependencies"
-        gradle --no-daemon --continue -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          :app:compileReleaseKotlin :app:compileReleaseUnitTestKotlin \
-          :platform-qa:compileReleaseKotlin :platform-qa:compileReleaseJavaWithJavac \
-          :app:generateReleasePlatformTestAppKeepRules --dry-run \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/abi-task-graph.txt"
-        python3 - <<'PY'
-        import json, os, re
-        from pathlib import Path
-        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
-        graph = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', (output / 'abi-task-graph.txt').read_text())
-        tasks = re.findall(r'(?m)^\s*(?:> Task\s+)?(:\S+)\s+SKIPPED\s*$', graph)
-        required = {':app:compileReleaseKotlin', ':app:compileReleaseUnitTestKotlin',
-                    ':platform-qa:compileReleaseKotlin', ':platform-qa:compileReleaseJavaWithJavac',
-                    ':app:generateReleasePlatformTestAppKeepRules'}
-        forbidden = [task for task in tasks if re.fullmatch(r':(?:app|platform-qa):(?:minify[^:]+|packageRelease|assembleRelease)', task)]
-        (output / 'abi-task-selection.json').write_text(json.dumps(dict(tasks=tasks, forbidden=forbidden,
-            missing=sorted(required-set(tasks)), duplicateRequired=sorted(task for task in required if tasks.count(task) != 1)), indent=2) + '\n')
-        assert tasks and all(tasks.count(task) == 1 for task in required), 'ABI preflight graph lacks its exact compile/inference tasks'
-        assert not forbidden, 'ABI preflight must stop before App/Test minification or APK packaging: ' + repr(forbidden)
-        PY
-        query_failure=0
-        for component in app platform-qa; do
-          if gradle --no-daemon -p android ":$component:dependencies" --configuration releaseRuntimeClasspath \
-            -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-            > "$RUNNER_TEMP/lite-flutter-host/dependencies/$component-releaseRuntimeClasspath.stdout.txt" \
-            2> "$RUNNER_TEMP/lite-flutter-host/dependencies/$component-releaseRuntimeClasspath.stderr.txt"; then
-            query_exit=0
-          else
-            query_exit=$?
-            query_failure=$query_exit
-          fi
-          printf '%s\n' "$query_exit" > "$RUNNER_TEMP/lite-flutter-host/dependencies/$component-releaseRuntimeClasspath.exit.txt"
-        done
-        test "$query_failure" = 0
-        gradle --no-daemon --continue -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          :app:compileReleaseKotlin :app:compileReleaseUnitTestKotlin \
-          :platform-qa:compileReleaseKotlin :platform-qa:compileReleaseJavaWithJavac \
-          :app:generateReleasePlatformTestAppKeepRules \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/compile.log"
-        test -s build/app/intermediates/androidTestAppKeepRules/release/rules.pro
-        test -s build/app/intermediates/androidTestAppKeepRules/release/inputs.json
-    - name: Verify native migration ownership and the real Kotlin to Dart import
-      working-directory: apps/aerove-lite
-      run: |-
-        set -euo pipefail
-        evidence="$RUNNER_TEMP/lite-flutter-host/native-migration"
-        test ! -e "$evidence"
-        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          :app:testReleaseUnitTest \
-          --tests dev.aerove.lite.flutter.MeowLegacyMigrationOwnerTest \
-          --tests dev.aerove.lite.flutter.MeowLegacyMigrationExportTest \
-          --tests dev.aerove.lite.flutter.ResourceReaderFenceRegressionTest \
-          --tests dev.aerove.lite.data.MeowTunReconciliation90Test \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-jvm.log"
-        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          -DnativeMigration.fixture="$evidence" :app:prepareNativeMigrationFixture \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-fixture-jvm.log"
-        test -s "$evidence/fixture.json"
-        (cd ../aerove && flutter test --no-pub --concurrency 1 \
-          --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
-          --dart-define="NATIVE_LITE_FIXTURE=$evidence/fixture.json" \
-          test/common/native_lite_migration_test.dart) \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-dart.log"
-        python3 tool/ci_artifacts.py seal --directory "$evidence" --abi shared-fixture
-        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          -PnativeMigration.fixtureDir="$evidence/retained-export" :platform-qa:mergeReleaseAssets --dry-run \
-          > "$RUNNER_TEMP/lite-flutter-host/native-migration-assets-graph.txt"
-        python3 - <<'PY'
-        import os, re
-        from pathlib import Path
-        graph = (Path(os.environ['RUNNER_TEMP'])/'lite-flutter-host/native-migration-assets-graph.txt').read_text()
-        tasks = re.findall(r'(?m)^\s*(?:> Task\s+)?(:\S+)\s+SKIPPED\s*$', graph)
-        assert tasks.count(':platform-qa:mergeReleaseAssets') == tasks.count(':platform-qa:prepareNativeMigrationFixtureAssets') == 1
-        assert not any(re.fullmatch(r':app:(?:assembleRelease|packageRelease|bundleRelease|minifyReleaseWithR8)', task) for task in tasks)
-        PY
-        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
-          -PnativeMigration.fixtureDir="$evidence/retained-export" :platform-qa:mergeReleaseAssets \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-assets.log"
-        python3 - <<'PY'
-        import os
-        from pathlib import Path
-        source = Path(os.environ['RUNNER_TEMP'])/'lite-flutter-host/native-migration/retained-export'
-        actual = Path('build/flutter-host/platform-qa/generated/nativeMigrationFixtureAssets/native-migration-fixture')
-        files = lambda root: {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob('*') if p.is_file()}
-        assert files(source) and files(source) == files(actual), 'Actual Gradle fixture assets differ from the real producer'
-        PY
-    - name: Preserve the same-run real migration fixture for both Android targets
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: Lite-native-migration-fixture-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-flutter-host/native-migration/
-        if-no-files-found: error
-    - name: Verify DNS and Geo fixtures in eight independent Flutter processes
-      timeout-minutes: 30
-      working-directory: apps/aerove
-      run: |-
-        set -euo pipefail
-        evidence="$RUNNER_TEMP/lite-flutter-host/dart-closure"
-        mkdir -p "$evidence"
-        node_binary="$(command -v node)"
-        "$node_binary" --version | tee "$evidence/node-version.txt"
-        export AEROVE_TEST_NODE="$node_binary"
-        run_fixture() {
-          local label="$1"
-          shift
-          printf '%q ' flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true "$@" > "$evidence/$label.command.txt"
-          printf '\n' >> "$evidence/$label.command.txt"
-          set +e
-          flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true "$@" 2>&1 | tee "$evidence/$label.log"
-          local statuses=("${PIPESTATUS[@]}")
-          set -e
-          printf '%s %s\n' "${statuses[0]}" "${statuses[1]}" > "$evidence/$label.status.txt"
-        }
-        run_fixture dns-meow --dart-define=DNS99_CORE=meow-rs --dart-define="DNS99_OUTPUT=$evidence/dns-meow.json" test/common/native_lite_dns99_test.dart
-        run_fixture dns-mihomo --dart-define=DNS99_CORE=mihomo --dart-define="DNS99_OUTPUT=$evidence/dns-mihomo.json" test/common/native_lite_dns99_test.dart
-        run_fixture geo-live-meow --dart-define=DTO_CORE=meow-rs --dart-define="GEO_LIVE_FIXTURE=$evidence/geo-live-meow.json" test/common/geo_live_producer91_test.dart
-        run_fixture geo-live-mihomo --dart-define=DTO_CORE=mihomo --dart-define="GEO_LIVE_FIXTURE=$evidence/geo-live-mihomo.json" test/common/geo_live_producer91_test.dart
-        run_fixture geo-trigger-meow --dart-define=DTO_CORE=meow-rs test/common/geo_maintenance_trigger91_test.dart
-        run_fixture geo-trigger-mihomo --dart-define=DTO_CORE=mihomo test/common/geo_maintenance_trigger91_test.dart
-        run_fixture geo-selection-meow test/common/geo_selection_producer91_test.dart
-        run_fixture geo-transaction-meow test/common/native_lite_geo_transaction114_test.dart
-        python3 - <<'PY'
-        import json, os
-        from pathlib import Path
-        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/dart-closure'
-        labels = ('dns-meow', 'dns-mihomo', 'geo-live-meow', 'geo-live-mihomo',
-                  'geo-trigger-meow', 'geo-trigger-mihomo', 'geo-selection-meow', 'geo-transaction-meow')
-        results = {}
-        for label in labels:
-            test, log = map(int, (output / (label + '.status.txt')).read_text().split())
-            results[label] = dict(testExit=test, logExit=log,
-                                  command=(output / (label + '.command.txt')).read_text().strip())
-        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
-                       attempt=os.environ['GITHUB_RUN_ATTEMPT'], independentProcesses=True,
-                       productionHooksEnabled=True, results=results, appApkBuilt=False, acceptance=False)
-        (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert all(value['testExit'] == 0 and value['logExit'] == 0 for value in results.values()), results
-        PY
-    - name: Verify fresh Lite defaults and unchanged Standard startup paths
-      working-directory: apps/aerove
-      run: |-
-        flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
-          test/common/native_lite_builder_test.dart \
-          --plain-name 'fresh null selection uses the real Lite producer and no core profile read'
-        flutter test --no-pub --concurrency 1 \
-          test/common/path_test.dart test/providers/setup_action_test.dart
-    - name: Verify shared-process RSS and confirmed memory cleanup in both products
-      timeout-minutes: 10
-      working-directory: apps/aerove
-      run: |-
-        set -euo pipefail
-        evidence="$RUNNER_TEMP/lite-flutter-host/memory"
-        mkdir -p "$evidence"
-        flutter test --no-pub --concurrency 1 test/widgets/memory_info_test.dart \
-          2>&1 | tee "$evidence/standard.log"
-        flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
-          test/common/native_lite_memory_info_test.dart 2>&1 | tee "$evidence/meow.log"
-    - name: Verify SQL-managed source selection policy through the Standard fixture composition
-      working-directory: apps/aerove
-      run: |-
-        flutter test --no-pub --concurrency 1 test/common/native_lite_binding89_test.dart \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/dart-closure/selection-profile-policy.log"
-    - name: Produce current-source profile update cancellation prerequisite (no APK)
-      run: python3 apps/aerove-lite/tool/profile_cancel_green.py --repository "$GITHUB_WORKSPACE" --output "$RUNNER_TEMP/lite-profile-cancel-green"
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      if: always()
-      with:
-        name: AEROVE-Lite-profile-cancel-green-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-profile-cancel-green/
-        if-no-files-found: error
-    - name: Inspect the independent runner task graph without packaging an APK
-      working-directory: apps/aerove-lite
-      run: |
-        gradle --no-daemon -p android-qa assembleRelease --dry-run \
-          | tee "$RUNNER_TEMP/lite-flutter-runner-task-graph.txt"
-        python3 - <<'PY'
-        import os, re
-        from pathlib import Path
-        graph = (Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-runner-task-graph.txt').read_text()
-        graph = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', graph)
-        tasks = []
-        for line in graph.splitlines():
-            match = re.fullmatch(r'(?:> Task\s+)?(:\S+)\s+SKIPPED', line.strip())
-            if match:
-                tasks.append(match.group(1))
-        if not tasks or ':assembleRelease' not in tasks or ':prepareDriverSource' not in tasks:
-            raise SystemExit('Independent runner task graph is missing its real source or packaging producer')
-        if any(task.count(':') != 1 or re.search(r'flutter|meow|helper|r8|minify', task, re.I) for task in tasks):
-            raise SystemExit('Independent runner task graph entered a production or minification task')
-        PY
-    - name: Retain compile scope without claiming an application or acceptance
-      if: always()
-      run: |-
-        mkdir -p "$RUNNER_TEMP/lite-flutter-host"
-        python3 - <<'PY'
-        import hashlib, json, os, shutil
-        from pathlib import Path
-        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
-        abi = output / 'abi'
-        abi.mkdir(parents=True, exist_ok=True)
-        product = Path('apps/aerove-lite')
-        inference = product / 'build/app/intermediates/androidTestAppKeepRules/release'
-        entries = []
-        for name, source in [('app-abi-rules.pro', inference/'rules.pro'), ('app-abi-report.json', inference/'inputs.json')]:
-            entry = dict(source=str(source), file=name, status='missing')
-            if source.is_file() and not source.is_symlink():
-                shutil.copyfile(source, abi/name)
-                entry.update(status='present', bytes=source.stat().st_size, sha256=hashlib.sha256((abi/name).read_bytes()).hexdigest())
-            entries.append(entry)
-        # AGP 9.4.1 PackagedDependenciesWriterTask writes deps.txt; do not request APK tasks to obtain it.
-        intermediates = product / 'build/app/intermediates'
-        provided = [path for path in intermediates.rglob('deps.txt') if path.is_file() and not path.is_symlink()
-                    and ('packaged_dependencies' in path.parts or 'generateReleaseFeatureTransitiveDeps' in path.parts)
-                    and 'release' in path.parts] if intermediates.is_dir() else []
-        for source in sorted(provided):
-            relative = Path('provided') / source.relative_to(intermediates)
-            target = abi/relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
-            entries.append(dict(source=str(source), file=relative.as_posix(), status='present', bytes=target.stat().st_size,
-                                sha256=hashlib.sha256(target.read_bytes()).hexdigest()))
-        original = '792966adf1057f3cce0aac558d7be3f0a40c9178ee7f04f5d45e7fb4ba3460c3'
-        rules = entries[0].get('sha256')
-        (abi/'export.json').write_text(json.dumps(dict(files=entries, original201RulesSha256=original,
-            actualRulesSha256=rules, rulesMatchOriginal201=None if rules is None else rules == original,
-            providedMetadata=dict(status='present' if provided else 'missing',
-                searched=str(intermediates/'**/deps.txt'), producer=':app:generateReleaseFeatureTransitiveDeps',
-                missingReason=None if provided else 'No release packaged-dependency metadata was produced by requested pre-R8 tasks; no APK task was added'),
-            acceptance=False), indent=2) + '\n')
-        (abi/'SHA256SUMS').write_text(''.join(row['sha256']+'  '+row['file']+'\n' for row in entries if row['status']=='present'))
-        roots = [Path('apps/aerove-lite/build'), Path('apps/aerove-lite/android/app/build'), Path('apps/aerove-lite/app/build'), Path('apps/aerove-lite/android-qa/build'), Path('apps/aerove-lite/android-platform-qa/build')]
-        apks = sorted({str(p) for root in roots if root.exists() for p in root.rglob('*.apk')})
-        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
-                       buildRoot='apps/aerove-lite/android', requestedTasks=[':app:compileReleaseKotlin', ':app:compileReleaseUnitTestKotlin', ':platform-qa:compileReleaseKotlin', ':platform-qa:compileReleaseJavaWithJavac', ':app:generateReleasePlatformTestAppKeepRules'],
-                       checkedOutputRoots=[str(root) for root in roots], appApkBuilt=bool(apks), apks=apks, acceptance=False)
-        (output / 'scope.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert not apks, 'Compile-only preflight unexpectedly packaged an application'
-        PY
-    - name: Verify first-install appearance and preserve saved user choices
-      working-directory: apps/aerove
-      run: |
-        flutter test --no-pub --concurrency 1 \
-          test/common/initial_theme_test.dart \
-          test/common/preferences_test.dart \
-          test/common/migration_test.dart \
-          test/models/config_test.dart \
-          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/initial-theme-dart.log"
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      if: always()
-      with:
-        name: AEROVE-Lite-Flutter-host-compilation
-        path: |-
-          ${{ runner.temp }}/lite-flutter-host/
-          apps/aerove-lite/build/app/reports/
-          apps/aerove-lite/build/app/test-results/
-          apps/aerove-lite/android/app/build/reports/
-          apps/aerove-lite/android/app/build/test-results/
-        if-no-files-found: error
-  reuse:
-    needs: promotion_request
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))))) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      actions: read
-      contents: read
-    outputs:
-      run_id: ${{ steps.select.outputs.run_id }}
-      run_number: ${{ steps.select.outputs.run_number }}
-      run_attempt: ${{ steps.select.outputs.run_attempt }}
-      artifact_ids: ${{ steps.select.outputs.artifact_ids }}
-      build_source: ${{ steps.select.outputs.build_source }}
-      build_tree: ${{ steps.select.outputs.build_tree }}
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        ref: ${{ github.sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - name: Select the exact successful acceptance run
-      id: select
-      env:
-        GH_TOKEN: ${{ github.token }}
-        ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
-      run: python3 apps/aerove-lite/tool/lite_release.py select --root "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
-  release:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success'))))) }}
-    needs:
-    - reuse
-    - promotion_request
+  evidence_inspection:
+    name: Lite265 evidence inspection only (no build)
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository == 'IvanSolis1989/Aerove' &&
+      github.repository_owner == 'IvanSolis1989' &&
+      github.actor == 'IvanSolis1989' &&
+      github.ref == 'refs/heads/codex/lite265-evidence-readback'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
+      contents: read
       actions: read
-      contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      ACCEPTANCE_RUN: ${{ needs.reuse.outputs.run_id }}
-      ACCEPTANCE_NUMBER: ${{ needs.reuse.outputs.run_number }}
-      ACCEPTANCE_ATTEMPT: ${{ needs.reuse.outputs.run_attempt }}
-      ARTIFACT_IDS: ${{ needs.reuse.outputs.artifact_ids }}
-      BUILD_SOURCE: ${{ needs.reuse.outputs.build_source }}
-      BUILD_TREE: ${{ needs.reuse.outputs.build_tree }}
+      ORIGINAL_RUN: '42066278567'
+      ORIGINAL_ATTEMPT: '1'
+      ORIGINAL_SOURCE: '4190ff45f8eedc6734fa666e2658b71abf147479'
+      ORIGINAL_BRANCH: 'codex/lite-shared-flutter-complete114'
+      EXPECTED_TREE: '8ca6fb6bc19867e9302923ba9bea8d289972a8b6'
+      FULL_JOB_ID: '127408997671'
+      PREVIEW_JOB_ID: '127408997657'
+      FULL_ARTIFACT_ID: '13437875787'
+      FULL_ARTIFACT_NAME: 'AEROVE-Lite-current-acceptance-flutter-full-attempt-1'
+      FULL_ARTIFACT_BYTES: '7889136'
+      FULL_ARTIFACT_SHA256: 'd41f300267952441d65c7a41b606d7d48acba0e5e978272d2af54951f33429ca'
+      ARM_ARTIFACT_ID: '13436109593'
+      ARM_ARTIFACT_NAME: 'AEROVE-Lite-preview-arm64-attempt-1'
+      ARM_ARTIFACT_BYTES: '47810677'
+      ARM_ARTIFACT_SHA256: '4b8064c747418990d476badd5db6f801a91c3dd1d6acbe8ce903dca1f8d3cbc6'
     steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        ref: ${{ github.sha }}
-        fetch-depth: 0
-        persist-credentials: false
-    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
-      with:
-        distribution: temurin
-        java-version: '17'
-    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-      with:
-        packages: platform-tools
-        log-accepted-android-sdk-licenses: false
-        cmdline-tools-version: '16111833'
-    - name: Install the pinned APK signature reader
-      run: |
-        sdkmanager 'build-tools;37.0.0'
-        test -x "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner"
-    - name: Download only selected immutable acceptance artifact IDs
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |
-        set -euo pipefail
-        root="$RUNNER_TEMP/lite-promotion"
-        mkdir -p "$root"
-        python3 - <<'PY' > "$root/artifact-ids.json"
-        import json, os
-        value = json.loads(os.environ['ARTIFACT_IDS'])
-        expected = {'arm', 'helper', 'x86', 'matrix'}
-        if set(value) != expected or any(not isinstance(v, int) or v < 1 for v in value.values()):
-            raise SystemExit('Selected acceptance artifact IDs are incomplete')
-        print(json.dumps(value))
-        PY
-        for key in arm helper x86 matrix; do
-          artifact_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$root/artifact-ids.json" "$key")
-          python3 apps/aerove-lite/tool/lite_release.py extract --artifact-id "$artifact_id" --destination "$root/$key"
-        done
-        "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs \
-          "$root/arm/AEROVE-Lite-android-arm64.apk" > "$root/arm-signature.txt"
-        "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging "$root/arm/AEROVE-Lite-android-arm64.apk" > "$root/arm-badging.txt"
-        "$ANDROID_SDK_ROOT/build-tools/37.0.0/apksigner" verify --verbose --print-certs \
-          "$root/x86/apks/app-release.apk" > "$root/x86-signature.txt"
-        "$ANDROID_SDK_ROOT/build-tools/37.0.0/aapt" dump badging "$root/x86/apks/app-release.apk" > "$root/x86-badging.txt"
-    - name: Verify exact source, ABI contracts, native receipts and twelve Android captures
-      run: |
-        python3 apps/aerove-lite/tool/lite_release.py validate \
-          --arm "$RUNNER_TEMP/lite-promotion/arm" --helper "$RUNNER_TEMP/lite-promotion/helper" \
-          --runtime "$RUNNER_TEMP/lite-promotion/x86" --matrix "$RUNNER_TEMP/lite-promotion/matrix" \
-          --source "$BUILD_SOURCE" --tree "$BUILD_TREE" \
-          --root "$GITHUB_WORKSPACE" --release-source "$GITHUB_SHA" \
-          --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT" \
-          --receipt "$RUNNER_TEMP/lite-promotion/promotion.json" \
-          --run "$ACCEPTANCE_RUN" --attempt "$ACCEPTANCE_ATTEMPT" --number "$ACCEPTANCE_NUMBER" \
-          --helper-source apps/aerove-lite/regexp2 \
-          --arm-badging "$RUNNER_TEMP/lite-promotion/arm-badging.txt" \
-          --arm-signature "$RUNNER_TEMP/lite-promotion/arm-signature.txt" \
-          --x86-badging "$RUNNER_TEMP/lite-promotion/x86-badging.txt" \
-          --x86-signature "$RUNNER_TEMP/lite-promotion/x86-signature.txt" \
-          --output "$RUNNER_TEMP/lite-promotion/validated.json"
-    - name: Preserve the separate build and release promotion receipt
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: aerove-lite-product-promotion-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-promotion/promotion.json
-        if-no-files-found: error
-    - name: Render source-bound release notes
-      run: |
-        info="$RUNNER_TEMP/lite-promotion/arm/BUILD_INFO.json"
-        tag=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("lite-v"+str(d["version"])+"+"+str(d["version_code"]))' "$info")
-        python3 apps/aerove-lite/tool/lite_release.py previous-changelog \
-          --output "$RUNNER_TEMP/lite-promotion/previous-changelog.md" --target-tag "$tag"
-        python3 apps/aerove-lite/tool/lite_release_notes.py --tag "$tag" --build-info "$info" \
-          --source-changelog docs/aerove-lite/CHANGELOG.md --acceptance-run "$ACCEPTANCE_RUN" \
-          --acceptance-attempt "$ACCEPTANCE_ATTEMPT" \
-          --previous-changelog "$RUNNER_TEMP/lite-promotion/previous-changelog.md" \
-          --output "$RUNNER_TEMP/lite-promotion/notes.md"
-    - name: Create or resume a matching draft, upload originals and read them back
-      run: |
-        python3 apps/aerove-lite/tool/lite_release.py publish \
-          --directory "$RUNNER_TEMP/lite-promotion/arm" \
-          --validated "$RUNNER_TEMP/lite-promotion/validated.json" \
-          --notes "$RUNNER_TEMP/lite-promotion/notes.md" \
-          --source "$GITHUB_SHA" --run "$ACCEPTANCE_RUN" --attempt "$ACCEPTANCE_ATTEMPT" \
-          --number "$ACCEPTANCE_NUMBER" \
-          --root "$GITHUB_WORKSPACE" --receipt "$RUNNER_TEMP/lite-promotion/promotion.json" \
-          --release-run "$GITHUB_RUN_ID" --release-attempt "$GITHUB_RUN_ATTEMPT"
-  build_arm:
-    needs: [flutter_host_preflight, verify]
-    name: build (arm64-v8a)
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
-    uses: ./.github/workflows/aerove-lite-build.yaml
-    with:
-      abi: arm64-v8a
-      target: aarch64-linux-android
-    secrets: inherit
-    permissions:
-      contents: read
-      actions: read
-  build_x86:
-    needs: [flutter_host_preflight, verify]
-    name: build (x86_64)
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
-    uses: ./.github/workflows/aerove-lite-build.yaml
-    with:
-      abi: x86_64
-      target: x86_64-linux-android
-    secrets: inherit
-    permissions:
-      contents: read
-      actions: read
-  standard_original_reference:
-    name: Std 原包 Android 取图诊断（不构建）
-    continue-on-error: ${{ !inputs.diagnostic_target || inputs.diagnostic_target == 'none' }}
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both')) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - name: Validate exclusive immutable Android diagnostic request
-        if: ${{ inputs.diagnostic_target && inputs.diagnostic_target != 'none' }}
-        env:
-          REQUEST_EVENT: ${{ github.event_name }}
-          DIAGNOSTIC_TARGET: ${{ inputs.diagnostic_target }}
-          MEOW_HOST_ONLY: ${{ inputs.meow_host_only }}
-          QA84_ONLY: ${{ inputs.qa84_only }}
-          QA79_ONLY: ${{ inputs.qa79_only }}
-          CLIENT_PREFLIGHT: ${{ inputs.client_preflight }}
-          PUBLISH_RELEASE: ${{ inputs.publish_release }}
-          NATIVE_PREFLIGHT: ${{ inputs.native_preflight }}
-          NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
-          NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
-          NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
-          NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
-        run: |
-          python3 - <<'PY'
-          import os
-          value = os.environ['DIAGNOSTIC_TARGET']
-          conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
-          if os.environ['NATIVE_TEST_FILTER']:
-              conflicts.append('NATIVE_TEST_FILTER')
-          if value not in ('lite94-matrix', 'std40', 'both') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
-              raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
-          PY
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Checkout immutable failed source for identity binding
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: 4190ff45f8eedc6734fa666e2658b71abf147479
           persist-credentials: false
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-        with:
-          packages: platform-tools
-          log-accepted-android-sdk-licenses: false
-          cmdline-tools-version: '16111833'
-      - name: Read original Std 40 artifact without rebuilding
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          github-token: ${{ github.token }}
-          repository: IvanSolis1989/Aerove
-          run-id: 40082294388
-          artifact-ids: 12555818245
-          merge-multiple: true
-          path: ${{ runner.temp }}/standard-original-input
-      - name: Existing API33 image, emulator and KVM configuration
-        shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-        run: |
-          set -euo pipefail
-          STANDARD_REFERENCE_ROOT="$RUNNER_TEMP/standard-original-reference"
-          printf 'STANDARD_REFERENCE_ROOT=%s\n' "$STANDARD_REFERENCE_ROOT" >> "$GITHUB_ENV"
-          mkdir -p "$STANDARD_REFERENCE_ROOT/environment"
-          timeout --kill-after=10s 240s sdkmanager --install 'build-tools;35.0.0' emulator --channel=0
-          timeout --kill-after=5s 20s "$ANDROID_HOME/emulator/emulator" -no-window -version > "$STANDARD_REFERENCE_ROOT/environment/emulator-version.txt" 2>&1
-          grep -E '37\.2\.12\.0.*16428233' "$STANDARD_REFERENCE_ROOT/environment/emulator-version.txt"
-          legacy_sdk_dir="$ANDROID_HOME/cmdline-tools/latest"
-          test -x "$legacy_sdk_dir/bin/sdkmanager"
-          grep -Fx 'Pkg.Revision=12.0' "$legacy_sdk_dir/source.properties" > "$STANDARD_REFERENCE_ROOT/environment/legacy-sdk-version.txt"
-          if timeout --kill-after=10s 120s "$legacy_sdk_dir/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses \
-              > "$STANDARD_REFERENCE_ROOT/environment/legacy-sdk-licenses.log" 2>&1 <<< "$(printf 'y\n%.0s' {1..64})"; then
-            printf '0\n' > "$STANDARD_REFERENCE_ROOT/environment/legacy-sdk-licenses.exit.txt"
-          else
-            legacy_license_rc=$?
-            printf 'SDK_LICENSE_CLI_EXIT=%s\n' "$legacy_license_rc" >&2 || true
-            exit "$legacy_license_rc"
-          fi
-          test -s "$ANDROID_HOME/licenses/android-sdk-preview-license" || { echo '::error::Existing SDK setup has not recorded the official preview license'; exit 1; }
-          image_archive="$RUNNER_TEMP/std-play33-r01.zip"
-          timeout --kill-after=10s 250s curl --fail --location --proto '=https' --tlsv1.2 --max-time 240 \
-            --output "$image_archive" 'https://dl.google.com/android/repository/sys-img/google_apis_playstore/x86_64-33_r01.zip'
-          timeout --kill-after=10s 180s python3 apps/aerove-lite/tool/standard_reference/install_play33_r01.py \
-            --archive "$image_archive" --sdk "$ANDROID_HOME" \
-            --receipt "$STANDARD_REFERENCE_ROOT/environment/IMAGE-IDENTITY.json"
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          export ANDROID_AVD_HOME="$RUNNER_TEMP/standard-original-reference-avd"
-          printf 'ANDROID_AVD_HOME=%s\n' "$ANDROID_AVD_HOME" >> "$GITHUB_ENV"
-          avd_directory="$ANDROID_AVD_HOME"
-          mkdir -p "$avd_directory"
-          echo no | timeout --kill-after=5s 30s avdmanager create avd --force -n test --package 'system-images;android-33-ext4;google_apis_playstore;x86_64' --device pixel_6 -p "$avd_directory/test.avd"
-          test -s "$avd_directory/test.ini"
-          test -s "$avd_directory/test.avd/config.ini"
-          printf 'hw.cpu.ncore=2\n' >> "$avd_directory/test.avd/config.ini"
-          cp "$avd_directory/test.avd/config.ini" "$STANDARD_REFERENCE_ROOT/environment/avd-config.ini"
-          cp "$avd_directory/test.ini" "$STANDARD_REFERENCE_ROOT/environment/avd-descriptor.ini"
-      - name: Record diagnostic-only original Std and harness identities
-        if: ${{ inputs.diagnostic_target && inputs.diagnostic_target != 'none' }}
-        env:
-          HARNESS_SOURCE: ${{ github.sha }}
-          HARNESS_RUN: ${{ github.run_id }}
-          HARNESS_ATTEMPT: ${{ github.run_attempt }}
-          HARNESS_NUMBER: ${{ github.run_number }}
+          submodules: false
+          fetch-depth: 1
+
+      - name: Read exact original run artifacts and preserve a bounded failure report
         run: |
           python3 - <<'PY'
-          import json, os, subprocess
-          from pathlib import Path
-          receipt = dict(diagnosticOriginalRuntime=True, runtimeTarget='std40', promotionAccepted=False,
-                         originalAppIdentity=dict(sourceRevision='c133772fc83b7984bdacb11e5dd41e2d65098771', workflowRun='40082294388', artifactId=12555818245),
-                         originalBuildInfo=json.loads((Path(os.environ['RUNNER_TEMP']) / 'standard-original-input/BUILD_INFO.json').read_text()),
-                         harnessIdentity=dict(sourceRevision=os.environ['HARNESS_SOURCE'], sourceTree=subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(), workflowRun=os.environ['HARNESS_RUN'],
-                                              runAttempt=int(os.environ['HARNESS_ATTEMPT']), runNumber=int(os.environ['HARNESS_NUMBER'])))
-          (Path(os.environ['STANDARD_REFERENCE_ROOT']) / 'DIAGNOSTIC-IDENTITY.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          import hashlib
+          import json
+          import os
+          from pathlib import Path, PurePosixPath, PureWindowsPath
+          import re
+          import subprocess
+          import sys
+          import zipfile
+
+          repo = "IvanSolis1989/Aerove"
+          run_id = int(os.environ["ORIGINAL_RUN"])
+          attempt = int(os.environ["ORIGINAL_ATTEMPT"])
+          source = os.environ["ORIGINAL_SOURCE"]
+          expected_tree = os.environ["EXPECTED_TREE"]
+          root = Path(os.environ["RUNNER_TEMP"]) / "lite265-readback"
+          root.mkdir()
+          report_path = root / "report.json"
+
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+
+          def gh_json(route):
+              result = subprocess.run(["gh", "api", route], check=True,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      text=True, timeout=90)
+              return json.loads(result.stdout)
+
+          def digest(path):
+              h = hashlib.sha256()
+              with path.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      h.update(chunk)
+              return h.hexdigest()
+
+          def gh_archive(artifact_id, destination):
+              try:
+                  with destination.open("wb") as output:
+                      subprocess.run(["gh", "api", f"repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+                                     stdout=output, stderr=subprocess.PIPE, check=True, timeout=240)
+              except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                  destination.unlink(missing_ok=True)
+                  raw = getattr(error, "stderr", b"") or b""
+                  message = raw.decode(errors="replace") if isinstance(raw, bytes) else raw
+                  message = re.sub(r"https?://[^\s\"']+", "<URL redacted>", message)
+                  message = re.sub(r"(?i)(token|authorization|password|secret)=\S+", r"\1=<redacted>", message)
+                  raise SystemExit(f"Artifact {artifact_id} download failed: {message[:1200]}") from None
+              return destination
+
+          def artifact_row(rows, artifact_id, name, size, sha256=None):
+              found = [row for row in rows if row.get("id") == artifact_id]
+              require(len(found) == 1, f"Expected one artifact ID {artifact_id}")
+              row = found[0]
+              require(row.get("name") == name and row.get("size_in_bytes") == size
+                      and row.get("expired") is False
+                      and row.get("workflow_run", {}).get("id") == run_id
+                      and row.get("workflow_run", {}).get("head_sha") == source,
+                      f"Artifact metadata identity mismatch for {artifact_id}")
+              value = row.get("digest", "")
+              require(re.fullmatch(r"sha256:[0-9a-f]{64}", value) is not None,
+                      f"Artifact digest is missing or invalid for {artifact_id}")
+              if sha256 is not None:
+                  require(value == "sha256:" + sha256, f"Artifact digest mismatch for {artifact_id}")
+              detail = gh_json(f"repos/{repo}/actions/artifacts/{artifact_id}")
+              for key in ("id", "name", "size_in_bytes", "digest", "expired"):
+                  require(detail.get(key) == row.get(key), f"Artifact detail/list mismatch for {artifact_id}")
+              return row
+
+          def safe_archive(row, label):
+              path = root / f"{label}.zip"
+              gh_archive(row["id"], path)
+              actual_size = path.stat().st_size
+              actual_hash = digest(path)
+              require(actual_size == row["size_in_bytes"], f"Archive byte size mismatch for {label}")
+              require("sha256:" + actual_hash == row["digest"], f"Archive digest mismatch for {label}")
+              archive = zipfile.ZipFile(path)
+              infos = archive.infolist()
+              names = [item.filename for item in infos]
+              require(names and len(names) == len(set(names)), f"Empty or duplicate archive paths in {label}")
+              require(sum(item.file_size for item in infos) <= 512 * 1024 * 1024,
+                      f"Uncompressed archive exceeds the bounded readback limit: {label}")
+              for item in infos:
+                  posix = PurePosixPath(item.filename)
+                  windows = PureWindowsPath(item.filename)
+                  mode = item.external_attr >> 16
+                  require(not posix.is_absolute() and not windows.is_absolute() and not windows.drive
+                          and ".." not in posix.parts and "\\" not in item.filename and posix.parts,
+                          f"Unsafe archive path in {label}")
+                  require(not (mode and (mode & 0o170000) == 0o120000)
+                          and (not mode or (mode & 0o170000) in (0o100000, 0o040000)),
+                          f"Non-regular archive entry in {label}")
+              require(archive.testzip() is None, f"ZIP CRC failure in {label}")
+              return path, archive, infos
+
+          def sha_bytes(value):
+              return hashlib.sha256(value).hexdigest()
+
+          def redacted(text):
+              text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+              text = re.sub(r"https?://[^\s\"']+", "<URL redacted>", text)
+              text = re.sub(r"(?i)\b(bearer|token|authorization|password|passwd|secret|api[_-]?key)\s*[:=]\s*[^\s,;]+",
+                            r"\1=<redacted>", text)
+              text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "<IP redacted>", text)
+              text = re.sub(r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "<MAC redacted>", text)
+              text = re.sub(r"\bemulator-[0-9]+\b", "<device serial redacted>", text)
+              text = re.sub(r"(?i)(serial(?:number)?\s*[:=]\s*)[^\s,;]+", r"\1<redacted>", text)
+              return text[:360]
+
+          run = gh_json(f"repos/{repo}/actions/runs/{run_id}")
+          require(run.get("id") == run_id and run.get("run_attempt") == attempt
+                  and run.get("head_sha") == source and run.get("head_branch") == os.environ["ORIGINAL_BRANCH"]
+                  and run.get("path") == ".github/workflows/aerove-lite.yaml"
+                  and run.get("status") == "completed" and run.get("conclusion") == "failure"
+                  and run.get("repository", {}).get("full_name") == repo,
+                  "Original failed run identity/state mismatch")
+          local_source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          local_tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+          require(local_source == source and local_tree == expected_tree,
+                  "Immutable checkout source/tree mismatch")
+
+          jobs_payload = gh_json(f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+          jobs = jobs_payload.get("jobs")
+          require(isinstance(jobs, list) and jobs_payload.get("total_count") == len(jobs),
+                  "Job API response is incomplete")
+          by_id = {job.get("id"): job for job in jobs}
+          expected_jobs = {
+              int(os.environ["FULL_JOB_ID"]): ("acceptance (Flutter UI and same-session native lifecycle)", "failure"),
+              int(os.environ["PREVIEW_JOB_ID"]): ("Flutter production UI preview (representative only)", "failure"),
+              127401476340: ("build (arm64-v8a) / package", "success"),
+              127401036780: ("build (x86_64) / package", "success"),
+              127396763516: ("build (arm64-v8a) / rust", "success"),
+              127396763933: ("build (arm64-v8a) / helper", "success"),
+              127396763976: ("build (x86_64) / rust", "success"),
+              127396763696: ("build (x86_64) / helper", "success"),
+          }
+          job_report = []
+          for job_id, (name, conclusion) in expected_jobs.items():
+              job = by_id.get(job_id)
+              require(job is not None and job.get("name") == name and job.get("run_id") == run_id
+                      and job.get("run_attempt") == attempt and job.get("head_sha") == source
+                      and job.get("status") == "completed" and job.get("conclusion") == conclusion,
+                      f"Original job identity/conclusion mismatch: {job_id}")
+              failed_steps = [{"name": step.get("name"), "conclusion": step.get("conclusion")}
+                              for step in job.get("steps", []) if step.get("conclusion") == "failure"]
+              job_report.append({"id": job_id, "name": name, "conclusion": conclusion,
+                                 "failedSteps": failed_steps})
+
+          artifacts_payload = gh_json(f"repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100")
+          artifact_rows = artifacts_payload.get("artifacts")
+          require(isinstance(artifact_rows, list) and artifacts_payload.get("total_count") == len(artifact_rows),
+                  "Artifact API response is incomplete")
+          full = artifact_row(artifact_rows, int(os.environ["FULL_ARTIFACT_ID"]),
+                              os.environ["FULL_ARTIFACT_NAME"], int(os.environ["FULL_ARTIFACT_BYTES"]),
+                              os.environ["FULL_ARTIFACT_SHA256"])
+          arm = artifact_row(artifact_rows, int(os.environ["ARM_ARTIFACT_ID"]),
+                             os.environ["ARM_ARTIFACT_NAME"], int(os.environ["ARM_ARTIFACT_BYTES"]),
+                             os.environ["ARM_ARTIFACT_SHA256"])
+          preview_name = "AEROVE-Lite-Flutter-UI-preview-attempt-1"
+          preview_rows = [item for item in artifact_rows if item.get("name") == preview_name]
+          require(len(preview_rows) == 1, "Expected one preview UI artifact row")
+          preview = artifact_row(artifact_rows, preview_rows[0].get("id"), preview_name,
+                                 preview_rows[0].get("size_in_bytes"))
+
+          arm_zip, arm_archive, arm_infos = safe_archive(arm, "arm64-producer")
+          arm_files = {item.filename: item for item in arm_infos if not item.is_dir()}
+          apk_name = "AEROVE-Lite-android-arm64.apk"
+          require(set(arm_files) == {apk_name, "BUILD_INFO.json", "SHA256SUMS"},
+                  "Unexpected ARM64 producer artifact contents")
+          build_info = json.loads(arm_archive.read(arm_files["BUILD_INFO.json"]))
+          apk_hash = sha_bytes(arm_archive.read(arm_files[apk_name]))
+          checksum_lines = arm_archive.read(arm_files["SHA256SUMS"]).decode().splitlines()
+          expected_checksums = {f"{apk_hash}  {apk_name}",
+                                f"{sha_bytes(arm_archive.read(arm_files['BUILD_INFO.json']))}  BUILD_INFO.json"}
+          require(set(checksum_lines) == expected_checksums and len(checksum_lines) == 2,
+                  "ARM64 producer SHA256SUMS mismatch")
+          require(build_info.get("product") == "AEROVE Lite" and build_info.get("channel") == "preview"
+                  and build_info.get("application_id") == "dev.aerove.lite"
+                  and build_info.get("abi") == "arm64-v8a" and build_info.get("min_sdk") == 33
+                  and build_info.get("version_code") == 36 and build_info.get("source") == source
+                  and build_info.get("tree") == expected_tree
+                  and build_info.get("workflow") == f"https://github.com/{repo}/actions/runs/{run_id}"
+                  and build_info.get("run_number") == run.get("run_number")
+                  and build_info.get("run_attempt") == attempt and build_info.get("apk_sha256") == apk_hash,
+                  "ARM64 BUILD_INFO does not bind the exact source/run/APK identity")
+          signer = build_info.get("signer_sha256")
+          require(signer == "09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8",
+                  "ARM64 signer fingerprint does not match the fixed Lite identity")
+          arm_archive.close()
+
+          full_zip, full_archive, full_infos = safe_archive(full, "flutter-full")
+          preview_zip, preview_archive, preview_infos = safe_archive(preview, "flutter-preview")
+          evidence = []
+          pngs = []
+          meow = []
+          receipts = []
+          install_markers = []
+          launch_markers = []
+          emulator_exit_markers = []
+          runner_markers = []
+          scan_pattern = re.compile(
+              r"(?i)(owned emulator|emulator exited|fatal signal|fatal exception|uncaught exception|"
+              r"instrumentation_status_code|instrumentation_code|test failed|runner.*(?:fail|crash|exception)|"
+              r"install.*dev\.aerove\.lite|displayed dev\.aerove\.lite|activitytaskmanager.*dev\.aerove\.lite|"
+              r"exception|stacktrace|process completed with exit code|flutter.*(?:error|exception|crash)|"
+              r"meowflutter|meow.*flutter|flutter.*meow|INSTALL(?:ING|_FAILED)?|performing streamed install)"
+          )
+          install_pattern = re.compile(r"(?i)(install(?:ing|ed)?[^\n]*dev\.aerove\.lite|"
+                                       r"performing streamed install|success[^\n]*dev\.aerove\.lite)")
+          launch_pattern = re.compile(r"(?i)(activitytaskmanager[^\n]*(?:start|displayed)[^\n]*dev\.aerove\.lite|"
+                                      r"displayed dev\.aerove\.lite|flutter engine.*dev\.aerove\.lite)")
+          emulator_pattern = re.compile(r"(?i)(owned emulator exited|emulator.*(?:exit|crash|fatal|stderr)|"
+                                        r"qemu.*(?:exit|crash|fatal)|fatal signal)")
+          runner_pattern = re.compile(r"(?i)(instrumentation_status_code|instrumentation_code|"
+                                      r"test failed|runner.*(?:fail|crash|exception)|flutterproductionuitest)")
+          meow_pattern = re.compile(r"(?i)(meowflutter|meow.{0,20}flutter|flutter.{0,20}meow)")
+
+          for label, archive, infos in (("flutter-full", full_archive, full_infos),
+                                        ("flutter-preview", preview_archive, preview_infos)):
+              for item in infos:
+                  if item.is_dir():
+                      continue
+                  lower = item.filename.lower()
+                  if lower.endswith(".png"):
+                      raw = archive.read(item)
+                      pngs.append({"artifact": label, "path": item.filename, "bytes": len(raw),
+                                   "sha256": sha_bytes(raw)})
+                      continue
+                  if not lower.endswith((".log", ".txt", ".out", ".json", ".xml")) or item.file_size > 24 * 1024 * 1024:
+                      continue
+                  raw = archive.read(item)
+                  file_hash = sha_bytes(raw)
+                  text = raw.decode("utf-8", errors="replace")
+                  if lower.endswith(".json"):
+                      try:
+                          payload = json.loads(text)
+                      except json.JSONDecodeError:
+                          payload = None
+                      allowed = {"phase", "status", "executionPassed", "applicationId", "productionVersionCode",
+                                 "productionVersionName", "versionCode", "versionName", "source", "tree", "runner",
+                                 "method", "apkSha256", "appApkSha256", "failureType", "exitCode", "processExitCode",
+                                 "error", "failure", "cancelled", "started", "completed", "instrumentationCode"}
+                      facts = {}
+                      def collect_facts(value):
+                          if isinstance(value, dict):
+                              for key, child in value.items():
+                                  if key in allowed and isinstance(child, (str, int, float, bool, type(None))):
+                                      facts[key] = redacted(str(child))
+                                  elif isinstance(child, (dict, list)):
+                                      collect_facts(child)
+                          elif isinstance(value, list):
+                              for child in value:
+                                  collect_facts(child)
+                      if payload is not None:
+                          collect_facts(payload)
+                      if facts:
+                          receipts.append({"artifact": label, "path": item.filename, "bytes": item.file_size,
+                                           "sha256": file_hash, "facts": facts})
+                      continue
+                  lines = text.splitlines()
+                  matching = [index for index, line in enumerate(lines) if scan_pattern.search(line)]
+                  for index, line in enumerate(lines):
+                      if install_pattern.search(line):
+                          install_markers.append({"artifact": label, "path": item.filename, "line": index + 1})
+                      if launch_pattern.search(line):
+                          launch_markers.append({"artifact": label, "path": item.filename, "line": index + 1})
+                      if emulator_pattern.search(line):
+                          emulator_exit_markers.append({"artifact": label, "path": item.filename, "line": index + 1,
+                                                        "excerpt": redacted(line)})
+                      if runner_pattern.search(line):
+                          runner_markers.append({"artifact": label, "path": item.filename, "line": index + 1,
+                                                 "excerpt": redacted(line)})
+                      if meow_pattern.search(line):
+                          meow.append({"artifact": label, "path": item.filename, "line": index + 1,
+                                       "excerpt": redacted(line)})
+                  if not matching:
+                      continue
+                  selected = set()
+                  for index in matching:
+                      for position in range(max(0, index - 2), min(len(lines), index + 3)):
+                          selected.add(position)
+                  excerpt = [{"line": index + 1, "text": redacted(lines[index])}
+                             for index in sorted(selected) if not re.search(r"(?i)(password|secret|api[_-]?key|authorization)", lines[index])]
+                  positions = sorted(selected)
+                  ranges = []
+                  for position in positions:
+                      if not ranges or position > ranges[-1][1] + 1:
+                          ranges.append([position + 1, position + 1])
+                      else:
+                          ranges[-1][1] = position + 1
+                  evidence.append({"artifact": label, "path": item.filename, "bytes": item.file_size,
+                                   "sha256": file_hash, "selectedLineRanges": ranges,
+                                   "excerpt": excerpt[:80]})
+
+          require(sum(len(json.dumps(row)) for row in evidence) < 140_000,
+                  "Selected evidence exceeds the bounded report size")
+          report = {
+              "role": "evidenceReadback", "accepted": False, "compiled": False,
+              "appApkBuilt": False, "fullCiAccepted": False,
+              "originalRun": {"id": run_id, "attempt": attempt, "source": source,
+                              "tree": expected_tree, "branch": os.environ["ORIGINAL_BRANCH"],
+                              "status": run.get("status"), "conclusion": run.get("conclusion")},
+              "jobs": job_report,
+              "arm64Producer": {"artifactId": arm["id"], "artifactBytes": arm["size_in_bytes"],
+                                "artifactSha256": arm["digest"].removeprefix("sha256:"),
+                                "apk": apk_name, "apkSha256": apk_hash,
+                                "applicationId": build_info.get("application_id"),
+                                "version": build_info.get("version"), "versionCode": build_info.get("version_code"),
+                                "abi": build_info.get("abi"), "minSdk": build_info.get("min_sdk"),
+                                "signerSha256": signer},
+              "fullArtifact": {"id": full["id"], "name": full["name"], "bytes": full["size_in_bytes"],
+                               "sha256": full["digest"].removeprefix("sha256:")},
+              "previewArtifact": {"id": preview["id"], "name": preview["name"],
+                                  "bytes": preview["size_in_bytes"],
+                                  "sha256": preview["digest"].removeprefix("sha256:")},
+              "actualInstallEvidence": install_markers[:80],
+              "actualLaunchEvidence": launch_markers[:80],
+              "pngs": pngs[:120],
+              "ownedEmulatorExitEvidence": emulator_exit_markers[:80],
+              "runnerFailureEvidence": runner_markers[:80],
+              "meowFlutterDiagnostics": meow[:80],
+              "receiptFacts": receipts[:100],
+              "sourceFiles": evidence,
+          }
+          full_archive.close()
+          preview_archive.close()
+          report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+          require(report_path.stat().st_size <= 200_000, "Evidence report exceeds 200 KiB")
+          print(f"Evidence readback report prepared ({report_path.stat().st_size} bytes); acceptance remains false.")
           PY
-      - name: Owned emulator and closed02 original-APK first-screen probe
-        shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-        run: |
-          python3 apps/aerove-lite/tool/emulator_standard_reference.py \
-            --apk-directory "$RUNNER_TEMP/standard-original-input" \
-            --diagnostics "$STANDARD_REFERENCE_ROOT/runtime" \
-            --image-directory "$ANDROID_HOME/system-images/android-33-ext4/google_apis_playstore/x86_64" \
-            --image-receipt "$STANDARD_REFERENCE_ROOT/environment/IMAGE-IDENTITY.json"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: ${{ always() }}
+
+      - name: Upload bounded evidence report only
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Std-original40-reference-attempt-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/standard-original-reference/
-          if-no-files-found: warn
-  flutter_ui_preview:
-    name: Flutter production UI preview (representative only)
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name
-      != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
-    needs:
-    - build_x86
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      AEROVE_GUEST_ANGLE: '1'
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
-      with:
-        distribution: temurin
-        java-version: '17'
-    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-      with:
-        packages: platform-tools
-        log-accepted-android-sdk-licenses: false
-        cmdline-tools-version: '16111833'
-    - name: Fetch exact prebuilt x86 runtime
-      run: python3 apps/aerove-lite/tool/ci_artifacts.py runtime --name "AEROVE-Lite-runtime-contract-attempt-${GITHUB_RUN_ATTEMPT}" --destination "$RUNNER_TEMP/lite-runtime-input"
-    - name: Existing API33 emulator environment with unchanged configuration
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |
-        set -euo pipefail
-        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/sdk-install"
-        mkdir -p "$sdk_install_dir"
-        for sdk_attempt in 1 2; do
-          sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
-          set +e
-          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
-          sdk_install_status=("${PIPESTATUS[@]}")
-          set -e
-          sdkmanager_rc="${sdk_install_status[0]}"
-          tee_rc="${sdk_install_status[1]}"
-          printf 'sdkmanager_exit=%s\ntee_exit=%s\n' "$sdkmanager_rc" "$tee_rc" > "$sdk_install_dir/attempt-${sdk_attempt}.status.txt"
-          if (( tee_rc != 0 )); then
-            printf 'SDK install log tee failed (exit %s)\n' "$tee_rc" >&2
-            exit "$tee_rc"
-          fi
-          if (( sdkmanager_rc == 0 )); then
-            break
-          fi
-          if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
-            exit "$sdkmanager_rc"
-          fi
-          if (( sdk_attempt == 1 )) &&
-              grep -Eiq 'Failed to download package archive for (emulator|system-images/android-33/google_apis/x86_64): (closed|.*connection reset|.*read (timed out|timeout)|.*EOF(Exception)?|.*unexpected end of (file|stream))([[:space:]:.]|$)' "$sdk_install_log" &&
-              ! grep -Eiq 'LicenseNotAccepted|license.*(not accepted|not been accepted)|no space left on device|insufficient.*(space|storage)|not enough.*space|failed to find package|unknown package|package .*not (found|available)|UnsupportedClassVersionError|requires? (Java|JDK)' "$sdk_install_log"; then
-            printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
-            continue
-          fi
-          exit "$sdkmanager_rc"
-        done
-        mkdir -p "$RUNNER_TEMP/lite-diagnostics/flutter-ui"
-        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger --name-match=kvm
-        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
-        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-        sed -i '/^[[:space:]]*disk\.dataPartition\.size[[:space:]]*=/d' "$avd_directory/test.avd/config.ini"
-        printf 'hw.cpu.ncore=2\ndisk.dataPartition.size=4G\n' >> "$avd_directory/test.avd/config.ini"
-        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/flutter-ui/avd-config.ini"
-        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
-        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
-        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
-        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
-        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
-        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
-          --output "$emulator_archive" "$emulator_archive_url" \
-          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
-        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
-        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
-        unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
-        test -x "$emulator_stage/extracted/emulator/emulator"
-        test -f "$emulator_stage/extracted/emulator/source.properties"
-        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties"
-        if test -e "$ANDROID_HOME/emulator"; then
-          mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
-        fi
-        mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
-        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
-        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
-    - name: Inspect the same production APK through its real Flutter launcher
-      run: python3 apps/aerove-lite/tool/emulator_current.py flutter-ui --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
-    - name: Preserve representative Flutter UI evidence without asserting full acceptance
-      if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: AEROVE-Lite-Flutter-UI-preview-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-diagnostics/
-        if-no-files-found: error
-  acceptance:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
-    needs:
-    - build_x86
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - phase: flutter-platform
-          label: fixed 28 native/platform regressions
-          artifact_suffix: flutter-platform
-        - phase: flutter-full
-          label: Flutter UI and same-session native lifecycle
-          artifact_suffix: flutter-full
-    name: acceptance (${{ matrix.label }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      actions: read
-    env:
-      GH_TOKEN: ${{ github.token }}
-      AEROVE_GUEST_ANGLE: '1'
-      AEROVE_CLEAR_FRAME_TRACE: '1'
-      AEROVE_GLASS_CONSUMER_RECEIPT: '1'
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
-      with:
-        distribution: temurin
-        java-version: '17'
-    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
-      with:
-        packages: platform-tools
-        log-accepted-android-sdk-licenses: false
-        cmdline-tools-version: '16111833'
-    - name: Fetch exact prebuilt x86 runtime
-      run: python3 apps/aerove-lite/tool/ci_artifacts.py runtime --name "AEROVE-Lite-runtime-contract-attempt-${GITHUB_RUN_ATTEMPT}" --destination "$RUNNER_TEMP/lite-runtime-input"
-    - name: Checkout the immutable Smart fixture sources
-      if: ${{ matrix.phase == 'flutter-platform' }}
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        repository: IvanSolis1989/Smart-Config-Kit
-        ref: 5e28b84fa5161c67222b1b12f71732a2e7b80fae
-        path: .ci-fixture-sources/smart-config
-        persist-credentials: false
-        fetch-depth: 1
-        sparse-checkout: |
-          Meow内核系
-          rulesets/generated/fused
-          tools/lib
-    - name: Prepare and read back the pinned Smart Android fixture
-      if: ${{ matrix.phase == 'flutter-platform' }}
-      timeout-minutes: 5
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |
-        set -euo pipefail
-        python3 apps/aerove-lite/tool/prepare_smart_config_meow_ci_fixture.py prepare \
-          --smart-repository "$GITHUB_WORKSPACE/.ci-fixture-sources/smart-config" \
-          --app-repository "$GITHUB_WORKSPACE" \
-          --geo-cache "$RUNNER_TEMP/lite-smart-geodata" --download \
-          --output "$RUNNER_TEMP/lite-smart-config-meow" \
-          --receipt "$RUNNER_TEMP/lite-diagnostics/flutter-platform/smart-fixture-source.json"
-        echo "SMART_CONFIG_MEOW_FIXTURE_DIR=$RUNNER_TEMP/lite-smart-config-meow" >> "$GITHUB_ENV"
-        echo "SMART_CONFIG_MEOW_FIXTURE_RECEIPT=$RUNNER_TEMP/lite-diagnostics/flutter-platform/smart-fixture-source.json" >> "$GITHUB_ENV"
-    - name: Prepare the existing separate-UID fixture compiler
-      if: ${{ matrix.phase == 'flutter-full' }}
-      run: sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
-    - name: Existing API33 emulator environment with unchanged configuration
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |
-        set -euo pipefail
-        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/sdk-install"
-        mkdir -p "$sdk_install_dir"
-        for sdk_attempt in 1 2; do
-          sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
-          set +e
-          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
-          sdk_install_status=("${PIPESTATUS[@]}")
-          set -e
-          sdkmanager_rc="${sdk_install_status[0]}"
-          tee_rc="${sdk_install_status[1]}"
-          printf 'sdkmanager_exit=%s\ntee_exit=%s\n' "$sdkmanager_rc" "$tee_rc" > "$sdk_install_dir/attempt-${sdk_attempt}.status.txt"
-          if (( tee_rc != 0 )); then
-            printf 'SDK install log tee failed (exit %s)\n' "$tee_rc" >&2
-            exit "$tee_rc"
-          fi
-          if (( sdkmanager_rc == 0 )); then
-            break
-          fi
-          if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
-            exit "$sdkmanager_rc"
-          fi
-          if (( sdk_attempt == 1 )) &&
-              grep -Eiq 'Failed to download package archive for (emulator|system-images/android-33/google_apis/x86_64): (closed|.*connection reset|.*read (timed out|timeout)|.*EOF(Exception)?|.*unexpected end of (file|stream))([[:space:]:.]|$)' "$sdk_install_log" &&
-              ! grep -Eiq 'LicenseNotAccepted|license.*(not accepted|not been accepted)|no space left on device|insufficient.*(space|storage)|not enough.*space|failed to find package|unknown package|package .*not (found|available)|UnsupportedClassVersionError|requires? (Java|JDK)' "$sdk_install_log"; then
-            printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
-            continue
-          fi
-          exit "$sdkmanager_rc"
-        done
-        mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
-        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-        sudo udevadm control --reload-rules
-        sudo udevadm trigger --name-match=kvm
-        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
-        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
-        sed -i '/^[[:space:]]*disk\.dataPartition\.size[[:space:]]*=/d' "$avd_directory/test.avd/config.ini"
-        printf 'hw.cpu.ncore=2\ndisk.dataPartition.size=4G\n' >> "$avd_directory/test.avd/config.ini"
-        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
-        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
-        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
-        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
-        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
-        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
-        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
-          --output "$emulator_archive" "$emulator_archive_url" \
-          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
-        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
-        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
-        unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
-        test -x "$emulator_stage/extracted/emulator/emulator"
-        test -f "$emulator_stage/extracted/emulator/source.properties"
-        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties"
-        if test -e "$ANDROID_HOME/emulator"; then
-          mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
-        fi
-        mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
-        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
-        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
-    - name: Real API 33 ${{ matrix.phase }} verification
-      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
-      run: |
-        set -euo pipefail
-        python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
-    - name: Preserve diagnostics
-      if: always()
-      run: |
-        mkdir -p "$RUNNER_TEMP/lite-diagnostics"
-        git status --short > "$RUNNER_TEMP/lite-diagnostics/git-status.txt"
-        git diff --binary > "$RUNNER_TEMP/lite-diagnostics/generated.patch"
-        if timeout 5s adb get-state > /dev/null 2>&1; then
-          timeout 15s adb logcat -d > "$RUNNER_TEMP/lite-diagnostics/logcat.txt" 2>&1 || true
-          timeout 30s adb pull /sdcard/Android/data/dev.aerove.lite/files/captures "$RUNNER_TEMP/lite-diagnostics/" || true
-        fi
-    - name: Preserve current source platform and Flutter acceptance receipts
-      if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: AEROVE-Lite-current-acceptance-${{ matrix.phase }}-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-diagnostics/${{ matrix.phase }}/production-ui/
-        if-no-files-found: error
-    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      if: always()
-      with:
-        name: AEROVE-Lite-diagnostics-${{ matrix.artifact_suffix }}-attempt-${{ github.run_attempt }}
-        path: |
-          apps/aerove-lite/app/build/reports/
-          apps/aerove-lite/app/build/outputs/androidTest-results/
-          apps/aerove-lite/meow-native/Cargo.lock
-          ${{ runner.temp }}/lite-diagnostics/
-          ${{ runner.temp }}/lite-fixture.log
-        if-no-files-found: warn
-  accepted:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release)))))) }}
-    needs:
-    - resolve
-    - verify
-    - build_arm
-    - build_x86
-    - acceptance
-    - flutter_ui_preview
-    runs-on: ubuntu-24.04
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      with:
-        persist-credentials: false
-    - name: Fetch the exact current Android platform and Flutter evidence
-      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-      with:
-        pattern: AEROVE-Lite-current-acceptance-*-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-current-acceptance
-        merge-multiple: false
-    - name: Verify current Android execution and retain pending release gates
-      run: |
-        python3 apps/aerove-lite/tool/android_acceptance_verify.py \
-          --directory "$RUNNER_TEMP/lite-current-acceptance" --source "$GITHUB_SHA" \
-          --run "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
-          --execution-only --output "$RUNNER_TEMP/lite-current-acceptance/AGGREGATE.json"
-    - name: Preserve raw Android execution evidence and pending release gates
-      if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-      with:
-        name: AEROVE-Lite-current-acceptance-aggregate-attempt-${{ github.run_attempt }}
-        path: ${{ runner.temp }}/lite-current-acceptance/
-        if-no-files-found: error
-    - name: All exact-source Android execution gates passed
-      env:
-        RESULTS: ${{ toJSON(needs) }}
-      run: python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); assert all(x["result"]=="success" for x in results.values()), results'
-'on':
-  push:
-    branches:
-    - codex/aerove-independent-architecture
-    paths:
-    - apps/aerove-lite/**
-    - .github/workflows/aerove-lite.yaml
-    - '!apps/aerove-lite/**/*.md'
-    - .github/workflows/aerove-lite-build.yaml
-  workflow_dispatch:
-    inputs:
-      diagnostic_target:
-        description: Fixed Android or pinned SDK static diagnosis only; no build or promotion
-        type: choice
-        required: false
-        default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, gfxstream37-static]
-      meow_host_only:
-        description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
-        required: false
-        type: boolean
-        default: false
-      qa84_only:
-        description: Original run84 APK matrix diagnosis only; exclusive, no build or publication
-        type: boolean
-        default: false
-      qa79_only:
-        description: Original run79 APK Android QA only; exclusive, no build or publication
-        required: false
-        type: boolean
-        default: false
-      client_preflight:
-        description: Client-only unit tests, lint, AndroidTest compilation and R8; exclusive, no native/APK or acceptance
-        required: false
-        type: boolean
-        default: false
-      accepted_build_run:
-        description: Explicit fully accepted original build run to promote without rebuilding
-        type: string
-        default: ''
-      publish_release:
-        description: Promote a fully accepted Lite artifact for this exact main commit; never rebuild
-        required: false
-        type: boolean
-        default: false
-      native_preflight:
-        description: Legacy clash-rs diagnosis only; never accepted as a Meow application build
-        required: false
-        type: boolean
-        default: false
-      native_test_filter:
-        description: Optional Rust test-name prefix for native-only failure diagnosis; empty runs the full suite
-        required: false
-        type: string
-        default: ''
-      native_test_serial:
-        description: Run native-only host tests with one thread to diagnose shared fixture interference
-        required: false
-        type: boolean
-        default: false
-      native_underlay_tests:
-        description: Run the seven pinned Tailscale socket integration tests using the native root lock
-        required: false
-        type: boolean
-        default: false
-      native_test_stacks:
-        description: Capture one bounded native stack snapshot for a filtered host-test diagnosis
-        required: false
-        type: boolean
-        default: false
+          name: Lite265-evidence-readback-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/lite265-readback/report.json
+          if-no-files-found: error
+          compression-level: 6
