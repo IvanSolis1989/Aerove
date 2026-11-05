@@ -193,6 +193,33 @@ jobs:
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt" 2>&1
         grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/flutter-ui/emulator-version.txt"
+        # Only discard this task's replaced SDK and verified archive after the new SDK passes.
+        runner_temp_real="$(realpath -e -- "$RUNNER_TEMP")"
+        emulator_stage_real="$(realpath -e -- "$emulator_stage")"
+        test "$(dirname -- "$emulator_stage_real")" = "$runner_temp_real"
+        case "$(basename -- "$emulator_stage_real")" in
+          lite-emulator-16740729.??????) ;;
+          *) printf 'Refusing cleanup outside the owned emulator staging directory\n' >&2; exit 1 ;;
+        esac
+        cleanup_archive="$(realpath -e -- "$emulator_archive")"
+        test "$cleanup_archive" = "$emulator_stage_real/emulator-linux_x64-16740729.zip"
+        test -f "$cleanup_archive" && test ! -L "$emulator_archive"
+        cleanup_previous="$emulator_stage_real/previous-emulator"
+        df -B1 "$ANDROID_HOME" "$runner_temp_real" "$avd_directory/test.avd" > "$sdk_install_dir/disk-before-owned-cleanup.txt"
+        du -sb -- "$cleanup_archive" > "$sdk_install_dir/owned-staging-bytes.txt"
+        if test -e "$cleanup_previous" || test -L "$cleanup_previous"; then
+          test -d "$cleanup_previous" && test ! -L "$cleanup_previous"
+          test "$(realpath -e -- "$cleanup_previous")" = "$cleanup_previous"
+          du -sb -- "$cleanup_previous" >> "$sdk_install_dir/owned-staging-bytes.txt"
+          if test -f "$cleanup_previous/source.properties"; then
+            cp -- "$cleanup_previous/source.properties" "$sdk_install_dir/previous-emulator-source.properties"
+          fi
+          rm -rf -- "$cleanup_previous"
+          test ! -e "$cleanup_previous" && test ! -L "$cleanup_previous"
+        fi
+        rm -- "$cleanup_archive"
+        test ! -e "$cleanup_archive"
+        df -B1 "$ANDROID_HOME" "$runner_temp_real" "$avd_directory/test.avd" > "$sdk_install_dir/disk-after-owned-cleanup.txt"
     - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
       if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface')
       with:
@@ -302,6 +329,7 @@ jobs:
                   --surface-test-info "$RUNNER_TEMP/lite-diagnostics/lite236-surface-harness/HARNESS-INFO.json")
         fi
         if [[ "$PIXEL_ORIGINAL_NUMBER" == 257 ]]; then extra+=(--app-renderer skia); fi
+        df -B1 "$RUNNER_TEMP" "${ANDROID_AVD_HOME:-$HOME/.android/avd}/test.avd" > "$RUNNER_TEMP/lite-diagnostics/sdk-install/disk-before-pixel-launch.txt"
         python3 apps/aerove-lite/tool/lite236_pixel_diagnostic.py \
           --runtime-directory "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/unpacked" \
           --archive "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/official.zip" \
