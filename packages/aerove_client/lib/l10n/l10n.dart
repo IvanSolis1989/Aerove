@@ -3210,6 +3210,36 @@ class AppLocalizations {
     );
   }
 
+  /// `App & Core`
+  String get memorySharedProcess {
+    return Intl.message(
+      'App & Core',
+      name: 'memorySharedProcess',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `App and Core share one process. Resident memory (RSS) is counted once and cannot be reliably split by component.`
+  String get memorySharedProcessDesc {
+    return Intl.message(
+      'App and Core share one process. Resident memory (RSS) is counted once and cannot be reliably split by component.',
+      name: 'memorySharedProcessDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reclaimable image cache cleared. Resident memory may not decrease immediately.`
+  String get memoryCacheCleared {
+    return Intl.message(
+      'Reclaimable image cache cleared. Resident memory may not decrease immediately.',
+      name: 'memoryCacheCleared',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Estimated from process resident memory; it may differ from what the system reports.`
   String get memoryEstimateDesc {
     return Intl.message(

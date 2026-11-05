@@ -6,6 +6,7 @@ import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/product.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/ui/foreground_ink.dart';
@@ -27,12 +28,20 @@ class MemorySnapshot {
     this.coreTotal = 0,
     this.core,
     this.coreInProcess = false,
-  });
+  }) : sharedProcessOnly = false;
+
+  const MemorySnapshot.sharedProcess({required int rss})
+    : app = rss,
+      coreTotal = 0,
+      core = null,
+      coreInProcess = true,
+      sharedProcessOnly = true;
 
   final int app;
   final int coreTotal;
   final CoreMemoryStats? core;
   final bool coreInProcess;
+  final bool sharedProcessOnly;
 
   int get total => app + coreTotal;
 
@@ -77,10 +86,21 @@ Future<MemorySnapshot?> _readMemory(WidgetRef ref, MemoryReader? reader) async {
 
 Future<MemorySnapshot> _readSnapshot(WidgetRef ref) async {
   final rss = ProcessInfo.currentRss;
+  if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+    return MemorySnapshot.sharedProcess(rss: rss);
+  }
   final coreConnected = ref.read(coreStatusProvider) == CoreStatus.connected;
-  final core = coreConnected
-      ? await ref.read(coreHandlerProvider).getMemoryStats()
-      : null;
+  CoreMemoryStats? core;
+  if (coreConnected) {
+    try {
+      core = await ref.read(coreHandlerProvider).getMemoryStats();
+    } catch (error) {
+      commonPrint.log(
+        'updateCoreMemory error: $error',
+        logLevel: coreFailureLogLevel(error),
+      );
+    }
+  }
   return MemorySnapshot.resolve(
     rss: rss,
     core: core,
@@ -99,9 +119,7 @@ class MemoryInfo extends ConsumerStatefulWidget {
 
 class _MemoryInfoState extends ConsumerState<MemoryInfo>
     with WidgetsBindingObserver, ActivePollingMixin<MemoryInfo> {
-  final _memoryStateNotifier = ValueNotifier<MemorySnapshot>(
-    const MemorySnapshot(),
-  );
+  final _memoryStateNotifier = ValueNotifier<MemorySnapshot?>(null);
 
   /// Out of view until measured, so a card below the fold never reads.
   final _inViewport = ValueNotifier(false);
@@ -144,7 +162,8 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
   // The sheet outlives the card when a resize swaps the dashboard layout, so it
   // reads on its own and the card rests until it closes.
   Future<void> _showDetail() async {
-    if (_detailOpen) {
+    final snapshot = _memoryStateNotifier.value;
+    if (_detailOpen || snapshot == null) {
       return;
     }
     _detailOpen = true;
@@ -152,7 +171,7 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
     await showSheet(
       context: context,
       builder: (_) => MemoryDetailSheet(
-        initial: _memoryStateNotifier.value,
+        initial: snapshot,
         memoryReader: widget.memoryReader,
       ),
     );
@@ -170,10 +189,12 @@ class _MemoryInfoState extends ConsumerState<MemoryInfo>
     final mobile = !density.isDesktop;
     final summary = ValueListenableBuilder(
       valueListenable: _memoryStateNotifier,
-      builder: (_, memory, _) => InteractionPaced(
-        revision: memory,
-        builder: (_) => _MemorySummary(memory: memory, density: density),
-      ),
+      builder: (_, memory, _) => memory == null
+          ? const SizedBox.shrink()
+          : InteractionPaced(
+              revision: memory,
+              builder: (_) => _MemorySummary(memory: memory, density: density),
+            ),
     );
     final card = DashboardCard(
       semanticLabel: appLocalizations.memoryInfo,
@@ -231,17 +252,20 @@ class _MemorySummary extends StatelessWidget {
     final figure = mobile ? AppTextStyle.title1 : AppTextStyle.title2;
     final parts = [
       (
-        label: appLocalizations.app,
+        label: memory.sharedProcessOnly
+            ? appLocalizations.memorySharedProcess
+            : appLocalizations.app,
         bytes: memory.app,
         color: colorScheme.primary,
         appInk: true,
       ),
-      (
-        label: appLocalizations.core,
-        bytes: memory.coreTotal,
-        color: DashboardColors.of(context).series2,
-        appInk: false,
-      ),
+      if (!memory.sharedProcessOnly)
+        (
+          label: appLocalizations.core,
+          bytes: memory.coreTotal,
+          color: DashboardColors.of(context).series2,
+          appInk: false,
+        ),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -359,13 +383,17 @@ class _MemoryDetailSheetState extends ConsumerState<MemoryDetailSheet>
   /// Resolves to the bytes freed.
   Future<int> _release() async {
     final before = _snapshot.total;
-    await ref.read(coreHandlerProvider).requestGc();
+    PaintingBinding.instance.imageCache.clear();
+    if (ClientProduct.current.expectedCoreId != 'meow-rs') {
+      await ref.read(coreHandlerProvider).requestGc();
+    }
     if (!mounted) {
       return 0;
     }
     final memory = await _readMemory(ref, widget.memoryReader);
-    if (memory == null || !mounted) {
-      return 0;
+    if (!mounted) return 0;
+    if (memory == null) {
+      throw StateError('Memory snapshot is unavailable after reclamation');
     }
     setState(() => _snapshot = memory);
     return max(0, before - memory.total);
@@ -384,7 +412,9 @@ class _MemoryDetailSheetState extends ConsumerState<MemoryDetailSheet>
         _release(),
         Future<void>.delayed(_minReleaseFeedback),
       ).wait;
-      message = freed > 0
+      message = ClientProduct.current.expectedCoreId == 'meow-rs'
+          ? appLocalizations.memoryCacheCleared
+          : freed > 0
           ? appLocalizations.memoryReleasedSize(freed.traffic.show)
           : appLocalizations.memoryReleased;
     } catch (error) {
@@ -479,18 +509,21 @@ class _MemoryDetailSheetState extends ConsumerState<MemoryDetailSheet>
         children: [
           _MemoryOverview(snapshot: _snapshot),
           _MemorySection(
-            title: _snapshot.coreInProcess
+            title: _snapshot.sharedProcessOnly
+                ? appLocalizations.memorySharedProcess
+                : _snapshot.coreInProcess
                 ? appLocalizations.memoryAppShared
                 : appLocalizations.app,
             bytes: _snapshot.app,
             items: _appItems(appLocalizations, _snapshot),
           ),
-          _MemorySection(
-            title: appLocalizations.core,
-            bytes: _snapshot.coreTotal,
-            contentKey: ValueKey(_snapshot.core != null),
-            items: _coreItems(appLocalizations, _snapshot),
-          ),
+          if (!_snapshot.sharedProcessOnly)
+            _MemorySection(
+              title: appLocalizations.core,
+              bytes: _snapshot.coreTotal,
+              contentKey: ValueKey(_snapshot.core != null),
+              items: _coreItems(appLocalizations, _snapshot),
+            ),
         ],
       ),
     );
@@ -589,16 +622,19 @@ class _MemoryOverview extends StatelessWidget {
           _MemoryBar(
             segments: [
               (bytes: snapshot.app, color: colorScheme.primary, appInk: true),
-              (
-                bytes: snapshot.coreTotal,
-                color: DashboardColors.of(context).series2,
-                appInk: false,
-              ),
+              if (!snapshot.sharedProcessOnly)
+                (
+                  bytes: snapshot.coreTotal,
+                  color: DashboardColors.of(context).series2,
+                  appInk: false,
+                ),
             ],
           ),
           const SizedBox(height: 8),
           GlassText(
-            snapshot.coreInProcess
+            snapshot.sharedProcessOnly
+                ? appLocalizations.memorySharedProcessDesc
+                : snapshot.coreInProcess
                 ? appLocalizations.memoryEstimateSharedDesc
                 : appLocalizations.memoryEstimateDesc,
             style: AppTextStyle.footnote

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
@@ -353,6 +354,36 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('a failed Core read retains the independently sampled app RSS', (
+    tester,
+  ) async {
+    final coreInterface = _MockCoreHandlerInterface();
+    when(
+      () => coreInterface.getMemoryStats(),
+    ).thenThrow(StateError('core runtime counters unavailable'));
+    final container = _containerWith(coreInterface, CoreStatus.connected);
+    addTearDown(container.dispose);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(homeBuilder: _scaffoldBody, child: MemoryInfo()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    verify(
+      () => coreInterface.getMemoryStats(),
+    ).called(greaterThanOrEqualTo(1));
+    // Only the unavailable Core remains zero; the running app has real RSS.
+    expect(find.text('0 B'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('the default reader skips Core memory while disconnected', (
     tester,
   ) async {
@@ -456,6 +487,32 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  test(
+    'shared process RSS is counted once without invented runtime counters',
+    () {
+      const snapshot = MemorySnapshot.sharedProcess(rss: 123456);
+      expect(snapshot.total, 123456);
+      expect(snapshot.app, 123456);
+      expect(snapshot.core, isNull);
+      expect(snapshot.sharedProcessOnly, isTrue);
+    },
+  );
+
+  test('an unconfirmed GC acknowledgement is a failure', () async {
+    final coreInterface = _MockCoreHandlerInterface();
+    when(() => coreInterface.forceGc()).thenAnswer((_) async => false);
+    await expectLater(
+      CoreController.scoped(coreInterface).requestGc(),
+      throwsA(
+        isA<CoreMethodException>().having(
+          (error) => error.code,
+          'code',
+          'operation_failed',
+        ),
+      ),
+    );
+  });
+
   group('MemorySnapshot.resolve', () {
     const core = CoreMemoryStats(
       rss: 4096,
@@ -534,6 +591,7 @@ void main() {
       WidgetTester tester, {
       required Future<MemorySnapshot> Function() reader,
       CoreHandlerInterface? coreInterface,
+      bool withStatusManager = false,
     }) async {
       final container = _containerWith(
         coreInterface ?? _MockCoreHandlerInterface(),
@@ -549,6 +607,7 @@ void main() {
         UncontrolledProviderScope(
           container: container,
           child: TestApp(
+            withStatusManager: withStatusManager,
             homeBuilder: _scaffoldBody,
             child: MemoryInfo(memoryReader: reader),
           ),
@@ -684,6 +743,48 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
+    for (final throwsFailure in [false, true]) {
+      testWidgets(
+        'a failed Core reclamation restores the action and allows retry: $throwsFailure',
+        (tester) async {
+          final coreInterface = _MockCoreHandlerInterface();
+          var attempts = 0;
+          when(() => coreInterface.forceGc()).thenAnswer((_) async {
+            attempts++;
+            if (attempts == 1) {
+              if (throwsFailure) throw StateError('Core reclamation failed');
+              return false;
+            }
+            return true;
+          });
+          await openSheet(
+            tester,
+            reader: () async => const MemorySnapshot(app: 1024),
+            coreInterface: coreInterface,
+            withStatusManager: true,
+          );
+          await tester.tap(find.byTooltip('Release memory'));
+          await tester.pump();
+          expect(find.byType(CommonCircleLoading), findsOneWidget);
+          await tester.pump(const Duration(milliseconds: 600));
+          await tester.pump();
+          expect(find.byType(CommonCircleLoading), findsNothing);
+          expect(find.text('Failed to release memory'), findsOneWidget);
+          expect(find.text('Memory released'), findsNothing);
+          expect(tester.takeException(), isNull);
+          await tester.tap(find.byTooltip('Release memory'));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 600));
+          await tester.pump();
+          verify(() => coreInterface.forceGc()).called(2);
+          expect(find.byType(CommonCircleLoading), findsNothing);
+          expect(find.text('Memory released'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        },
+      );
+    }
+
     testWidgets('the release action asks the Core to collect', (tester) async {
       final coreInterface = _MockCoreHandlerInterface();
       when(() => coreInterface.forceGc()).thenAnswer((_) async => true);
@@ -693,9 +794,18 @@ void main() {
         coreInterface: coreInterface,
       );
 
+      final cache = PaintingBinding.instance.imageCache;
+      final pending = Completer<ImageInfo>();
+      cache.putIfAbsent(
+        'release-cache',
+        () => OneFrameImageStreamCompleter(pending.future),
+      );
+      expect(cache.pendingImageCount, 1);
+
       await tester.tap(find.byTooltip('Release memory'));
       await tester.pump();
 
+      expect(cache.pendingImageCount, 0);
       verify(() => coreInterface.forceGc()).called(1);
       expect(find.byType(CommonCircleLoading), findsOneWidget);
 

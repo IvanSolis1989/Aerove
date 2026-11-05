@@ -940,10 +940,9 @@ class SetupAction extends _$SetupAction {
     }
   }
 
-  // False means building the profile, the config write, or the Core setup
-  // step failed; a profile that fails to build is still pushed to the Core
-  // as the empty config so it never keeps serving the previous one.
-  // authorizeCore failures still throw.
+  // Go retains its empty-config fallback for build failures. Meow requires a
+  // built profile and a complete applied record before touching the active config.
+  // authorizeCore failures still throw; build failures keep the bool API contract.
   Future<bool> applyProfile({
     bool silence = false,
     bool force = false,
@@ -1566,6 +1565,7 @@ class SetupAction extends _$SetupAction {
       return getProfile(setupState: state, patchConfig: realPatchConfig);
     }, title: 'build profile');
     final profileFailed = realProfile == null;
+    if (bindSharedSource && profileFailed) return _SetupTaskResult.failed;
     if (bindSharedSource) {
       await waitForDatabaseWrites();
       final storage = await preferences.sharedPreferences;
@@ -1734,12 +1734,18 @@ class SetupAction extends _$SetupAction {
       );
       return _SetupTaskResult.failed;
     }
+    final meowRecord = bindSharedSource
+        ? await _setupRecord(inputs, realProfile!)
+        : null;
+    if (bindSharedSource && meowRecord == null) return _SetupTaskResult.failed;
     // Go answers a config it rejects by running its built-in default, which
     // has no proxies, so until this push succeeds no applied config is known.
     _appliedInputs = null;
     globalState.lastConfigMd5 = null;
     _publishAppliedCounts(null);
-    final record = realProfile == null
+    final record = bindSharedSource
+        ? meowRecord
+        : realProfile == null
         ? null
         : await _setupRecord(inputs, realProfile);
     if (system.isAndroid) {

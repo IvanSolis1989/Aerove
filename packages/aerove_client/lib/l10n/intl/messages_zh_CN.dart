@@ -953,6 +953,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "maximize": MessageLookupByLibrary.simpleMessage("最大化"),
     "memoryAppResident": MessageLookupByLibrary.simpleMessage("常驻内存"),
     "memoryAppShared": MessageLookupByLibrary.simpleMessage("应用及共享"),
+    "memoryCacheCleared": MessageLookupByLibrary.simpleMessage(
+      "已清理可回收的图片缓存，常驻内存可能不会立即下降。",
+    ),
     "memoryCoreHeapIdle": MessageLookupByLibrary.simpleMessage("堆内存空闲"),
     "memoryCoreHeapInuse": MessageLookupByLibrary.simpleMessage("堆内存使用中"),
     "memoryCoreNotRunning": MessageLookupByLibrary.simpleMessage("内核未运行"),
@@ -968,6 +971,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "memoryInfoDesc": MessageLookupByLibrary.simpleMessage("应用与内核占用的内存"),
     "memoryReleased": MessageLookupByLibrary.simpleMessage("内存已释放"),
     "memoryReleasedSize": m50,
+    "memorySharedProcess": MessageLookupByLibrary.simpleMessage("应用与内核"),
+    "memorySharedProcessDesc": MessageLookupByLibrary.simpleMessage(
+      "应用与内核运行于同一进程。常驻内存（RSS）只统计一次，无法可靠地按组件拆分。",
+    ),
     "messageTest": MessageLookupByLibrary.simpleMessage("消息测试"),
     "messageTestTip": MessageLookupByLibrary.simpleMessage("这是一条消息。"),
     "minimize": MessageLookupByLibrary.simpleMessage("最小化"),

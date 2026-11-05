@@ -123,6 +123,31 @@ class GuestAngleEvidenceTests(unittest.TestCase):
                         self.assertRaises(ValueError):
                     current.guest_angle_evidence(directory, {}, host, vulkan_backend='lavapipe')
 
+    def test_original259_angle_comma_sanitization_preserves_the_driver_signature(self):
+        startup = ('INFO         | emuglConfig_init: vulkan_mode_selected:lavapipe gles_mode_selected:swangle\n'
+                   'INFO         | Selecting Vulkan device: llvmpipe (LLVM 21.0.0, 256 bits), Version: 1.4.318')
+        guest = ('GLES: Google Inc. (Mesa), ANGLE (Mesa, Vulkan 1.3.0 '
+                 '(llvmpipe (LLVM 21.0.0 256 bits) (0x00000000)), Mesa-25.2.4), '
+                 'OpenGL ES 3.1.0 (ANGLE 2.1.0 git hash: unknown hash)')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=guest)):
+                route = current.guest_angle_evidence(directory, {}, startup, vulkan_backend='lavapipe')
+            self.assertEqual(route['guestRenderer'], [guest])
+            self.assertEqual(route['route'], 'guest-angle-vulkan-lavapipe')
+            self.assertEqual((directory / 'guest-angle-surfaceflinger.out').read_text(), guest)
+            for changed, host in (
+                    (guest.replace('21.0.0', '20.0.0'), startup),
+                    (guest.replace('256 bits', '128 bits'), startup),
+                    (guest.replace('llvmpipe', 'lavapipe'), startup),
+                    (guest.replace('llvmpipe', 'SwiftShader'), startup),
+                    (guest.replace('21.0.0 256 bits', '21.0.0 unknown 256 bits'), startup),
+                    (guest, startup + '\nSelecting Vulkan device: llvmpipe (LLVM 20.0.0, 256 bits), Version: 1.3.0')):
+                with self.subTest(guest=changed, host=host), \
+                        patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=changed)), \
+                        self.assertRaises(ValueError):
+                    current.guest_angle_evidence(directory, {}, host, vulkan_backend='lavapipe')
+
     def test_missing_original_image_library_retains_failure_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

@@ -48,6 +48,7 @@ class XClashDefaults {
   final int Function() _createId;
   final Future<bool> Function(Config) _saveConfig;
   Map<String, dynamic>? _record;
+  bool _resumingSavedConfig = false;
 
   int? get recommendedScriptId =>
       _record?['complete'] == true ? _record!['scriptId'] as int? : null;
@@ -89,6 +90,7 @@ class XClashDefaults {
         throw const FormatException('Invalid XClash initialization journal');
       }
       _record = record;
+      _resumingSavedConfig = _storage.containsKey(configKey);
       return;
     }
     final hasFiles =
@@ -182,7 +184,7 @@ class XClashDefaults {
       await _database.transaction(
         _database.scriptsDao.migrateLegacyDefaultUrls,
       );
-      return config;
+      return _migrateMeowKeepAlivePreset(config, record);
     }
     final id = record['scriptId'] as int;
     final existing = await _database.scriptsDao.query().get();
@@ -199,7 +201,10 @@ class XClashDefaults {
           lastUpdateTime: DateTime.now(),
         );
     final applyPreset =
-        record['freshAndroid'] == true && !await _hasRows(ignoringScriptId: id);
+        record['freshAndroid'] == true &&
+        !(ClientProduct.current.expectedCoreId == 'meow-rs' &&
+            _resumingSavedConfig) &&
+        !await _hasRows(ignoringScriptId: id);
     final replaceLegacyDns =
         record['legacyDns'] == true &&
         config.patchClashConfig.dns == defaultDns &&
@@ -240,11 +245,22 @@ class XClashDefaults {
         throw StateError('Failed to save XClash initial network preferences');
       }
     });
+    final previousPresetVersion = record['meowKeepAlivePresetVersion'];
+    if (ClientProduct.current.expectedCoreId == 'meow-rs' &&
+        (applyPreset ||
+            record['freshAndroid'] == true && _resumingSavedConfig)) {
+      record['meowKeepAlivePresetVersion'] = 1;
+    }
     record['complete'] = true;
     try {
       await _writeJournal();
     } catch (_) {
       record['complete'] = false;
+      if (previousPresetVersion == null) {
+        record.remove('meowKeepAlivePresetVersion');
+      } else {
+        record['meowKeepAlivePresetVersion'] = previousPresetVersion;
+      }
       rethrow;
     }
     return next;
@@ -295,10 +311,57 @@ class XClashDefaults {
       },
       unifiedDelay: true,
       tcpConcurrent: true,
-      keepAliveIdle: 30,
-      keepAliveInterval: 15,
+      keepAliveIdle:
+          ClientProduct.current.coreCapabilities.globalTcpKeepAliveTuning
+          ? 30
+          : 15,
+      keepAliveInterval:
+          ClientProduct.current.coreCapabilities.globalTcpKeepAliveTuning
+          ? 15
+          : 30,
+      disableKeepAlive:
+          ClientProduct.current.coreCapabilities.globalTcpKeepAliveTuning
+          ? config.patchClashConfig.disableKeepAlive
+          : false,
     ),
   );
+
+  Future<Config> _migrateMeowKeepAlivePreset(
+    Config config,
+    Map<String, dynamic> record,
+  ) async {
+    final patch = config.patchClashConfig;
+    if (ClientProduct.current.expectedCoreId != 'meow-rs' ||
+        record['freshAndroid'] != true ||
+        record['complete'] != true ||
+        record.containsKey('meowKeepAlivePresetVersion')) {
+      return config;
+    }
+    // The version records this compatibility decision, not unmodified user intent.
+    var next = config;
+    if (patch.keepAliveInterval == 15 &&
+        patch.keepAliveIdle == 30 &&
+        !patch.disableKeepAlive) {
+      next = config.copyWith.patchClashConfig(
+        keepAliveInterval: 30,
+        keepAliveIdle: 15,
+        disableKeepAlive: false,
+      );
+      if (!await _saveConfig(next)) {
+        throw StateError(
+          'Failed to save the historical Meow keepalive preset migration',
+        );
+      }
+    }
+    record['meowKeepAlivePresetVersion'] = 1;
+    try {
+      await _writeJournal();
+    } catch (_) {
+      record.remove('meowKeepAlivePresetVersion');
+      rethrow;
+    }
+    return next;
+  }
 
   Future<void> _writeJournal() =>
       _writeAtomic(_journal, utf8.encode(jsonEncode(_record)));

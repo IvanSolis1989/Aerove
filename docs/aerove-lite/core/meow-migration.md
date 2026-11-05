@@ -110,7 +110,7 @@ Lite 共同协议明确使用 `stack=lwip`、`congestionController=builtin`，An
 `/aerove/*`、一致 revision、provider 成功事件、规则分页、网络 CAS、真实诊断以及 Android 生命周期属于宿主适配责任。
 缺少现成 JNI/路由不是核心不支持的证据。
 
-- Meow `/memory` 是持续 NDJSON 且首帧为零，不能直接接到现有一次性读取；须提供真实进程内存快照，不填模拟零值。
+- 固定 Meow `/memory` 是持续 NDJSON 且首帧为零（`727ddcd06f592e2f12c5222c4de6cce328df808c:crates/meow-api/src/routes.rs:3665-3732`），不能直接接到现有一次性读取。Lite Flutter、VPN 与嵌入内核共用宿主进程，内存页复用 `ProcessInfo.currentRss` 提供真实 RSS 快照并只计一次，说明不能可靠按组件拆分；不伪造 Go 堆／GC 或独立 Core 零值，不合并独立 regexp2 子进程。原采集可见性、前后台及单请求节拍保持。两版同一清理入口调用 Flutter `ImageCache.clear()`，标准版继续真实 Core GC；固定 Rust API 没有 Go GC 对应端点，Lite 反馈实际缓存清理完成而不虚报释放字节。新 APK 上的采样、UI、清理与手机验证仍须完成。
 - 原 `gateway/device-id/boolean dns-hijack` 不能原样传递。Meow 使用地址字段和列表形式；Android Builder 持有路由，
   引擎不得另建系统 TUN 或接管 OS 路由。FD 不写入假设备 YAML。
 - 候选 composer 复用现有控制认证、资源 generation/路径包含、设置合成链；用户监听及宿主策略须由桥接实际消费和读回。

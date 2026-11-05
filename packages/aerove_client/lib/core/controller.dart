@@ -457,7 +457,12 @@ class CoreController {
   }
 
   Future<void> requestGc() async {
-    await _interface.forceGc();
+    if (!await _interface.forceGc()) {
+      throw const CoreMethodException(
+        code: 'operation_failed',
+        message: 'Core did not confirm memory reclamation',
+      );
+    }
   }
 
   Future<void> crash() async {

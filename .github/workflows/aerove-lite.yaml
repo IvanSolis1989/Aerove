@@ -1236,6 +1236,17 @@ jobs:
           --plain-name 'fresh null selection uses the real Lite producer and no core profile read'
         flutter test --no-pub --concurrency 1 \
           test/common/path_test.dart test/providers/setup_action_test.dart
+    - name: Verify shared-process RSS and confirmed memory cleanup in both products
+      timeout-minutes: 10
+      working-directory: apps/aerove
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/memory"
+        mkdir -p "$evidence"
+        flutter test --no-pub --concurrency 1 test/widgets/memory_info_test.dart \
+          2>&1 | tee "$evidence/standard.log"
+        flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+          test/common/native_lite_memory_info_test.dart 2>&1 | tee "$evidence/meow.log"
     - name: Verify SQL-managed source selection policy through the Standard fixture composition
       working-directory: apps/aerove
       run: |-

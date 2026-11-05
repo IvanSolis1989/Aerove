@@ -1050,6 +1050,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "maximize": MessageLookupByLibrary.simpleMessage("最大化"),
     "memoryAppResident": MessageLookupByLibrary.simpleMessage("常駐メモリ"),
     "memoryAppShared": MessageLookupByLibrary.simpleMessage("アプリと共有"),
+    "memoryCacheCleared": MessageLookupByLibrary.simpleMessage(
+      "解放可能な画像キャッシュを削除しました。常駐メモリはすぐに減らない場合があります。",
+    ),
     "memoryCoreHeapIdle": MessageLookupByLibrary.simpleMessage("未使用のヒープ"),
     "memoryCoreHeapInuse": MessageLookupByLibrary.simpleMessage("使用中のヒープ"),
     "memoryCoreNotRunning": MessageLookupByLibrary.simpleMessage(
@@ -1067,6 +1070,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "memoryInfoDesc": MessageLookupByLibrary.simpleMessage("アプリとコアが使用するメモリ"),
     "memoryReleased": MessageLookupByLibrary.simpleMessage("メモリを解放しました"),
     "memoryReleasedSize": m50,
+    "memorySharedProcess": MessageLookupByLibrary.simpleMessage("アプリとコア"),
+    "memorySharedProcessDesc": MessageLookupByLibrary.simpleMessage(
+      "アプリとコアは同じプロセスで動作します。常駐メモリ（RSS）は一度だけ集計され、コンポーネントごとに正確に分けることはできません。",
+    ),
     "messageTest": MessageLookupByLibrary.simpleMessage("メッセージテスト"),
     "messageTestTip": MessageLookupByLibrary.simpleMessage("これはメッセージです。"),
     "minimize": MessageLookupByLibrary.simpleMessage("最小化"),

@@ -1266,6 +1266,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "memoryAppShared": MessageLookupByLibrary.simpleMessage(
       "Приложение и общая",
     ),
+    "memoryCacheCleared": MessageLookupByLibrary.simpleMessage(
+      "Доступный для освобождения кэш изображений очищен. Резидентная память может уменьшиться не сразу.",
+    ),
     "memoryCoreHeapIdle": MessageLookupByLibrary.simpleMessage(
       "Свободная куча",
     ),
@@ -1293,6 +1296,12 @@ class MessageLookup extends MessageLookupByLibrary {
       "Память освобождена",
     ),
     "memoryReleasedSize": m50,
+    "memorySharedProcess": MessageLookupByLibrary.simpleMessage(
+      "Приложение и ядро",
+    ),
+    "memorySharedProcessDesc": MessageLookupByLibrary.simpleMessage(
+      "Приложение и ядро работают в одном процессе. Резидентная память (RSS) учитывается один раз; достоверно разделить её по компонентам невозможно.",
+    ),
     "messageTest": MessageLookupByLibrary.simpleMessage("Тест сообщения"),
     "messageTestTip": MessageLookupByLibrary.simpleMessage("Это сообщение."),
     "minimize": MessageLookupByLibrary.simpleMessage("Свернуть"),

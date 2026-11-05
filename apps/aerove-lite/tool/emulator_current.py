@@ -133,18 +133,23 @@ def guest_angle_route(outputs, startup, *, vulkan_backend='swiftshader'):
         if len(devices) != 1:
             raise ValueError('Lavapipe diagnosis requires one actual host Vulkan device')
         device = next(iter(devices))
-        if not re.match(r'(?i)^(?:llvmpipe|lavapipe)\b', device):
-            raise ValueError('Requested Lavapipe Vulkan device was not selected')
+        # ANGLE's frontend removes commas from the backend renderer description.
+        driver = re.compile(r'\b(llvmpipe|lavapipe)\s+\(LLVM\s+(\d+\.\d+\.\d+),?\s+(\d+)\s+bits\)', re.I)
+        selected = driver.fullmatch(device)
+        if selected is None:
+            raise ValueError('Requested Mesa LLVM Vulkan device was not selected')
+        signature = (selected[1].lower(), selected[2], int(selected[3]))
         guest = []
         for line in outputs['surfaceflinger'].splitlines():
             version = re.search(r'OpenGL ES\s+(\d+)\.(\d+)\b', line)
             if (re.search(r'\bGLES:', line) and version
                     and tuple(map(int, version.groups())) >= (3, 1)
                     and all(word in line.upper() for word in ('ANGLE', 'VULKAN'))
-                    and device in line):
+                    and [(backend.lower(), llvm, int(bits))
+                         for backend, llvm, bits in driver.findall(line)] == [signature]):
                 guest.append(line)
         if not guest:
-            raise ValueError('Guest ANGLE GLES3.1 and the same host Mesa Vulkan device were not observed')
+            raise ValueError('Guest ANGLE GLES3.1 and the same host Mesa LLVM driver signature were not observed')
         return dict(route='guest-angle-vulkan-lavapipe', apiLevel=33,
                     bootEgl='angle', hardwareEgl='angle', hostVulkanBackend='lavapipe',
                     angleFeatureOverridesDisabled=outputs['angle-overrides-disabled'].strip(),

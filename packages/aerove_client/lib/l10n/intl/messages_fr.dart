@@ -1306,6 +1306,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Mémoire résidente",
     ),
     "memoryAppShared": MessageLookupByLibrary.simpleMessage("App et partagée"),
+    "memoryCacheCleared": MessageLookupByLibrary.simpleMessage(
+      "Le cache d’images libérable a été vidé. La mémoire résidente peut ne pas diminuer immédiatement.",
+    ),
     "memoryCoreHeapIdle": MessageLookupByLibrary.simpleMessage("Tas inactif"),
     "memoryCoreHeapInuse": MessageLookupByLibrary.simpleMessage("Tas utilisé"),
     "memoryCoreNotRunning": MessageLookupByLibrary.simpleMessage(
@@ -1329,6 +1332,12 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "memoryReleased": MessageLookupByLibrary.simpleMessage("Mémoire libérée"),
     "memoryReleasedSize": m50,
+    "memorySharedProcess": MessageLookupByLibrary.simpleMessage(
+      "Appli et noyau",
+    ),
+    "memorySharedProcessDesc": MessageLookupByLibrary.simpleMessage(
+      "L’application et le noyau partagent un processus. La mémoire résidente (RSS) est comptée une seule fois et ne peut pas être répartie de manière fiable entre les composants.",
+    ),
     "messageTest": MessageLookupByLibrary.simpleMessage("Test de message"),
     "messageTestTip": MessageLookupByLibrary.simpleMessage(
       "Ceci est un message.",

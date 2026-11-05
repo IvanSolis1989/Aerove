@@ -1029,6 +1029,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "maximize": MessageLookupByLibrary.simpleMessage("최대화"),
     "memoryAppResident": MessageLookupByLibrary.simpleMessage("상주 메모리"),
     "memoryAppShared": MessageLookupByLibrary.simpleMessage("앱 및 공유"),
+    "memoryCacheCleared": MessageLookupByLibrary.simpleMessage(
+      "회수 가능한 이미지 캐시를 비웠습니다. 상주 메모리가 즉시 줄어들지 않을 수 있습니다.",
+    ),
     "memoryCoreHeapIdle": MessageLookupByLibrary.simpleMessage("유휴 힙"),
     "memoryCoreHeapInuse": MessageLookupByLibrary.simpleMessage("사용 중인 힙"),
     "memoryCoreNotRunning": MessageLookupByLibrary.simpleMessage(
@@ -1046,6 +1049,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "memoryInfoDesc": MessageLookupByLibrary.simpleMessage("앱과 코어가 사용하는 메모리"),
     "memoryReleased": MessageLookupByLibrary.simpleMessage("메모리를 해제했습니다"),
     "memoryReleasedSize": m50,
+    "memorySharedProcess": MessageLookupByLibrary.simpleMessage("앱과 코어"),
+    "memorySharedProcessDesc": MessageLookupByLibrary.simpleMessage(
+      "앱과 코어는 하나의 프로세스에서 실행됩니다. 상주 메모리(RSS)는 한 번만 계산되며 구성 요소별로 정확하게 나눌 수 없습니다.",
+    ),
     "messageTest": MessageLookupByLibrary.simpleMessage("메시지 테스트"),
     "messageTestTip": MessageLookupByLibrary.simpleMessage("이것은 메시지입니다."),
     "minimize": MessageLookupByLibrary.simpleMessage("최소화"),

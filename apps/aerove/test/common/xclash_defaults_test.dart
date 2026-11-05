@@ -198,6 +198,24 @@ void main() {
   );
 
   test(
+    'Standard keeps the historical Android keepalive tuple on restart',
+    () async {
+      await install();
+      final original = savedConfig!;
+      final journal = File('${home.path}/xclash-defaults.json');
+      final before = await journal.readAsBytes();
+      savedConfig = null;
+      final restarted = metadataMigration();
+      await restarted.prepare(isAndroid: true);
+      expect(await restarted.initialize(original), same(original));
+      expect(original.patchClashConfig.keepAliveInterval, 15);
+      expect(original.patchClashConfig.keepAliveIdle, 30);
+      expect(savedConfig, isNull);
+      expect(await journal.readAsBytes(), before);
+    },
+  );
+
+  test(
     'repeated startup keeps user settings and updated script bytes',
     () async {
       await install();

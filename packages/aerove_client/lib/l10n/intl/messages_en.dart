@@ -1221,6 +1221,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Resident memory",
     ),
     "memoryAppShared": MessageLookupByLibrary.simpleMessage("App & shared"),
+    "memoryCacheCleared": MessageLookupByLibrary.simpleMessage(
+      "Reclaimable image cache cleared. Resident memory may not decrease immediately.",
+    ),
     "memoryCoreHeapIdle": MessageLookupByLibrary.simpleMessage("Heap idle"),
     "memoryCoreHeapInuse": MessageLookupByLibrary.simpleMessage("Heap in use"),
     "memoryCoreNotRunning": MessageLookupByLibrary.simpleMessage(
@@ -1242,6 +1245,10 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "memoryReleased": MessageLookupByLibrary.simpleMessage("Memory released"),
     "memoryReleasedSize": m50,
+    "memorySharedProcess": MessageLookupByLibrary.simpleMessage("App & Core"),
+    "memorySharedProcessDesc": MessageLookupByLibrary.simpleMessage(
+      "App and Core share one process. Resident memory (RSS) is counted once and cannot be reliably split by component.",
+    ),
     "messageTest": MessageLookupByLibrary.simpleMessage("Message test"),
     "messageTestTip": MessageLookupByLibrary.simpleMessage(
       "This is a message.",

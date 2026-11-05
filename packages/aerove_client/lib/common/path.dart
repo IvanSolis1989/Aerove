@@ -51,7 +51,15 @@ class AppPath {
       );
     });
     _downloadDir = ResolveOnce(downloadDirectory);
-    _tempDir = ResolveOnce(temporaryDirectory);
+    _tempDir = ResolveOnce(() async {
+      if (!Platform.isAndroid || ClientProduct.current.id != 'aerove-lite') {
+        return temporaryDirectory();
+      }
+      // Native validation accepts only files inside the canonical private home.
+      return Directory(
+        join((await _dataDir.value).path, 'temp'),
+      ).create(recursive: true);
+    });
     cacheDirectory().then(cacheDir.complete);
   }
 

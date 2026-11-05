@@ -302,6 +302,8 @@ Lite Flutter Android 黑盒 API 候选 QA93 另只读核对 AndroidX 固定 `c86
 
 **固定版本 / revision：** SDK `3.47.6` / framework `5fc346839b5d0eef006ed8404392afb4dfae428d`
 
+两版内存清理另复用同固定版本的 [ImageCache.clear](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/painting/image_cache.dart#L162)，移除 pending／keepAlive 图片缓存引用，保留仍被使用的 live 引用；未采用不能减轻内存压力的 clearLiveImages，也不把清缓存等同于已降低 RSS。只使用现成 API，未复制框架实现或新增依赖，原 BSD-3-Clause 与 Flutter Authors 署名保持。
+
 **用途与采用方式：** 标准版Flutter框架；Lite optics几何与AGSL shader适配源自Flutter Impeller superellipse；字体测试fixture保留Roboto许可，生产不新增捆绑字体；字体策略只读参考SDK Android默认字体行为。网络控制与启停比例另只读参考同固定 SDK 的 [`RenderPositionedBox`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/rendering/shifted_box.dart) 松约束居中行为，采用既有 Center、InkWell、Semantics 和 AppShape，未复制实现或新增依赖。读屏顺序另只读参考同 SDK [`semantics.dart`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/packages/flutter/lib/src/semantics/semantics.dart) 的 `_childrenInTraversalOrder`（只有同类排序键互相排序，无键兄弟保持几何顺序）与 `flutter_test` 的 `simulatedAccessibilityTraversal`，采用既有 `Semantics` 与 `OrdinalSortKey`，未复制实现或新增依赖。读屏顺序开发前检索（2026-10-25）：关键词 `flutter OrdinalSortKey semantics traversal order test`、`jetpack compose isTraversalGroup traversalIndex screen reader order test`；候选为 Flutter 官方 [`traversal_order_test.dart`](https://flutter.googlesource.com/mirrors/flutter.git/+/HEAD/packages/flutter/test/semantics/traversal_order_test.dart) 与 [`OrdinalSortKey`](https://api.flutter.dev/flutter/semantics/OrdinalSortKey-class.html) API、Android 官方[读屏顺序指南](https://developer.android.com/develop/ui/compose/accessibility/traversal)；结论为复用两框架公开 API，未找到需要引入的第三方实现 另为核对极光背景模糊的降采样与sigma缩放，只读参考同一固定 Flutter SDK 的 [`gaussian_blur_filter_contents.cc`](https://github.com/flutter/flutter/blob/5fc346839b5d0eef006ed8404392afb4dfae428d/engine/src/flutter/impeller/entity/contents/filters/gaussian_blur_filter_contents.cc) 中 `CalculateDownsamplePassArgs`、`CalculateScale` 与 `ScaleSigma`；项目复用既有 `ImageFilter.blur` 与截图密度，未复制引擎实现或新增依赖。固定源码本地 Git blob `a2de219377a8b37b2638d68b0f772dc88e776bf7` / SHA-256 `5e67e0784ea12086c64e4917595887a0de2fd3476debf9260027ecc90a9adc14`，BSD-3-Clause 与 Flutter Authors 署名保持。
 
 仪表盘速度局部布局另只读参考同固定 SDK 的 `BuildScope`、`BuildOwner.buildScope`、`parentUsesSize` 与 `invokeLayoutCallback`；继承环境在当前帧 build 阶段变化时，由卡片布局入口同步刷新局部构建作用域，正常采样保留布局前合并。复用公开 API，未复制框架实现或新增依赖。
@@ -359,6 +361,8 @@ Android 能力另复用公开 [`Build.VERSION.MEDIA_PERFORMANCE_CLASS`](https://
 #### [dart-lang/sdk](https://github.com/dart-lang/sdk)
 
 **固定版本 / revision：** Dart `3.13.5` / `04bcd1036cdc799ac6564988f159ee454d42c822`
+
+Lite 共享进程内存另复用既有 [ProcessInfo.currentRss](https://api.dart.dev/dart-io/ProcessInfo/currentRss.html) 常驻字节读取，不冒充 PSS、独立 Rust heap 或 Go 运行时字段。应用与嵌入 Core 的同一 RSS 只计一次，不新增 JNI、采样流或 allocator；沿原 SDK 与 BSD-3-Clause 许可。
 
 **用途与采用方式：** TLS、字体、Socket API及 `Isolate.kill` 生命周期只读核验；kill不保证挂起socket立即EOF/FD清理，因此未以隔离区退出替代逐请求取消。另只读核对 DateTime 相等与 UTC/local 转换语义，用于数据库往返测试夹具，不改变生产时间存储。 I4 固定历史环形缓冲另只读参照同固定 SDK [`sdk/lib/collection/queue.dart`](https://github.com/dart-lang/sdk/blob/04bcd1036cdc799ac6564988f159ee454d42c822/sdk/lib/collection/queue.dart) 的 ListQueue 头偏移与环形索引思路；其 API 不支持按逻辑下标替换，未直接采用或复制实现、未新增依赖。Aerove 保留固定容量、共享代际、按实例缓存的不可变快照及冻结副本契约。
 
@@ -1081,6 +1085,8 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 **用途与采用方式：** Standard URL launcher failure diagnosis only: read `launchUrl` result contract (`false` or `PlatformException`) and MethodChannel implementation (`null` becomes `false`, platform exception propagates); no source copied and no dependency added.
 
+同一仓库另核对已锁定 `path_provider_android 2.3.1` / `path_provider_android-v2.3.1` / `f52df418da6ef2ba666112b4b9e87d9a1c43a0d0` 的 [实际实现](https://github.com/flutter/packages/blob/f52df418da6ef2ba666112b4b9e87d9a1c43a0d0/packages/path_provider/path_provider_android/lib/src/path_provider_android_real.dart)：`getTemporaryPath` 使用 Context cacheDir，support 使用 filesDir，两者不同。Lite 待校验文件复用现 AppPath 与已规范化 support 根，在私有 home 内创建临时子目录，保持原生 no-symlink/regular-file/私域校验；标准版沿用平台临时目录。不复制上游实现、不新增依赖。[该版本 LICENSE](https://github.com/flutter/packages/blob/f52df418da6ef2ba666112b4b9e87d9a1c43a0d0/packages/path_provider/path_provider_android/LICENSE) blob `29b709dac6c7a8ce696d35c375f603afd808d205`，保留 Flutter Authors 版权与 BSD-style 许可。
+
 **许可证、署名与证据：** BSD-style text and Flutter Authors copyright in both fixed-tag package/root `LICENSE` files: [`url_launcher` LICENSE](https://github.com/flutter/packages/blob/url_launcher-v6.3.3/packages/url_launcher/url_launcher/LICENSE) blob `29b709dac6c7a8ce696d35c375f603afd808d205`; [`url_launcher_platform_interface` LICENSE](https://github.com/flutter/packages/blob/url_launcher_platform_interface-v2.3.2/packages/url_launcher/url_launcher_platform_interface/LICENSE) blob `c6823b81eb845db89cee59cbbc7ee0b0b63d86ec`. GitHub repo metadata response did not expose a repository-level license field; these fixed-file texts are the evidence.
 
 #### [dart-lang/native](https://github.com/dart-lang/native)
@@ -1205,6 +1211,8 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 #### [Android Emulator Guest ANGLE](https://android.googlesource.com/platform/external/qemu/)
 
 原258在App安装前因guest SurfaceFlinger/EGL失败及host SIGSEGV停止。固定257 Surface诊断只做一次官方SDK内置 Lavapipe 对照，依据[官方图形选项](https://developer.android.com/studio/run/emulator-acceleration#accel-graphics)与同下述QEMU提交的 [emugl_config.cpp](https://android.googlesource.com/platform/external/qemu/+/cf0f40a0aad1aa3fca68f2f89372525c8d28ca68/android/android-ui/modules/aemu-gl-init/src/android/opengl/emugl_config.cpp)选择逻辑：`-gpu lavapipe` 保持GLES为SwANGLE，Host Vulkan改为Mesa Lavapipe；必须由同次Host设备选择及SurfaceFlinger实际ANGLE/Vulkan同设备、GLES≥3.1读回验证。API33、官方37.2.13原archive、原APK、分辨率、刷新率、Impeller及材质均不改变，236与正式SwiftShader校验保持。此为未接受诊断，不代表真实启动、像素或性能已通过；不复制驱动源码、不新增依赖或自动回退，保留原QEMU GPL与SDK NOTICE。
+
+原259已实际启动，Host与SurfaceFlinger的LLVM设备描述仅逗号排版不同，原完整字符串比较在安装App前拒绝。上述固定ANGLE的 [Context.cpp](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/src/libANGLE/Context.cpp#3328) 会删除renderer描述中的逗号；诊断据此严格比较backend、完整LLVM版本和向量位宽，保留唯一Host设备、实际mode、API、GLES与原始日志门。该对应关系是同owner的软件驱动签名，不是物理UUID或硬件唯一性证明；未更换GPU或放宽其它断言。只参考既有BSD许可源码，不复制实现；App Surface及完整UI验收仍未完成。
 
 **固定来源 / revision：** QEMU `cf0f40a0aad1aa3fca68f2f89372525c8d28ca68`；Android 13 Goldfish `7493b6b8d8aeed860ff2415e8327af2ed97324fe`；ANGLE `353815e0d958c63adc3425df35baf61f097d2da2`；Goldfish OpenGL `58990d35c7ace6cc89aea121378935d46d799d14`。
 
