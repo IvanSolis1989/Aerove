@@ -921,6 +921,10 @@ class Control(Producer):
             records = parse_log(self.args.output / 'control-instrument.out', expected_reporter='InstrumentationTestRunner')
             require(capture['appIdentity']['sha256'] == bound['apks']['control.apk']
                 and capture['runnerIdentity']['sha256'] == bound['apks']['runner.apk'], 'Captured installed identities differ')
+            self.adb_command('instrumented-window', 'shell', 'dumpsys', '-t', '10', 'window', 'windows', timeout=15)
+            self.adb_command('instrumented-surfaceflinger', 'shell', 'dumpsys', '-t', '10', 'SurfaceFlinger', timeout=15)
+            # Retain both independent modes even when the earlier image-binding check fails.
+            self.ordinary_launch(bound)
             for key in ('surface', 'window', 'display'):
                 image = capture[key]['image'] if key != 'display' else capture[key]
                 require(image['file'] == key + '.png' and sha(self.args.output / 'capture' / image['file']) == image['sha256']
@@ -935,7 +939,6 @@ class Control(Producer):
             self.receipt['installedAfter'] = self.installed_hash('control-after', PACKAGE, bound['apks']['control.apk'])
             self.adb_command('post-run-window', 'shell', 'dumpsys', '-t', '10', 'window', 'windows', timeout=15)
             self.adb_command('post-run-surfaceflinger', 'shell', 'dumpsys', '-t', '10', 'SurfaceFlinger', timeout=15)
-            self.ordinary_launch(bound)
             require(len(records) == 1 and records[0]['className'] + '#' + records[0]['testName'] == SELECTOR
                 and records[0]['status'] == 'passed' and capture.get('qaToken') == token and capture.get('captureCompleted') is True
                 and capture.get('resourceCleanup') == 'complete' and capture.get('accepted') is False, 'Actual control observation failed')
