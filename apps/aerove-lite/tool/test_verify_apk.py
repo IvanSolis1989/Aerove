@@ -435,9 +435,10 @@ class ApkInspectionTests(unittest.TestCase):
             "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource", "hostPolicyCommand")
         expected = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in runtime) + tuple(
             "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in ("Begin", "Evaluate", "Cancel", "Release"))
-        expected += ("Java_dev_aerove_lite_core_MeowNativeCore_validateSource",)
+        expected += ("Java_dev_aerove_lite_core_MeowNativeCore_validateSource",
+            "Java_dev_aerove_lite_core_MeowNativeCore_startupDiagnostic")
         self.assertEqual(expected + module.RESOURCE_JNI_SYMBOLS, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(20, len(set(expected)))
+        self.assertEqual(21, len(set(expected)))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
