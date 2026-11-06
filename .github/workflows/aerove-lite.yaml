@@ -914,6 +914,7 @@ jobs:
         persist-credentials: false
     - name: Source preparation and APK inspector regression tests
       run: |-
+        python3 apps/aerove-lite/android/sync_product.py
         python3 apps/aerove-lite/meow-native/test_build.py
         python3 apps/aerove-lite/tool/test_verify_apk.py
         python3 apps/aerove-lite/tool/test_lite_release.py
