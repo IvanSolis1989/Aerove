@@ -1109,6 +1109,8 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertEqual('SIGTRAP', observed['signal'])
         self.assertEqual(self.child.pid, observed['targetPid'])
         self.assertEqual('signal-event-forwarded', observed['classification'])
+        self.assertEqual('StopEvent', observed['eventClass'])
+        self.assertEqual(0, observed['signalCode'])
         self.assertEqual(signal.SIGTRAP, observed['signalNumber'])
         self.assertEqual(os.getpid(), observed['signalSenderPid'])
         self.assertTrue(observed['readbackComplete'])

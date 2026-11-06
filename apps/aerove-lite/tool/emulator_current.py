@@ -317,8 +317,28 @@ try:
                                     monotonic=time.monotonic()))
             save(fault.with_name("startup-exec-events.json"), dict(targetPid=pid, events=exec_events))
             continue
-        genuine_trap = trace_exec and isinstance(event[0], gdb.SignalEvent) and event[0].stop_signal == "SIGTRAP"
-        if not isinstance(event[0], gdb.SignalEvent) or (event[0].stop_signal not in fault_signals and not genuine_trap):
+        observed_signal = event[0].stop_signal if isinstance(event[0], gdb.SignalEvent) else None
+        generic_info = None
+        if trace_exec and type(event[0]) is gdb.StopEvent:
+            generic_info = dict(eventClass=type(event[0]).__name__, targetPid=pid,
+                                monotonic=time.monotonic())
+            try:
+                generic_info["signalNumber"] = int(gdb.parse_and_eval('$_siginfo.si_signo'))
+                generic_info["signalCode"] = int(gdb.parse_and_eval('$_siginfo.si_code'))
+                if generic_info["signalCode"] == 0:
+                    generic_info["signalSenderPid"] = int(gdb.parse_and_eval('$_siginfo._sifields._kill.si_pid'))
+            except (gdb.error, ValueError, TypeError) as error:
+                generic_info["siginfoReadErrorClass"] = type(error).__name__
+            details = getattr(event[0], "details", {})
+            generic_info["reason"] = details.get("reason") if isinstance(details, dict) else None
+            save(fault.with_name("startup-generic-stop.json"), generic_info)
+            if (generic_info.get("signalNumber") == 5 and generic_info.get("signalCode") == 0 and
+                    generic_info.get("signalSenderPid", 0) > 0):
+                observed_signal = "SIGTRAP"
+            else:
+                raise gdb.GdbError("Unclassified startup StopEvent; preserved siginfo requires review")
+        genuine_trap = trace_exec and observed_signal == "SIGTRAP"
+        if observed_signal not in fault_signals and not genuine_trap:
             break
         if genuine_trap:
             resume_command = "signal SIGTRAP"
@@ -326,7 +346,7 @@ try:
         if captures > 3:
             continue
         observed = dict(targetPid=pid, gdbPid=os.getpid(), monotonic=time.monotonic(), readbackComplete=False,
-                        capture=captures, signal=event[0].stop_signal,
+                        capture=captures, signal=observed_signal, eventClass=type(event[0]).__name__,
                         classification="signal-event-forwarded" if genuine_trap else "fault-signal-passed")
         try:
             observed["signalNumber"] = int(gdb.parse_and_eval('$_siginfo.si_signo'))
