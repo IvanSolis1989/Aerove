@@ -1263,6 +1263,8 @@ jobs:
           :app:testReleaseUnitTest \
           --tests dev.aerove.lite.flutter.MeowLegacyMigrationOwnerTest \
           --tests dev.aerove.lite.flutter.MeowLegacyMigrationExportTest \
+          --tests dev.aerove.lite.flutter.MeowAppPluginTest \
+          --tests dev.aerove.lite.core.MeowStartupDiagnosticTest \
           --tests dev.aerove.lite.flutter.ResourceReaderFenceRegressionTest \
           --tests dev.aerove.lite.data.MeowTunReconciliation90Test \
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-jvm.log"

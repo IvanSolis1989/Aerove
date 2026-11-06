@@ -25,6 +25,9 @@ concurrency:
 env:
   RUSTUP_TOOLCHAIN: '1.98.1'
   NDK_VERSION: '28.2.13676358'
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
 jobs:
   plan:
     runs-on: ubuntu-24.04
@@ -40,7 +43,6 @@ jobs:
           persist-credentials: false
       - id: plan
         name: Admit explicit source and lock plan
-        shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
           REQUESTED_PHASE: ${{ inputs.phase }}
@@ -75,6 +77,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
           toolchain: '1.98.1'
+          components: rustfmt
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
         with:
           workspaces: apps/aerove-lite/meow-native -> target
@@ -93,7 +96,6 @@ jobs:
           ninja --version
           pkg-config --version
       - name: Real locked host proxy lifecycle chain
-        shell: bash
         env:
           INITIALIZE_LOCK: ${{ needs.plan.outputs.bootstrap }}
           REQUESTED_PROOF: ${{ needs.plan.outputs.proof }}
@@ -120,7 +122,6 @@ jobs:
           PY
       - name: Preserve actual source, lock and host terminal result
         if: always()
-        shell: bash
         run: |
           set -euo pipefail
           root=apps/aerove-lite/meow-native
@@ -183,7 +184,6 @@ jobs:
           key: meow-${{ matrix.target }}-1.98.1-ndk28.2
           cache-directories: apps/aerove-lite/meow-native/.upstream
       - name: Link the real locked bridge for this Android ABI
-        shell: bash
         env:
           TARGET: ${{ matrix.target }}
         run: |
@@ -207,7 +207,6 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Aggregate only the explicitly planned proof
-        shell: bash
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
           HOST_RESULT: ${{ needs.host.result }}
