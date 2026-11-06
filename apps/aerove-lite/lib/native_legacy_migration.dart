@@ -66,6 +66,7 @@ Future<void> _prepareNativeLegacyData() async {
       );
     for (final journal in sourceJournals) {
       await journal.recover(
+        database: database,
         invoke: (request) async {
           final reply = await _migrationChannel
               .invokeMapMethod<String, dynamic>(

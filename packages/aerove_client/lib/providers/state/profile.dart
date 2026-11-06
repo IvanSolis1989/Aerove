@@ -63,6 +63,8 @@ Future<SetupState> setupState(Ref ref, int? profileId) async {
       : ref.watch(
           patchClashConfigProvider.select(
             (state) => ProfileOverrides(
+              localProviderSources:
+                  profile?.overrides.localProviderSources ?? const {},
               nativeProfileUuid: native?.nativeProfileUuid,
               nativeResourceInputs: native?.nativeResourceInputs ?? const {},
               proxyProviders: native?.proxyProviders ?? const {},

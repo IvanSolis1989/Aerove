@@ -133,6 +133,7 @@ class SetupAction extends _$SetupAction {
       await journal.recover(
         invoke: _core.invokeMeowProviderSource,
         readProof: _providerBusinessProof,
+        database: database,
       );
     }
   }
@@ -1118,13 +1119,16 @@ class SetupAction extends _$SetupAction {
         (isCurrent?.call() ?? true);
     try {
       var observedSource = ref.read(setupStateProvider(profileId)).value;
+      final ownedSourceStates = <SetupState>{};
       final sourceSubscription = ref.listen(setupStateProvider(profileId), (
         _,
         next,
       ) {
         if (next.hasError) cancellation.value = true;
         if (next.value case final source?) {
-          if (observedSource != null && observedSource != source)
+          if (observedSource != null &&
+              observedSource != source &&
+              !ownedSourceStates.contains(source))
             cancellation.value = true;
           observedSource = source;
         }
@@ -1152,6 +1156,7 @@ class SetupAction extends _$SetupAction {
                 replacementBytes ??
                 Uint8List.fromList(utf8.encode(replacementData!)),
             observeQuiescence: (state) => nativeRequest = state,
+            allowOwnedSource: ownedSourceStates.add,
           ),
           operation: cancellation,
         );
@@ -1233,6 +1238,7 @@ class SetupAction extends _$SetupAction {
     required bool Function() current,
     required Uint8List bytes,
     required void Function(CoreRequestQuiescence) observeQuiescence,
+    required void Function(SetupState) allowOwnedSource,
   }) async {
     if (profileId == null)
       throw const FormatException(
@@ -1242,17 +1248,25 @@ class SetupAction extends _$SetupAction {
       checkUpdateCurrent(current);
       final state = await ref.read(setupStateProvider(profileId).future);
       final key = '$namespace/$name';
-      if (state.overrides.localProviderSources.containsKey(key) ||
-          state.overrides.nativeResourceInputs.containsKey(
-            '\$.$namespace.$name',
-          ) ||
-          namespace == 'proxy-providers' &&
-              state.profileProviders.containsKey(name) ||
+      final previousBinding = state.overrides.localProviderSources[key];
+      final nativeInput =
+          state.overrides.nativeResourceInputs['\$.$namespace.$name'];
+      final referencedProfile = namespace == 'proxy-providers'
+          ? state.profileProviders[name]
+          : null;
+      final detached =
+          previousBinding != null ||
+          nativeInput != null ||
+          referencedProfile != null;
+      final sqlSource =
           namespace == 'rule-providers' &&
-              (state.overrides.ruleProviderBindings.containsKey(name) ||
+          previousBinding == null &&
+          (state.overrides.ruleProviderBindings.containsKey(name) ||
+              !state.overrides.sourceRuleProviders.containsKey(name) &&
                   state.clashProviders.any(
                     (provider) => provider.label == name,
-                  ))) {
+                  ));
+      if (sqlSource) {
         throw const CoreMethodException(
           code: 'source_owner_mismatch',
           message:
@@ -1270,16 +1284,34 @@ class SetupAction extends _$SetupAction {
         await Directory(await appPath.homeDirPath).resolveSymbolicLinks(),
       );
       final relative = fileProviderSourcePath(profileId, namespace, name);
-      if (declaration is! Map || declaration['type'] != 'file') {
+      Map<String, dynamic>? originalDefinition;
+      if (previousBinding != null)
+        originalDefinition = previousBinding.originalDefinition;
+      else if (nativeInput?['sourceDefinition'] case final Map original)
+        originalDefinition = Map<String, dynamic>.from(original);
+      else if (referencedProfile != null)
+        originalDefinition = {
+          ...?state.overrides.proxyProviders[name]?.definition,
+          'type': 'file',
+          'path': await appPath.getProfilePath(referencedProfile.toString()),
+        };
+      if (detached && originalDefinition == null) {
+        throw const CoreMethodException(
+          code: 'source_owner_mismatch',
+          message: 'Provider has no verifiable original business declaration',
+        );
+      }
+      if (!detached && (declaration is! Map || declaration['type'] != 'file')) {
         throw const CoreMethodException(
           code: 'source_owner_mismatch',
           message:
               'Provider does not belong to the selected managed file source',
         );
       }
-      if (!(await fileProviderSourceBackupEntriesTask(home.path, [
-        profileId,
-      ])).contains(relative)) {
+      if (!detached &&
+          !(await fileProviderSourceBackupEntriesTask(home.path, [
+            profileId,
+          ])).contains(relative)) {
         throw const CoreMethodException(
           code: 'source_owner_mismatch',
           message:
@@ -1288,17 +1320,51 @@ class SetupAction extends _$SetupAction {
       }
       checkUpdateCurrent(current);
       final proof = await _providerBusinessProof(saveCurrent: true);
-      final journal = await FileProviderSourceJournal.prepare(
-        home: home,
-        id: uuidV4,
-        profileId: profileId,
-        namespace: namespace,
-        name: name,
-        expectedRevision: before.revision,
-        expected: before.applied.toJson(),
-        beforeProof: proof,
-        bytes: bytes,
-      );
+      final journal = detached
+          ? await FileProviderSourceJournal.prepareDetached(
+              database: database,
+              home: home,
+              id: uuidV4,
+              profileId: profileId,
+              namespace: namespace,
+              name: name,
+              expectedRevision: before.revision,
+              expected: before.applied.toJson(),
+              beforeProof: proof,
+              bytes: bytes,
+              originalDefinition: originalDefinition!,
+              immutableInputs: state.overrides.nativeResourceInputs.values
+                  .expand((input) => [input['file'], input['receiptFile']])
+                  .whereType<String>(),
+            )
+          : await FileProviderSourceJournal.prepare(
+              home: home,
+              id: uuidV4,
+              profileId: profileId,
+              namespace: namespace,
+              name: name,
+              expectedRevision: before.revision,
+              expected: before.applied.toJson(),
+              beforeProof: proof,
+              bytes: bytes,
+            );
+      if (detached) {
+        final afterRow =
+            (journal.sourcePlan['profileRow'] as Map)['after'] as Map;
+        final afterOverrides = ProfileOverrides.fromJson(
+          Map<String, dynamic>.from(
+            jsonDecode(afterRow['overrides'] as String) as Map,
+          ),
+        );
+        allowOwnedSource(state);
+        allowOwnedSource(
+          state.copyWith(
+            overrides: state.overrides.copyWith(
+              localProviderSources: afterOverrides.localProviderSources,
+            ),
+          ),
+        );
+      }
       var beginAttempted = false;
       try {
         checkUpdateCurrent(current);
@@ -1317,7 +1383,13 @@ class SetupAction extends _$SetupAction {
           );
         }
         checkUpdateCurrent(current);
-        await journal.publish();
+        await journal.publish(database: database);
+        if (detached) {
+          ref.invalidate(profilesStreamProvider);
+          await ref.read(profilesStreamProvider.future);
+          ref.invalidate(setupStateProvider(profileId));
+          await ref.read(setupStateProvider(profileId).future);
+        }
         final result = await _setupConfig(
           force: true,
           silence: true,
@@ -1369,17 +1441,19 @@ class SetupAction extends _$SetupAction {
         // Cancellation/transport errors are not a rollback decision. Query must
         // first join Native work and read its sole durable commit point.
         if (!beginAttempted)
-          await journal.discardUnbegun();
+          await journal.discardUnbegun(database: database);
         else
           await journal.recover(
             invoke: owner.invokeMeowProviderSource,
             readProof: _providerBusinessProof,
+            database: database,
           );
         rethrow;
       }
       await journal.recover(
         invoke: owner.invokeMeowProviderSource,
         readProof: _providerBusinessProof,
+        database: database,
       );
       checkUpdateCurrent(current);
     });

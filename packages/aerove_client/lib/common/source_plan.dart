@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:fl_clash/models/provider_source.dart';
 import 'package:flutter/foundation.dart' show compute;
+import 'package:fl_clash/database/database.dart' show Database;
+import 'package:drift/drift.dart' show Variable;
 import 'file_provider_source.dart';
 import 'native_lite_migration.dart'
     show nativeLiteAtomicFile, nativeLitePrivateDestination, nativeLiteJsonHash;
@@ -120,6 +122,7 @@ class FileProviderSourceJournal {
     required Map<String, dynamic> expected,
     required Map<String, dynamic> beforeProof,
     required List<int> bytes,
+    Map<String, dynamic>? profileRow,
   }) async {
     if (!RegExp(
       r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
@@ -135,13 +138,19 @@ class FileProviderSourceJournal {
       );
     }
     final root = Directory(await home.resolveSymbolicLinks());
-    final relative = fileProviderSourcePath(profileId, namespace, name);
+    final detached = profileRow != null;
+    final relative = fileProviderSourcePath(
+      profileId,
+      namespace,
+      name,
+      detached: detached,
+    );
     checkFileProviderSourceRestorePaths(root.path, [
       relative,
       '$relative.source.json',
     ]);
     final source = File(p.join(root.path, relative));
-    if (!await source.exists())
+    if (!detached && !await source.exists())
       throw const FormatException('provider source: managed source is missing');
     final directory = Directory(
       p.join(root.path, 'provider-source-transactions', id),
@@ -214,7 +223,7 @@ class FileProviderSourceJournal {
       }
       final sourcePlan = <String, dynamic>{
         'schema': 1,
-        'kind': 'managed-file',
+        'kind': detached ? 'detached-file' : 'managed-file',
         'profileId': profileId,
         'namespace': namespace,
         'name': name,
@@ -222,7 +231,9 @@ class FileProviderSourceJournal {
         'expected': expected,
         'beforeStateSha256': nativeLiteJsonHash(beforeProof),
         'files': entries,
+        if (profileRow != null) 'profileRow': profileRow,
       };
+      _checkProfileRows(sourcePlan);
       final encoded = utf8.encode(
         jsonEncode({
           'schema': 1,
@@ -231,6 +242,10 @@ class FileProviderSourceJournal {
           'sourcePlanSha256': nativeLiteJsonHash(sourcePlan),
         }),
       );
+      if (encoded.length > 8 * 1024 * 1024)
+        throw const FormatException(
+          'provider source: journal byte budget exceeded',
+        );
       await nativeLiteAtomicFile(
         File(p.join(directory.path, 'source-journal.json')),
         encoded,
@@ -245,6 +260,139 @@ class FileProviderSourceJournal {
     } catch (_) {
       await _removeOwnedDirectory(directory, root);
       rethrow;
+    }
+  }
+
+  static Future<FileProviderSourceJournal> prepareDetached({
+    required Database database,
+    required Directory home,
+    required String id,
+    required int profileId,
+    required String namespace,
+    required String name,
+    required String expectedRevision,
+    required Map<String, dynamic> expected,
+    required Map<String, dynamic> beforeProof,
+    required List<int> bytes,
+    required Map<String, dynamic> originalDefinition,
+    Iterable<String> immutableInputs = const [],
+  }) async {
+    final before = await _profileRow(database, profileId);
+    final overrides = Map<String, dynamic>.from(
+      jsonDecode(before['overrides'] as String? ?? '{}') as Map,
+    );
+    final bindings = Map<String, dynamic>.from(
+      overrides['localProviderSources'] as Map? ?? {},
+    );
+    final key = '$namespace/$name';
+    final prior = bindings[key] == null
+        ? null
+        : LocalProviderSource.fromJson(
+            Map<String, dynamic>.from(bindings[key] as Map),
+          );
+    final prepared = prepareDetachedProviderSource(
+      profileId: profileId,
+      key: key,
+      bytes: bytes,
+      originalDefinition: prior?.originalDefinition ?? originalDefinition,
+      immutableInputs: immutableInputs,
+    );
+    bindings[key] = prepared.binding.toJson();
+    final after = <String, dynamic>{
+      ...before,
+      'overrides': jsonEncode({...overrides, 'localProviderSources': bindings}),
+    };
+    return prepare(
+      home: home,
+      id: id,
+      profileId: profileId,
+      namespace: namespace,
+      name: name,
+      expectedRevision: expectedRevision,
+      expected: expected,
+      beforeProof: beforeProof,
+      bytes: prepared.bytes,
+      profileRow: {'before': before, 'after': after},
+    );
+  }
+
+  static Future<Map<String, dynamic>> _profileRow(
+    Database database,
+    int id,
+  ) async {
+    final rows = await database
+        .customSelect(
+          'SELECT * FROM profiles WHERE id = ?',
+          variables: [Variable<int>(id)],
+        )
+        .get();
+    if (rows.length != 1)
+      throw const FormatException(
+        'provider source: selected profile row is missing',
+      );
+    return Map<String, dynamic>.from(rows.single.data);
+  }
+
+  static void _checkProfileRows(Map<String, dynamic> plan) {
+    if (plan['kind'] == 'managed-file') {
+      if (plan.containsKey('profileRow'))
+        throw const FormatException('provider source: unexpected profile row');
+      return;
+    }
+    final rows = plan['profileRow'] as Map;
+    final before = Map<String, dynamic>.from(rows['before'] as Map);
+    final after = Map<String, dynamic>.from(rows['after'] as Map);
+    if (rows.length != 2 ||
+        before['id'] != plan['profileId'] ||
+        after['id'] != plan['profileId'] ||
+        !before.containsKey('overrides') ||
+        !after.containsKey('overrides') ||
+        nativeLiteJsonHash({...before}..remove('overrides')) !=
+            nativeLiteJsonHash({...after}..remove('overrides'))) {
+      throw const FormatException(
+        'provider source: invalid profile row publication',
+      );
+    }
+    final oldOverrides = Map<String, dynamic>.from(
+      jsonDecode(before['overrides'] as String? ?? '{}') as Map,
+    );
+    final newOverrides = Map<String, dynamic>.from(
+      jsonDecode(after['overrides'] as String) as Map,
+    );
+    final oldBindings = Map<String, dynamic>.from(
+      oldOverrides.remove('localProviderSources') as Map? ?? {},
+    );
+    final newBindings = Map<String, dynamic>.from(
+      newOverrides.remove('localProviderSources') as Map? ?? {},
+    );
+    final key = '${plan['namespace']}/${plan['name']}';
+    final binding = LocalProviderSource.fromJson(
+      Map<String, dynamic>.from(newBindings.remove(key) as Map),
+    );
+    final prior = oldBindings.remove(key);
+    final previous = prior == null
+        ? null
+        : LocalProviderSource.fromJson(Map<String, dynamic>.from(prior as Map));
+    if (nativeLiteJsonHash(oldOverrides) != nativeLiteJsonHash(newOverrides) ||
+        nativeLiteJsonHash(oldBindings) != nativeLiteJsonHash(newBindings) ||
+        binding.relativePath !=
+            fileProviderSourcePath(
+              plan['profileId'] as int,
+              plan['namespace'] as String,
+              plan['name'] as String,
+              detached: true,
+            ) ||
+        binding.sha256 !=
+            ((plan['files'] as List).first as Map)['afterSha256'] ||
+        previous != null &&
+            (previous.relativePath != binding.relativePath ||
+                previous.sha256 !=
+                    ((plan['files'] as List).first as Map)['beforeSha256'] ||
+                nativeLiteJsonHash(previous.originalDefinition) !=
+                    nativeLiteJsonHash(binding.originalDefinition))) {
+      throw const FormatException(
+        'provider source: detached binding publication changed unrelated intent',
+      );
     }
   }
 
@@ -281,7 +429,7 @@ class FileProviderSourceJournal {
     await directory.delete();
   }
 
-  Future<void> _writeState({required bool after}) async {
+  Future<void> _writeFiles({required bool after}) async {
     final entries = (sourcePlan['files'] as List).cast<Map>();
     // Check every target before changing any. Recovery accepts a mixture left
     // by a crash, but never overwrites an unrelated third value.
@@ -342,12 +490,145 @@ class FileProviderSourceJournal {
     }
   }
 
-  Future<void> publish() => _writeState(after: true);
-  Future<void> restore() => _writeState(after: false);
+  Future<void> _writeState({required bool after, Database? database}) async {
+    final rows = sourcePlan['profileRow'] as Map?;
+    if (rows == null) return _writeFiles(after: after);
+    if (database == null)
+      throw const FormatException(
+        'provider source: profile database is required for recovery',
+      );
+    final snapshots = <String, Uint8List?>{};
+    for (final entry in (sourcePlan['files'] as List).cast<Map>()) {
+      final relative = entry['relativePath'] as String;
+      checkFileProviderSourceRestorePaths(home.path, [relative]);
+      final file = File(p.join(home.path, relative));
+      if (await file.exists() &&
+          await file.length() >
+              (relative.endsWith('.source.json')
+                  ? 16384
+                  : (sourcePlan['namespace'] == 'proxy-providers' ? 4 : 64) *
+                        1024 *
+                        1024)) {
+        throw const FormatException(
+          'provider source: source snapshot byte budget exceeded',
+        );
+      }
+      snapshots[relative] = await file.exists()
+          ? await file.readAsBytes()
+          : null;
+    }
+    var fileWriteStarted = false;
+    String? priorRowHash;
+    try {
+      await database.transaction(() async {
+        final actual = await _profileRow(
+          database,
+          sourcePlan['profileId'] as int,
+        );
+        final actualHash = nativeLiteJsonHash(actual);
+        priorRowHash = actualHash;
+        if (actualHash != nativeLiteJsonHash(rows['before']) &&
+            actualHash != nativeLiteJsonHash(rows['after'])) {
+          throw const FormatException(
+            'provider source: profile row compare-and-swap failed',
+          );
+        }
+        final target = rows[after ? 'after' : 'before'] as Map;
+        if (actualHash != nativeLiteJsonHash(target)) {
+          // The complete row is a conflict detector, never a stale row upsert.
+          await database.customUpdate(
+            'UPDATE profiles SET overrides = ? WHERE id = ?',
+            variables: [
+              Variable<String>(target['overrides'] as String?),
+              Variable<int>(sourcePlan['profileId'] as int),
+            ],
+            updates: {database.profiles},
+          );
+          if (nativeLiteJsonHash(
+                await _profileRow(database, sourcePlan['profileId'] as int),
+              ) !=
+              nativeLiteJsonHash(target)) {
+            throw const FormatException(
+              'provider source: profile override read-back failed',
+            );
+          }
+        }
+        fileWriteStarted = true;
+        await _writeFiles(after: after);
+      });
+    } catch (_) {
+      // A failed COMMIT acknowledgement is not proof of rollback. If SQLite
+      // retained a new or unrelated row, leave files and journal for decision
+      // recovery instead of creating a mismatched binding/source pair.
+      if (fileWriteStarted) {
+        if (nativeLiteJsonHash(
+              await _profileRow(database, sourcePlan['profileId'] as int),
+            ) !=
+            priorRowHash)
+          rethrow;
+        // Validate the complete rollback set before restoring any member.
+        for (final entry in (sourcePlan['files'] as List).cast<Map>()) {
+          final relative = entry['relativePath'] as String;
+          checkFileProviderSourceRestorePaths(home.path, [relative]);
+          final file = File(p.join(home.path, relative));
+          final original = snapshots[relative];
+          final originalSha = original == null
+              ? null
+              : sha256.convert(original).toString();
+          final actual = await file.exists()
+              ? sha256.convert(await file.readAsBytes()).toString()
+              : null;
+          if (actual == originalSha) continue;
+          if (actual != entry[after ? 'afterSha256' : 'beforeSha256']) {
+            throw const FormatException(
+              'provider source: failed database commit encountered a newer source',
+            );
+          }
+        }
+        for (final entry in (sourcePlan['files'] as List).cast<Map>()) {
+          final relative = entry['relativePath'] as String;
+          final file = File(p.join(home.path, relative));
+          final original = snapshots[relative];
+          final actual = await file.exists()
+              ? sha256.convert(await file.readAsBytes()).toString()
+              : null;
+          final originalSha = original == null
+              ? null
+              : sha256.convert(original).toString();
+          if (actual == originalSha) continue;
+          if (actual != entry[after ? 'afterSha256' : 'beforeSha256'])
+            throw const FormatException(
+              'provider source: failed database commit encountered a newer source',
+            );
+          if (original == null) {
+            if (await file.exists()) await file.delete();
+          } else
+            await nativeLiteAtomicFile(file, original, boundary: home);
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> publish({Database? database}) =>
+      _writeState(after: true, database: database);
+  Future<void> restore({Database? database}) =>
+      _writeState(after: false, database: database);
 
   /// Only the initiating call may use this before it has invoked Native begin.
   /// It removes staging without restoring or publishing any business byte.
-  Future<void> discardUnbegun() async {
+  Future<void> discardUnbegun({Database? database}) async {
+    if (sourcePlan['profileRow'] case final Map rows) {
+      if (database == null ||
+          nativeLiteJsonHash(
+                await _profileRow(database, sourcePlan['profileId'] as int),
+              ) !=
+              nativeLiteJsonHash(rows['before'])) {
+        throw const FormatException(
+          'provider source: unbegun profile row changed',
+        );
+      }
+    }
     for (final entry in (sourcePlan['files'] as List).cast<Map>()) {
       final relative = entry['relativePath'] as String;
       checkFileProviderSourceRestorePaths(home.path, [relative]);
@@ -434,7 +715,7 @@ class FileProviderSourceJournal {
           json['id'] != id ||
           json['sourcePlanSha256'] != nativeLiteJsonHash(plan) ||
           plan['schema'] != 1 ||
-          plan['kind'] != 'managed-file') {
+          !{'managed-file', 'detached-file'}.contains(plan['kind'])) {
         throw const FormatException(
           'provider source: invalid recovery journal',
         );
@@ -443,6 +724,7 @@ class FileProviderSourceJournal {
         plan['profileId'] as int,
         plan['namespace'] as String,
         plan['name'] as String,
+        detached: plan['kind'] == 'detached-file',
       );
       final files = plan['files'] as List;
       if (files.length != 2 ||
@@ -464,6 +746,7 @@ class FileProviderSourceJournal {
           );
         }
       }
+      _checkProfileRows(plan);
       result.add(
         FileProviderSourceJournal._(
           root,
@@ -481,12 +764,13 @@ class FileProviderSourceJournal {
   Future<Map<String, dynamic>> recover({
     required Future<Map<String, dynamic>> Function(Map<String, dynamic>) invoke,
     required Future<Map<String, dynamic>> Function() readProof,
+    Database? database,
   }) async {
     var reply = await invoke(envelope('query'));
     _checkReply(reply);
     final decision = reply['decision'];
     if (decision == 'COMMITTED') {
-      await publish();
+      await publish(database: database);
     } else if (decision == 'UNDECIDED' || decision == 'ABORTED') {
       if (decision == 'UNDECIDED' &&
           reply['state'] != 'PREPARED' &&
@@ -495,7 +779,7 @@ class FileProviderSourceJournal {
           'provider source: candidate quiescence is unconfirmed',
         );
       }
-      await restore();
+      await restore(database: database);
       final proof = await readProof();
       if (nativeLiteJsonHash(proof) != sourcePlan['beforeStateSha256']) {
         throw const FormatException(
@@ -520,7 +804,7 @@ class FileProviderSourceJournal {
       );
     }
     // If commitment raced with abort, the sole durable decision wins.
-    if (reply['decision'] == 'COMMITTED') await publish();
+    if (reply['decision'] == 'COMMITTED') await publish(database: database);
     await finalize(reply['decision'] as String);
     final finished = await invoke({
       ...envelope('query'),
