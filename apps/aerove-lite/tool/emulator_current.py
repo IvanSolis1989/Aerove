@@ -221,7 +221,9 @@ def derived_host_evidence(path, emulator_pid, directory):
                 loadedLibrarySha256=actual, emulatorMapsSha256=sha(output), loadedInOwnedEmulator=True)
 
 
-def sigill_gdb_script(pid, ready, fault, control=None):
+def sigill_gdb_script(pid, ready, fault, control=None, fault_signals=('SIGILL',)):
+    if fault_signals not in (('SIGILL',), ('SIGILL', 'SIGSEGV')):
+        raise ValueError('Unsupported owned diagnostic signal set')
     # GDB reads only this live Popen PID; no process search, inferior calls or patching.
     return """set pagination off
 set confirm off
@@ -236,12 +238,14 @@ handle all nostop noprint pass
 handle SIGTRAP nostop noprint pass
 handle SIGINT stop print pass
 handle SIGILL stop print pass
+%s
 python
 import gdb, json, os, pathlib, time
 pid = %d
 ready = pathlib.Path(%r)
 fault = pathlib.Path(%r)
 control = %r
+fault_signals = %r
 event = [None]
 budget = [1048576]
 captures = 0
@@ -296,12 +300,13 @@ try:
         gdb.execute("continue", to_string=True)
         if not gdb.selected_inferior().pid:
             break
-        if not isinstance(event[0], gdb.SignalEvent) or event[0].stop_signal != "SIGILL":
+        if not isinstance(event[0], gdb.SignalEvent) or event[0].stop_signal not in fault_signals:
             break
         captures += 1
         if captures > 3:
             continue
-        observed = dict(targetPid=pid, gdbPid=os.getpid(), monotonic=time.monotonic(), readbackComplete=False, capture=captures)
+        observed = dict(targetPid=pid, gdbPid=os.getpid(), monotonic=time.monotonic(), readbackComplete=False,
+                        capture=captures, signal=event[0].stop_signal)
         save(fault, observed)
         print("AEROVE_OWNED_SIGILL_CAPTURE pid=" + str(pid), flush=True)
         for command in ("p $_siginfo", "info registers rip rsp rbp eflags", "x/16bx $pc", "x/8i $pc", "info symbol $pc", "bt 24", "info sharedlibrary", "info proc mappings"):
@@ -329,7 +334,7 @@ try:
         fault_thread.switch()
         observed["readbackComplete"] = True
         save(fault, observed)
-        # SIGILL stays pass: the next continue delivers the original signal.
+        # The captured signal stays pass: continue delivers the original failure.
 except KeyboardInterrupt:
     print("AEROVE_GDB_OWNER_INTERRUPT", flush=True)
 finally:
@@ -342,7 +347,8 @@ finally:
         if control is not None:
             save(pathlib.Path(control['detached']), dict(targetPid=pid, gdbPid=os.getpid(), detached=True))
 end
-""" % (pid, str(ready), str(fault), control)
+""" % ('handle SIGSEGV stop print pass' if 'SIGSEGV' in fault_signals else '',
+       pid, str(ready), str(fault), control, fault_signals)
 
 
 def sigill_interrupt_command(pid, starttime):
@@ -363,16 +369,17 @@ finally:
 
 class SigillCapture:
     """One opt-in sidecar; the emulator remains the owner's original Popen child."""
-    def __init__(self, emulator, directory, receipt):
+    def __init__(self, emulator, directory, receipt, fault_signals=('SIGILL',)):
         self.emulator, self.directory, self.receipt = emulator, Path(directory), receipt
         self.child = None
+        self.fault_signals = fault_signals
         self.ready, self.fault = self.directory / 'sigill-gdb-ready.json', self.directory / 'sigill-observed.json'
         self.control = dict(path=str(self.directory / 'gdb-owner-stop.json'),
                             detached=str(self.directory / 'gdb-owner-detached.json'),
                             token=os.urandom(24).hex())
         self.deadline = time.monotonic() + 1500
         self.state = dict(diagnosticOnly=True, performanceEvidence=False, accepted=False,
-                          targetPid=emulator.pid, commands=[], status='starting')
+                          targetPid=emulator.pid, commands=[], status='starting', faultSignals=list(fault_signals))
         receipt['sigillForensics'] = self.state
 
     def start(self):
@@ -393,7 +400,7 @@ class SigillCapture:
                 cpu.append(fields)
         (self.directory / 'host-cpu-flags.json').write_text(json.dumps(cpu, indent=2) + '\n')
         script = self.directory / 'sigill-capture.gdb'
-        script.write_text(sigill_gdb_script(self.emulator.pid, self.ready, self.fault, self.control))
+        script.write_text(sigill_gdb_script(self.emulator.pid, self.ready, self.fault, self.control, self.fault_signals))
         command = ['sudo', '-n', '--', gdb, '-nx', '-nh', '--batch', '-x', str(script)]
         self.state['command'] = command
         with (self.directory / 'sigill-gdb.stdout.log').open('wb') as out, (self.directory / 'sigill-gdb.stderr.log').open('wb') as err:
@@ -730,6 +737,11 @@ def main():
     forensic = os.environ.get('AEROVE_EMULATOR_SIGILL_TRACE') == '1'
     if forensic and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
         raise ValueError('SIGILL capture is restricted to the fixed original208 representative diagnosis')
+    boot_forensic = os.environ.get('AEROVE_LITE290_BOOT_CRASH')
+    if boot_forensic:
+        from lite290_surface_probe import enabled as probe290_enabled
+        if boot_forensic != '1' or not probe290_enabled() or args.phase != 'flutter-ui':
+            raise ValueError('Bootstrap fault capture requires the fixed original290 diagnostic owner')
     guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
     if guest_angle:
         guard_guest_angle_phase(args.phase, current, args.sample)
@@ -782,12 +794,23 @@ def main():
             emulator = subprocess.Popen(emulator_command, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True, env=emulator_environment(os.environ))
             receipt['emulatorPid'] = emulator.pid
             check_cancelled(receipt)
+            if boot_forensic:
+                capture = SigillCapture(emulator, directory, receipt, fault_signals=('SIGILL', 'SIGSEGV'))
+                try:
+                    capture.start()
+                except Exception as error:
+                    capture.state.update(status='failed', error=repr(error))
+                    raise
+            def bootstrap_check(value):
+                check_cancelled(value)
+                if boot_forensic:
+                    capture.check()
             if guest_angle:
-                wait_ready(emulator, directory, receipt, check_cancelled, capture_guest_logcat=True,
+                wait_ready(emulator, directory, receipt, bootstrap_check, capture_guest_logcat=True,
                            disable_guest_host_query_reset=True,
                            debug_guest_vulkan=current.get('runtimeTarget') == 'lite208-flutter-ui')
             else:
-                wait_ready(emulator, directory, receipt, check_cancelled)
+                wait_ready(emulator, directory, receipt, bootstrap_check)
             check_cancelled(receipt)
             if guest_angle:
                 receipt['guestGraphicsRoute'] = guest_angle_evidence(

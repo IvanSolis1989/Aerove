@@ -887,6 +887,29 @@ class OriginalSamplePhaseTests(unittest.TestCase):
             current.original_sample_phase_selector('matrix', 'glyph', runtime)
 
 class SigillCaptureBoundaryTests(unittest.TestCase):
+    def test_signal_extension_preserves_default_and_compiles_read_only_gdb_python(self):
+        default = current.sigill_gdb_script(123, Path('/ready'), Path('/fault'))
+        extended = current.sigill_gdb_script(123, Path('/ready'), Path('/fault'), None, ('SIGILL', 'SIGSEGV'))
+        self.assertNotIn('handle SIGSEGV stop print pass', default)
+        self.assertIn('handle SIGSEGV stop print pass', extended)
+        for text in (default, extended):
+            compile(text.split('python\n', 1)[1].rsplit('\nend', 1)[0], 'gdb-embedded-python', 'exec')
+            self.assertIn('gdb.execute("attach " + str(pid)', text)
+            self.assertIn('gdb.execute("detach")', text)
+        with self.assertRaises(ValueError):
+            current.sigill_gdb_script(123, Path('/ready'), Path('/fault'), None, ('SIGINT',))
+
+    def test_bootstrap_capture_cannot_instrument_a_normal_current_owner(self):
+        import sys
+        with patch.dict(os.environ, AEROVE_LITE290_BOOT_CRASH='1'), \
+                patch.object(current.sys, 'platform', 'linux'), \
+                patch.object(sys, 'argv', ['owner', 'flutter-ui', '--runtime-directory', 'fixture']), \
+                patch.object(current, 'verify_current_runtime', return_value={'identity': {}}), \
+                patch.object(current.subprocess, 'Popen') as spawn:
+            with self.assertRaisesRegex(ValueError, 'fixed original290'):
+                current.main()
+            spawn.assert_not_called()
+
     def test_forensic_optin_cannot_enter_a_normal_current_or_full_owner(self):
         import sys
         for phase in ('matrix', 'flutter-full', 'flutter-ui'):
@@ -1029,6 +1052,21 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertFalse(self.receipt['sigillForensics']['performanceEvidence'])
         self.assertFalse(self.receipt['sigillForensics']['accepted'])
         self.assertEqual(self.child.pid, json.loads(self.capture.fault.read_text())['targetPid'])
+
+    def test_bootstrap_sigsegv_is_observed_and_passed_to_original_parent(self):
+        import signal
+        self.capture.fault_signals = ('SIGILL', 'SIGSEGV')
+        self.capture.state['faultSignals'] = list(self.capture.fault_signals)
+        self.capture.start()
+        self.child.send_signal(signal.SIGSEGV)
+        self.assertEqual(-signal.SIGSEGV, self.child.wait(timeout=15), self.logs())
+        self.capture.close()
+        observed = json.loads(self.capture.fault.read_text())
+        self.assertEqual('SIGSEGV', observed['signal'])
+        self.assertEqual(self.child.pid, observed['targetPid'])
+        self.assertTrue(observed['readbackComplete'])
+        self.assertEqual(0, self.capture.child.returncode, self.logs())
+        self.assertFalse(self.capture.state['accepted'])
 
     def test_owner_cancellation_detaches_then_original_cleanup_joins_only_owned_target(self):
         import signal
