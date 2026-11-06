@@ -78,6 +78,244 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     private View firstFrameView;
     private Method firstFrameRead;
 
+    /** Fixed release38 observation; no App mutation, scene navigation or renderer override. */
+    public void testOriginal290MappedRendererAndSurface() throws Exception {
+        original290Probe = true;
+        testCaptureLateSurfaceAndCompositor();
+    }
+
+    private static final String ORIGINAL290_APK = "e8a0a712317cf59f8aad5034ad2c560f0f01f520f668cb241146731a9b831108";
+    private static final String ORIGINAL290_MAP_SHA = "7365901cbb1d15ea75521b172ab43be7f99993929994c98bd9468bc2b65f1a8a";
+    private static final String ORIGINAL290_MAP_ID = "2ec72d72bdeb76128550b7e7eb062450ca6ff4f15d6a5a1b78a8b62670e20cfa";
+    private boolean original290Probe;
+    private final AtomicBoolean original290WorkerPending = new AtomicBoolean();
+    private final AtomicInteger original290NativePending = new AtomicInteger();
+    private final AtomicBoolean original290RetainedResources = new AtomicBoolean();
+
+    private interface Observation290 { void collect() throws Exception; }
+
+    /** Record independent failures, then fail the test after safe independent evidence is saved. */
+    private void observe290(String label, JSONObject receipt, JSONArray failures, Observation290 observation) throws Exception {
+        try {
+            observation.collect();
+        } catch (InterruptedException cancelled) {
+            Thread.currentThread().interrupt();
+            throw cancelled;
+        } catch (Exception | AssertionError failure) {
+            failures.put(new JSONObject().put("observation", label).put("failureClass", failure.getClass().getName())
+                    .put("failureCauseClass", failure.getCause() == null ? JSONObject.NULL : failure.getCause().getClass().getName())
+                    .put("deviceNanos", now()));
+        }
+    }
+
+    private void captureOriginal290(Activity activity, File root, JSONObject receipt, ExecutorService worker,
+            HandlerThread callbacks, AtomicLong epoch, SurfaceHolder.Callback observer,
+            AtomicReference<SurfaceHolder> observedHolder) throws Exception {
+        JSONArray failures = new JSONArray();
+        receipt.put("observationFailures", failures).put("checkpoint", "fresh-startup-10s")
+                .put("fixture", "host-verified-fresh-empty-app-data").put("semanticNavigationPerformed", false)
+                .put("performanceAccepted", false).put("releaseAccepted", false)
+                .put("mappingSha256", ORIGINAL290_MAP_SHA).put("mappingId", ORIGINAL290_MAP_ID)
+                .put("originalMapping", new JSONObject().put("sha256", ORIGINAL290_MAP_SHA).put("pgMapId", ORIGINAL290_MAP_ID))
+                .put("mappingBinding", "host verifies original mapping bytes; runtime verifies exact original APK and mapped field types")
+                .put("checkpointDelayMs", 10_000).put("atomicSameFrame", false);
+        long checkpointAt = now() + TimeUnit.SECONDS.toNanos(10);
+        // Register the holder epoch before the wait whenever a usable Surface exists.
+        observe290("initial-surface", receipt, failures, () -> onMain(() -> {
+            Snapshot initial = snapshot(activity, epoch.get());
+            initial.view.getHolder().addCallback(observer);
+            observedHolder.set(initial.view.getHolder());
+            return null;
+        }));
+        while (now() < checkpointAt) {
+            Thread.sleep(Math.max(1L, Math.min(100L, TimeUnit.NANOSECONDS.toMillis(checkpointAt - now()))));
+        }
+        receipt.put("checkpointDeviceNanos", now());
+        AtomicReference<Snapshot> before = new AtomicReference<>();
+        observe290("surface-before", receipt, failures, () -> {
+            Snapshot value = onMain(() -> snapshot(activity, epoch.get()));
+            before.set(value);
+            receipt.put("beforeSurfaceCopy", value.json);
+        });
+        JSONObject mappedBefore = new JSONObject();
+        receipt.put("mappedRendererBefore", mappedBefore).put("mappedRendererObservation", mappedBefore);
+        observe290("mapped-renderer-before", receipt, failures,
+                () -> onMain(() -> mapped290(activity, mappedBefore)));
+        JSONObject marker = new JSONObject().put("schema", 1).put("checkpoint", "fresh-startup-10s")
+                .put("qaToken", argument("qaToken")).put("pid", Process.myPid()).put("elapsedRealtimeNanos", now())
+                .put("surfaceEpoch", epoch.get()).put("originalAppApkSha256", ORIGINAL290_APK)
+                .put("mappingSha256", ORIGINAL290_MAP_SHA).put("atomicSameFrame", false);
+        File markerFile = new File(root, "checkpoint.json");
+        File markerPending = new File(root, "checkpoint.json.tmp");
+        check(!markerFile.exists() && markerPending.createNewFile(), "Checkpoint marker must be new");
+        try (FileOutputStream out = new FileOutputStream(markerPending)) {
+            out.write((marker.toString(2) + "\n").getBytes(StandardCharsets.UTF_8));
+            out.getFD().sync();
+        }
+        check(markerPending.renameTo(markerFile), "Atomic checkpoint marker rename failed");
+        receipt.put("checkpointMarker", new JSONObject().put("file", markerFile.getName())
+                .put("sha256", fileDigest(markerFile)).put("deviceNanos", marker.getLong("elapsedRealtimeNanos")));
+        saveReceipt(root, receipt);
+        callbacks.start();
+        Handler handler = new Handler(callbacks.getLooper());
+        List<Bitmap> owned = new ArrayList<>();
+        try {
+            observe290("surface-copy", receipt, failures, () -> {
+                Snapshot value = required(before.get(), "No valid Surface snapshot for PixelCopy");
+                copy290(activity, value, false, root, receipt, handler, owned);
+            });
+            observe290("window-copy", receipt, failures,
+                    () -> copy290(activity, before.get(), true, root, receipt, handler, owned));
+            observe290("compositor-copy", receipt, failures, () -> {
+                JSONObject copy = new JSONObject().put("method", "UiAutomation.takeScreenshot").put("submittedNanos", now());
+                receipt.put("compositorCopy", copy);
+                original290WorkerPending.set(true);
+                Future<Bitmap> task;
+                try {
+                    task = worker.submit(() -> {
+                        try { return instrumentation.getUiAutomation().takeScreenshot(); }
+                        finally { original290WorkerPending.set(false); }
+                    });
+                } catch (RuntimeException rejected) {
+                    original290WorkerPending.set(false);
+                    throw rejected;
+                }
+                Bitmap image;
+                try { image = task.get(15, TimeUnit.SECONDS); }
+                catch (TimeoutException | InterruptedException unfinished) {
+                    original290RetainedResources.set(true);
+                    throw unfinished;
+                }
+                copy.put("returnedNanos", now()).put("returnedNull", image == null);
+                image = required(image, "UiAutomation returned no screenshot");
+                owned.add(image);
+                final Bitmap captured = image;
+                Point size = onMain(() -> {
+                    Point point = new Point();
+                    required(activity.getDisplay(), "Activity has no display").getRealSize(point);
+                    return point;
+                });
+                check(captured.getWidth() == size.x && captured.getHeight() == size.y, "Compositor display dimensions changed");
+                copy.put("image", savePng(root, "compositor.png", captured));
+            });
+            observe290("surface-after", receipt, failures, () -> {
+                Snapshot after = onMain(() -> snapshot(activity, epoch.get()));
+                receipt.put("afterCompositorCopy", after.json);
+                checkSame(required(before.get(), "No before Surface snapshot"), after);
+            });
+            JSONObject mappedAfter = new JSONObject();
+            receipt.put("mappedRendererAfter", mappedAfter);
+            observe290("mapped-renderer-after", receipt, failures,
+                    () -> onMain(() -> mapped290(activity, mappedAfter)));
+            observe290("original-apk-after", receipt, failures, () -> receipt.put("originalAppAfter", originalIdentity()));
+            receipt.put("collectionAttemptsFinished", true).put("captureCompleted", failures.length() == 0)
+                    .put("status", failures.length() == 0 ? "captured" : "failed");
+            saveReceipt(root, receipt);
+            check(failures.length() == 0, "Original290 independent observations failed; inspect observationFailures");
+        } finally {
+            // Native work cannot be cancelled safely. Keep its bitmaps/handler until runner-process teardown.
+            if (original290NativePending.get() == 0 && !mainWorkTeardownRequired.get() && mainWorkOutstanding.get() == 0) {
+                for (Bitmap bitmap : owned) bitmap.recycle();
+            } else {
+                original290RetainedResources.set(true);
+            }
+            receipt.put("original290WorkerPending", original290WorkerPending.get())
+                    .put("original290NativePending", original290NativePending.get());
+        }
+    }
+
+    private void copy290(Activity activity, Snapshot snapshot, boolean window, File root, JSONObject receipt,
+            Handler handler, List<Bitmap> owned) throws Exception {
+        String key = window ? "windowCopy" : "surfaceCopy";
+        Point size = onMain(() -> {
+            Point point = new Point();
+            required(activity.getDisplay(), "Activity has no display").getRealSize(point);
+            return point;
+        });
+        int width = window ? size.x : required(snapshot, "Missing Surface snapshot").width;
+        int height = window ? size.y : snapshot.height;
+        Bitmap bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        owned.add(bitmap);
+        bitmap.eraseColor(0xfff10df1);
+        JSONObject copy = new JSONObject().put("method", window ? "PixelCopy.request(Window)" : "PixelCopy.request(SurfaceView)")
+                .put("submittedNanos", now()).put("destinationSentinelArgb", "fff10df1")
+                .put("callbackObserved", false).put("result", -1);
+        receipt.put(key, copy);
+        CountDownLatch finished = new CountDownLatch(1);
+        AtomicInteger status = new AtomicInteger(-1);
+        AtomicLong callbackAt = new AtomicLong();
+        AtomicBoolean pending = new AtomicBoolean();
+        onMain(() -> {
+            original290NativePending.incrementAndGet();
+            pending.set(true);
+            PixelCopy.OnPixelCopyFinishedListener listener = code -> {
+                status.set(code); callbackAt.set(now());
+                if (pending.compareAndSet(true, false)) original290NativePending.decrementAndGet();
+                finished.countDown();
+            };
+            try {
+                if (window) PixelCopy.request(activity.getWindow(), bitmap, listener, handler);
+                else PixelCopy.request(snapshot.view, bitmap, listener, handler);
+            } catch (RuntimeException | Error failure) {
+                if (pending.compareAndSet(true, false)) original290NativePending.decrementAndGet();
+                throw failure;
+            }
+            return null;
+        });
+        boolean completed = finished.await(3, TimeUnit.SECONDS);
+        copy.put("callbackObserved", completed).put("callbackNanos", callbackAt.get())
+                .put("result", status.get()).put("readbackNanos", now());
+        // Never save the untouched sentinel bitmap as source evidence.
+        check(completed && status.get() == PixelCopy.SUCCESS, "PixelCopy did not return SUCCESS");
+        copy.put("image", savePng(root, window ? "window.png" : "surface.png", bitmap));
+    }
+
+    private static Object mappedField290(Object owner, String className, String name, String type) throws Exception {
+        Class<?> declared = Class.forName(className, false, owner.getClass().getClassLoader());
+        check(declared.isInstance(owner), "Mapped owner class differs");
+        java.lang.reflect.Field field = declared.getDeclaredField(name);
+        check(field.getType().getName().equals(type) && !Modifier.isStatic(field.getModifiers()), "Mapped field signature differs");
+        field.setAccessible(true);
+        return required(field.get(owner), "Mapped field is null");
+    }
+
+    private JSONObject mapped290(Activity activity, JSONObject result) throws Exception {
+        check(Looper.myLooper() == Looper.getMainLooper(), "Mapped fields must be read on main");
+        result.put("deviceNanos", now()).put("mappingId", ORIGINAL290_MAP_ID)
+                .put("privateReadOnlyAccessUsed", true).put("listenerCallbackObserved", false);
+        Object delegate = mappedField290(activity, "h22", "d", "l22");
+        result.put("delegateUiDisplayed", mappedField290(delegate, "l22", "h", "boolean"))
+                .put("delegateFirstFrameRendered", mappedField290(delegate, "l22", "i", "boolean"))
+                .put("delegateAttached", mappedField290(delegate, "l22", "j", "boolean"));
+        Object engine = mappedField290(delegate, "l22", "b", "r22");
+        List<SurfaceView> surfaces = new ArrayList<>();
+        visit(activity.getWindow().getDecorView(), surfaces);
+        check(surfaces.size() == 1, "Require exactly one visible attached SurfaceView");
+        SurfaceView view = surfaces.get(0);
+        Object renderer = mappedField290(view, "h42", "g", "io.flutter.embedding.engine.renderer.e");
+        View ancestor = view;
+        Class<?> flutterView = Class.forName("p42", false, activity.getClassLoader());
+        for (int depth = 0; depth < 80 && !flutterView.isInstance(ancestor); depth++) {
+            check(ancestor.getParent() instanceof View, "Mapped FlutterView ancestor missing");
+            ancestor = (View) ancestor.getParent();
+        }
+        check(flutterView.isInstance(ancestor) && ancestor.getWindowToken() == activity.getWindow().getDecorView().getWindowToken(),
+                "Mapped FlutterView belongs to another window");
+        check(mappedField290(ancestor, "p42", "t", "r22") == engine, "Mapped FlutterView engine differs");
+        result.put("surfaceAvailable", mappedField290(view, "h42", "a", "boolean"))
+                .put("surfacePaused", mappedField290(view, "h42", "d", "boolean"))
+                .put("rendererDisplayingFlutterUi", mappedField290(renderer, "io.flutter.embedding.engine.renderer.e", "d", "boolean"))
+                .put("flutterViewUiDisplayed", mappedField290(ancestor, "p42", "s", "boolean"));
+        Object rendererSurface = mappedField290(renderer, "io.flutter.embedding.engine.renderer.e", "c", "android.view.Surface");
+        result.put("rendererSurfaceSameJavaWrapperAsHolder", rendererSurface == view.getHolder().getSurface());
+        return result
+                .put("viewAlpha", view.getAlpha()).put("viewVisibility", view.getVisibility())
+                .put("surfaceValid", view.getHolder().getSurface().isValid()).put("viewIdentity", System.identityHashCode(view))
+                .put("rendererIdentity", System.identityHashCode(renderer)).put("surfaceIdentity", System.identityHashCode(rendererSurface))
+                .put("readCompleted", true);
+    }
+
+
     public void testOriginal265SurfaceWindowAndStartupMetadata() throws Exception {
         original265Probe = true;
         testCaptureLateSurfaceAndCompositor();
@@ -200,6 +438,11 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             activeTask = null;
             check(TARGET.equals(activity.getPackageName()) && LAUNCHER.equals(activity.getComponentName().getClassName()),
                     "Unexpected returned Launcher Activity");
+            if (original290Probe) {
+                stage = "original290-checkpoint";
+                captureOriginal290(activity, root, receipt, worker, callbacks, surfaceEpoch, surfaceObserver, observedHolder);
+                return;
+            }
             receipt.put("launcherReturnedNanos", now()).put("lateFrameDelayMs", original265Probe ? 0 : 15_000);
             stage = "late-frame-wait";
             saveReceipt(root, receipt);
@@ -315,15 +558,16 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             // Do not export arbitrary exception messages, tokens, or App data into this receipt.
             throw failure;
         } finally {
-            boolean pending = activeTask != null && !activeTask.isDone();
+            boolean pending = activeTask != null && !activeTask.isDone()
+                    || original290WorkerPending.get() || original290RetainedResources.get();
             boolean mainPending = mainWorkOutstanding.get() != 0 || mainWorkTeardownRequired.get();
-            boolean nativeCopyPending = copyPending && pending || windowCopyPending.get();
+            boolean nativeCopyPending = copyPending && pending || windowCopyPending.get() || original290NativePending.get() != 0;
             JSONObject surfaceCopy = receipt.optJSONObject("surfaceCopy");
-            if (surfaceCopy != null) surfaceCopy.put("startNanos", copyStart.get())
+            if (!original290Probe && surfaceCopy != null) surfaceCopy.put("startNanos", copyStart.get())
                     .put("requestReturnedNanos", copyReturn.get()).put("callbackNanos", copyCallback.get())
                     .put("result", copyStatus.get());
             JSONObject compositorCopy = receipt.optJSONObject("compositorCopy");
-            if (compositorCopy != null) compositorCopy.put("startNanos", compositorStart.get()).put("endNanos", compositorEnd.get());
+            if (!original290Probe && compositorCopy != null) compositorCopy.put("startNanos", compositorStart.get()).put("endNanos", compositorEnd.get());
             receipt.put("stage", stage).put("finishedElapsedRealtimeNanos", now())
                     .put("workerStillPending", pending).put("pixelCopyStillPending", nativeCopyPending)
                     .put("resourceCleanup", pending || nativeCopyPending || mainPending || coordinatorTeardownRequired.get()
@@ -555,6 +799,16 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     }
 
     private JSONObject originalIdentity() throws Exception {
+        if (original290Probe) {
+            check(ORIGINAL290_APK.equals(argument("originalAppApkSha256"))
+                    && "38".equals(argument("originalAppVersionCode"))
+                    && ORIGINAL_SIGNER.equals(argument("originalAppSignerSha256")), "Unexpected original290 identity argument");
+            JSONObject identity = installedIdentity(TARGET, ORIGINAL290_APK, ORIGINAL_SIGNER, 38L);
+            check("0.2.0-beta.6".equals(identity.getString("versionName")), "Unexpected original290 versionName");
+            return identity.put("source", "dbf758c8db04516780513453fa65609ee2e8e80f")
+                    .put("tree", "8af4cc19bbeceb46810f68166aced2b42c792ac2")
+                    .put("buildRun", "42236353882").put("buildAttempt", "1");
+        }
         if (original265Probe) {
             String apk = "07b9482e3ba7227c4746b11ea55b6eac7c64fe51a1355276686b791fbb14a1cb";
             check(apk.equals(argument("originalAppApkSha256")) && "36".equals(argument("originalAppVersionCode"))

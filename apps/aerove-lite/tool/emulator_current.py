@@ -20,6 +20,9 @@ APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
 
 def verify_current_runtime(directory):
+    from lite290_surface_probe import enabled as probe290_enabled, runtime as probe290_runtime
+    if probe290_enabled():
+        return probe290_runtime(directory)
     from lite265_recheck import enabled, runtime
     if enabled():
         return runtime(directory)
@@ -577,6 +580,14 @@ def original_sample_phase_selector(phase, sample, runtime):
 
 
 def guard_flutter_phase(phase, sample=None, runtime=None):
+    from lite290_surface_probe import enabled as probe290_enabled, IDENTITY as ORIGINAL290
+    if probe290_enabled():
+        if (phase != 'flutter-ui' or sample is not None or runtime is not None and
+                (runtime.get('identity') != ORIGINAL290 or runtime.get('original290Probe') is not True or
+                 runtime.get('harnessIdentity') != artifacts.identity() or
+                 runtime.get('diagnosticOnly') is not True or runtime.get('accepted') is not False)):
+            raise ValueError('Fixed290 probe requires a separate harness and only flutter-ui')
+        return  # verify_current_runtime verifies the entire fixed archive before emulator creation.
     if phase not in ('flutter-ui', 'flutter-platform', 'flutter-full'):
         return
     neutral = os.environ.get('AEROVE_ORIGINAL_RUNTIME_PROOF')
@@ -625,6 +636,9 @@ def guard_guest_angle_phase(phase, runtime, sample=None):
 
 def flutter_ui_inputs(directory, runtime):
     """Require the inspected BUILD_INFO in the same verified transport before starting an emulator."""
+    from lite290_surface_probe import enabled as probe290_enabled, original_inputs as probe290_inputs
+    if probe290_enabled():
+        return probe290_inputs(directory, runtime)
     if os.environ.get('AEROVE_LITE265_SURFACE_PROBE') == '1':
         from lite265_surface_probe import original_inputs
         return original_inputs(directory, runtime)
@@ -654,6 +668,18 @@ def flutter_ui_inputs(directory, runtime):
 
 
 def phase_acceptance_command(phase, directory, flutter_inputs=None):
+    from lite290_surface_probe import enabled as probe290_enabled
+    if probe290_enabled():
+        if phase != 'flutter-ui' or flutter_inputs is None:
+            raise ValueError('Fixed290 probe requires verified original APK inputs and only flutter-ui')
+        return [sys.executable, str(Path(__file__).with_name('lite290_surface_probe.py')),
+                '--apk', str(flutter_inputs['apk']), '--test-apk', str(flutter_inputs['test_apk']),
+                '--build-info', str(flutter_inputs['build_info']), '--serial', 'emulator-5554',
+                '--adb', str(Path(os.environ['ANDROID_HOME']) / 'platform-tools/adb'),
+                '--apksigner', str(Path(os.environ['ANDROID_HOME']) / 'build-tools/37.0.0/apksigner'),
+                '--harness', os.environ['AEROVE_LITE290_SURFACE_HARNESS'],
+                '--harness-info', os.environ['AEROVE_LITE290_SURFACE_HARNESS_INFO'],
+                '--output', str(Path(directory) / 'surface-probe')]
     if os.environ.get('AEROVE_LITE265_SURFACE_PROBE') == '1':
         from lite265_recheck import enabled
         if phase != 'flutter-ui' or not enabled() or flutter_inputs is None:
@@ -722,7 +748,7 @@ def main():
     if guest_angle:
         emulator_command.extend(['-feature', 'GuestAngle,Vulkan'])
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
-    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui'):
+    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') or current.get('original290Probe'):
         receipt.update(originalAppIdentity=current['originalAppIdentity'], harnessIdentity=current['harnessIdentity'],
                        diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
     if args.phase == 'flutter-ui':

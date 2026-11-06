@@ -75,7 +75,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'gfxstream37-static', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'gfxstream37-static', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite236_pixels:
@@ -2610,6 +2610,220 @@ jobs:
         if-no-files-found: error
 
 
+  original290_surface_probe:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite290-same-apk-probe' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite290-surface-startup' }}
+    needs:
+    - diagnostic_guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - phase: flutter-ui
+          label: original290 mapped Surface/Window/compositor observation
+          artifact_suffix: flutter-ui
+    name: Original290 mapped Surface and startup only
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AEROVE_LITE290_SURFACE_PROBE: '1'
+      ANDROID_SERIAL: emulator-5554
+      AEROVE_GUEST_ANGLE: '1'
+      AEROVE_CLEAR_FRAME_TRACE: '1'
+      AEROVE_GLASS_CONSUMER_RECEIPT: '1'
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Fetch exact prebuilt x86 runtime
+      run: python3 apps/aerove-lite/tool/lite290_surface_probe.py --fetch "$RUNNER_TEMP/lite-runtime-input"
+    - name: Existing API33 emulator environment with unchanged configuration
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      run: |
+        set -euo pipefail
+        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/sdk-install"
+        mkdir -p "$sdk_install_dir"
+        for sdk_attempt in 1 2; do
+          sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
+          set +e
+          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
+          sdk_install_status=("${PIPESTATUS[@]}")
+          set -e
+          sdkmanager_rc="${sdk_install_status[0]}"
+          tee_rc="${sdk_install_status[1]}"
+          printf 'sdkmanager_exit=%s\ntee_exit=%s\n' "$sdkmanager_rc" "$tee_rc" > "$sdk_install_dir/attempt-${sdk_attempt}.status.txt"
+          if (( tee_rc != 0 )); then
+            printf 'SDK install log tee failed (exit %s)\n' "$tee_rc" >&2
+            exit "$tee_rc"
+          fi
+          if (( sdkmanager_rc == 0 )); then
+            break
+          fi
+          if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
+            exit "$sdkmanager_rc"
+          fi
+          if (( sdk_attempt == 1 )) &&
+              grep -Eiq 'Failed to download package archive for (emulator|system-images/android-33/google_apis/x86_64): (closed|.*connection reset|.*read (timed out|timeout)|.*EOF(Exception)?|.*unexpected end of (file|stream))([[:space:]:.]|$)' "$sdk_install_log" &&
+              ! grep -Eiq 'LicenseNotAccepted|license.*(not accepted|not been accepted)|no space left on device|insufficient.*(space|storage)|not enough.*space|failed to find package|unknown package|package .*not (found|available)|UnsupportedClassVersionError|requires? (Java|JDK)' "$sdk_install_log"; then
+            printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
+            continue
+          fi
+          exit "$sdkmanager_rc"
+        done
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+        sed -i '/^[[:space:]]*disk\.dataPartition\.size[[:space:]]*=/d' "$avd_directory/test.avd/config.ini"
+        printf 'hw.cpu.ncore=2\ndisk.dataPartition.size=4G\n' >> "$avd_directory/test.avd/config.ini"
+        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
+        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
+        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
+        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
+          --output "$emulator_archive" "$emulator_archive_url" \
+          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
+        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
+        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
+        unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
+        test -x "$emulator_stage/extracted/emulator/emulator"
+        test -f "$emulator_stage/extracted/emulator/source.properties"
+        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties"
+        if test -e "$ANDROID_HOME/emulator"; then
+          mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
+        fi
+        mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
+        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
+        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
+    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+      with:
+        gradle-version: 9.6.0
+        cache-read-only: false
+    - name: Build only the independent public-API Surface diagnostic runner
+      env:
+        KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
+        AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}
+      run: |
+        sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
+        evidence="$RUNNER_TEMP/lite-diagnostics/lite290-surface-harness"
+        mkdir -p "$evidence"
+        export AEROVE_LITE_KEYSTORE_PATH="$RUNNER_TEMP/lite-surface-signer.p12"
+        trap 'rm -f -- "$AEROVE_LITE_KEYSTORE_PATH"' EXIT
+        python3 - <<'PY'
+        import base64, os
+        from pathlib import Path
+        key = Path(os.environ['AEROVE_LITE_KEYSTORE_PATH'])
+        assert not key.exists() and os.environ['KEYSTORE_BASE64'] and os.environ['AEROVE_LITE_KEYSTORE_PASSWORD']
+        key.write_bytes(base64.b64decode(os.environ['KEYSTORE_BASE64'], validate=True))
+        key.chmod(0o600)
+        PY
+        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease --dry-run -PqaDriver=production \
+          > "$evidence/production-task-graph.txt"
+        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease --dry-run -PqaDriver=surface-pixel-diagnostic \
+          > "$evidence/task-graph.txt"
+        python3 - <<'PY'
+        import os, re
+        from pathlib import Path
+        graph = (Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite290-surface-harness/task-graph.txt').read_text()
+        tasks = re.findall(r'(?m)^(:\S+) SKIPPED$', graph)
+        assert tasks.count(':assembleRelease') == 1 and tasks.count(':prepareDriverSource') == 1
+        assert all(task.count(':') == 1 and not re.search(r'flutter|meow|helper|r8|minify|kotlin', task, re.I) for task in tasks)
+        production = (Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite290-surface-harness/production-task-graph.txt').read_text()
+        assert re.findall(r'(?m)^(:compileReleaseKotlin) SKIPPED$', production) == [':compileReleaseKotlin']
+        PY
+        gradle --no-daemon -p apps/aerove-lite/android-qa assembleRelease -PqaDriver=surface-pixel-diagnostic \
+          2>&1 | tee "$evidence/build.log"
+        gradle --no-daemon -p apps/aerove-lite/android-qa dependencies --configuration releaseRuntimeClasspath \
+          -PqaDriver=surface-pixel-diagnostic > "$evidence/runtime-classpath.txt"
+        python3 - <<'PY'
+        import hashlib, json, os, re, shutil, subprocess, sys
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+        sys.path.insert(0, 'apps/aerove-lite/tool')
+        from verify_apk import signing_certificate
+        from seal_platform_runner import classes
+        evidence = Path(os.environ['RUNNER_TEMP'])/'lite-diagnostics/lite290-surface-harness'
+        output = Path('apps/aerove-lite/android-qa/build/outputs/apk/release')
+        metadata = json.loads((output/'output-metadata.json').read_text())
+        rows = metadata['elements']
+        assert metadata['variantName'] == 'release' and len(rows) == 1 and not rows[0]['filters']
+        name = rows[0]['outputFile']
+        assert Path(name).name == name and name.endswith('.apk')
+        apk = output/name
+        assert apk.is_file() and not apk.is_symlink()
+        analyzer = Path(os.environ['ANDROID_SDK_ROOT'])/'cmdline-tools/latest/bin/apkanalyzer'
+        defined = subprocess.check_output([str(analyzer), 'dex', 'packages', '--defined-only', str(apk)], text=True)
+        (evidence/'defined-classes.txt').write_text(defined)
+        actual_classes = classes(defined)
+        assert 'dev.aerove.lite.SurfacePixelDiagnosticTest' in actual_classes
+        assert not any(name.startswith(('kotlin.', 'kotlinx.coroutines.', 'androidx.', 'android.test.', 'junit.')) for name in actual_classes), 'Surface runner duplicated provided runtime classes'
+        manifest_xml = subprocess.check_output([str(analyzer), 'manifest', 'print', str(apk)], text=True)
+        (evidence/'manifest.xml').write_text(manifest_xml)
+        android = '{http://schemas.android.com/apk/res/android}'
+        libraries = ET.fromstring(manifest_xml).find('application').findall('uses-library')
+        assert len(libraries) == 3 and {item.get(android+'name'):item.get(android+'required') for item in libraries} == {
+            'android.test.runner':'true', 'android.test.base':'true', 'android.test.mock':'true'}
+        tools = Path(os.environ['ANDROID_HOME'])/'build-tools/37.0.0'
+        signature = subprocess.check_output([str(tools/'apksigner'),'verify','--verbose','--print-certs',str(apk)], text=True)
+        badging = subprocess.check_output([str(tools/'aapt'),'dump','badging',str(apk)], text=True)
+        manifest = subprocess.check_output([str(tools/'aapt'),'dump','xmltree',str(apk),'AndroidManifest.xml'], text=True)
+        (evidence/'signature.txt').write_text(signature)
+        (evidence/'badging.txt').write_text(badging)
+        (evidence/'manifest.txt').write_text(manifest)
+        signer = signing_certificate(signature)
+        assert signer == '09f9e021ddac36ead015d27e073b673e79fdf4e02605c402a505781963b1a4d8'
+        assert re.search(r"^package: name='dev.aerove.lite.test' ", badging, re.M) and 'launchable-activity:' not in badging
+        assert len(re.findall(r'E: instrumentation(?: |$)', manifest, re.M)) == 1
+        assert re.search(r'android:name[^=]*="android.test.InstrumentationTestRunner"', manifest)
+        assert re.search(r'android:targetPackage[^=]*="dev.aerove.lite"', manifest)
+        assert re.search(r'android:testOnly[^=]*=\(type 0x12\)0xffffffff', manifest)
+        staged = evidence/'surface-test.apk'
+        shutil.copyfile(apk, staged)
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        info = dict(schema=1, diagnosticOnly=True, sourceRevision=os.environ['GITHUB_SHA'],
+            sourceTree=subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+            workflowRun=os.environ['GITHUB_RUN_ID'], runAttempt=int(os.environ['GITHUB_RUN_ATTEMPT']),
+            runNumber=int(os.environ['GITHUB_RUN_NUMBER']), apkSha256=digest(staged), signerSha256=signer,
+            appCompiled=False, harnessCompiled=True, taskGraphSha256=digest(evidence/'task-graph.txt'),
+            sourceSha256=digest(Path('apps/aerove-lite/android-qa/src/main/java/dev/aerove/lite/SurfacePixelDiagnosticTest.java')))
+        (evidence/'HARNESS-INFO.json').write_text(json.dumps(info,indent=2)+'\n')
+        PY
+    - name: Bind the independent diagnostic harness to the emulator owner
+      run: |
+        echo "AEROVE_LITE290_SURFACE_HARNESS=$RUNNER_TEMP/lite-diagnostics/lite290-surface-harness/surface-test.apk" >> "$GITHUB_ENV"
+        echo "AEROVE_LITE290_SURFACE_HARNESS_INFO=$RUNNER_TEMP/lite-diagnostics/lite290-surface-harness/HARNESS-INFO.json" >> "$GITHUB_ENV"
+    - name: Real API 33 ${{ matrix.phase }} verification
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      run: |
+        set -euo pipefail
+        python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
+        test -f "$RUNNER_TEMP/lite-diagnostics/flutter-ui/surface-probe/PROBE.json"
+        cp "$RUNNER_TEMP/original290-fetch.json" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/original290-fetch.json"
+    - name: Preserve original290 raw phase and owner evidence
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: Lite290-surface-startup-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/lite-diagnostics/
+        if-no-files-found: error
+
+
 'on':
   push:
     branches:
@@ -2626,7 +2840,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, gfxstream37-static, lite265-precheck, lite265-recheck, lite265-surface-startup]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, gfxstream37-static, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

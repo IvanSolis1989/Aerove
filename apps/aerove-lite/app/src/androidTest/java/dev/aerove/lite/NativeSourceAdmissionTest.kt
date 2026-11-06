@@ -51,7 +51,10 @@ class NativeSourceAdmissionTest {
                 counter.accept().use { fail("Source admission attempted a provider request") }
             } catch (_: SocketTimeoutException) { }
 
-            val bundle = File(context.filesDir, "runtime/resources/bundles/source-admission-${UUID.randomUUID()}")
+            val bundle = File(
+                context.filesDir.canonicalFile,
+                "runtime/resources/bundles/source-admission-${UUID.randomUUID()}",
+            ).canonicalFile
             check(bundle.mkdirs())
             try {
                 val runtime = """
