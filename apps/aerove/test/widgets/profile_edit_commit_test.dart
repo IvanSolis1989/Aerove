@@ -112,7 +112,6 @@ void main() {
           );
           await input.writeAsString('old archived input');
           final action = _ObservedEdit();
-          final previousContainer = globalState.container;
           final container = ProviderContainer(
             overrides: [
               profilesActionProvider.overrideWith(() => action),
@@ -134,7 +133,6 @@ void main() {
             action: action,
             container: container,
             hold: hold,
-            previousContainer: previousContainer,
           );
         }))!;
         final (
@@ -146,7 +144,6 @@ void main() {
           :action,
           :container,
           :hold,
-          :previousContainer,
         ) = fixture;
         final observer = _EditorReturn();
         try {
@@ -228,7 +225,6 @@ void main() {
           await tester.runAsync(() async {
             hold.close();
             container.dispose();
-            globalState.container = previousContainer;
             db.database = previous;
             await sql.close();
             await home.delete(recursive: true);

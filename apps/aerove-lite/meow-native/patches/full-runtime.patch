@@ -11913,15 +11913,20 @@
 +                if let Some(sink) = &self.sink {
 +                    sink.accepted(entry);
 +                }
-@@ -629,0 +721,41 @@
-+pub fn validate_source_payload(behavior: RuleSetBehavior, entries: &[String]) -> Result<(), String> {
+@@ -629,0 +721,46 @@
++pub fn validate_source_payload(
++    behavior: RuleSetBehavior,
++    entries: &[String],
++) -> Result<(), String> {
 +    if behavior != RuleSetBehavior::Classical {
 +        build_rule_set_checked(behavior, entries, &ParserContext::empty())?;
 +        return Ok(());
 +    }
 +    for entry in entries {
 +        let entry = entry.trim();
-+        if entry.is_empty() || entry.starts_with('#') { continue; }
++        if entry.is_empty() || entry.starts_with('#') {
++            continue;
++        }
 +        validate_classical_source_shape(entry)?;
 +        crate::parser::validate_rule_source(&splice_placeholder_adapter(entry))?;
 +    }
@@ -11929,33 +11934,33 @@
 +}
 +
 +fn validate_classical_source_shape(entry: &str) -> Result<(), String> {
-+        let mut fields = entry.splitn(3, ',');
-+        let first_field = fields.next().map_or("", str::trim);
-+        if first_field == "MATCH" {
-+            return Err(format!(
-+                "'{entry}': MATCH is not allowed in a classical rule-set"
-+            ));
-+        }
-+        // An empty or missing payload silently degrades to match-all for
-+        // the substring-match types (`DOMAIN-SUFFIX,` → ends_with(""),
-+        // `DOMAIN-KEYWORD,` → contains("") — same as `FinalRule`). Same
-+        // class as MATCH — reject loudly (Class B, ADR-0002).
-+        if fields.next().map_or("", str::trim).is_empty() {
-+            return Err(format!("'{entry}': missing payload"));
-+        }
-+        // Comma-safe upstream regex payloads cannot be spliced
-+        // unambiguously — the truncated payload could still be a
-+        // valid-but-different regex. Reject loudly (Class B, ADR-0002).
-+        if first_field == "DOMAIN-REGEX" && fields.next().is_some() {
-+            return Err(format!(
-+                "'{entry}': {first_field} payloads containing commas are \
++    let mut fields = entry.splitn(3, ',');
++    let first_field = fields.next().map_or("", str::trim);
++    if first_field == "MATCH" {
++        return Err(format!(
++            "'{entry}': MATCH is not allowed in a classical rule-set"
++        ));
++    }
++    // An empty or missing payload silently degrades to match-all for
++    // the substring-match types (`DOMAIN-SUFFIX,` → ends_with(""),
++    // `DOMAIN-KEYWORD,` → contains("") — same as `FinalRule`). Same
++    // class as MATCH — reject loudly (Class B, ADR-0002).
++    if fields.next().map_or("", str::trim).is_empty() {
++        return Err(format!("'{entry}': missing payload"));
++    }
++    // Comma-safe upstream regex payloads cannot be spliced
++    // unambiguously — the truncated payload could still be a
++    // valid-but-different regex. Reject loudly (Class B, ADR-0002).
++    if first_field == "DOMAIN-REGEX" && fields.next().is_some() {
++        return Err(format!(
++            "'{entry}': {first_field} payloads containing commas are \
 +                 not supported in a classical rule-set"
-+            ));
-+        }
++        ));
++    }
 +    Ok(())
 +}
 +
-@@ -967,0 +1100,17 @@
+@@ -967,0 +1105,17 @@
 +
 +#[cfg(test)]
 +mod plain_domain_validation_regression {

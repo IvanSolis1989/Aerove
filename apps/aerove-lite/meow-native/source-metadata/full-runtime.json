@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "154fa1c7c1be5aa6406f2c3d1ec67321eeeb94272dee1d0906b15cb48d3924a2",
+  "patchSha256": "897577999b87b54250e1f220caad52a1799c0d74559aea43af964e26b3385406",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "3f5344364d0fc9a977146a783df30b8a6515011821dcf2223224711babce3824",
+  "adaptedFileManifestSha256": "02b6f0e328145830066a62fec1d2007b8f9b55de9433f79575ade3b3804ee777",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -427,7 +427,7 @@
     },
     "crates/meow-rules/src/rule_set.rs": {
       "beforeSha256": "9b5120e61f2286b55ac1e69db6886864ab0dec52877ec7dcfdb9ca2b0bbff8b3",
-      "afterSha256": "0e23f54a14b58736ab284b92dca7d29887ab54e284ede8c687693050f097c7f8"
+      "afterSha256": "291347ad577b2a24ce38c29af2ccae68cddbb32258072acf0eccb92f1fb5bddb"
     },
     "crates/meow-rules/src/uid.rs": {
       "beforeSha256": "f6091433f3a9f1d22de6870ba8356eed71e57e68e663ce48b1c0b9e7ad2e924f",
@@ -1296,7 +1296,7 @@
     "crates/meow-rules/src/port.rs": "5972e18c91a869d0f2489ba4d2106006f1bc16fe102b597cda23a2c30f45e1a6",
     "crates/meow-rules/src/process.rs": "9bcdbdf5af4c2e758319b2e2db4bae70b7fb08e7d4f3230d02f21d4888c6bbe9",
     "crates/meow-rules/src/process_path.rs": "4570b263ec106921f164b64461e15cd3a9b2d2c3dba47e83fff40c433bd2f345",
-    "crates/meow-rules/src/rule_set.rs": "0e23f54a14b58736ab284b92dca7d29887ab54e284ede8c687693050f097c7f8",
+    "crates/meow-rules/src/rule_set.rs": "291347ad577b2a24ce38c29af2ccae68cddbb32258072acf0eccb92f1fb5bddb",
     "crates/meow-rules/src/rule_set_rule.rs": "254c27cb20444a5cf00287839d5cb1320f469d8effd44893ad158361bbfa0813",
     "crates/meow-rules/src/src_geoip.rs": "ab3b225ec2dbeae9f5320fdd66dc80afaa12e53925002cedcbd60897675b792f",
     "crates/meow-rules/src/sub_rule.rs": "5e3dde26236d71388f5861b15bbe2d17e2d5c8ef46ebb13a70849ef93d171e9c",
