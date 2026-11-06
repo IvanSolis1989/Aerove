@@ -208,7 +208,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             observe290("mapped-renderer-after", receipt, failures,
                     () -> onMain(() -> mapped290(activity, mappedAfter)));
             observe290("original-apk-after", receipt, failures, () -> receipt.put("originalAppAfter", originalIdentity()));
-            observeAfterBaseline294(activity, root, receipt, failures, worker, owned);
+            observeAfterBaseline294(activity, root, receipt, failures, worker, owned, handler, epoch);
             receipt.put("collectionAttemptsFinished", true).put("captureCompleted", failures.length() == 0)
                     .put("status", failures.length() == 0 ? "captured" : "failed");
             saveReceipt(root, receipt);
@@ -324,7 +324,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     }
 
     private void observeAfterBaseline294(Activity activity, File root, JSONObject receipt, JSONArray failures,
-            ExecutorService worker, List<Bitmap> owned) throws Exception {
+            ExecutorService worker, List<Bitmap> owned, Handler handler, AtomicLong epoch) throws Exception {
         JSONObject extra = new JSONObject().put("mappingSha256", ORIGINAL290_MAP_SHA).put("pgMapId", ORIGINAL290_MAP_ID)
                 .put("afterBaselineThreeCaptures", true).put("atomicSameFrame", false)
                 .put("accepted", false).put("visualApproved", false).put("startedNanos", now());
@@ -379,6 +379,27 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             bitmap = required(bitmap, "Original engine returned no last-layer-tree bitmap");
             owned.add(bitmap);
             engine.put("image", savePng(root, "engine.png", bitmap));
+        });
+        JSONObject postEngine = new JSONObject().put("relativeDirectory", "after-engine")
+                .put("startedNanos", now()).put("atomicSameFrame", false)
+                .put("holderEpochReliableSinceLaunch", false);
+        extra.put("afterEngineSurface", postEngine);
+        observe290("surface-after-engine", receipt, failures, () -> {
+            check(!mainWorkTeardownRequired.get() && mainWorkOutstanding.get() == 0,
+                    "Earlier main work is still owned by runner teardown");
+            File directory = new File(root, "after-engine");
+            check(directory.mkdir(), "Post-engine evidence directory must be new");
+            Snapshot before = onMain(() -> snapshot(activity, epoch.get()));
+            postEngine.put("before", before.json);
+            JSONObject targetState = extra.optJSONObject("targetAndViewport");
+            JSONObject previousView = targetState == null ? null : targetState.optJSONObject("surfaceView");
+            if (previousView != null && previousView.optBoolean("present")) {
+                postEngine.put("sameJavaViewAsEngineTarget", previousView.getInt("identity") == System.identityHashCode(before.view));
+            }
+            copy290(activity, before, false, directory, postEngine, handler, owned);
+            Snapshot after = onMain(() -> snapshot(activity, epoch.get()));
+            postEngine.put("after", after.json).put("finishedNanos", now());
+            checkSame(before, after);
         });
         // Query semantics only after original captures and engine readback; it may schedule new App frames.
         JSONObject semantic = new JSONObject().put("submittedNanos", now()).put("rootObserved", false).put("agreeFound", false)
