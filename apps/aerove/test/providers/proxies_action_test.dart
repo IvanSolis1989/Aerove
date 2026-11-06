@@ -86,13 +86,6 @@ void main() {
   ProxiesAction actionOf(ProviderContainer container) =>
       container.read(proxiesActionProvider.notifier);
 
-  ProviderContainer runningContainer() {
-    final container = buildContainer();
-    container.read(initProvider.notifier).value = true;
-    container.read(runTimeProvider.notifier).value = 1;
-    return container;
-  }
-
   group('updateGroups', () {
     test('publishes the groups derived from core proxy data', () async {
       when(core.getProxies).thenAnswer(
@@ -196,7 +189,41 @@ void main() {
   });
 
   group('changeProxy', () {
-    setUp(() {
+    late db.Database selectionDatabase;
+    late db.Database previousDatabase;
+
+    Future<ProviderContainer> selectionContainer({Profile? profile}) async {
+      final seeded = profile ?? _selectedProfile('HK-00');
+      await selectionDatabase.profiles.put(seeded.toCompanion());
+      final container = ProviderContainer(
+        overrides: [
+          coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+          currentProfileIdProvider.overrideWithBuild((_, _) => seeded.id),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.listen(profilesProvider, (_, _) {});
+      await container.read(profilesStreamProvider.future);
+      await waitForDatabaseWrites();
+      return container;
+    }
+
+    Future<ProviderContainer> runningSelectionContainer() async {
+      final container = await selectionContainer();
+      container.read(initProvider.notifier).value = true;
+      container.read(runTimeProvider.notifier).value = 1;
+      return container;
+    }
+
+    tearDown(() async {
+      await waitForDatabaseWrites();
+      await selectionDatabase.close();
+      db.database = previousDatabase;
+    });
+    setUp(() async {
+      previousDatabase = db.database;
+      selectionDatabase = db.Database(NativeDatabase.memory());
+      db.database = selectionDatabase;
       when(
         () => core.changeProxy(any()),
       ).thenAnswer((_) async => const ChangeProxyResult(changed: true));
@@ -205,7 +232,7 @@ void main() {
     });
 
     test('closes connections when enabled', () async {
-      final container = runningContainer();
+      final container = await runningSelectionContainer();
       container.read(appSettingProvider.notifier).value = const AppSettingProps(
         closeConnections: true,
       );
@@ -221,10 +248,13 @@ void main() {
       ).called(1);
       verify(core.closeConnections).called(1);
       verifyNever(core.resetConnections);
+      expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+        'Proxy': 'HK-01',
+      });
     });
 
     test('resets connections instead when the setting is off', () async {
-      final container = buildContainer();
+      final container = await selectionContainer();
       container.read(appSettingProvider.notifier).value = const AppSettingProps(
         closeConnections: false,
       );
@@ -235,6 +265,28 @@ void main() {
 
       verify(core.resetConnections).called(1);
       verifyNever(core.closeConnections);
+      expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+        'Proxy': 'HK-01',
+      });
+    });
+
+    test('Standard still switches Core without a current profile', () async {
+      final container = buildContainer();
+      container.read(appSettingProvider.notifier).value = const AppSettingProps(
+        closeConnections: false,
+      );
+
+      await actionOf(
+        container,
+      ).changeProxy(groupName: 'Proxy', proxyName: 'HK-01');
+
+      verify(
+        () => core.changeProxy(
+          const ChangeProxyParams(groupName: 'Proxy', proxyName: 'HK-01'),
+        ),
+      ).called(1);
+      verify(core.resetConnections).called(1);
+      expect(await selectionDatabase.profilesDao.query().get(), isEmpty);
     });
 
     test('a failing connection reset does not fail the switch', () async {
@@ -244,7 +296,9 @@ void main() {
           message: 'Core RPC client is closed',
         ),
       );
-      final container = buildContainer(profile: _selectedProfile('HK-00'));
+      final container = await selectionContainer(
+        profile: _selectedProfile('HK-00'),
+      );
       container.read(appSettingProvider.notifier).value = const AppSettingProps(
         closeConnections: true,
       );
@@ -257,11 +311,14 @@ void main() {
       expect(container.read(currentProfileProvider)?.selectedMap, {
         'Proxy': 'HK-01',
       });
+      expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+        'Proxy': 'HK-01',
+      });
     });
 
     test('skips the connection reset when the switch itself fails', () async {
       when(() => core.changeProxy(any())).thenThrow(StateError('core down'));
-      final container = runningContainer();
+      final container = await runningSelectionContainer();
 
       await actionOf(
         container,
@@ -269,6 +326,9 @@ void main() {
 
       verifyNever(core.closeConnections);
       verifyNever(core.resetConnections);
+      expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+        'Proxy': 'HK-00',
+      });
     });
 
     test(
@@ -277,7 +337,7 @@ void main() {
         when(
           () => core.changeProxy(any()),
         ).thenAnswer((_) async => const ChangeProxyResult(changed: false));
-        final container = runningContainer();
+        final container = await runningSelectionContainer();
 
         await actionOf(
           container,
@@ -285,6 +345,9 @@ void main() {
 
         verifyNever(core.closeConnections);
         verifyNever(core.resetConnections);
+        expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+          'Proxy': 'HK-01',
+        });
       },
     );
 
@@ -292,7 +355,9 @@ void main() {
       when(() => core.changeProxy(any())).thenAnswer(
         (_) async => const ChangeProxyResult(message: 'proxy not exist'),
       );
-      final container = buildContainer(profile: _selectedProfile('HK-00'));
+      final container = await selectionContainer(
+        profile: _selectedProfile('HK-00'),
+      );
 
       await actionOf(
         container,
@@ -302,10 +367,15 @@ void main() {
       expect(container.read(currentProfileProvider)?.selectedMap, {
         'Proxy': 'HK-00',
       });
+      expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+        'Proxy': 'HK-00',
+      });
     });
 
     test('commits the selection the Core accepted', () async {
-      final container = buildContainer(profile: _selectedProfile('HK-00'));
+      final container = await selectionContainer(
+        profile: _selectedProfile('HK-00'),
+      );
 
       await actionOf(
         container,
@@ -314,11 +384,16 @@ void main() {
       expect(container.read(currentProfileProvider)?.selectedMap, {
         'Proxy': 'HK-01',
       });
+      expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+        'Proxy': 'HK-01',
+      });
     });
 
     test('rolls the selection back when the switch fails', () async {
       when(() => core.changeProxy(any())).thenThrow(StateError('core down'));
-      final container = buildContainer(profile: _selectedProfile('HK-00'));
+      final container = await selectionContainer(
+        profile: _selectedProfile('HK-00'),
+      );
 
       await actionOf(
         container,
@@ -327,13 +402,18 @@ void main() {
       expect(container.read(currentProfileProvider)?.selectedMap, {
         'Proxy': 'HK-00',
       });
+      expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
+        'Proxy': 'HK-00',
+      });
     });
 
     test(
       'rolls back to the last selection the Core applied, not the last tap',
       () async {
         when(() => core.changeProxy(any())).thenThrow(StateError('core down'));
-        final container = buildContainer(profile: _selectedProfile('HK-00'));
+        final container = await selectionContainer(
+          profile: _selectedProfile('HK-00'),
+        );
         final action = actionOf(container);
 
         action.changeProxyDebounce('Proxy', 'HK-01');
@@ -345,6 +425,9 @@ void main() {
         await action.changeProxy(groupName: 'Proxy', proxyName: 'HK-02');
 
         expect(container.read(currentProfileProvider)?.selectedMap, {
+          'Proxy': 'HK-00',
+        });
+        expect((await selectionDatabase.profilesDao.get(1))!.selectedMap, {
           'Proxy': 'HK-00',
         });
         debouncer.cancel((FunctionTag.changeProxy, 'Proxy'));

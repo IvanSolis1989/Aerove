@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:drift/native.dart';
+import 'package:fl_clash/database/database.dart' as db;
 
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/desktop/model.dart';
@@ -63,23 +65,45 @@ void main() {
       expect(profile?.url, edited.url);
     });
 
-    test('updates selection and inserts the first profile', () {
+    test('updates selection and inserts the first profile', () async {
       final first = Profile.normal(label: 'First');
       final second = Profile.normal(label: 'Second');
+      final previous = db.database;
+      final database = db.Database(NativeDatabase.memory());
+      db.database = database;
+      await database.profiles.put(first.toCompanion());
       final container = ProviderContainer(
         overrides: [
           currentProfileIdProvider.overrideWithBuild((_, _) => first.id),
-          profilesProvider.overrideWith(() => TestProfiles([first])),
         ],
       );
-      addTearDown(container.dispose);
+      addTearDown(() async {
+        await waitForDatabaseWrites();
+        container.dispose();
+        db.database = previous;
+        await database.close();
+      });
+      container.listen(profilesProvider, (_, _) {});
+      await container.read(profilesStreamProvider.future);
       final action = container.read(profilesActionProvider.notifier);
 
-      action.updateCurrentSelectedMap('Group', 'Proxy');
+      await action.updateCurrentSelectedMap(
+        'Group',
+        'Proxy',
+        profileId: first.id,
+      );
       final updatedFirst = container.read(profilesProvider).single;
       expect(updatedFirst.selectedMap['Group'], 'Proxy');
+      expect(
+        (await database.profilesDao.get(first.id))!.selectedMap['Group'],
+        'Proxy',
+      );
 
-      action.updateCurrentSelectedMap('Group', 'Proxy');
+      await action.updateCurrentSelectedMap(
+        'Group',
+        'Proxy',
+        profileId: first.id,
+      );
       expect(container.read(profilesProvider), hasLength(1));
 
       container.read(currentProfileIdProvider.notifier).value = null;

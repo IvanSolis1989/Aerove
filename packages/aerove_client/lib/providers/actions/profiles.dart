@@ -128,16 +128,31 @@ class ProfilesAction extends _$ProfilesAction {
     await Future.wait(intents.map((intent) => intent.done));
   }
 
-  void updateCurrentSelectedMap(String groupName, String proxyName) {
-    final currentProfile = ref.read(currentProfileProvider);
-    if (currentProfile != null &&
-        currentProfile.selectedMap[groupName] != proxyName) {
-      final selectedMap = Map<String, String>.from(currentProfile.selectedMap)
-        ..[groupName] = proxyName;
-      ref
+  Future<bool> updateCurrentSelectedMap(
+    String groupName,
+    String proxyName, {
+    required int? profileId,
+    bool Function()? isCurrent,
+  }) {
+    if (profileId == null || !ref.mounted) return Future.value(false);
+    final lite = ClientProduct.current.expectedCoreId == 'meow-rs';
+    Future<bool> write() {
+      if (!ref.mounted || (isCurrent != null && !isCurrent()))
+        return Future.value(false);
+      return ref
           .read(profilesProvider.notifier)
-          .put(currentProfile.copyWith(selectedMap: selectedMap));
+          .setSelectedProxy(
+            profileId,
+            groupName,
+            proxyName,
+            isCurrent: isCurrent,
+            optimistic: !lite,
+          );
     }
+
+    return lite
+        ? ref.read(setupActionProvider.notifier).withProviderSourceWrite(write)
+        : write();
   }
 
   Future<void> deleteProfile(int id) async {

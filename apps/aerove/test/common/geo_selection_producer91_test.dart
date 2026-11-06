@@ -131,7 +131,7 @@ void main() {
         globalState.lastConfigMd5 = built.md5;
         final proxies = container.read(proxiesActionProvider.notifier);
         final first = proxies.changeProxy(groupName: 'g', proxyName: 'B');
-        await Future<void>.delayed(Duration.zero);
+        await protocol.entered(0);
         await waitForDatabaseWrites();
         expect(
           (await db.database.profilesDao.query().get()).single.selectedMap['g'],
@@ -147,9 +147,9 @@ void main() {
         expect(evaluations, 2);
         expect(protocol.refreshes.single.dataSourceProof?['tables'], isNotNull);
         final a = proxies.changeProxy(groupName: 'g', proxyName: 'A');
-        await Future<void>.delayed(Duration.zero);
+        await protocol.entered(1);
         final b = proxies.changeProxy(groupName: 'g', proxyName: 'B');
-        await Future<void>.delayed(Duration.zero);
+        await protocol.entered(2);
         protocol.acks
             .removeAt(0)
             .complete(const ChangeProxyResult(changed: true));
@@ -161,7 +161,7 @@ void main() {
         await b;
         expect(protocol.refreshes.length, 2);
         final switched = proxies.changeProxy(groupName: 'g', proxyName: 'A');
-        await Future<void>.delayed(Duration.zero);
+        await protocol.entered(3);
         container.read(currentProfileIdProvider.notifier).value = 99;
         protocol.acks
             .removeAt(0)
@@ -170,7 +170,7 @@ void main() {
         expect(protocol.refreshes.length, 2);
         container.read(currentProfileIdProvider.notifier).value = 1;
         final failed = proxies.changeProxy(groupName: 'g', proxyName: 'B');
-        await Future<void>.delayed(Duration.zero);
+        await protocol.entered(4);
         protocol.acks
             .removeAt(0)
             .complete(
@@ -186,7 +186,7 @@ void main() {
           '(config)=>{config.rules=["MATCH,REJECT"];return config;}',
         );
         final changed = proxies.changeProxy(groupName: 'g', proxyName: 'B');
-        await Future<void>.delayed(Duration.zero);
+        await protocol.entered(5);
         protocol.acks
             .removeAt(0)
             .complete(const ChangeProxyResult(changed: false));
@@ -194,6 +194,106 @@ void main() {
         expect(protocol.refreshes.length, 2);
         expect(evaluations, 4);
         expect(globalState.lastConfigMd5, built.md5);
+        await scriptFile.writeAsString('(config)=>config');
+        for (final secondFails in [false, true]) {
+          final seeded = container
+              .read(currentProfileProvider)!
+              .copyWith(selectedMap: {'g': 'A', 'h': 'X'});
+          await container.read(profilesProvider.notifier).putCommitted(seeded);
+          final sourceEntered = Completer<void>();
+          final sourceRelease = Completer<void>();
+          final overrides = seeded.overrides.copyWith(
+            hosts: {
+              'fixture.invalid': [secondFails ? '127.0.0.2' : '127.0.0.1'],
+            },
+          );
+          final publishing = setup.withProviderSourceWrite(() async {
+            sourceEntered.complete();
+            await sourceRelease.future;
+            await container
+                .read(profilesProvider.notifier)
+                .putCommitted(seeded.copyWith(overrides: overrides));
+          });
+          await sourceEntered.future;
+          final callOffset = protocol.calls.length;
+          final refreshOffset = protocol.refreshes.length;
+          final firstGroup = proxies.changeProxy(
+            groupName: 'g',
+            proxyName: 'B',
+          );
+          final secondGroup = proxies.changeProxy(
+            groupName: 'h',
+            proxyName: 'Y',
+          );
+          await pumpEventQueue();
+          expect(protocol.calls.length, callOffset);
+          expect((await db.database.profilesDao.get(1))!.selectedMap, {
+            'g': 'A',
+            'h': 'X',
+          });
+          sourceRelease.complete();
+          await publishing;
+          await protocol.entered(callOffset);
+          await protocol.entered(callOffset + 1);
+          await waitForDatabaseWrites();
+          final persisted = (await db.database.profilesDao.get(1))!;
+          expect(persisted.selectedMap, {'g': 'B', 'h': 'Y'});
+          expect(persisted.overrides, overrides);
+          expect(protocol.calls.skip(callOffset), [
+            const ChangeProxyParams(groupName: 'g', proxyName: 'B'),
+            const ChangeProxyParams(groupName: 'h', proxyName: 'Y'),
+          ]);
+          final published = await setup.getProfile(
+            setupState: await container.read(setupStateProvider(1).future),
+            patchConfig: container.read(patchClashConfigProvider),
+          );
+          globalState.lastConfigMd5 = published.md5;
+          protocol.acks
+              .removeAt(0)
+              .complete(const ChangeProxyResult(changed: false));
+          await firstGroup;
+          expect(protocol.refreshes.length, refreshOffset);
+          protocol.acks
+              .removeAt(0)
+              .complete(
+                ChangeProxyResult(
+                  changed: false,
+                  message: secondFails ? 'second group rejected' : '',
+                ),
+              );
+          await secondGroup;
+          final expected = {'g': 'B', 'h': secondFails ? 'X' : 'Y'};
+          expect(protocol.refreshes.length, refreshOffset + 1);
+          expect(protocol.refreshes.last.selectedMap, expected);
+          expect(protocol.refreshes.last.dataSourceProof?['tables'], isNotNull);
+          final finalRow = (await db.database.profilesDao.get(1))!;
+          expect(finalRow.selectedMap, expected);
+          expect(finalRow.overrides, overrides);
+          expect(container.read(currentProfileProvider)!.selectedMap, expected);
+        }
+        final callOffset = protocol.calls.length;
+        final refreshOffset = protocol.refreshes.length;
+        final older = proxies.changeProxy(groupName: 'g', proxyName: 'A');
+        await protocol.entered(callOffset);
+        final newer = proxies.changeProxy(groupName: 'g', proxyName: 'B');
+        await protocol.entered(callOffset + 1);
+        protocol.acks
+            .removeAt(1)
+            .complete(const ChangeProxyResult(changed: false));
+        await newer;
+        expect(protocol.refreshes.length, refreshOffset + 1);
+        expect(protocol.refreshes.last.selectedMap, {'g': 'B', 'h': 'X'});
+        protocol.acks
+            .removeAt(0)
+            .complete(
+              const ChangeProxyResult(message: 'older failure', changed: false),
+            );
+        await older;
+        expect(protocol.refreshes.length, refreshOffset + 1);
+        expect((await db.database.profilesDao.get(1))!.selectedMap, {
+          'g': 'B',
+          'h': 'X',
+        });
       } finally {
         scriptEvaluator = previous;
         await waitForDatabaseWrites();
@@ -210,11 +310,18 @@ void main() {
 // Task builder and one real Node script evaluation are executed above.
 class _AckProtocol implements CoreHandlerInterface {
   final acks = <Completer<ChangeProxyResult>>[];
+  final calls = <ChangeProxyParams>[];
+  final arrivals = <int, Completer<void>>{};
   final refreshes = <SetupParams>[];
+  Future<void> entered(int index) =>
+      arrivals.putIfAbsent(index, Completer<void>.new).future;
   @override
   Future<ChangeProxyResult> changeProxy(ChangeProxyParams params) {
     final ack = Completer<ChangeProxyResult>();
     acks.add(ack);
+    final index = calls.length;
+    calls.add(params);
+    arrivals.putIfAbsent(index, Completer<void>.new).complete();
     return ack.future;
   }
 
@@ -229,6 +336,11 @@ class _AckProtocol implements CoreHandlerInterface {
         'proxy-groups': [
           {
             'name': 'g',
+            'type': 'select',
+            'proxies': ['DIRECT', 'REJECT'],
+          },
+          {
+            'name': 'h',
             'type': 'select',
             'proxies': ['DIRECT', 'REJECT'],
           },

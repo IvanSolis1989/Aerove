@@ -1150,6 +1150,8 @@ jobs:
           providers/custom_state_test.dart
           views/custom_providers_view_test.dart
           providers/profile_update_cancel_test.dart
+          providers/action_test.dart
+          providers/proxies_action_test.dart
           features/profile_update_cancel_view_test.dart
           state_storage/profile_write_test.dart
           providers/database_test.dart
@@ -1203,7 +1205,7 @@ jobs:
             composition='Standard test entry; explicit core arguments and MeowCoreHandler fixtures retain their own identities',
             results=results, appApkBuilt=False, acceptance=False)
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert len(results) == 20 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        assert len(results) == 22 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
         PY
     - name: Compile the Flutter host and actual platform acceptance runner
       working-directory: apps/aerove-lite

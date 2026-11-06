@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:fl_clash/database/database.dart' as db;
 import 'package:fl_clash/l10n/l10n.dart';
@@ -10,6 +10,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 class WriteGate extends QueryInterceptor {
+  Completer<void>? selectionEntered;
+  Completer<void>? selectionRelease;
+
+  @override
+  Future<int> runUpdate(
+    QueryExecutor executor,
+    String statement,
+    List<Object?> args,
+  ) async {
+    if (statement.contains('selected_map') && selectionRelease != null) {
+      selectionEntered!.complete();
+      await selectionRelease!.future;
+    }
+    return executor.runUpdate(statement, args);
+  }
+
   var attempts = 0;
   int? failAt;
   Completer<void>? entered;
@@ -97,6 +113,76 @@ void main() {
     expect(gate.attempts, 0);
     expect(c.read(profilesProvider), same(before));
   });
+  test(
+    'selection completion waits for the selection column to reach SQLite',
+    () async {
+      gate.selectionEntered = Completer<void>();
+      gate.selectionRelease = Completer<void>();
+      var completed = false;
+      final writing = n.setSelectedProxy(1, 'group', 'chosen').then((value) {
+        completed = true;
+        return value;
+      });
+      await gate.selectionEntered!.future;
+      expect(completed, false);
+      gate.selectionRelease!.complete();
+      expect(await writing, true);
+      expect((await database.profilesDao.get(1))!.selectedMap, {
+        'group': 'chosen',
+      });
+    },
+  );
+  test(
+    'selection merges the persisted row without replacing newer source overrides',
+    () async {
+      final stale = current();
+      final isolated = ProviderContainer(
+        overrides: [
+          profilesStreamProvider.overrideWith((ref) => Stream.value([stale])),
+        ],
+      );
+      addTearDown(isolated.dispose);
+      isolated.listen(profilesProvider, (_, _) {});
+      await isolated.read(profilesStreamProvider.future);
+      final source = stale.copyWith(
+        overrides: const ProfileOverrides(
+          sourceProxyProviders: {
+            'new-source': {'type': 'file', 'path': 'owned-source'},
+          },
+        ),
+        selectedMap: const {'other': 'kept'},
+      );
+      await database.profiles.put(source.toCompanion());
+      expect(
+        await isolated
+            .read(profilesProvider.notifier)
+            .setSelectedProxy(1, 'group', 'chosen'),
+        true,
+      );
+      final stored = (await database.profilesDao.get(1))!;
+      expect(stored.overrides, source.overrides);
+      expect(stored.selectedMap, {'other': 'kept', 'group': 'chosen'});
+      expect(
+        isolated.read(profilesProvider).single.overrides,
+        source.overrides,
+      );
+    },
+  );
+  test(
+    'a selection queued behind a delete does not recreate the profile',
+    () async {
+      gate.arm();
+      n.put(current().copyWith(currentGroupName: 'held'));
+      await gate.entered!.future;
+      final deletion = n.del(1);
+      final selection = n.setSelectedProxy(1, 'group', 'chosen');
+      gate.release!.complete();
+      await deletion;
+      expect(await selection, false);
+      expect(await database.profilesDao.get(1), isNull);
+      expect(c.read(profilesProvider).map((profile) => profile.id), [2]);
+    },
+  );
   test(
     'an in-flight UI write coalesces a burst into one latest write',
     () async {

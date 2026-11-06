@@ -27,11 +27,13 @@ class _NoApply extends SetupAction {
 class _ObservedEdit extends ProfilesAction {
   final saved = Completer<void>();
   Object? rejection;
+  Uint8List? submittedFileData;
   @override
   Future<Profile> saveProfileEdit(
     Profile profile, {
     Uint8List? fileData,
   }) async {
+    submittedFileData = fileData == null ? null : Uint8List.fromList(fileData);
     try {
       return await super.saveProfileEdit(profile, fileData: fileData);
     } catch (error) {
@@ -187,14 +189,10 @@ void main() {
             }
             expect(row, findsOneWidget);
             await tester.ensureVisible(row);
-            await tester.runAsync(() async {
-              await tester.tap(row);
-              await observer.editorReturned.future.timeout(
-                const Duration(seconds: 10),
-              );
-            });
+            await tester.tap(row);
             await tester.pump();
             await tester.pump(const Duration(milliseconds: 400));
+            expect(observer.editorReturned.isCompleted, isTrue);
           } else {
             await tester.enterText(
               find.byWidgetPredicate(
@@ -217,6 +215,14 @@ void main() {
           expect(find.byType(EditProfileView), findsOneWidget);
           expect(observer.editPops, 0);
           expect(action.rejection.toString(), contains('fixture rejection'));
+          if (fileEdit) {
+            expect(
+              utf8.decode(action.submittedFileData!),
+              'mode: direct\nrules: ["MATCH,DIRECT"]\n',
+            );
+          } else {
+            expect(action.submittedFileData, isNull);
+          }
           final retained = (await tester.runAsync(
             () async => (
               label: (await sql.profilesDao.get(41))!.label,

@@ -53,7 +53,11 @@ class ProxiesAction extends _$ProxiesAction {
 
   _DelaySync? _delaySync;
 
-  final Map<String, String> _pendingSelectedRollback = {};
+  final Map<(int?, String), String> _pendingSelectedRollback = {};
+  final Map<(int?, String), Object> _selectionIntents = {};
+  final Map<(int?, String), (Object, int)> _pendingSelections = {};
+  final Set<(int, int)> _dirtySelectionMetadata = {};
+  final Map<(int, int), int> _selectionMetadataRefreshes = {};
   int _groupsRevision = 0;
   int _selectionMetadataRevision = 0;
 
@@ -120,16 +124,27 @@ class ProxiesAction extends _$ProxiesAction {
 
   void changeProxyDebounce(String groupName, String proxyName) {
     final lite = ClientProduct.current.expectedCoreId == 'meow-rs';
-    final revision = lite ? ++_selectionMetadataRevision : null;
     final profileId = ref.read(currentProfileProvider)?.id;
     final groupsRevision = _groupsRevision;
+    final key = (profileId, groupName);
+    final intent = _selectionIntents[key] = Object();
+    if (lite) {
+      _selectionMetadataRevision++;
+      _pendingSelections[key] = (intent, groupsRevision);
+    }
     _pendingSelectedRollback.putIfAbsent(
-      groupName,
+      key,
       () => _currentSelectedName(groupName),
     );
-    ref
-        .read(profilesActionProvider.notifier)
-        .updateCurrentSelectedMap(groupName, proxyName);
+    final selection = lite
+        ? null
+        : _saveSelection(
+            profileId: profileId,
+            groupName: groupName,
+            proxyName: proxyName,
+            isCurrent: () =>
+                ref.mounted && identical(_selectionIntents[key], intent),
+          );
     debouncer.call((FunctionTag.changeProxy, groupName), (
       String groupName,
       String proxyName,
@@ -137,9 +152,10 @@ class ProxiesAction extends _$ProxiesAction {
       await _changeProxy(
         groupName: groupName,
         proxyName: proxyName,
-        selectionRevision: revision,
         profileId: profileId,
         groupsRevision: groupsRevision,
+        intent: intent,
+        selection: selection,
       );
       updateGroupsDebounce();
     }, args: [groupName, proxyName]);
@@ -270,66 +286,183 @@ class ProxiesAction extends _$ProxiesAction {
   Future<void> changeProxy({
     required String groupName,
     required String proxyName,
-  }) => _changeProxy(
-    groupName: groupName,
-    proxyName: proxyName,
-    selectionRevision: ClientProduct.current.expectedCoreId == 'meow-rs'
-        ? ++_selectionMetadataRevision
-        : null,
-    profileId: ref.read(currentProfileProvider)?.id,
-    groupsRevision: _groupsRevision,
-  );
+  }) {
+    final profileId = ref.read(currentProfileProvider)?.id;
+    final intent = _selectionIntents[(profileId, groupName)] = Object();
+    if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+      _selectionMetadataRevision++;
+      _pendingSelections[(profileId, groupName)] = (intent, _groupsRevision);
+    }
+    return _changeProxy(
+      groupName: groupName,
+      proxyName: proxyName,
+      profileId: profileId,
+      groupsRevision: _groupsRevision,
+      intent: intent,
+    );
+  }
+
+  Future<bool> _saveSelection({
+    required int? profileId,
+    required String groupName,
+    required String proxyName,
+    required bool Function() isCurrent,
+  }) async {
+    try {
+      return await ref
+          .read(profilesActionProvider.notifier)
+          .updateCurrentSelectedMap(
+            groupName,
+            proxyName,
+            profileId: profileId,
+            isCurrent: isCurrent,
+          );
+    } catch (error) {
+      commonPrint.log(
+        'Saving proxy selection failed: $error',
+        logLevel: coreFailureLogLevel(error),
+      );
+      if (ref.mounted && isCurrent()) {
+        dialogs.showNotifier(
+          currentAppLocalizations.databaseWriteFailedTip,
+          level: MessageLevel.error,
+        );
+      }
+      return false;
+    }
+  }
 
   Future<void> _changeProxy({
     required String groupName,
     required String proxyName,
-    required int? selectionRevision,
     required int? profileId,
     required int groupsRevision,
+    required Object intent,
+    Future<bool>? selection,
   }) async {
     final lite = ClientProduct.current.expectedCoreId == 'meow-rs';
+    final key = (profileId, groupName);
+    bool intentCurrent() =>
+        ref.mounted &&
+        identical(_selectionIntents[key], intent) &&
+        ref.read(currentProfileProvider)?.id == profileId &&
+        (!lite ||
+            groupsRevision == _groupsRevision &&
+                ref.read(coreStatusProvider) == CoreStatus.connected);
+    bool current() =>
+        intentCurrent() &&
+        ((!lite && profileId == null) ||
+            ref.read(currentProfileProvider)?.selectedMap[groupName] ==
+                proxyName);
+    try {
+      if (!intentCurrent()) return;
+      final rollbackName =
+          _pendingSelectedRollback.remove(key) ??
+          _currentSelectedName(groupName);
+      final persisted =
+          !lite && profileId == null ||
+          await (selection ??
+              _saveSelection(
+                profileId: profileId,
+                groupName: groupName,
+                proxyName: proxyName,
+                isCurrent: intentCurrent,
+              ));
+      if (!persisted || !current()) return;
+      final ChangeProxyResult result;
+      try {
+        result = await _core.changeProxy(
+          ChangeProxyParams(groupName: groupName, proxyName: proxyName),
+        );
+        if (result.message.isNotEmpty) {
+          throw MessageException(result.message);
+        }
+      } catch (error) {
+        commonPrint.log(
+          'changeProxy($groupName -> $proxyName) failed: $error',
+          logLevel: coreFailureLogLevel(error),
+        );
+        if (!current()) return;
+        await _saveSelection(
+          profileId: profileId,
+          groupName: groupName,
+          proxyName: rollbackName,
+          isCurrent: intentCurrent,
+        );
+        if (!intentCurrent()) return;
+        dialogs.showNotifier(
+          currentAppLocalizations.changeProxyFailedTip,
+          level: MessageLevel.error,
+        );
+        return;
+      }
+      if (lite) {
+        if (profileId == null ||
+            !ref.mounted ||
+            ref.read(currentProfileProvider)?.id != profileId ||
+            groupsRevision != _groupsRevision ||
+            ref.read(coreStatusProvider) != CoreStatus.connected) {
+          return;
+        }
+        _dirtySelectionMetadata.add((profileId, groupsRevision));
+        if (!current()) return;
+      }
+      if (!result.changed) {
+        return;
+      }
+      try {
+        if (ref.read(appSettingProvider).closeConnections) {
+          await _core.closeConnections();
+        } else {
+          await _core.resetConnections();
+        }
+      } catch (error) {
+        commonPrint.log(
+          'changeProxy($groupName -> $proxyName) connection reset failed: $error',
+          logLevel: coreFailureLogLevel(error),
+        );
+      }
+    } finally {
+      if (lite) {
+        if (identical(_pendingSelections[key]?.$1, intent)) {
+          _pendingSelections.remove(key);
+        }
+        if (profileId != null) {
+          await _convergeSelectionMetadata(
+            profileId,
+            groupsRevision,
+            groupName,
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _convergeSelectionMetadata(
+    int profileId,
+    int groupsRevision,
+    String groupName,
+  ) async {
+    final scope = (profileId, groupsRevision);
+    final revision = _selectionMetadataRevision;
     bool current() =>
         ref.mounted &&
-        selectionRevision == _selectionMetadataRevision &&
+        revision == _selectionMetadataRevision &&
         groupsRevision == _groupsRevision &&
         ref.read(coreStatusProvider) == CoreStatus.connected &&
         ref.read(currentProfileProvider)?.id == profileId &&
-        ref.read(currentProfileProvider)?.selectedMap[groupName] == proxyName;
-    if (lite &&
-        (!ref.mounted ||
-            selectionRevision != _selectionMetadataRevision ||
-            ref.read(currentProfileProvider)?.id != profileId ||
-            groupsRevision != _groupsRevision))
+        !_pendingSelections.entries.any(
+          (entry) =>
+              entry.key.$1 == profileId && entry.value.$2 == groupsRevision,
+        );
+    if (!_dirtySelectionMetadata.contains(scope) ||
+        !current() ||
+        _selectionMetadataRefreshes[scope] == revision)
       return;
-    final profilesAction = ref.read(profilesActionProvider.notifier);
-    final rollbackName =
-        _pendingSelectedRollback.remove(groupName) ??
-        _currentSelectedName(groupName);
-    profilesAction.updateCurrentSelectedMap(groupName, proxyName);
-    final ChangeProxyResult result;
+    _selectionMetadataRefreshes[scope] = revision;
+    final proxyName = _currentSelectedName(groupName);
     try {
-      result = await _core.changeProxy(
-        ChangeProxyParams(groupName: groupName, proxyName: proxyName),
-      );
-      if (result.message.isNotEmpty) {
-        throw MessageException(result.message);
-      }
-    } catch (error) {
-      commonPrint.log(
-        'changeProxy($groupName -> $proxyName) failed: $error',
-        logLevel: coreFailureLogLevel(error),
-      );
-      if (lite && !current()) return;
-      profilesAction.updateCurrentSelectedMap(groupName, rollbackName);
-      dialogs.showNotifier(
-        currentAppLocalizations.changeProxyFailedTip,
-        level: MessageLevel.error,
-      );
-      return;
-    }
-    if (lite) {
-      if (!current() || profileId == null) return;
-      await ref
+      final refreshed = await ref
           .read(setupActionProvider.notifier)
           .refreshSelectionMetadata(
             profileId: profileId,
@@ -337,22 +470,11 @@ class ProxiesAction extends _$ProxiesAction {
             proxyName: proxyName,
             isCurrent: current,
           );
-      if (!current()) return;
-    }
-    if (!result.changed) {
-      return;
-    }
-    try {
-      if (ref.read(appSettingProvider).closeConnections) {
-        await _core.closeConnections();
-      } else {
-        await _core.resetConnections();
+      if (refreshed && current()) _dirtySelectionMetadata.remove(scope);
+    } finally {
+      if (_selectionMetadataRefreshes[scope] == revision) {
+        _selectionMetadataRefreshes.remove(scope);
       }
-    } catch (error) {
-      commonPrint.log(
-        'changeProxy($groupName -> $proxyName) connection reset failed: $error',
-        logLevel: coreFailureLogLevel(error),
-      );
     }
   }
 

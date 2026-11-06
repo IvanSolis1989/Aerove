@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:collection/collection.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -283,6 +284,88 @@ class Profiles extends _$Profiles {
   }
 
   Profile labeled(Profile profile) => state.optimizeLabel(profile);
+
+  Future<bool> setSelectedProxy(
+    int profileId,
+    String groupName,
+    String proxyName, {
+    bool Function()? isCurrent,
+    bool optimistic = false,
+  }) async {
+    bool current() => ref.mounted && (isCurrent?.call() ?? true);
+    if (!current()) return false;
+    final previous = state.getProfile(profileId);
+    if (previous == null) return false;
+    final selection = {...previous.selectedMap, groupName: proxyName};
+    if (optimistic) {
+      state = state.copyAndPut(
+        previous.copyWith(selectedMap: selection),
+        (item) => item.id == profileId,
+      );
+    }
+    var written = false;
+    try {
+      await _writes.track(
+        () => _serial(() async {
+          if (!current()) return;
+          final observed = state.getProfile(profileId);
+          if (observed == null) return;
+          Profile? committed;
+          await database.transaction(() async {
+            final stored = await database.profilesDao.get(profileId);
+            if (stored == null ||
+                !current() ||
+                state.getProfile(profileId) == null)
+              return;
+            final selectedMap = {...stored.selectedMap, groupName: proxyName};
+            await (database.update(database.profiles)
+                  ..where((table) => table.id.equals(profileId)))
+                .write(ProfilesCompanion(selectedMap: Value(selectedMap)));
+            committed = stored.copyWith(selectedMap: selectedMap);
+          });
+          final saved = committed;
+          if (saved == null) return;
+          written = true;
+          if (!ref.mounted) return;
+          state = [
+            for (final item in state)
+              if (item.id == profileId)
+                item.copyWith(
+                  selectedMap:
+                      optimistic &&
+                          !const MapEquality<String, String>().equals(
+                            item.selectedMap,
+                            selection,
+                          )
+                      ? item.selectedMap
+                      : saved.selectedMap,
+                  overrides: item.overrides == observed.overrides
+                      ? saved.overrides
+                      : item.overrides,
+                )
+              else
+                item,
+          ];
+        }),
+      );
+      return written;
+    } catch (_) {
+      if (optimistic && current()) {
+        state = [
+          for (final item in state)
+            if (item.id == profileId &&
+                const MapEquality<String, String>().equals(
+                  item.selectedMap,
+                  selection,
+                ))
+              item.copyWith(selectedMap: previous.selectedMap)
+            else
+              item,
+        ];
+      }
+      rethrow;
+    }
+  }
 
   /// A new provider label follows into custom profiles whatever path set it.
   void put(Profile profile) {

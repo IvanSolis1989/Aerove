@@ -88,6 +88,34 @@ class _ProviderAppliedBoundary extends _UnusedCore {
   }
 }
 
+class _SelectionBoundary extends _UnusedCore {
+  _SelectionBoundary(this.database);
+  final db.Database database;
+  final calls = <String, Completer<ChangeProxyResult>>{};
+  final arrivals = <String, Completer<void>>{};
+  Future<void> entered(String proxy) =>
+      arrivals.putIfAbsent(proxy, Completer<void>.new).future;
+
+  @override
+  Future<ChangeProxyResult> changeProxy(ChangeProxyParams params) async {
+    final stored = (await database.profilesDao.get(7))!;
+    expect(stored.selectedMap[params.groupName], params.proxyName);
+    final result = calls[params.proxyName] = Completer<ChangeProxyResult>();
+    arrivals.putIfAbsent(params.proxyName, Completer<void>.new).complete();
+    return result.future;
+  }
+}
+
+class _SelectionSetup extends SetupAction {
+  @override
+  Future<bool> refreshSelectionMetadata({
+    required int profileId,
+    required String groupName,
+    required String proxyName,
+    required bool Function() isCurrent,
+  }) async => false;
+}
+
 class _ProviderCancelService implements Service {
   final entered = Completer<CoreMethodCall>();
   final cancelled = Completer<String>();
@@ -266,6 +294,166 @@ void main() {
     version: '1',
     buildNumber: '1',
   );
+  group('selection source writes', () {
+    late Directory home;
+    late db.Database sql;
+    late db.Database previous;
+    late ProviderContainer container;
+    late _SelectionBoundary protocol;
+    setUp(() async {
+      home = await Directory.systemTemp.createTemp('selection-source-');
+      await useAppPaths(home);
+      SharedPreferences.setMockInitialValues({});
+      await preferences.rebind();
+      previous = db.database;
+      sql = db.Database(NativeDatabase(File('${home.path}/database.sqlite')));
+      db.database = sql;
+      for (final id in [7, 8]) {
+        await sql.profiles.put(
+          Profile(
+            id: id,
+            autoUpdateDuration: Duration.zero,
+            selectedMap: const {'choice': 'original'},
+          ).toCompanion(),
+        );
+      }
+      protocol = _SelectionBoundary(sql);
+      container = ProviderContainer(
+        overrides: [
+          ...buildConfigOverrides(
+            Config.realFromJson(
+              null,
+              coreId: core,
+            ).copyWith(currentProfileId: 7),
+          ),
+          coreHandlerProvider.overrideWithValue(
+            CoreController.scoped(protocol),
+          ),
+          setupActionProvider.overrideWith(_SelectionSetup.new),
+        ],
+      );
+      globalState.container = container;
+      container.listen(profilesProvider, (_, _) {});
+      await container.read(profilesStreamProvider.future);
+      container.read(coreStatusProvider.notifier).value = CoreStatus.connected;
+    });
+    tearDown(() async {
+      await waitForDatabaseWrites();
+      container.dispose();
+      db.database = previous;
+      await sql.close();
+      await home.delete(recursive: true);
+    });
+
+    test(
+      'an older failed Core selection cannot undo a newer saved selection',
+      () async {
+        final proxies = container.read(proxiesActionProvider.notifier);
+        final first = proxies.changeProxy(groupName: 'choice', proxyName: 'A');
+        await protocol.entered('A');
+        final second = proxies.changeProxy(groupName: 'choice', proxyName: 'B');
+        await protocol.entered('B');
+        protocol.calls['B']!.complete(const ChangeProxyResult(changed: false));
+        await second;
+        protocol.calls['A']!.complete(
+          const ChangeProxyResult(message: 'older failure', changed: false),
+        );
+        await first;
+        expect((await sql.profilesDao.get(7))!.selectedMap['choice'], 'B');
+        expect(
+          container.read(currentProfileProvider)!.selectedMap['choice'],
+          'B',
+        );
+        expect(
+          (await sql.profilesDao.get(8))!.selectedMap['choice'],
+          'original',
+        );
+      },
+    );
+
+    if (core == 'meow-rs') {
+      test(
+        'selection waits for source publication and keeps its newer binding',
+        () async {
+          final setup = container.read(setupActionProvider.notifier);
+          final entered = Completer<void>();
+          final release = Completer<void>();
+          const overrides = ProfileOverrides(
+            sourceProxyProviders: {
+              'published': {'type': 'file', 'path': 'source-owned'},
+            },
+          );
+          final publishing = setup.withProviderSourceWrite(() async {
+            entered.complete();
+            await release.future;
+            final stored = (await sql.profilesDao.get(7))!;
+            await sql.profiles.put(
+              stored.copyWith(overrides: overrides).toCompanion(),
+            );
+          });
+          await entered.future;
+          final selection = container
+              .read(proxiesActionProvider.notifier)
+              .changeProxy(groupName: 'choice', proxyName: 'A');
+          await pumpEventQueue();
+          expect(
+            (await sql.profilesDao.get(7))!.selectedMap['choice'],
+            'original',
+          );
+          expect(protocol.calls, isEmpty);
+          release.complete();
+          await publishing;
+          await protocol.entered('A');
+          expect((await sql.profilesDao.get(7))!.overrides, overrides);
+          protocol.calls['A']!.complete(
+            const ChangeProxyResult(changed: false),
+          );
+          await selection;
+          expect(container.read(currentProfileProvider)!.overrides, overrides);
+        },
+      );
+
+      for (final delete in [false, true]) {
+        test(
+          'a queued selection is cancelled after ${delete ? 'profile deletion' : 'profile switch'}',
+          () async {
+            final entered = Completer<void>();
+            final release = Completer<void>();
+            final holding = container
+                .read(setupActionProvider.notifier)
+                .withProviderSourceWrite(() async {
+                  entered.complete();
+                  await release.future;
+                });
+            await entered.future;
+            final selection = container
+                .read(proxiesActionProvider.notifier)
+                .changeProxy(groupName: 'choice', proxyName: 'A');
+            await pumpEventQueue();
+            if (delete) {
+              await container.read(profilesProvider.notifier).del(7);
+            } else {
+              container.read(currentProfileIdProvider.notifier).value = 8;
+            }
+            release.complete();
+            await holding;
+            await selection;
+            expect(protocol.calls, isEmpty);
+            final original = await sql.profilesDao.get(7);
+            if (delete) {
+              expect(original, isNull);
+            } else {
+              expect(original!.selectedMap['choice'], 'original');
+            }
+            expect(
+              (await sql.profilesDao.get(8))!.selectedMap['choice'],
+              'original',
+            );
+          },
+        );
+      }
+    }
+  });
   if (core == 'meow-rs')
     test(
       'an old same-name provider object cannot side-load into a new runtime',
