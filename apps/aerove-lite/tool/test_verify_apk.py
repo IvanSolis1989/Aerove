@@ -401,7 +401,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_await_exit_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_awaitExit"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(27, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(28, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
@@ -417,7 +417,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_listener_command_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(27, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(28, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])

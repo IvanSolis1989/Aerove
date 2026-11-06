@@ -67,6 +67,7 @@ pub struct OwnedRuntime {
     status: watch::Sender<OwnedStatus>, listeners: Mutex<ListenerStatus>, commands: mpsc::Sender<Command>,
     failure: Mutex<Option<crate::runtime::Failure>>,
     startup_diagnostic: AtomicBool,
+    safe_startup: crate::startup_diagnostic::Shared,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     listener_intents: AtomicU64,
     network_state: Mutex<crate::network_api::StateValue>,
@@ -109,9 +110,17 @@ impl OwnedRuntime {
     pub(crate) fn start(json: String, fd: Option<OwnedFd>, network: NetworkContext, generation: u64,
         cancel: CancellationToken, register: RegisterControl, lookup: Option<Arc<dyn FlowOwnerLookup>>,
         install_owner: impl FnOnce(Arc<Self>)) -> io::Result<Arc<Self>> {
+        Self::start_observed(json, fd, network, generation, cancel, register, lookup, install_owner,
+            crate::startup_diagnostic::Diagnostic::shared())
+    }
+    pub(crate) fn start_observed(json: String, fd: Option<OwnedFd>, network: NetworkContext, generation: u64,
+        cancel: CancellationToken, register: RegisterControl, lookup: Option<Arc<dyn FlowOwnerLookup>>,
+        install_owner: impl FnOnce(Arc<Self>), safe_startup: crate::startup_diagnostic::Shared) -> io::Result<Arc<Self>> {
         let raw_fd = fd.as_ref().map_or(-1, AsRawFd::as_raw_fd);
         let mode = serde_json::from_str::<serde_json::Value>(&json).ok().and_then(|v| v.get("runtimeMode").and_then(|v| v.as_str()).map(str::to_owned));
+        safe_startup.lock().advance(crate::startup_diagnostic::Stage::PlanDecode);
         let plan = Arc::new(RuntimePlan::parse(&json, raw_fd, mode.as_deref() == Some("tun"), false)?);
+        safe_startup.lock().advance(crate::startup_diagnostic::Stage::HostPolicy);
         let initial_probe = crate::probe_policy::ProbePolicies::from_host(&plan.host_policy_yaml)?;
         let initial_policy = crate::request_policies::RequestPolicies::from_host(&plan.host_policy_yaml)?;
         let find_mode = crate::process_policies::ProcessPolicies::from_host(&plan.host_policy_yaml)?.wire();
@@ -125,6 +134,7 @@ impl OwnedRuntime {
         let probes = crate::probe_policy::ProbePolicies::new(initial_probe.clone(), plane.clone(), cancel.clone());
         let tunnel_capture = Arc::new(std::sync::OnceLock::new());
         let network = network.with_control_plane(plane.clone()).with_request_policy(policies.clone()).with_probe_policies(probes.clone()).with_tunnel_capture(tunnel_capture.clone());
+        safe_startup.lock().advance(crate::startup_diagnostic::Stage::PhysicalDns);
         let network = match network.dns_owner() {
             Some(owner) => network.with_dns_transport(owner.transport_scope(&network)),
             None => {
@@ -153,7 +163,7 @@ impl OwnedRuntime {
             tun_ready: false, user_listeners_ready: false, listening: false, core_ready: false });
         let (commands, receiver) = mpsc::channel(8);
         let owner = Arc::new(Self { plane, policies, probes, processes, network_slot, network_policy: Mutex::new(None), geo:Mutex::new(None), user_controller: Mutex::new(None), statistics: Mutex::new(None), tunnel_capture, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
-            status, commands, failure: Mutex::new(None), startup_diagnostic: AtomicBool::new(false), listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
+            status, commands, failure: Mutex::new(None), safe_startup, startup_diagnostic: AtomicBool::new(false), listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
                 user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
                 only_statistics_proxy: crate::statistics_policies::StatisticsPolicies::from_host(&plan.host_policy_yaml)?, unified_delay: initial_probe.unified_delay, tcp_concurrent: initial_probe.tcp_concurrent, find_process_mode: find_mode }),
             task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0), network_state: Mutex::new(crate::network_api::StateValue::default()), network_fence: Arc::new(Mutex::new(())),
@@ -168,6 +178,14 @@ impl OwnedRuntime {
             let serving = Box::pin(worker.serve(json, plan, fd, network.clone(), scope.clone(), generation, register, receiver, &mut core));
             let result = AssertUnwindSafe(serving).catch_unwind().await;
             let stopping = cancel.is_cancelled();
+            match &result {
+                Ok(Err(cause)) if !stopping => worker.safe_startup.lock().record_io(cause),
+                Err(_) => {
+                    let mut diagnostic = worker.safe_startup.lock(); let stage = diagnostic.stage;
+                    diagnostic.record_code(stage, "ownedRuntimePanicked");
+                },
+                _ => {},
+            }
             let mut cleanup_details = serde_json::Map::new();
             cleanup_details.insert("serve".into(), match &result {
                 Ok(result) => cleanup_outcome(result),
@@ -226,6 +244,7 @@ impl OwnedRuntime {
             cleanup_details.insert("acknowledged".into(),cleanup_confirmed.into());
             cleanup_details.insert("parkUncertain".into(),worker.cleanup.uncertain.load(Ordering::Acquire).into());
             let cleanup_failed = closed.is_err() || (loaded.is_ok() && !cleanup_confirmed);
+            worker.safe_startup.lock().cleaned(!cleanup_failed, loaded.is_ok());
             let cleanup_failure = cleanup_failed.then(|| crate::runtime::Failure {
                 code:"runtimeCleanupFailed", field:Some("runtime.cleanup".into()),
                 reason:Some(serde_json::Value::Object(cleanup_details).to_string()),
@@ -358,7 +377,9 @@ impl OwnedRuntime {
     async fn serve(self: &Arc<Self>, json: String, plan: Arc<RuntimePlan>, fd: Option<OwnedFd>, network: NetworkContext,
         scope: Arc<OwnedLoadScope>, _generation: u64, register: RegisterControl,
         mut commands: mpsc::Receiver<Command>, core_slot: &mut Option<RunningCore>) -> io::Result<()> {
+        self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::ManagedConfig);
         let engine = managed_yaml(&plan)?;
+        self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::ConfigLoad);
         let config_work = Box::pin(meow_config::load_config_from_str_owned(&engine, &scope));
         let loading = scope.run(network.serve_scope(config_work));
         let config = tokio::select! { biased;
@@ -387,6 +408,7 @@ impl OwnedRuntime {
         let resolver_slot = tunnel.resolver_slot();
         let initial_resolver = Arc::clone(&resolver_slot.read());
         let initial_pair = crate::network_context::ResolverPair { main: initial_resolver, proxy: config.dns.proxy_resolver.clone() };
+        self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::DnsSetup);
         let (initial_pair,initial_dns_scope)=crate::geo_reload::rehome_initial_dns(initial_pair,network.captured()).await?;
         crate::network_policy::bind_resolver_observations(&tunnel, &initial_pair)?;
         tunnel.set_resolver(initial_pair.main.clone());
@@ -399,6 +421,7 @@ impl OwnedRuntime {
         network_policy.adopt_initial_dns_scope(initial_dns_scope).map_err(error)?;
         network_policy.bind_process_policy(self.processes.clone());
         *self.network_policy.lock() = Some(network_policy.clone());
+        self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::ControlSetup);
         let only = crate::statistics_policies::StatisticsPolicies::from_host(&plan.host_policy_yaml)?;
         let statistics = crate::statistics_policies::StatisticsPolicies::new(tunnel.statistics().clone(),_generation,only,self.plane.clone(),self.cancel.clone())?;
         *self.statistics.lock() = Some(statistics);
@@ -425,6 +448,7 @@ impl OwnedRuntime {
             &specs, config.general.allow_lan, &config.general.bind_address, &auth));
         let health_specs = meow_config::extract_health_check_specs(config.raw.proxy_groups.as_deref().unwrap_or(&[]));
         tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
+        self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::GraphActivation);
         let group_events = api.control.activate_groups(&scope).map_err(group_activation_error)?;
         core_slot.as_mut().expect("installed core").group_events = Some(group_events);
         for spec in health_specs {
@@ -459,13 +483,14 @@ impl OwnedRuntime {
             result
         });
         core_slot.as_mut().expect("installed core").private_task = Some(private_task);
+        self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::UserActivation);
         let startup_user = crate::host_policies::startup_user(&plan.host_policy_yaml)?;
         if startup_user.enabled { user.configure(self.route_stamp().0,true,&startup_user.secret).await?; }
         self.status.send_modify(|status| { status.api_address = Some(address); status.core_ready = true; });
         if !plan.initially_parked && self.listener_intents.load(Ordering::Acquire) == 0 {
             self.activate(core_slot.as_mut().expect("installed core"), &json, &plan, fd, &network, &specs, &auth).await?;
         } else { drop(fd); }
-        self.status.send_modify(|status| { if !self.cancel.is_cancelled() { status.state = "Running"; } });
+        self.status.send_modify(|status| { if !self.cancel.is_cancelled() { self.safe_startup.lock().running(); status.state = "Running"; } });
         loop { tokio::select! { biased;
             _ = self.cancel.cancelled() => { if let Some(cause) = user.failure() { return Err(error(cause)); } if let Some(cause) = self.network_policy()?.failure() { return Err(error(cause)); } return Ok(()); },
             changed = user_failure.changed() => { if changed.is_err() { return Err(error("userControllerFailureChannelClosed")); } if let Some(cause) = user.failure() { return Err(error(cause)); } },
@@ -1348,6 +1373,10 @@ mod cleanup_ack_tests {
             };
             let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
             assert_eq!(detail.code,"managedDialerProxyGraphRejected");
+            let safe = serde_json::to_value(&*owner.safe_startup.lock()).unwrap();
+            assert_eq!(safe["primary"]["stage"], "configLoad");
+            assert_eq!(safe["primary"]["code"], "managedDialerProxyGraphRejected");
+            assert!(!safe.to_string().contains("MISSING"));
             assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
             assert!(detail.reason.as_deref().unwrap().contains("MISSING"));
             let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();

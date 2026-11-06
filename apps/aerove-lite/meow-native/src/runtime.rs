@@ -68,6 +68,7 @@ pub struct Snapshot {
 
 pub struct Session {
     generation: u64,
+    startup: crate::startup_diagnostic::Shared,
     cancel: CancellationToken,
     state: watch::Sender<Snapshot>,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
@@ -127,7 +128,7 @@ impl Registry {
             upload_bytes: "0".into(), download_bytes: "0".into(),
             proxy_traffic: BTreeMap::new(),
         });
-        let session = Arc::new(Session { generation, cancel: cancel.unwrap_or_default(), state,
+        let session = Arc::new(Session { generation, startup: crate::startup_diagnostic::Diagnostic::shared(), cancel: cancel.unwrap_or_default(), state,
             task: tokio::sync::Mutex::new(None), stop_gate: tokio::sync::Mutex::new(()),
             tunnel: Mutex::new(None), control: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
@@ -155,6 +156,10 @@ impl Session {
     }
 
     pub fn generation(&self) -> u64 { self.generation }
+    pub(crate) fn startup_diagnostic(&self) -> crate::startup_diagnostic::Diagnostic { self.startup.lock().clone() }
+    pub(crate) fn record_ready_failure(&self, code: &'static str) {
+        self.startup.lock().record_code(crate::startup_diagnostic::Stage::ReadyWait, code);
+    }
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     pub fn owned_runtime(&self) -> Option<Arc<crate::owned_runtime::OwnedRuntime>> { self.owned.lock().clone() }
 
@@ -168,10 +173,10 @@ impl Session {
             if session.cancel.is_cancelled() { control.cancel(); return false; }
             *admission = Some(control); *session.tunnel.lock() = Some(tunnel); true
         });
-        let owner = match crate::owned_runtime::OwnedRuntime::start(json, fd, network, self.generation, self.cancel.clone(), register, lookup,
-            |owner| { *self.owned.lock() = Some(owner); }) {
+        let owner = match crate::owned_runtime::OwnedRuntime::start_observed(json, fd, network, self.generation, self.cancel.clone(), register, lookup,
+            |owner| { *self.owned.lock() = Some(owner); }, self.startup.clone()) {
             Ok(owner) => owner,
-            Err(_) => { self.state.send_modify(|state| { state.phase = Phase::Failed; state.failure = Some(Failure::new("ownedStartFailed")); }); return; },
+            Err(cause) => { self.startup.lock().record_io(&cause); self.state.send_modify(|state| { state.phase = Phase::Failed; state.failure = Some(Failure::new("ownedStartFailed")); }); return; },
         };
         let mut updates = owner.subscribe();
         loop {
@@ -488,7 +493,7 @@ mod tests {
             proxy_traffic: BTreeMap::new(),
         });
         let session = Session {
-            generation: 1, cancel: CancellationToken::new(), state,
+            generation: 1, startup: crate::startup_diagnostic::Diagnostic::shared(), cancel: CancellationToken::new(), state,
             task: tokio::sync::Mutex::new(None), stop_gate: tokio::sync::Mutex::new(()),
             tunnel: Mutex::new(None), control: Mutex::new(None),
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]

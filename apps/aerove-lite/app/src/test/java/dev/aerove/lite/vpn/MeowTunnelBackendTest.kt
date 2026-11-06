@@ -25,6 +25,7 @@ class MeowTunnelBackendTest {
         var onListener: (String,Int) -> Unit = {_,_->}
         var starts = 0; var stops = 0; var payload = ""; var descriptor = 0
         var statusReads = 0; var statusFailure: Throwable? = null
+        var startupReads = 0; var startupReadFailure: Throwable? = null
         var parked = false;var tunMode = false
         var port = 49152
         val policy = MeowPolicyFixture()
@@ -33,6 +34,9 @@ class MeowTunnelBackendTest {
             starts++; payload=planJson;descriptor=fd;policy.startup(org.json.JSONObject(planJson).getString("hostPolicyYaml"));onStart();return 1
         }
         override fun awaitReady(handle: Long) = onReady()
+        override fun startupDiagnostic(handle: Long): MeowStartupSnapshot? {
+            startupReads++; startupReadFailure?.let { throw it }; return null
+        }
         override fun awaitExit(handle: Long) = onExit()
         override fun stop(handle: Long) { stops++;onStop() }
         override fun listener(handle:Long,action:String,fd:Int):MeowListenerStatus {
@@ -429,6 +433,20 @@ class MeowTunnelBackendTest {
             assertEquals(MeowState.Running, actual.nativeAfterStop.getOrThrow().state)
             assertEquals(1, f.native.stops); assertEquals(0, f.released); assertEquals(2, f.native.statusReads)
         }
+        f.native.onStop = {}; f.backend.stopAndJoinRetained()
+    }
+    @Test fun safeStartupReadbackFailuresDoNotReplaceOriginalReadinessOrCleanupFailures() = runBlocking<Unit> {
+        val f = Fixture(); val original = java.io.IOException("password=private https://private.invalid")
+        val cleanup = java.io.IOException("private cleanup path")
+        f.native.onReady = { throw original }; f.native.onStop = { throw cleanup }
+        f.native.startupReadFailure = IllegalStateException("secret diagnostic unavailable")
+        val session = f.backend.open(f.plan)
+        try { session.awaitReady(); fail("must preserve startup failure") }
+        catch (failure: java.io.IOException) {
+            assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it === original })
+            assertTrue(generateSequence(failure.suppressed.single()) { it.cause }.any { it === cleanup })
+        }
+        assertEquals(2, f.native.startupReads); assertEquals(0, f.native.statusReads)
         f.native.onStop = {}; f.backend.stopAndJoinRetained()
     }
     @Test fun absentStartupObserverDoesNotReadAdditionalNativeStatus() = runBlocking<Unit> {

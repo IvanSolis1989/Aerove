@@ -1,5 +1,6 @@
 //! Independent Meow candidate; the existing Android core is not switched here.
 pub mod runtime;
+mod startup_diagnostic;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 pub mod transport_tasks;
 pub mod capabilities;

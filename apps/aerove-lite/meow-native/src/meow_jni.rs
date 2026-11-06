@@ -142,10 +142,21 @@ pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_listenerStatus<'
     }).resolve::<ThrowRuntimeExAndDefault>()
 }
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_startupDiagnostic<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let session = session(handle)?;
+        let state = session.snapshot();
+        let safe = serde_json::json!({"schema":1,"generation":session.generation().to_string(),
+            "phase":state.phase,"coreReady":state.api_ready,"tunReady":state.tun_ready,
+            "userListenersReady":state.user_listeners_ready,"startup":session.startup_diagnostic()});
+        Ok(env.new_string(safe.to_string())?)
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_awaitReady<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64) {
     env.with_env(|_| -> Result<(), BridgeError> {
         let session = session(handle)?;
-        executor()?.block_on(session.ready()).map_err(|error| failure(&session, error.code))?;
+        executor()?.block_on(session.ready()).map_err(|error| { session.record_ready_failure(error.code); failure(&session, error.code) })?;
         Ok(())
     }).resolve::<ThrowRuntimeExAndDefault>()
 }

@@ -8,6 +8,7 @@ object MeowNativeCore {
     // Caller retains tunFd; native duplicates it. -1 is required for Proxy and initially parked Tun.
     @JvmStatic external fun startOwned(planJson: String, tunFd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?): Long
     @JvmStatic external fun status(handle: Long): String
+    @JvmStatic external fun startupDiagnostic(handle: Long): String
     @JvmStatic external fun listenerStatus(handle: Long): String
 
     // Blocking: native returns only after actual readiness/error, and stop after cancellation + join.

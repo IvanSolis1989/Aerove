@@ -73,6 +73,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
     interface Commands {
         fun start(planJson: String, fd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?): Long
         fun awaitReady(handle: Long)
+        fun startupDiagnostic(handle: Long): MeowStartupSnapshot? = null
         fun awaitExit(handle: Long)
         fun status(handle: Long): MeowStatus
         fun listeners(handle: Long): MeowListenerStatus
@@ -84,6 +85,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
         override fun start(planJson: String, fd: Int, protector: SocketProtector?, owner: ConnectionOwnerLookup?) =
             MeowNativeCore.startOwned(planJson, fd, protector, owner)
         override fun awaitReady(handle: Long) = MeowNativeCore.awaitReady(handle)
+        override fun startupDiagnostic(handle: Long) = MeowStartupCodec.decode(MeowNativeCore.startupDiagnostic(handle))
         override fun awaitExit(handle: Long) = MeowNativeCore.awaitExit(handle)
         override fun status(handle: Long) = MeowNativeCore.readStatus(handle)
         override fun listeners(handle: Long) = MeowNativeCore.readListenerStatus(handle)
@@ -338,8 +340,11 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                 }
             } catch (failure: Throwable) {
                 val observer = startupObserver.get()
+                val safeBefore = runCatching { commands.startupDiagnostic(handle) }
                 val before = observer?.let { runCatching { commands.status(handle) } }
                 try { stop() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+                val safeAfter = runCatching { commands.startupDiagnostic(handle) }
+                runCatching { android.util.Log.w("MeowStartup", meowStartupFailureDiagnostic(handle, safeBefore, safeAfter)) }
                 if (observer != null && startupObserver.get() === observer) {
                     val after = runCatching { commands.status(handle) }
                     runCatching { observer.receive(StartupFailure(handle, intentGeneration, coreEpoch, failure, checkNotNull(before), after)) }
