@@ -20,6 +20,9 @@ APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
 
 def verify_current_runtime(directory):
+    from flutter_hello_control import enabled as control_enabled, runtime as control_runtime
+    if control_enabled():
+        return control_runtime(directory)
     from lite290_surface_probe import enabled as probe290_enabled, runtime as probe290_runtime
     if probe290_enabled():
         return probe290_runtime(directory)
@@ -52,8 +55,10 @@ GUEST_RENDERER_LABEL = 'Guest ANGLE (Vulkan + SwiftShader)'
 def graphics_configuration():
     from lite265_recheck import enabled, BACKEND
     from lite290_surface_probe import lavapipe_requested
+    from flutter_hello_control import enabled as control_enabled
     comparison = lavapipe_requested()
-    lavapipe = enabled() or comparison
+    control = control_enabled()
+    lavapipe = enabled() or comparison or control
     return dict(gpuBackend='lavapipe' if lavapipe else GPU_BACKEND,
                 vulkanBackend='lavapipe' if lavapipe else 'swiftshader',
                 guestRenderer=BACKEND if lavapipe else GUEST_RENDERER_LABEL)
@@ -648,6 +653,15 @@ def original_sample_phase_selector(phase, sample, runtime):
 
 
 def guard_flutter_phase(phase, sample=None, runtime=None):
+    from flutter_hello_control import enabled as control_enabled
+    if control_enabled():
+        if (phase != 'flutter-control' or sample is not None or runtime is not None and
+                (runtime.get('controlDiagnostic') is not True or runtime.get('identity') != artifacts.identity() or
+                 runtime.get('accepted') is not False)):
+            raise ValueError('Official Flutter control requires its fixed isolated runtime and phase')
+        return
+    if phase == 'flutter-control':
+        raise ValueError('Official Flutter control phase requires its fixed diagnostic opt-in')
     from lite290_surface_probe import enabled as probe290_enabled, IDENTITY as ORIGINAL290
     if probe290_enabled():
         if (phase != 'flutter-ui' or sample is not None or runtime is not None and
@@ -693,6 +707,10 @@ def guard_flutter_phase(phase, sample=None, runtime=None):
 
 def guard_guest_angle_phase(phase, runtime, sample=None):
     """Only the verified current Flutter suites or the fixed original208 UI diagnosis."""
+    from flutter_hello_control import enabled as control_enabled
+    if control_enabled():
+        guard_flutter_phase(phase, sample, runtime)
+        return
     if phase not in ('flutter-ui', 'flutter-platform', 'flutter-full'):
         raise ValueError('Guest ANGLE requires a current Flutter phase or fixed original208 UI')
     guard_flutter_phase(phase, sample, runtime)
@@ -736,6 +754,15 @@ def flutter_ui_inputs(directory, runtime):
 
 
 def phase_acceptance_command(phase, directory, flutter_inputs=None):
+    from flutter_hello_control import enabled as control_enabled
+    if control_enabled():
+        if phase != 'flutter-control' or flutter_inputs is None or 'control_runtime' not in flutter_inputs:
+            raise ValueError('Official Flutter control requires its verified independent input')
+        return [sys.executable, str(Path(__file__).with_name('flutter_hello_control.py')), 'run',
+                '--runtime-directory', str(flutter_inputs['control_runtime']),
+                '--serial', 'emulator-5554', '--adb', str(Path(os.environ['ANDROID_HOME']) / 'platform-tools/adb'),
+                '--apksigner', str(Path(os.environ['ANDROID_HOME']) / 'build-tools/37.0.0/apksigner'),
+                '--output', str(Path(directory) / 'control-probe')]
     from lite290_surface_probe import enabled as probe290_enabled
     if probe290_enabled():
         if phase != 'flutter-ui' or flutter_inputs is None:
@@ -779,8 +806,10 @@ def phase_acceptance_command(phase, directory, flutter_inputs=None):
 
 def main():
     graphics = graphics_configuration()
+    from flutter_hello_control import enabled as control_enabled
+    control = control_enabled()
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample', 'flutter-ui', 'flutter-platform', 'flutter-full'])
+    parser.add_argument('phase', choices=['matrix', 'remaining', 'original-sample', 'flutter-ui', 'flutter-platform', 'flutter-full', 'flutter-control'])
     parser.add_argument('--runtime-directory', type=Path, required=True)
     parser.add_argument('--sample')
     args = parser.parse_args()
@@ -797,11 +826,12 @@ def main():
     forensic = os.environ.get('AEROVE_EMULATOR_SIGILL_TRACE') == '1'
     if forensic and (args.phase != 'flutter-ui' or current.get('runtimeTarget') != 'lite208-flutter-ui'):
         raise ValueError('SIGILL capture is restricted to the fixed original208 representative diagnosis')
-    boot_forensic = os.environ.get('AEROVE_LITE290_BOOT_CRASH')
-    if boot_forensic:
+    boot_request = os.environ.get('AEROVE_LITE290_BOOT_CRASH')
+    if boot_request:
         from lite290_surface_probe import enabled as probe290_enabled
-        if boot_forensic != '1' or not probe290_enabled() or args.phase != 'flutter-ui':
+        if boot_request != '1' or not probe290_enabled() or args.phase != 'flutter-ui':
             raise ValueError('Bootstrap fault capture requires the fixed original290 diagnostic owner')
+    boot_forensic = control or boot_request == '1'
     guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
     if guest_angle:
         guard_guest_angle_phase(args.phase, current, args.sample)
@@ -810,6 +840,8 @@ def main():
         raise ValueError('Source-built host diagnosis requires the fixed original208 host GLES runtime')
     sample_selector = original_sample_phase_selector(args.phase, args.sample, current)
     flutter_inputs = flutter_ui_inputs(args.runtime_directory, current) if args.phase in ('flutter-ui', 'flutter-platform', 'flutter-full') else None
+    if control:
+        flutter_inputs = {'control_runtime': args.runtime_directory.resolve()}
     if args.phase in ('matrix', 'remaining') and not current.get('runtimeTarget'):
         info = json.loads((args.runtime_directory / 'BUILD_INFO.json').read_text())
         if info.get('flutter_packaging', {}).get('client_kind') == 'flutter-aot':
@@ -820,6 +852,9 @@ def main():
     if guest_angle:
         emulator_command.extend(['-feature', 'GuestAngle,Vulkan'])
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
+    if control:
+        receipt.update(controlDiagnostic=True, productAppCompiled=False, diagnosticOnly=True, accepted=False,
+                       performanceEvidence=False, visualApproved=False, releaseAccepted=False)
     if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') or current.get('original290Probe'):
         receipt.update(originalAppIdentity=current['originalAppIdentity'], harnessIdentity=current['harnessIdentity'],
                        diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
@@ -851,7 +886,7 @@ def main():
     try:
         check_cancelled(receipt)
         from lite290_surface_probe import lavapipe_requested, inspect_lavapipe_driver
-        if lavapipe_requested():
+        if control or lavapipe_requested():
             availability = inspect_lavapipe_driver(os.environ['ANDROID_HOME'])
             receipt['lavapipeDriverAvailability'] = availability
             (directory / 'lavapipe-driver-availability.json').write_text(json.dumps(availability, indent=2) + '\n')
@@ -922,7 +957,7 @@ def main():
                 environment['AEROVE_BETA14_PROFILE_OWNER'] = str(profile_owner.resolve())
             check_cancelled(receipt)
             acceptance_command = phase_acceptance_command(args.phase, directory, flutter_inputs)
-            if args.phase == 'flutter-ui':
+            if args.phase in ('flutter-ui', 'flutter-control'):
                 receipt['acceptanceCommand'] = acceptance_command
             if args.sample:
                 environment['AEROVE_ORIGINAL_RUNTIME_TARGET'] = current['runtimeTarget']

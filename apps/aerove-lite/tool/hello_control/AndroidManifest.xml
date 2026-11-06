@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.aerove.diagnostic.flutter_onscreen_control.test">
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="37" />
+    <queries><package android:name="dev.aerove.diagnostic.flutter_onscreen_control" /></queries>
+    <application android:label="Flutter official control diagnostic runner" android:allowBackup="false" android:testOnly="true">
+        <uses-library android:name="android.test.runner" android:required="true" />
+        <uses-library android:name="android.test.base" android:required="true" />
+        <uses-library android:name="android.test.mock" android:required="true" />
+    </application>
+    <instrumentation android:name="android.test.InstrumentationTestRunner"
+        android:targetPackage="dev.aerove.diagnostic.flutter_onscreen_control"
+        android:functionalTest="false" android:handleProfiling="false" />
+</manifest>
