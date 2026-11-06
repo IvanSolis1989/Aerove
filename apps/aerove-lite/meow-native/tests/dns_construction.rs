@@ -66,13 +66,16 @@ impl Server {
 async fn answer(resolver:&meow_dns::Resolver,name:&str){assert_eq!(tokio::time::timeout(Duration::from_secs(5),resolver.lookup_ipv4(name)).await.unwrap(),Some("192.0.2.42".parse().unwrap()));}
 
 async fn answer6(resolver:&meow_dns::Resolver,name:&str,expected:Option<&str>){
-    assert_eq!(tokio::time::timeout(Duration::from_secs(5),resolver.lookup_ipv6(name)).await.unwrap(),expected.map(|ip|ip.parse().unwrap()));
+    answer6_with_wire(resolver,name,expected,expected).await;
+}
+async fn answer6_with_wire(resolver:&meow_dns::Resolver,name:&str,lookup:Option<&str>,wire:Option<&str>){
+    assert_eq!(tokio::time::timeout(Duration::from_secs(5),resolver.lookup_ipv6(name)).await.unwrap(),lookup.map(|ip|ip.parse().unwrap()));
     let mut query=Message::new(23,MessageType::Query,OpCode::Query);
     query.add_query(Query::query(name.parse().unwrap(),RecordType::AAAA));
     let bytes=tokio::time::timeout(Duration::from_secs(5),meow_dns::DnsServer::handle_query(&query.to_bytes().unwrap(),resolver)).await.unwrap().unwrap();
     let reply=Message::from_bytes(&bytes).unwrap();assert_eq!(reply.metadata.response_code,ResponseCode::NoError);
-    assert_eq!(reply.answers.len(),usize::from(expected.is_some()));
-    if let Some(ip)=expected {assert_eq!(reply.answers[0].data,RData::AAAA(AAAA(ip.parse().unwrap())));}
+    assert_eq!(reply.answers.len(),usize::from(wire.is_some()));
+    if let Some(ip)=wire {assert_eq!(reply.answers[0].data,RData::AAAA(AAAA(ip.parse().unwrap())));}
 }
 fn enabled_yaml(address:SocketAddr,root:Option<bool>,dns:Option<bool>,fake:bool)->String {
     let root=root.map(|value|format!("ipv6: {value}\n")).unwrap_or_default();
@@ -95,11 +98,16 @@ async fn enabled_main_and_proxy_use_mihomo_root_and_dns_ipv6_semantics_before_ho
             resolver.preload_cache("cached6.example",&["2001:db8::7".parse().unwrap()],Duration::from_secs(60));
             let before=server.aaaa.load(Ordering::SeqCst);
             answer6(resolver,"wire6.example",if allows {Some("2001:db8::42")} else {None}).await;
-            answer6(resolver,"pinned6.example",if allows {Some("2001:db8::9")} else {None}).await;
+            answer6_with_wire(resolver,"pinned6.example",if allows {Some("2001:db8::9")} else {None},Some("2001:db8::9")).await;
             answer6(resolver,"cached6.example",if allows {Some("2001:db8::7")} else {None}).await;
             assert_eq!(server.aaaa.load(Ordering::SeqCst)-before,usize::from(allows));
             answer(resolver,"wire4.example").await;
         }
+    }
+    let without_hosts=enabled_yaml(server.address,Some(true),Some(false),false).replace(" use-system-hosts:"," use-hosts: false\n use-system-hosts:");
+    let config=meow_config::load_config_from_str_owned(&without_hosts,&scope).await.unwrap();
+    for resolver in [&config.dns.resolver,config.dns.proxy_resolver.as_ref().unwrap()] {
+        answer6(resolver,"pinned6.example",None).await;
     }
     dns.close().await;scope.close().await.unwrap();server.close().await;
 }

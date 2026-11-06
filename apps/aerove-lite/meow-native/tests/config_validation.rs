@@ -67,7 +67,7 @@ fn source_admission_honors_an_already_cancelled_owner() {
 async fn source_plugin_material_references_are_not_opened_and_runtime_still_rejects_bad_material() {
     let material = Fixture::new(b"controlled invalid certificate/key material");
     for (plugin, options) in [
-        ("gost-plugin", "mode: websocket, mux: false"),
+        ("gost-plugin", "mode: websocket, mux: false, tls: true"),
         ("shadow-tls", "host: cover.example.test, version: 3, password: secret"),
     ] {
         for path in [material.0.clone(), material.0.with_extension("missing-source-material")] {
@@ -85,14 +85,15 @@ async fn source_plugin_material_references_are_not_opened_and_runtime_still_reje
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 #[tokio::test]
-async fn source_admission_uses_owned_read_join_and_does_not_admit_unprepared_runtime() {
+async fn source_admission_uses_owned_read_join_and_prepared_geo_remains_strict() {
     use aerove_meow_core::resource_fetch::OfflineResourceOwner;
     let roots = preflight_roots::Roots::new();
-    let source = format!("proxy-providers: {{remote: {{type: file, path: {:?}}}}}\nproxy-groups: [{{name: PICK, type: select, use: [remote]}}]\nrules: ['MATCH,PICK']\n", roots.read.join("missing-nodes.yaml").to_str().unwrap());
+    let source = format!("proxy-providers: {{remote: {{type: file, path: {:?}}}}}\nproxy-groups: [{{name: PICK, type: select, use: [remote]}}]\nrules: ['GEOSITE,cn,PICK','MATCH,PICK']\n", roots.read.join("missing-nodes.yaml").to_str().unwrap());
     let owner = OfflineResourceOwner::new();
     let captured = source.to_owned();
     owner.read(move |cancel| validation::validate_source_config(&captured, cancel)).await.unwrap();
-    assert!(owner.validate_prepared(source, roots.read.to_str().unwrap().into(), roots.cache.to_str().unwrap().into()).await.unwrap().is_err());
+    let error = owner.validate_prepared(source, roots.read.to_str().unwrap().into(), roots.cache.to_str().unwrap().into()).await.unwrap().unwrap_err();
+    assert!(error.contains("$.geodata.geosite-path"), "{error}");
     owner.cancel();
     owner.close_and_join().await.unwrap();
     assert!(owner.read(|_| Ok(())).await.is_err());

@@ -57,10 +57,12 @@ class NativeSourceAdmissionTest {
                 val runtime = """
                     proxy-providers: {remote: {type: file, path: '${File(bundle, "missing-nodes.yaml").path}'}}
                     proxy-groups: [{name: PICK, type: select, use: [remote]}]
-                    rules: ['MATCH,PICK']
+                    rules: ['GEOSITE,cn,PICK', 'MATCH,PICK']
                 """.trimIndent()
                 assertNull(JniResourceFetch.offlineRead { MeowNativeCore.validateSource(it, runtime) })
-                assertNotNull(JniResourceFetch.preparedValidator(context).validate(runtime, bundle))
+                val diagnostic = JniResourceFetch.preparedValidator(context).validate(runtime, bundle)
+                assertNotNull(diagnostic)
+                assertTrue(diagnostic!!.contains("$.geodata.geosite-path"))
             } finally {
                 assertTrue(bundle.deleteRecursively())
             }
