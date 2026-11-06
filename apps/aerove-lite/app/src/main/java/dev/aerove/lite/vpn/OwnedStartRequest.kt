@@ -17,6 +17,7 @@ class OwnedStartRequest internal constructor(internal val registry: OwnedStartRe
     internal val id: String = UUID.randomUUID().toString()
     internal var sent = false
     internal var admitted = false
+    internal var providerSourcePermit: dev.aerove.lite.flutter.ProviderSourcePermit? = null
     @Volatile internal var cancelling = false
     internal var onCancel: (() -> Unit)? = null
     private val acknowledgement = CompletableDeferred<OwnedStartCancellation>()

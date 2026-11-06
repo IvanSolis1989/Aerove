@@ -208,19 +208,22 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m85(label) => "${label}은(는) 하나만 입력해야 합니다";
 
-  static String m86(speed) => "다운로드 속도: ${speed}";
+  static String m86(protocols, removed, adjustments) =>
+      "이 코어가 지원하지 않는 노드 ${removed}개(${protocols})를 제외했습니다. ${adjustments}";
 
-  static String m87(value) => "합계 ${value}";
+  static String m87(speed) => "다운로드 속도: ${speed}";
 
-  static String m88(speed) => "업로드 속도: ${speed}";
+  static String m88(value) => "합계 ${value}";
 
-  static String m89(transport) => "${transport} 요청 헤더";
+  static String m89(speed) => "업로드 속도: ${speed}";
 
-  static String m90(label) => "${label}은(는) URL이어야 합니다";
+  static String m90(transport) => "${transport} 요청 헤더";
 
-  static String m91(count) => "${Intl.plural(count, other: '${count}년 전')}";
+  static String m91(label) => "${label}은(는) URL이어야 합니다";
 
   static String m92(count) => "${Intl.plural(count, other: '${count}년 전')}";
+
+  static String m93(count) => "${Intl.plural(count, other: '${count}년 전')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1585,6 +1588,10 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("스타일"),
     "submit": MessageLookupByLibrary.simpleMessage("제출"),
+    "subscriptionCompatibilitySummary": m86,
+    "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
+      "현재 코어가 지원하는 lwIP TUN 스택을 적용했습니다.",
+    ),
     "subscriptionInfo": MessageLookupByLibrary.simpleMessage("구독 정보"),
     "sudoPasswordTitle": MessageLookupByLibrary.simpleMessage(
       "sudo 비밀번호를 입력하세요",
@@ -1626,12 +1633,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("업로드량"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("TProxy 포트"),
     "traffic": MessageLookupByLibrary.simpleMessage("트래픽"),
-    "trafficDownloadSpeed": m86,
-    "trafficTotal": m87,
-    "trafficUploadSpeed": m88,
+    "trafficDownloadSpeed": m87,
+    "trafficTotal": m88,
+    "trafficUploadSpeed": m89,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("트래픽 사용량"),
     "transport": MessageLookupByLibrary.simpleMessage("전송"),
-    "transportHeaders": m89,
+    "transportHeaders": m90,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "TUN 권한을 얻지 못해 끄기로 되돌렸습니다.",
@@ -1672,7 +1679,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("업로드"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("업로드 대역폭"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m90,
+    "urlTip": m91,
     "useHosts": MessageLookupByLibrary.simpleMessage("hosts 사용"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("시스템 hosts 사용"),
     "usedShort": MessageLookupByLibrary.simpleMessage("사용"),
@@ -1695,8 +1702,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "시스템에 기록하면 시스템 시계도 설정합니다. Android에서는 무시됩니다.",
     ),
-    "yearsAgo": m91,
-    "yearsAgoShort": m92,
+    "yearsAgo": m92,
+    "yearsAgoShort": m93,
     "yes": MessageLookupByLibrary.simpleMessage("예"),
     "zhCN": MessageLookupByLibrary.simpleMessage("중국어 간체"),
   };

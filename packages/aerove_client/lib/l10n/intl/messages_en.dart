@@ -232,20 +232,23 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m85(label) => "${label} must be a single item";
 
-  static String m86(speed) => "Download speed: ${speed}";
+  static String m86(protocols, removed, adjustments) =>
+      "Skipped ${removed} nodes not supported by this core (${protocols}). ${adjustments}";
 
-  static String m87(value) => "Total ${value}";
+  static String m87(speed) => "Download speed: ${speed}";
 
-  static String m88(speed) => "Upload speed: ${speed}";
+  static String m88(value) => "Total ${value}";
 
-  static String m89(transport) => "${transport} Headers";
+  static String m89(speed) => "Upload speed: ${speed}";
 
-  static String m90(label) => "${label} must be a URL";
+  static String m90(transport) => "${transport} Headers";
 
-  static String m91(count) =>
+  static String m91(label) => "${label} must be a URL";
+
+  static String m92(count) =>
       "${Intl.plural(count, one: '1 year ago', other: '${count} years ago')}";
 
-  static String m92(count) => "${Intl.plural(count, other: '${count}y ago')}";
+  static String m93(count) => "${Intl.plural(count, other: '${count}y ago')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1879,6 +1882,10 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("Style"),
     "submit": MessageLookupByLibrary.simpleMessage("Submit"),
+    "subscriptionCompatibilitySummary": m86,
+    "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
+      "Applied the current core\'s supported lwIP TUN stack.",
+    ),
     "subscriptionInfo": MessageLookupByLibrary.simpleMessage(
       "Subscription info",
     ),
@@ -1924,12 +1931,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("Uploaded"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("TProxy port"),
     "traffic": MessageLookupByLibrary.simpleMessage("Traffic"),
-    "trafficDownloadSpeed": m86,
-    "trafficTotal": m87,
-    "trafficUploadSpeed": m88,
+    "trafficDownloadSpeed": m87,
+    "trafficTotal": m88,
+    "trafficUploadSpeed": m89,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Traffic usage"),
     "transport": MessageLookupByLibrary.simpleMessage("Transport"),
-    "transportHeaders": m89,
+    "transportHeaders": m90,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "TUN could not be authorized, so it was turned off.",
@@ -1972,7 +1979,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Upload"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("Upload bandwidth"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m90,
+    "urlTip": m91,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "usedShort": MessageLookupByLibrary.simpleMessage("used"),
@@ -1997,8 +2004,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "Write to system also sets the system clock; Android ignores it.",
     ),
-    "yearsAgo": m91,
-    "yearsAgoShort": m92,
+    "yearsAgo": m92,
+    "yearsAgoShort": m93,
     "yes": MessageLookupByLibrary.simpleMessage("Yes"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Simplified Chinese"),
   };

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/file_provider_source.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/database/database.dart' as db;
@@ -117,6 +118,27 @@ void main() {
   );
 
   group('StoreAction.handleClear', () {
+    test(
+      'explicit full reset removes controlled file sources and their markers',
+      () async {
+        final relative = fileProviderSourcePath(3, 'rule-providers', 'fixture');
+        final source =
+            File(BackupEntries.resolve(await appPath.homeDirPath, relative))
+              ..createSync(recursive: true)
+              ..writeAsStringSync('user source');
+        registerFileProviderSource(
+          homeDirPath: await appPath.homeDirPath,
+          profileId: 3,
+          section: 'rule-providers',
+          name: 'fixture',
+          sourcePath: source.path,
+        );
+        final marker = File('${source.path}.source.json');
+        await buildContainer().read(storeActionProvider.notifier).handleClear();
+        expect(source.existsSync(), false);
+        expect(marker.existsSync(), false);
+      },
+    );
     test('clears the core effect of every profile still in state', () async {
       final container = buildContainer(profiles: [profile(1), profile(2)]);
 

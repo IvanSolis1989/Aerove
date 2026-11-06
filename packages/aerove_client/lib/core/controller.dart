@@ -1,6 +1,8 @@
 import 'package:fl_clash/product.dart';
+import 'package:fl_clash/common/subscription_compatibility.dart';
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:fl_clash/common/common.dart';
@@ -9,7 +11,8 @@ import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/core/spill.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show visibleForTesting, ValueListenable;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 
@@ -118,6 +121,7 @@ class CoreController {
   Future<String> validateProfile(
     String path, [
     String ageSecretKey = '',
+    void Function(SubscriptionCompatibilityReport)? onCompatibility,
   ]) async {
     final file = File(path);
     if (await file.isAgeEncrypted) {
@@ -128,7 +132,37 @@ class CoreController {
         await _interface.decryptConfig(path, ageSecretKey),
       );
     }
-    final message = await validateConfig(path);
+    Future<String> validateSource() async {
+      if (ClientProduct.current.expectedCoreId != 'meow-rs')
+        return validateConfig(path);
+      if (await file.length() > 4 * 1024 * 1024) return validateConfig(path);
+      final projection = await projectSubscriptionYamlTask(
+        await file.readAsString(),
+        coreId: 'meow-rs',
+      );
+      final candidate = File(await appPath.tempFilePath);
+      try {
+        await candidate.safeWriteAsString(
+          await encodeYamlTask(projection.config),
+        );
+        final message = await validateConfig(candidate.path);
+        if (message.isEmpty) onCompatibility?.call(projection.report);
+        return message;
+      } finally {
+        await candidate.safeDelete();
+      }
+    }
+
+    final String message;
+    try {
+      message = await validateSource();
+    } on SubscriptionSourceFormatException {
+      final proxies = await _interface.convertProxies(path);
+      if (proxies.isEmpty) rethrow;
+      await file.safeWriteAsString(await encodeYamlTask({'proxies': proxies}));
+      return validateSource();
+    }
+    if (ClientProduct.current.expectedCoreId == 'meow-rs') return message;
     if (message.isEmpty) {
       return message;
     }
@@ -142,7 +176,7 @@ class CoreController {
       return message;
     }
     await file.safeWriteAsString(await encodeYamlTask({'proxies': proxies}));
-    return validateConfig(path);
+    return validateSource();
   }
 
   Future<List<String>> validateProxies(List<Map<String, dynamic>> proxies) {
@@ -206,18 +240,94 @@ class CoreController {
   Future<String> setupConfig({
     required SetupParams params,
     Future<void> Function()? preloadInvoke,
+    ValueListenable<bool>? cancellation,
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
   }) async {
-    if (preloadInvoke == null) {
-      return _interface.setupConfig(params);
+    Future<String> invoke() async {
+      if (cancellation == null) return _interface.setupConfig(params);
+      final owner = _interface;
+      if (owner is! CancellableCoreRequest)
+        throw StateError('Core does not support cancellable setup requests');
+      final result = await (owner as CancellableCoreRequest)
+          .invokeCancellableMethod<String>(
+            method: CoreMethod.setupConfig,
+            arguments: params.toJson(),
+            cancellation: cancellation,
+            observeQuiescence: observeQuiescence,
+          );
+      if (result == null)
+        throw const CoreMethodException(
+          code: 'no_response',
+          message: 'Core did not answer setupConfig',
+        );
+      return result;
     }
-    final (result, _) = await (
-      _interface.setupConfig(params),
-      preloadInvoke(),
-    ).wait;
+
+    if (preloadInvoke == null) {
+      return invoke();
+    }
+    final (result, _) = await (invoke(), preloadInvoke()).wait;
     return result;
   }
 
   Future<AppliedSetup?> getAppliedSetup() => _interface.getAppliedSetup();
+
+  Future<({SetupRecord applied, String revision})>
+  readMeowProviderApplied() async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs') {
+      throw StateError('Meow provider context is unavailable for this core');
+    }
+    final raw = await _interface.invokeMethod<Map<String, dynamic>>(
+      method: CoreMethod.getAppliedSetup,
+    );
+    final revision = raw?['revision'];
+    final applied = raw?['applied'];
+    if (revision is! String || revision.isEmpty || applied is! Map) {
+      throw const CoreMethodException(
+        code: 'not_running',
+        message: 'No actual applied provider runtime is available',
+      );
+    }
+    return (
+      applied: SetupRecord.fromJson(Map<String, dynamic>.from(applied)),
+      revision: revision,
+    );
+  }
+
+  Future<Map<String, dynamic>> invokeMeowProviderSource(
+    Map<String, dynamic> request, {
+    ValueListenable<bool>? cancellation,
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
+  }) async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs')
+      throw StateError('Provider source transactions require Meow');
+    Map? reply;
+    if (cancellation == null) {
+      reply = await _interface.invokeMethod<Map>(
+        method: CoreMethod.updateExternalProvider,
+        arguments: request,
+      );
+    } else {
+      final owner = _interface;
+      if (owner is! CancellableCoreRequest)
+        throw StateError(
+          'Core does not support cancellable provider source requests',
+        );
+      reply = await (owner as CancellableCoreRequest)
+          .invokeCancellableMethod<Map>(
+            method: CoreMethod.updateExternalProvider,
+            arguments: request,
+            cancellation: cancellation,
+            observeQuiescence: observeQuiescence,
+          );
+    }
+    if (reply == null)
+      throw const CoreMethodException(
+        code: 'no_response',
+        message: 'Core did not answer the provider source transaction',
+      );
+    return Map<String, dynamic>.from(reply);
+  }
 
   Future<bool> refreshAppliedSetup(SetupParams params) =>
       _interface.refreshAppliedSetup(params);
@@ -408,7 +518,11 @@ class CoreController {
   /// The profile as the JSON text a script reads.
   Future<String> getConfigJson(int id) async {
     final path = await appPath.getProfilePath(id.toString());
-    return readSpilledText(await _interface.getConfig(path));
+    final text = await readSpilledText(await _interface.getConfig(path));
+    if (ClientProduct.current.expectedCoreId != 'meow-rs') return text;
+    return jsonEncode(
+      (await projectSubscriptionYamlTask(text, coreId: 'meow-rs')).config,
+    );
   }
 
   Future<Map<String, dynamic>> getProfileOutbounds(int id) async {

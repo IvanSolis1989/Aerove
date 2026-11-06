@@ -204,19 +204,22 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m85(label) => "${label}只能是一项";
 
-  static String m86(speed) => "下载速度：${speed}";
+  static String m86(protocols, removed, adjustments) =>
+      "已跳过当前内核不支持的 ${removed} 个节点（${protocols}）。${adjustments}";
 
-  static String m87(value) => "累计 ${value}";
+  static String m87(speed) => "下载速度：${speed}";
 
-  static String m88(speed) => "上传速度：${speed}";
+  static String m88(value) => "累计 ${value}";
 
-  static String m89(transport) => "${transport} 请求头";
+  static String m89(speed) => "上传速度：${speed}";
 
-  static String m90(label) => "${label}必须为URL";
+  static String m90(transport) => "${transport} 请求头";
 
-  static String m91(count) => "${count} 年前";
+  static String m91(label) => "${label}必须为URL";
 
   static String m92(count) => "${count} 年前";
+
+  static String m93(count) => "${count} 年前";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1465,6 +1468,10 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("风格"),
     "submit": MessageLookupByLibrary.simpleMessage("提交"),
+    "subscriptionCompatibilitySummary": m86,
+    "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
+      "已使用当前内核支持的 lwIP 网络栈。",
+    ),
     "subscriptionInfo": MessageLookupByLibrary.simpleMessage("订阅信息"),
     "sudoPasswordTitle": MessageLookupByLibrary.simpleMessage("输入 sudo 密码"),
     "suspended": MessageLookupByLibrary.simpleMessage("挂起中…"),
@@ -1502,12 +1509,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("上传总量"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Tproxy端口"),
     "traffic": MessageLookupByLibrary.simpleMessage("流量"),
-    "trafficDownloadSpeed": m86,
-    "trafficTotal": m87,
-    "trafficUploadSpeed": m88,
+    "trafficDownloadSpeed": m87,
+    "trafficTotal": m88,
+    "trafficUploadSpeed": m89,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("流量统计"),
     "transport": MessageLookupByLibrary.simpleMessage("传输协议"),
-    "transportHeaders": m89,
+    "transportHeaders": m90,
     "tun": MessageLookupByLibrary.simpleMessage("虚拟网卡"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "虚拟网卡授权失败，已关闭。",
@@ -1546,7 +1553,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("上传"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("上行带宽"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m90,
+    "urlTip": m91,
     "useHosts": MessageLookupByLibrary.simpleMessage("使用Hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("使用系统Hosts"),
     "usedShort": MessageLookupByLibrary.simpleMessage("已用"),
@@ -1569,8 +1576,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "写入系统会同时设置系统时钟，Android 上不生效。",
     ),
-    "yearsAgo": m91,
-    "yearsAgoShort": m92,
+    "yearsAgo": m92,
+    "yearsAgoShort": m93,
     "yes": MessageLookupByLibrary.simpleMessage("是"),
     "zhCN": MessageLookupByLibrary.simpleMessage("中文简体"),
   };

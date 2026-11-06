@@ -3,12 +3,180 @@ package dev.aerove.lite.flutter
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 
 class RuntimeHandoffStoreTest {
+    @Test fun trustedPrivateRootAliasRelocatesResourcesAndKeepsTheStoreAfterTheRuntimeCloses() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("runtime-trusted-alias").toRealPath().toFile()
+        val alias = File(root, "system-root-alias").toPath()
+        Files.createSymbolicLink(alias, root.toPath())
+        try {
+            val source = File(root, "rules.yaml").apply { writeText("payload: [example.com]\n") }
+            val row = RuntimeHandoffResource("assets/rules.yaml", source.path, runtimeSha256(source.readBytes()))
+            val store = RuntimeHandoffStore(root)
+            val snapshot = store.commit(handoff(resources = listOf(row)), 0, null)
+            val lease = dev.aerove.lite.data.FlutterRuntimeResources.create(alias.toFile(), snapshot) { true }
+            assertTrue(lease.readRoot.toPath().startsWith(File(root, "runtime/meow-read").toPath()))
+            assertEquals(source.readText(), File(lease.readRoot, row.relativePath).readText())
+            lease.closeAfterNativeJoin()
+            assertFalse(lease.readRoot.exists())
+            assertEquals(snapshot.revision, store.readCurrent()!!.revision)
+            assertEquals(source.readText(), File(snapshot.resourceDirectory, row.relativePath).readText())
+        } finally { Files.deleteIfExists(alias) }
+    }
+
+    @Test fun trustedPrivateRootAliasStillRejectsARedirectedRuntimeParent() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("runtime-alias-redirect").toRealPath().toFile()
+        val alias = File(root, "system-root-alias").toPath()
+        val external = Files.createTempDirectory("runtime-alias-outside").toRealPath()
+        val parent = File(root, "runtime/meow-read").apply { parentFile.mkdirs() }.toPath()
+        Files.createSymbolicLink(alias, root.toPath())
+        Files.createSymbolicLink(parent, external)
+        try {
+            val store = RuntimeHandoffStore(root)
+            val snapshot = store.commit(handoff(), 0, null)
+            val failure = runCatching { dev.aerove.lite.data.FlutterRuntimeResources.create(alias.toFile(), snapshot) { true } }.exceptionOrNull()
+            assertTrue(failure is IllegalArgumentException)
+            assertEquals("Redirected runtime resource parent", failure?.message)
+            assertTrue(external.toFile().listFiles().orEmpty().isEmpty())
+            assertEquals(snapshot.revision, store.readCurrent()!!.revision)
+        } finally {
+            Files.deleteIfExists(parent)
+            Files.deleteIfExists(alias)
+        }
+    }
+
+    @Test fun sourcePermitIsNotBorrowedByAnIndependentOrdinaryStartAndRollbackIsBoundToOneSnapshotAndEpoch() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("provider-source-permit").toFile(); val store = RuntimeHandoffStore(root)
+        val business = JSONObject().put("source", "same")
+        fun projection(marker: JSONObject? = null): RuntimeHandoff {
+            val base = handoff(); val metadata = JSONObject(base.runtimeSettingsJson).put("flutterSetup", JSONObject().put("data-source-proof", business))
+            marker?.let { metadata.put("providerSourceTransaction", it) }
+            return RuntimeHandoff(base.coreSha, base.sourceId, base.sourceRevision, base.sourceSha256, base.compiledYaml, base.compiledSha256,
+                base.setupRecordJson, metadata.toString(), base.vpnOptionsJson, base.notificationJson, base.resources)
+        }
+        suspend fun begin(): Pair<String, JSONObject> {
+            val expected = store.readAppliedIdentity()!!; val id = java.util.UUID.randomUUID().toString()
+            val plan = JSONObject().put("ownerSha256", "a".repeat(64)).put("namespace", "proxy-providers").put("name", "feed")
+                .put("expectedRevision", expected.revision).put("expected", JSONObject(expected.expectedSetupRecordJson)).put("sourcePlanSha256", "b".repeat(64))
+            store.beginProviderSourceTransaction(id, plan, JSONObject().put("relativePath", "provider-source-transactions/$id/source-journal.json").put("sha256", "c".repeat(64)), expected)
+            return id to plan
+        }
+        val initial = store.commit(projection(), 0, null)
+        store.requestStart(initial.revision, initial.intentEpoch)
+        store.commitApplied(initial.revision, initial.intentEpoch, RuntimeAppliedProof(1, 1, "1"))
+        val (id, plan) = begin(); val permit = store.providerSourceApplyPermit(id, nativeLiteJsonHash(plan))
+        assertTrue(store.providerSourceLeaseAllows(initial, null))
+        assertFalse(store.providerSourceAllowsAdmission(initial))
+        val admitted = CompletableDeferred<MeowRuntimeSnapshot>(); val release = CompletableDeferred<Unit>()
+        val source = async {
+            val marker = JSONObject().put("transactionId", id).put("planSha256", nativeLiteJsonHash(plan)).put("afterStateSha256", nativeLiteJsonHash(business))
+            val candidate = store.commitForSetup(projection(marker), initial.intentEpoch, initial.revision, { true }, {}, permit)
+            admitted.complete(candidate); release.await()
+            assertSame(permit, store.admit(candidate.revision, candidate.intentEpoch, candidate.sourcePermit).sourcePermit)
+            store.commitApplied(candidate.revision, candidate.intentEpoch, RuntimeAppliedProof(2, 2, "2"))
+        }
+        val candidate = withTimeout(5000) { admitted.await() }
+        try {
+            val ordinary = async {
+                val epoch = store.currentEpoch()
+                rejects { store.beginStart(candidate.revision, candidate.intentEpoch) }
+                rejects { store.requestStart(candidate.revision, candidate.intentEpoch) }
+                rejects { store.admit(candidate.revision, candidate.intentEpoch) }
+                rejects { store.restoreLastApplied(candidate.intentEpoch) }
+                assertEquals(epoch, store.currentEpoch())
+                assertNull(store.readCurrent()!!.sourcePermit); assertNull(store.peekCurrent()!!.sourcePermit)
+                val independentStore = RuntimeHandoffStore(root)
+                assertFalse(independentStore.providerSourceAllowsAdmission(independentStore.readCurrent()!!, permit))
+                val copied = dev.aerove.lite.vpn.VpnPlan(candidate.profileId, dev.aerove.lite.LiteSettings()).withProviderSourcePermit(permit)
+                assertNull(copied.copy(runtimeSessionGeneration = 17).providerSourcePermit)
+            }
+            withTimeout(5000) { ordinary.await() }
+        } finally { release.complete(Unit); withTimeout(5000) { source.await() } }
+        rejects { store.admit(candidate.revision, candidate.intentEpoch, permit) }
+        assertNull(store.admit(candidate.revision, candidate.intentEpoch).sourcePermit)
+        store.finalizeProviderSourceTransaction(id, nativeLiteJsonHash(plan))
+        val normal = store.beginStart(candidate.revision, candidate.intentEpoch)
+        assertNull(normal.sourcePermit)
+        store.commitApplied(normal.revision, normal.intentEpoch, RuntimeAppliedProof(3, 3, "3"))
+        val (rollbackId, rollbackPlan) = begin()
+        val wrongPhase = store.providerSourceApplyPermit(rollbackId, nativeLiteJsonHash(rollbackPlan))
+        store.failProviderSourceTransaction(rollbackId, quiesced = true)
+        val rollback = store.stageProviderSourceRollback(rollbackId, business)
+        val rollbackPermit = checkNotNull(rollback.sourcePermit)
+        val wrong = MeowRuntimeSnapshot(java.util.UUID.randomUUID().toString(), rollback.intentEpoch, true, rollback.handoff, rollback.resourceDirectory)
+        assertFalse(store.providerSourceAllowsAdmission(wrong, rollbackPermit))
+        assertFalse(store.providerSourceAllowsAdmission(rollback, wrongPhase))
+        assertFalse(store.providerSourceAllowsAdmission(rollback, permit))
+        rejects { store.admit(rollback.revision, rollback.intentEpoch, permit) }
+        rejects { store.beginStart(rollback.revision, rollback.intentEpoch) }
+        assertEquals(rollback.intentEpoch, store.currentEpoch())
+        val restarted = store.beginStart(rollback.revision, rollback.intentEpoch, rollbackPermit)
+        assertFalse(store.providerSourceAllowsAdmission(rollback, rollbackPermit))
+        rejects { store.admit(restarted.revision, restarted.intentEpoch, rollbackPermit) }
+        assertNotSame(rollbackPermit, restarted.sourcePermit)
+        assertSame(restarted.sourcePermit, store.admit(restarted.revision, restarted.intentEpoch, restarted.sourcePermit).sourcePermit)
+    }
+
+    @Test fun providerSourceDecisionSurvivesReloadAndStopPreventsALateCandidateCommit() = runBlocking<Unit> {
+        val root = Files.createTempDirectory("provider-source-decision").toFile()
+        fun projection(proof: JSONObject, marker: JSONObject? = null): RuntimeHandoff {
+            val base = handoff()
+            val metadata = JSONObject(base.runtimeSettingsJson).put("flutterSetup", JSONObject().put("data-source-proof", proof))
+            marker?.let { metadata.put("providerSourceTransaction", it) }
+            return RuntimeHandoff(base.coreSha, base.sourceId, base.sourceRevision, base.sourceSha256, base.compiledYaml, base.compiledSha256,
+                base.setupRecordJson, metadata.toString(), base.vpnOptionsJson, base.notificationJson, base.resources)
+        }
+        fun plan(expected: RuntimeAppliedIdentity) = JSONObject().put("ownerSha256", "a".repeat(64)).put("namespace", "proxy-providers")
+            .put("name", "feed").put("expectedRevision", expected.revision).put("expected", JSONObject(expected.expectedSetupRecordJson)).put("sourcePlanSha256", "b".repeat(64))
+        val oldProof = JSONObject().put("source", "old")
+        val nextProof = JSONObject().put("source", "new")
+        val store = RuntimeHandoffStore(root)
+        val old = store.commit(projection(oldProof), 0, null)
+        store.commitGraphApplied(old.revision, old.intentEpoch, RuntimeAppliedProof(1, 1, "1"), old.handoff)
+        val id = java.util.UUID.randomUUID().toString(); val initialIdentity = store.readAppliedIdentity()!!
+        val sourcePlan = plan(initialIdentity)
+        val journal = JSONObject().put("relativePath", "provider-source-transactions/$id/source-journal.json").put("sha256", "c".repeat(64))
+        val pending = store.beginProviderSourceTransaction(id, sourcePlan, journal, initialIdentity)
+        assertEquals("PREPARED", pending.getString("state")); assertTrue(old.resourceDirectory.isDirectory)
+        rejects { store.commit(projection(nextProof), old.intentEpoch, old.revision) }
+        val marker = JSONObject().put("transactionId", id).put("planSha256", nativeLiteJsonHash(sourcePlan)).put("afterStateSha256", nativeLiteJsonHash(nextProof))
+        val permit = store.providerSourceApplyPermit(id, nativeLiteJsonHash(sourcePlan))
+        val candidate = store.commitForSetup(projection(nextProof, marker), old.intentEpoch, old.revision, { false }, {}, permit)
+        assertEquals(pending.getString("plannedRevision"), candidate.revision)
+        val beforeDecision = RuntimeHandoffStore(root)
+        assertEquals("UNDECIDED", beforeDecision.readProviderSourceTransaction(id)!!.getString("decision"))
+        assertEquals(initialIdentity, beforeDecision.readAppliedIdentity())
+        beforeDecision.commitGraphApplied(candidate.revision, candidate.intentEpoch, RuntimeAppliedProof(2, 1, "2"), candidate.handoff)
+        val afterDecision = RuntimeHandoffStore(root)
+        assertEquals("COMMITTED", afterDecision.readProviderSourceTransaction(id)!!.getString("decision"))
+        afterDecision.failProviderSourceTransaction(id)
+        assertEquals("COMMITTED", afterDecision.readProviderSourceTransaction(id)!!.getString("decision"))
+        afterDecision.finalizeProviderSourceTransaction(id, nativeLiteJsonHash(sourcePlan))
+        assertFalse(old.resourceDirectory.exists()); assertTrue(candidate.resourceDirectory.isDirectory)
+        val currentIdentity = afterDecision.readAppliedIdentity()!!
+        val stopId = java.util.UUID.randomUUID().toString(); val stopPlan = plan(currentIdentity)
+        val stopJournal = JSONObject(journal.toString()).put("relativePath", "provider-source-transactions/$stopId/source-journal.json")
+        afterDecision.beginProviderSourceTransaction(stopId, stopPlan, stopJournal, currentIdentity)
+        afterDecision.invalidate()
+        val recovering = RuntimeHandoffStore(root)
+        assertTrue(recovering.readProviderSourceTransaction(stopId)!!.getBoolean("stopObserved"))
+        recovering.failProviderSourceTransaction(stopId, quiesced = true)
+        val stopped = recovering.stageProviderSourceRollback(stopId, nextProof)
+        assertFalse(stopped.userRequested)
+        assertFalse(recovering.providerSourceAllowsAdmission(stopped, stopped.sourcePermit))
+        recovering.finishStoppedProviderSourceAbort(stopId)
+        assertEquals("ABORTED_STOPPED", recovering.readProviderSourceTransaction(stopId)!!.getString("state"))
+        assertNull(recovering.readAppliedIdentity())
+        rejects { recovering.commitGraphApplied(candidate.revision, candidate.intentEpoch, RuntimeAppliedProof(9, 9, "9"), candidate.handoff) }
+        assertEquals("ABORTED", RuntimeHandoffStore(root).readProviderSourceTransaction(stopId)!!.getString("decision"))
+    }
+
     @Test fun flutterComposerRequiresLiveOwnedReadLeaseAndRejectsTamperedResourcesOrReceipt() = runBlocking<Unit> {
         val root = Files.createTempDirectory("flutter-composer-lease").toRealPath().toFile()
         val asset = File(root, "rules.yaml").apply { writeText("payload: [example.test]\n") }

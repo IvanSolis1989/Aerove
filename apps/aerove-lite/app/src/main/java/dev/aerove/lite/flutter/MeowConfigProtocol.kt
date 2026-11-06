@@ -7,6 +7,7 @@ import dev.aerove.lite.data.MAX_PROFILE_BYTES
 import dev.aerove.lite.data.MeowProfileValidator
 import dev.aerove.lite.data.NativeConfigValidator
 import dev.aerove.lite.data.NativePreparedConfigValidator
+import dev.aerove.lite.data.NativeSourceConfigValidator
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -26,6 +27,9 @@ class MeowConfigProtocol(homeDir: File,
     private val verifiedNativeFeatures: () -> Set<String> = { MeowNativeCore.readVerifiedFeatures() },
     spillBudget: MeowSpillBudget = MeowSpillBudget(),
     private val maxInputBytes: Int = MAX_PROFILE_BYTES,
+    private val sourceValidator: NativeSourceConfigValidator = NativeSourceConfigValidator { yaml ->
+        JniResourceFetch.offlineRead { handle -> MeowNativeCore.validateSource(handle, yaml) }
+    },
 ) : AutoCloseable {
     private val spill = MeowFlutterSpill(homeDir, spillBudget)
     private val home = spill.home
@@ -53,7 +57,7 @@ class MeowConfigProtocol(homeDir: File,
         try {
             MeowProfileValidator(validator,
                 NativePreparedConfigValidator { _, _ -> error("Prepared validation requires a sealed resource handoff") },
-                home, verifiedNativeFeatures).validate(source, managed = false, bundleDirectory = null, sourceAdmission = true)
+                home, verifiedNativeFeatures, sourceNative = sourceValidator).validate(source, managed = false, bundleDirectory = null, sourceAdmission = true)
             ""
         } catch (failure: ConfigValidationException) { failure.message ?: "$: Configuration validation failed" }
     }

@@ -422,7 +422,8 @@ class LitePromotionGateTests(unittest.TestCase):
         with mock.patch.object(release.subprocess, "check_output", return_value=workflow.encode()) as git:
             self.assertEqual(release._source_acceptance_plan(root, "a" * 40), dict(kind="flutter"))
             git.assert_called_once_with(["git", "show", "a" * 40 + ":.github/workflows/aerove-lite.yaml"], cwd=root)
-        invalid = [workflow.replace("- phase: flutter-full", "- phase: flutter-platform"),
+        invalid = [workflow.replace("fixed 31 native/platform regressions", "fixed 28 native/platform regressions"),
+                   workflow.replace("- phase: flutter-full", "- phase: flutter-platform"),
                    workflow.replace("--execution-only --output", "--output"),
                    workflow.replace(release.FLUTTER_AGGREGATE_STEP, "Unverified evidence"),
                    workflow.replace("path: ${{ runner.temp }}/lite-current-acceptance/\n",

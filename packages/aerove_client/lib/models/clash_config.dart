@@ -6,6 +6,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/core.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:yaml/yaml.dart';
+import 'provider_source.dart';
 
 part 'generated/clash_config.freezed.dart';
 
@@ -1867,6 +1868,7 @@ abstract class ProfileOverrides with _$ProfileOverrides {
     @Default({}) Map<int, Map<String, dynamic>> iconBindings,
     @Default({}) Map<String, dynamic> baseConfig,
     @Default({}) Map<String, Map<String, dynamic>> nativeResourceInputs,
+    @Default({}) Map<String, LocalProviderSource> localProviderSources,
     String? nativeProfileUuid,
     @Default({}) Map<String, Map<String, dynamic>> sourceProxyProviders,
     @Default({}) Map<String, Map<String, dynamic>> sourceRuleProviders,

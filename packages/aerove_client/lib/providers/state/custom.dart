@@ -487,11 +487,7 @@ String _numberedName(String base, int index) =>
     '$base-${index.toString().padLeft(2, '0')}';
 
 String freeProxyName(String base, Set<String> taken) {
-  var name = base;
-  for (var index = 1; !taken.add(name); index++) {
-    name = _numberedName(base, index);
-  }
-  return name;
+  return claimProxyName(base, taken);
 }
 
 final _numberSuffix = RegExp(r'-\d{2,}$');

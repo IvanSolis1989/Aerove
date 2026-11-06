@@ -11,6 +11,8 @@ val productRoot = rootDir.parentFile
 val releaseKeystore = providers.environmentVariable("AEROVE_LITE_KEYSTORE_PATH")
 val releasePassword = providers.environmentVariable("AEROVE_LITE_KEYSTORE_PASSWORD")
 val selectedTests = listOf(
+    "dev/aerove/lite/NativeDnsIpv6Test.kt",
+    "dev/aerove/lite/NativeSourceAdmissionTest.kt",
     "dev/aerove/lite/backgroundpolicy/VpnUserStateDeviceTest.kt",
     "dev/aerove/lite/data/LiteYamlRuntimeTest.kt",
     "dev/aerove/lite/editor/EditorDocumentAndroidTest.kt",

@@ -1,5 +1,12 @@
 part of '../action.dart';
 
+String _meowProviderNamespace(ExternalProvider provider) =>
+    switch (provider.type) {
+      'Proxy' => 'proxy-providers',
+      'Rule' => 'rule-providers',
+      _ => throw const FormatException('provider: invalid type'),
+    };
+
 class _DelayTestTarget {
   const _DelayTestTarget({
     required this.proxyName,
@@ -359,6 +366,16 @@ class ProxiesAction extends _$ProxiesAction {
               .start(provider.updatingKey, scope: UpdatingScope.core)
         : null;
     try {
+      if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+        await ref
+            .read(setupActionProvider.notifier)
+            .updateMeowProvider(
+              namespace: _meowProviderNamespace(provider),
+              name: provider.name,
+              expectedRuntimeRevision: provider.runtimeRevision,
+            );
+        return '';
+      }
       final clashProvidersAction = ref.read(
         clashProvidersActionProvider.notifier,
       );
@@ -394,6 +411,17 @@ class ProxiesAction extends _$ProxiesAction {
               .start(provider.updatingKey, scope: UpdatingScope.core)
         : null;
     try {
+      if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+        await ref
+            .read(setupActionProvider.notifier)
+            .updateMeowProvider(
+              namespace: _meowProviderNamespace(provider),
+              name: provider.name,
+              replacementData: data,
+              expectedRuntimeRevision: provider.runtimeRevision,
+            );
+        return '';
+      }
       final message = await _core.sideLoadExternalProvider(
         providerName: provider.name,
         data: data,

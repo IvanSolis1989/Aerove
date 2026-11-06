@@ -38,7 +38,7 @@ GEO_EMPTY_CASES['lib'].extend(['empty_geo_assets_commit_host_auto_off_metadata_w
     'empty_geo_assets_reject_hidden_provider_subrule_and_dns_dependencies_before_geo_read',
     'empty_geo_assets_cancelled_prepare_joins_empty_scopes_preserving_old_graph'])
 
-CORE_JNI_SYMBOLS = _ORIGINAL19_CORE_JNI_SYMBOLS + RESOURCE_JNI_SYMBOLS
+CORE_JNI_SYMBOLS = _ORIGINAL19_CORE_JNI_SYMBOLS + ("Java_dev_aerove_lite_core_MeowNativeCore_validateSource",) + RESOURCE_JNI_SYMBOLS
 
 
 HOST_NO_FAIL_FAST_TARGETS = (
@@ -234,7 +234,7 @@ CORE_POLICY_TEST_CASES_SELECTION_STALE = CORE_POLICY_TEST_CASES_SELECTION_OWNER 
 
 GEO_EMPTY_MODE = "policy-runtime-geo-empty-v1"
 SELECTION_STALE_MODE = "policy-runtime-selection-stale-v1"
-SELECTION_STALE_OVERLAY_SHA256 = "36e4a70e59f542ee130fd4c9de572639a51d060b2bd5075aca0a1e4ab052370d"
+SELECTION_STALE_OVERLAY_SHA256 = "04818305a3d3305aa7b27b1de3249a82abe836b128f7235c9aa43f37acc96014"
 GEO_EMPTY_OVERLAY_SHA256 = "9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f"
 GEO_OWNER_MODE = "policy-runtime-geo-owned-v1"
 GEO_OWNER_OVERLAY_SHA256 = "9c9e799f482814e6b8276ef2749efb483d142f0e537ad418529dcd617c8dd655"

@@ -8,6 +8,12 @@ class StoreAction extends _$StoreAction {
   void build() {}
 
   Future<void> shakingStore() async {
+    await ref
+        .read(setupActionProvider.notifier)
+        .withProviderSourceWrite(_shakeUnownedSourceFiles);
+  }
+
+  Future<void> _shakeUnownedSourceFiles() async {
     // The lists leave out rows they cannot read, whose files must survive, and
     // the tables may not hold an optimistic write yet.
     final profileIds = {
@@ -43,6 +49,12 @@ class StoreAction extends _$StoreAction {
   }
 
   Future handleClear() async {
+    await ref
+        .read(setupActionProvider.notifier)
+        .withProviderSourceWrite(_resetAllData);
+  }
+
+  Future<void> _resetAllData() async {
     debouncer.cancel(FunctionTag.savePreferences);
     final profileIds = ref
         .read(profilesProvider)

@@ -4,9 +4,25 @@ import 'dart:convert';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 
 import 'desktop/model.dart';
 import 'method.dart';
+
+abstract interface class CancellableCoreRequest {
+  Future<T?> invokeCancellableMethod<T>({
+    required CoreMethod method,
+    Object? arguments,
+    Duration? timeout,
+    required ValueListenable<bool> cancellation,
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
+  });
+}
+
+abstract interface class CoreRequestQuiescence {
+  bool get isQuiescent;
+  Future<void> get whenQuiescent;
+}
 
 mixin CoreInterface {
   Future<CoreLifecycleResult> start();

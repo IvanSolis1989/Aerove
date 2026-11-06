@@ -1921,7 +1921,15 @@
 @@ -117 +152 @@
 -        if use_hosts && use_system_hosts {
 +        if use_hosts && use_system_hosts && !crate::owned_load::offline_validation() {
-@@ -209,0 +245,31 @@
+@@ -128 +163 @@
+-                crate::effective_ipv6(raw.ipv6),
++                crate::effective_ipv6(raw.ipv6) && dns.ipv6.unwrap_or(true),
+@@ -183 +218 @@
+-        crate::effective_ipv6(raw.ipv6),
++        crate::effective_ipv6(raw.ipv6) && dns.ipv6.unwrap_or(true),
+@@ -207,0 +243,31 @@
++}
++
 +/// Geo-only no-network construction. The Native owner has separately checked
 +/// the entire non-Geo engine; repeat the exact DNS/hosts/ipv6 source equality
 +/// here so this capability cannot silently reinterpret changed DNS endpoints.
@@ -1951,12 +1959,62 @@
 +    let proxy_resolver=prior_proxy.map(|resolver|Arc::new(resolver.owned_geo_generation(None,None)));
 +    let listen_addr=crate::parse_optional_socket_addr("dns.listen",raw.dns.as_ref().and_then(|dns|dns.listen.as_deref()))?;
 +    Ok(DnsConfig{resolver_slot:meow_dns::new_resolver_slot(resolver.clone()),resolver,listen_addr,enabled,proxy_resolver})
-+}
-+
 @@ -229 +295 @@
 -    let wanted_store_path = persist.then(|| {
 +    let wanted_store_path = (persist && !crate::owned_load::offline_validation()).then(|| {
-@@ -433,0 +500,17 @@
+@@ -374,0 +441,51 @@
++pub(crate) fn validate_source_dns(raw: &RawConfig, names: &std::collections::HashSet<smol_str::SmolStr>,
++    providers: &HashMap<&str, RuleSetBehavior>) -> Result<(), String> {
++    build_hosts_trie(raw.hosts.as_ref(), true).map_err(|error| error.to_string())?;
++    let Some(dns) = &raw.dns else { return Ok(()); };
++    crate::parse_optional_socket_addr("dns.listen", dns.listen.as_deref()).map_err(|error| error.to_string())?;
++    if let Some(mode) = dns.enhanced_mode.as_deref() {
++        if !matches!(mode, "fake-ip" | "redir-host") { return Err(format!("dns.enhanced-mode: unknown value '{mode}'")); }
++    }
++    if let Some(mode) = dns.fake_ip_filter_mode.as_deref() {
++        if !matches!(mode, "blacklist" | "whitelist") { return Err(format!("dns.fake-ip-filter-mode: unknown value '{mode}'")); }
++    }
++    if let Some(range) = dns.fake_ip_range.as_deref() {
++        range.parse::<ipnet::IpNet>().map_err(|error| format!("dns.fake-ip-range: {error}"))?;
++    }
++    let check_servers = |servers: &[String]| -> Result<(), String> {
++        for server in parse_nameserver_entries(servers).map_err(|error| error.to_string())? {
++            if let Some(target) = server.proxy {
++                if !names.contains(target.as_str()) { return Err(format!("dns nameserver: unknown outbound '{target}'")); }
++            }
++        }
++        Ok(())
++    };
++    for servers in [&dns.nameserver, &dns.fallback, &dns.default_nameserver, &dns.proxy_server_nameserver] {
++        check_servers(servers.as_deref().unwrap_or(&[]))?;
++    }
++    if let Some(policy) = &dns.nameserver_policy {
++        for (key, value) in policy {
++            let urls: Vec<String> = value.as_urls().into_iter().map(str::to_owned).collect();
++            check_servers(&urls)?;
++            for expanded in expand_policy_keys(key) {
++                let lower = expanded.to_ascii_lowercase();
++                if lower.starts_with("rule-set:") {
++                    let name = expanded["rule-set:".len()..].trim();
++                    let behavior = providers.get(name).ok_or_else(|| format!("nameserver-policy: unknown rule-provider '{name}'"))?;
++                    if *behavior == RuleSetBehavior::IpCidr { return Err(format!("nameserver-policy: rule-set '{name}' must have domain/classical behavior")); }
++                } else if let Some(category) = lower.strip_prefix("geosite:") {
++                    if category.trim().is_empty() { return Err("nameserver-policy: empty geosite category".into()); }
++                } else if lower.contains(':') {
++                    return Err(format!("nameserver-policy: unsupported prefixed key '{expanded}'"));
++                }
++            }
++        }
++    }
++    if let Some(filter) = &dns.fallback_filter {
++        for cidr in filter.ipcidr.iter().flatten() {
++            cidr.parse::<ipnet::IpNet>().map_err(|error| format!("dns.fallback-filter.ipcidr: {error}"))?;
++        }
++    }
++    Ok(())
++}
++
+@@ -433,0 +551,17 @@
 +) -> Result<NameserverPolicy, anyhow::Error> {
 +    build_nameserver_policy_with_retained(map,geosite,bootstrap_clients,proxy_registry,rule_providers,strict,None).await
 +}
@@ -1974,13 +2032,13 @@
 +    // stay lenient: those are transient, not config defects.
 +    strict: bool,
 +    retained:Option<&NameserverPolicy>,
-@@ -558 +641,2 @@
+@@ -558 +692,2 @@
 -            build_policy_resolvers(key, value, bootstrap_clients, proxy_registry, strict).await?;
 +            match retained {Some(retained)=>retained.source_entry(key).ok_or_else(||anyhow::anyhow!("owned Geo DNS policy source was not actually constructed: {key}"))?.nameservers,
 +                None=>build_policy_resolvers(key, value, bootstrap_clients, proxy_registry, strict).await?};
-@@ -562,0 +647 @@
+@@ -562,0 +698 @@
 +        policy.retain_source_entry(key,entry.clone());
-@@ -860 +945 @@
+@@ -860 +996 @@
 -    let geoip_reader = if geoip {
 +    let geoip_reader = if geoip && !crate::owned_load::offline_validation() {
 --- a/crates/meow-config/src/ech_dns.rs
@@ -2461,14 +2519,16 @@
 +        let tls = TlsLayer::new(&config)
 --- a/crates/meow-config/src/lib.rs
 +++ b/crates/meow-config/src/lib.rs
-@@ -5,0 +6,4 @@
+@@ -5,0 +6,6 @@
 +pub mod owned_load;
++mod source_admission;
++pub use source_admission::validate_source_config;
 +mod offline_validation;
 +pub use offline_validation::{validate_offline_config, validate_offline_config_with_scope, validate_prepared_config_with_scope};
 +pub mod provider_events;
-@@ -9,0 +14 @@
+@@ -9,0 +16 @@
 +pub use meow_transport::tls::{EchQuery, EchScope, EchSource};
-@@ -32,0 +38,22 @@
+@@ -32,0 +40,22 @@
 +pub use meow_proxy::health::{probe_without_effects, probe_without_effects_detailed,
 +    ProbeMeasurement as ManagedProbeMeasurement, UrlTestError as ManagedProbeError};
 +
@@ -2491,7 +2551,7 @@
 +
 +pub use meow_rules as offline_rules;
 +pub use maxminddb as offline_maxminddb;
-@@ -47,0 +75,32 @@
+@@ -47,0 +77,32 @@
 +pub type OwnedConfigLoad<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Config, anyhow::Error>> + Send + 'a>>;
 +
 +pub fn load_config_from_str_owned<'a>(
@@ -2524,14 +2584,12 @@
 +        result
 +    })
 +}
-@@ -56 +115 @@
+@@ -56 +117 @@
 -    tokio::task::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
 +    crate::owned_load::spawn_blocking(move || tracing::dispatcher::with_default(&dispatch, f)).await
-@@ -605,0 +665 @@
+@@ -605,0 +667 @@
 +    if let Some(scope) = owned_load::OwnedLoadScope::current() { return scope.offline_validation(); }
-@@ -1231,0 +1292,116 @@
-+}
-+
+@@ -1233,0 +1296,116 @@
 +
 +/// Capability-only Geo input. It cannot be deserialized from a controller path.
 +/// Source authorization/hash is the host owner's job; every effective input must
@@ -2646,16 +2704,250 @@
 +        Ok::<_,anyhow::Error>((rules,providers,payloads,ctx))
 +    }).await.map_err(|cause|anyhow::anyhow!("Geo preparation worker failed: {cause}"))??;
 +    Ok(PreparedGeoReload{rules,rule_providers:providers,payloads,context})
-@@ -3134,0 +3311,5 @@
++}
++
+@@ -1303,94 +1481,2 @@
+-    // Collect proxy -> dialer edges from the raw config.
+-    //
+-    // Iterate in reverse and keep only the first sighting (the *last* block in
+-    // the file) per name: the registry-building loop uses `insert`, so for
+-    // duplicate `name:` entries the last block is the effective definition.
+-    // Collecting edges from superseded duplicates would apply a chain the
+-    // effective block never declared.
+-    let mut edges: Vec<(SmolStr, SmolStr)> = Vec::new();
+-    let mut seen_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+-    for raw_proxy in raw_proxies.iter().rev() {
+-        let Some(name) = raw_proxy.get("name").and_then(|v| v.as_str()) else {
+-            continue;
+-        };
+-        if !seen_names.insert(name) {
+-            continue;
+-        }
+-        // Entries shadowing a built-in are dropped by `insert_parsed_leaves`;
+-        // collecting their edge would wrap the *built-in* in a
+-        // `DialerProxyAdapter` (or replace it via re-parse), chaining global
+-        // `DIRECT`/`REJECT` traffic through the shadowed node's dialer.
+-        if BUILTIN_ADAPTER_NAMES.contains(&name) {
+-            continue;
+-        }
+-        let dialer: SmolStr = match raw_proxy.get("dialer-proxy") {
+-            None => continue,
+-            Some(v) => match v.as_str() {
+-                // Trimmed like the provider-node path so
+-                // `dialer-proxy: " front "` resolves `front` identically
+-                // on statics instead of missing the `dialable` check below.
+-                Some(s) if !s.trim().is_empty() => SmolStr::from(s.trim()),
+-                // `""` and `~` unset the chain in mihomo — not malformed.
+-                Some("") => continue,
+-                _ if v.is_null() => continue,
+-                _ if strict => {
+-                    anyhow::bail!("proxy '{name}': malformed dialer-proxy value (strict mode)");
+-                }
+-                // Lenient keeps the node but binds it to a target that
+-                // never resolves, so its dials fail loudly naming the node
+-                // instead of silently dialling direct past the chain the
+-                // operator asked for. The sentinel is exempt from the
+-                // `dialable` check below and never collides with a real
+-                // name by construction.
+-                _ => {
+-                    warn!("proxy '{name}': malformed dialer-proxy value; the node will fail its dials");
+-                    SmolStr::from(format!("{MALFORMED_DIALER_PREFIX}{name}"))
+-                }
+-            },
+-        };
+-        if dialer.as_str() == name {
+-            anyhow::bail!("proxy '{name}': dialer-proxy points to itself");
+-        }
+-        edges.push((SmolStr::from(name), dialer));
+-    }
+-    if edges.is_empty() {
+-        return Ok(edges);
+-    }
+-
+-    // Names a dialer may reference. Leaf proxies are in the registry already;
+-    // groups are built after this pass, so only their *declared* names count
+-    // here, plus `GLOBAL`, which is auto-created when the config omits it.
+-    let dialable: std::collections::HashSet<&str> = proxies
+-        .keys()
+-        .map(SmolStr::as_str)
+-        .chain(raw_groups.iter().map(|group| group.name.as_str()))
+-        .chain(std::iter::once("GLOBAL"))
+-        .collect();
+-    for (name, dialer) in &edges {
+-        if !dialable.contains(dialer.as_str()) && !dialer.starts_with(MALFORMED_DIALER_PREFIX) {
+-            anyhow::bail!("proxy '{name}': dialer-proxy '{dialer}' not found");
+-        }
+-    }
+-
+-    // Peel every edge whose dialer declares no dialer of its own. What survives
+-    // is on a cycle or feeds one, and late binding would recurse forever on it.
+-    let mut live: std::collections::HashSet<&SmolStr> = edges.iter().map(|(n, _)| n).collect();
+-    loop {
+-        let before = live.len();
+-        for (name, dialer) in &edges {
+-            if live.contains(name) && !live.contains(dialer) {
+-                live.remove(name);
+-            }
+-        }
+-        if live.is_empty() || live.len() == before {
+-            break;
+-        }
+-    }
+-    if !live.is_empty() {
+-        let cycle: Vec<String> = edges
+-            .iter()
+-            .filter(|(name, _)| live.contains(name))
+-            .map(|(name, dialer)| format!("{name} -> {dialer}"))
+-            .collect();
+-        anyhow::bail!("dialer-proxy cycle detected: {}", cycle.join(", "));
+-    }
++    let names = proxies.keys().cloned().collect();
++    let edges = declared_dialer_edges(raw_proxies, raw_groups, &names, strict)?;
+@@ -1467,0 +1554,104 @@
++    Ok(edges)
++}
++
++fn declared_dialer_edges(
++    raw_proxies: &[HashMap<String, serde_yaml::Value>],
++    raw_groups: &[raw::RawProxyGroup],
++    names: &std::collections::HashSet<SmolStr>,
++    strict: bool,
++) -> Result<Vec<(SmolStr, SmolStr)>, anyhow::Error> {
++    // Collect proxy -> dialer edges from the raw config.
++    //
++    // Iterate in reverse and keep only the first sighting (the *last* block in
++    // the file) per name: the registry-building loop uses `insert`, so for
++    // duplicate `name:` entries the last block is the effective definition.
++    // Collecting edges from superseded duplicates would apply a chain the
++    // effective block never declared.
++    let mut edges: Vec<(SmolStr, SmolStr)> = Vec::new();
++    let mut seen_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
++    for raw_proxy in raw_proxies.iter().rev() {
++        let Some(name) = raw_proxy.get("name").and_then(|v| v.as_str()) else {
++            continue;
++        };
++        if !seen_names.insert(name) {
++            continue;
++        }
++        // Entries shadowing a built-in are dropped by `insert_parsed_leaves`;
++        // collecting their edge would wrap the *built-in* in a
++        // `DialerProxyAdapter` (or replace it via re-parse), chaining global
++        // `DIRECT`/`REJECT` traffic through the shadowed node's dialer.
++        if BUILTIN_ADAPTER_NAMES.contains(&name) {
++            continue;
++        }
++        let dialer: SmolStr = match raw_proxy.get("dialer-proxy") {
++            None => continue,
++            Some(v) => match v.as_str() {
++                // Trimmed like the provider-node path so
++                // `dialer-proxy: " front "` resolves `front` identically
++                // on statics instead of missing the `dialable` check below.
++                Some(s) if !s.trim().is_empty() => SmolStr::from(s.trim()),
++                // `""` and `~` unset the chain in mihomo — not malformed.
++                Some("") => continue,
++                _ if v.is_null() => continue,
++                _ if strict => {
++                    anyhow::bail!("proxy '{name}': malformed dialer-proxy value (strict mode)");
++                }
++                // Lenient keeps the node but binds it to a target that
++                // never resolves, so its dials fail loudly naming the node
++                // instead of silently dialling direct past the chain the
++                // operator asked for. The sentinel is exempt from the
++                // `dialable` check below and never collides with a real
++                // name by construction.
++                _ => {
++                    warn!("proxy '{name}': malformed dialer-proxy value; the node will fail its dials");
++                    SmolStr::from(format!("{MALFORMED_DIALER_PREFIX}{name}"))
++                }
++            },
++        };
++        if dialer.as_str() == name {
++            anyhow::bail!("proxy '{name}': dialer-proxy points to itself");
++        }
++        edges.push((SmolStr::from(name), dialer));
++    }
++    if edges.is_empty() {
++        return Ok(edges);
++    }
++
++    // Names a dialer may reference. Leaf proxies are in the registry already;
++    // groups are built after this pass, so only their *declared* names count
++    // here, plus `GLOBAL`, which is auto-created when the config omits it.
++    let dialable: std::collections::HashSet<&str> = names
++        .iter()
++        .map(SmolStr::as_str)
++        .chain(raw_groups.iter().map(|group| group.name.as_str()))
++        .chain(std::iter::once("GLOBAL"))
++        .collect();
++    for (name, dialer) in &edges {
++        if !dialable.contains(dialer.as_str()) && !dialer.starts_with(MALFORMED_DIALER_PREFIX) {
++            anyhow::bail!("proxy '{name}': dialer-proxy '{dialer}' not found");
++        }
++    }
++
++    // Peel every edge whose dialer declares no dialer of its own. What survives
++    // is on a cycle or feeds one, and late binding would recurse forever on it.
++    let mut live: std::collections::HashSet<&SmolStr> = edges.iter().map(|(n, _)| n).collect();
++    loop {
++        let before = live.len();
++        for (name, dialer) in &edges {
++            if live.contains(name) && !live.contains(dialer) {
++                live.remove(name);
++            }
++        }
++        if live.is_empty() || live.len() == before {
++            break;
++        }
++    }
++    if !live.is_empty() {
++        let cycle: Vec<String> = edges
++            .iter()
++            .filter(|(name, _)| live.contains(name))
++            .map(|(name, dialer)| format!("{name} -> {dialer}"))
++            .collect();
++        anyhow::bail!("dialer-proxy cycle detected: {}", cycle.join(", "));
++    }
++
+@@ -1598,0 +1789,11 @@
++    let names = proxies.keys().cloned().collect();
++    reject_named_group_membership_cycles(edges, raw_groups, &names, include_all_proxy_names, global_auto_created)
++}
++
++fn reject_named_group_membership_cycles(
++    edges: &[(SmolStr, SmolStr)],
++    raw_groups: &[raw::RawProxyGroup],
++    names: &std::collections::HashSet<SmolStr>,
++    include_all_proxy_names: &std::collections::HashSet<SmolStr>,
++    global_auto_created: bool,
++) -> Result<(), anyhow::Error> {
+@@ -1604 +1805 @@
+-        if !proxies.contains_key(group.name.as_str()) {
++        if !names.contains(group.name.as_str()) {
+@@ -1615 +1816 @@
+-            .filter(|m| proxies.contains_key(*m))
++            .filter(|m| names.contains(*m))
+@@ -1621 +1822 @@
+-                    .filter(|name| proxies.contains_key(name.as_str()))
++                    .filter(|name| names.contains(name.as_str()))
+@@ -1641 +1842 @@
+-            .extend(proxies.keys().map(SmolStr::as_str));
++            .extend(names.iter().map(SmolStr::as_str));
+@@ -1648 +1849 @@
+-        .filter(|(name, _)| proxies.contains_key(name))
++        .filter(|(name, _)| names.contains(name))
+@@ -1654 +1855 @@
+-        if !proxies.contains_key(name) {
++        if !names.contains(name) {
+@@ -3134,0 +3336,5 @@
 +    if geoip_trigger.is_some() { offline_validation::require_prepared_geo_file(Some(geoip_path), "$.geodata.mmdb-path")?; }
 +    if lines.iter().any(|line| line_references_asn(line)) { offline_validation::require_prepared_geo_file(Some(asn_path), "$.geodata.asn-path")?; }
 +    if lines.iter().any(|line| line_references_geosite(line)) || dns_policy_uses_geosite(raw) {
 +        offline_validation::require_prepared_geo_file(geosite_explicit, "$.geodata.geosite-path")?;
 +    }
-@@ -3279 +3460 @@
+@@ -3279 +3485 @@
 -fn dns_policy_uses_geosite(raw: &raw::RawConfig) -> bool {
 +pub fn dns_policy_uses_geosite(raw: &raw::RawConfig) -> bool {
-@@ -3353,0 +3535,10 @@
+@@ -3353,0 +3560,10 @@
 +/// Resource preparation reports dependencies; this is not semantic rule admission.
 +pub struct RuleGeodataRequirements { pub geoip: bool, pub asn: bool, pub geosite: bool }
 +pub fn rule_geodata_requirements(lines: &[String]) -> RuleGeodataRequirements {
@@ -2666,7 +2958,7 @@
 +    }
 +}
 +
-@@ -3905,4 +4096,13 @@
+@@ -3905,4 +4121,13 @@
 -    // Pre-resolve any DNS-sourced ECH configs into inline base64 so the
 -    // sync `parse_proxy` path that follows can stay sync. Failures warn
 -    // and leave the map unchanged — except the `enable: true` with no
@@ -2684,7 +2976,7 @@
 +    }
 +    // Pure ECH defects only. DNS mode remains typed metadata until the
 +    // handshake can use the operation's captured user resolver generation.
-@@ -7773,0 +7974,5 @@
+@@ -7773,0 +7999,5 @@
 +
 +#[cfg(test)]
 +mod owned_dns_tests;
@@ -3021,7 +3313,7 @@
 +}
 --- /dev/null
 +++ b/crates/meow-config/src/owned_load.rs
-@@ -0,0 +1,407 @@
+@@ -0,0 +1,410 @@
 +use parking_lot::Mutex;
 +use std::{cell::RefCell, collections::HashMap, future::Future, pin::Pin, sync::{Arc, atomic::{AtomicU64, Ordering}}};
 +use tokio::{sync::Notify, task::{AbortHandle, JoinHandle}};
@@ -3157,6 +3449,9 @@
 +            if self.is_cancelled() { return; }
 +            changed.await;
 +        }
++    }
++    pub(crate) fn run_sync<T>(self: &Arc<Self>, work: impl FnOnce() -> T) -> T {
++        CURRENT.sync_scope(self.clone(), work)
 +    }
 +    pub async fn run<F: Future>(self: &Arc<Self>, work: F) -> F::Output {
 +        CURRENT.scope(self.clone(), work).await
@@ -3525,47 +3820,86 @@
 +            None => Ok(meow_common::adapter::ProbeDependencies::default()),
 +        }
 +    }
-@@ -282 +298 @@
+@@ -106,0 +123,38 @@
++}
++
++pub(crate) fn validate_source_proxy(config: &HashMap<String, serde_yaml::Value>, ipv6: bool) -> std::result::Result<(), String> {
++    #[cfg(feature = "ss")]
++    if config.get("type").and_then(serde_yaml::Value::as_str) == Some("ss") {
++        let name = config.get("name").and_then(serde_yaml::Value::as_str).ok_or("missing proxy name")?;
++            let server = config
++                .get("server")
++                .and_then(|v| v.as_str())
++                .ok_or("missing server")?;
++            let port = required_port(config, "ss")?;
++            let password = config
++                .get("password")
++                .and_then(|v| v.as_str())
++                .ok_or("missing password")?;
++            let cipher = config
++                .get("cipher")
++                .and_then(|v| v.as_str())
++                .ok_or("missing cipher")?;
++            let udp = config
++                .get("udp")
++                .and_then(serde_yaml::Value::as_bool)
++                .unwrap_or(false);
++            let plugin = config.get("plugin").and_then(|v| v.as_str());
++            let plugin_opts_str = config.get("plugin-opts").and_then(serialize_plugin_opts);
++            let client_fingerprint = config.get("client-fingerprint").and_then(|v| v.as_str());
++
++        ShadowsocksAdapter::validate_source_options(server, port, password, cipher, plugin, plugin_opts_str.as_deref()).map_err(|error| format!("ss: {error}"))?;
++        let _ = (name, udp, client_fingerprint);
++        #[cfg(feature = "mux")]
++        if let Some(options) = parse_mux_options(name, config)? {
++            if options.protocol == meow_proxy::mux::Protocol::MuxCool { return Err(format!("{name}: mux protocol muxcool is VLESS/VMess-only")); }
++        }
++        #[cfg(not(feature = "mux"))]
++        parse_mux_options(name, config)?;
++        return Ok(());
++    }
++    parse_proxy(config, ipv6).map(|_| ())
+@@ -282 +336 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -331 +347 @@
+@@ -331 +385 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -336 +352 @@
+@@ -336 +390 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -340 +356 @@
+@@ -340 +394 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -344 +360 @@
+@@ -344 +398 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -349 +365 @@
+@@ -349 +403 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer)).with_name(name)))
-@@ -355 +371 @@
+@@ -355 +409 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -361 +377 @@
+@@ -361 +415 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -366 +382 @@
+@@ -366 +420 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -371 +387 @@
+@@ -371 +425 @@
 -            Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +            Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -1096 +1112 @@
+@@ -1096 +1150 @@
 -    Ok(Arc::new(WrappedProxy::new(Box::new(adapter))))
 +    Ok(Arc::new(WrappedProxy::new(Box::new(adapter)).with_probe_dialer(Arc::clone(dialer))))
-@@ -1138 +1154,5 @@
+@@ -1138 +1192,5 @@
 -    meow_proxy::AnytlsAdapter::new(name, server, port, password, sni, skip_cert_verify, udp)
 +    if crate::owned_load::offline_validation() {
 +        meow_proxy::AnytlsAdapter::validate_options(name, server, port, password, sni, skip_cert_verify, udp)
 +    } else {
 +        meow_proxy::AnytlsAdapter::new(name, server, port, password, sni, skip_cert_verify, udp)
 +    }
-@@ -1890,7 +1910,3 @@
+@@ -1890,7 +1948,3 @@
 -        // ── ECH opts ────────────────────────────────────────────────────
 -        // DNS-sourced ECH (`enable: true` without `config:`) is resolved by
 -        // `ech_dns::preresolve_ech` *before* `parse_proxy` runs, which injects
@@ -3576,17 +3910,17 @@
 +        // DNS mode is pure metadata here. The real handshake later queries
 +        // its captured proxy-server resolver (or main resolver), like the
 +        // fixed Standard ECH callback. Missing/error scope never means no ECH.
-@@ -1898,5 +1914 @@
+@@ -1898,5 +1952 @@
 -            let ech_enabled = ech_opts
 -                .get("enable")
 -                .and_then(serde_yaml::Value::as_bool)
 -                .unwrap_or(false);
 -            if ech_enabled {
 +            if ech_opts.get("enable").and_then(serde_yaml::Value::as_bool).unwrap_or(false) {
-@@ -1904 +1916 @@
+@@ -1904 +1954 @@
 -                if let Some(inline_config) = ech_opts.get("config").and_then(|v| v.as_str()) {
 +                if let Some(inline_config) = ech_opts.get("config").and_then(|v|v.as_str()).filter(|v|!v.is_empty()) {
-@@ -1906,4 +1918,8 @@
+@@ -1906,4 +1956,8 @@
 -                    let bytes = base64::engine::general_purpose::STANDARD
 -                        .decode(inline_config)
 -                        .map_err(|e| format!("vless: ech-opts.config base64 decode: {e}"))?;
@@ -3599,11 +3933,25 @@
 +                    hickory_proto::rr::Name::from_utf8(query_name)
 +                        .map_err(|e|format!("vless: ech-opts.query-server-name: {e}"))?;
 +                    tls_cfg.ech=Some(EchOpts::Dns(query_name.to_owned()));
-@@ -4836,2 +4852 @@
+@@ -2981,0 +3036,13 @@
++pub(crate) fn validate_source_group(config: &crate::raw::RawProxyGroup) -> std::result::Result<(), String> {
++    match config.group_type.as_str() {
++        "select" | "url-test" | "fallback" | "relay" => {}
++        "load-balance" => { parse_lb_strategy(config.strategy.as_deref())?; }
++        _ => return Err(format!("group '{}': unsupported group type: {}", config.name, config.group_type)),
++    }
++    crate::proxy_provider::GroupFilter::from_raw_group(config)?;
++    if config.interval.is_some_and(|interval| interval > meow_common::MAX_DURATION_SECS) {
++        return Err(format!("group '{}': interval exceeds core duration ceiling", config.name));
++    }
++    Ok(())
++}
++
+@@ -4836,2 +4903 @@
 -        // A `direct` leaf normalizes to the built-in DIRECT name — use ss so
 -        // the static member keeps its own name in `members()`.
 +        // Keep this existing ss fixture independent of the direct alias regression.
-@@ -5474,0 +5490,166 @@
+@@ -5474,0 +5541,166 @@
 +
 +
 +#[cfg(test)]
@@ -11536,11 +11884,78 @@
 +    pub fn with_sink(ctx: &'a ParserContext, sink: Option<Arc<dyn AcceptedEntrySink>>) -> Self {
 @@ -518,0 +628 @@
 +            sink,
-@@ -572,0 +683,3 @@
+@@ -546,23 +656 @@
+-        let mut fields = entry.splitn(3, ',');
+-        let first_field = fields.next().map_or("", str::trim);
+-        if first_field == "MATCH" {
+-            return Err(format!(
+-                "'{entry}': MATCH is not allowed in a classical rule-set"
+-            ));
+-        }
+-        // An empty or missing payload silently degrades to match-all for
+-        // the substring-match types (`DOMAIN-SUFFIX,` → ends_with(""),
+-        // `DOMAIN-KEYWORD,` → contains("") — same as `FinalRule`). Same
+-        // class as MATCH — reject loudly (Class B, ADR-0002).
+-        if fields.next().map_or("", str::trim).is_empty() {
+-            return Err(format!("'{entry}': missing payload"));
+-        }
+-        // Comma-safe upstream regex payloads cannot be spliced
+-        // unambiguously — the truncated payload could still be a
+-        // valid-but-different regex. Reject loudly (Class B, ADR-0002).
+-        if first_field == "DOMAIN-REGEX" && fields.next().is_some() {
+-            return Err(format!(
+-                "'{entry}': {first_field} payloads containing commas are \
+-                 not supported in a classical rule-set"
+-            ));
+-        }
++        validate_classical_source_shape(entry)?;
+@@ -572,0 +661,3 @@
 +                if let Some(sink) = &self.sink {
 +                    sink.accepted(entry);
 +                }
-@@ -967,0 +1081,17 @@
+@@ -629,0 +721,41 @@
++pub fn validate_source_payload(behavior: RuleSetBehavior, entries: &[String]) -> Result<(), String> {
++    if behavior != RuleSetBehavior::Classical {
++        build_rule_set_checked(behavior, entries, &ParserContext::empty())?;
++        return Ok(());
++    }
++    for entry in entries {
++        let entry = entry.trim();
++        if entry.is_empty() || entry.starts_with('#') { continue; }
++        validate_classical_source_shape(entry)?;
++        crate::parser::validate_rule_source(&splice_placeholder_adapter(entry))?;
++    }
++    Ok(())
++}
++
++fn validate_classical_source_shape(entry: &str) -> Result<(), String> {
++        let mut fields = entry.splitn(3, ',');
++        let first_field = fields.next().map_or("", str::trim);
++        if first_field == "MATCH" {
++            return Err(format!(
++                "'{entry}': MATCH is not allowed in a classical rule-set"
++            ));
++        }
++        // An empty or missing payload silently degrades to match-all for
++        // the substring-match types (`DOMAIN-SUFFIX,` → ends_with(""),
++        // `DOMAIN-KEYWORD,` → contains("") — same as `FinalRule`). Same
++        // class as MATCH — reject loudly (Class B, ADR-0002).
++        if fields.next().map_or("", str::trim).is_empty() {
++            return Err(format!("'{entry}': missing payload"));
++        }
++        // Comma-safe upstream regex payloads cannot be spliced
++        // unambiguously — the truncated payload could still be a
++        // valid-but-different regex. Reject loudly (Class B, ADR-0002).
++        if first_field == "DOMAIN-REGEX" && fields.next().is_some() {
++            return Err(format!(
++                "'{entry}': {first_field} payloads containing commas are \
++                 not supported in a classical rule-set"
++            ));
++        }
++    Ok(())
++}
++
+@@ -967,0 +1100,17 @@
 +
 +#[cfg(test)]
 +mod plain_domain_validation_regression {
@@ -13841,3 +14256,451 @@
 @@ -366 +366 @@
 -    match tunnel.dial_udp(proxy.as_ref(), &metadata).await {
 +    match tunnel.dial_udp_with_rule(proxy.as_ref(), &metadata, rule_name.clone(), rule_payload.clone()).await {
+--- a/crates/meow-config/src/raw.rs
++++ b/crates/meow-config/src/raw.rs
+@@ -393,0 +394,2 @@
++    #[serde(skip_serializing_if = "Option::is_none")]
++    pub ipv6: Option<bool>,
+--- a/crates/meow-config/src/rule_parser.rs
++++ b/crates/meow-config/src/rule_parser.rs
+@@ -104,11 +104,4 @@
+-    let parts: Vec<&str> = line.splitn(4, ',').map(str::trim).collect();
+-    if parts.first().copied() != Some("RULE-SET") {
+-        return None;
+-    }
+-    if parts.len() < 3 {
+-        return Some(Err("RULE-SET needs <name>,<adapter>".into()));
+-    }
+-    let name = parts[1];
+-    let adapter = parts[2];
+-    let flags = parse_rule_flags(parts.get(3).copied());
+-
++    let (name, adapter, flags) = match parse_rule_set_reference(line)? {
++        Ok(reference) => reference,
++        Err(error) => return Some(Err(error)),
++    };
+@@ -137,0 +131,7 @@
++}
++
++pub(crate) fn parse_rule_set_reference(line: &str) -> Option<Result<(&str, &str, meow_rules::RuleFlags), String>> {
++    let parts: Vec<&str> = line.splitn(4, ',').map(str::trim).collect();
++    if parts.first().copied() != Some("RULE-SET") { return None; }
++    if parts.len() < 3 { return Some(Err("RULE-SET needs <name>,<adapter>".into())); }
++    Some(Ok((parts[1], parts[2], parse_rule_flags(parts.get(3).copied()))))
+--- /dev/null
++++ b/crates/meow-config/src/source_admission.rs
+@@ -0,0 +1,178 @@
++use crate::{owned_load::{LoadContext, OwnedLoadScope, OwnedWork}, raw::{RawConfig, RawRuleProvider}};
++use meow_rules::{RuleSetBehavior, RuleSetFormat};
++use smol_str::SmolStr;
++use std::{collections::{HashMap, HashSet}, sync::Arc};
++
++struct SourceContext;
++impl LoadContext for SourceContext {
++    fn offline_validation(&self) -> bool { true }
++    fn wrap(&self, work: OwnedWork) -> OwnedWork { work }
++    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { work(); }
++}
++
++/// Admits declarations, never materializes providers or grants runtime activation.
++pub fn validate_source_config(raw: &RawConfig) -> Result<(), String> {
++    let scope = OwnedLoadScope::with_context(Arc::new(SourceContext));
++    let result = scope.run_sync(|| validate_declarations(raw));
++    scope.cancel();
++    result
++}
++
++fn validate_declarations(raw: &RawConfig) -> Result<(), String> {
++    if raw.strict == Some(false) { return Err("$.strict: source admission cannot disable strict validation".into()); }
++    raw.mode.as_deref().unwrap_or("rule").parse::<meow_common::TunnelMode>().map_err(|error| format!("$.mode: {error}"))?;
++    crate::validate_named_listeners(raw).map_err(|error| error.to_string())?;
++    crate::parse_tun_config(raw.tun.as_ref(), raw.max_connections).map_err(|error| error.to_string())?;
++    crate::auth::parse_auth_config(raw.authentication.as_deref(), raw.skip_auth_prefixes.as_deref())?;
++    if raw.tcp_connect_timeout.is_some_and(|secs| secs > meow_common::MAX_DURATION_SECS) {
++        return Err("$.tcp-connect-timeout: duration exceeds core ceiling".into());
++    }
++
++    let mut static_names = HashSet::new();
++    for proxy in raw.proxies.iter().flatten() {
++        if crate::proxy_parser::node_selects_external_plugin(proxy) {
++            return Err("offline_external_plugin_forbidden".into());
++        }
++        crate::proxy_parser::validate_source_proxy(proxy, crate::effective_ipv6(raw.ipv6))?;
++        let name = proxy.get("name").and_then(serde_yaml::Value::as_str).ok_or("proxies: missing proxy name")?;
++        if crate::BUILTIN_ADAPTER_NAMES.contains(&name) { return Err(format!("proxies: '{name}' shadows a built-in adapter")); }
++        static_names.insert(SmolStr::from(name));
++    }
++    let groups = raw.proxy_groups.as_deref().unwrap_or(&[]);
++    let mut names = static_names.clone();
++    names.extend(crate::BUILTIN_ADAPTER_NAMES.iter().copied().map(SmolStr::from));
++    let mut seen_groups = HashSet::new();
++    for group in groups {
++        if group.name.is_empty() || names.contains(group.name.as_str()) || !seen_groups.insert(group.name.as_str()) {
++            return Err(format!("$.proxy-groups.{}: empty or duplicate name", group.name));
++        }
++    }
++    names.extend(groups.iter().map(|group| SmolStr::from(group.name.as_str())));
++    names.insert(SmolStr::new_static("GLOBAL"));
++    for group in groups {
++        crate::proxy_parser::validate_source_group(group)?;
++        for member in group.proxies.iter().flatten() {
++            require_name(member, &names, &format!("$.proxy-groups.{}.proxies", group.name))?;
++        }
++        for provider in group.use_providers.iter().flatten() {
++            if !raw.proxy_providers.as_ref().is_some_and(|map| map.contains_key(provider)) {
++                return Err(format!("$.proxy-groups.{}.use: unknown proxy-provider '{provider}'", group.name));
++            }
++        }
++        let has_declared_members = !group.proxies.as_deref().unwrap_or(&[]).is_empty()
++            || (group.include_all_proxies.unwrap_or(false) && !static_names.is_empty())
++            || (group.group_type != "relay" && (!group.use_providers.as_deref().unwrap_or(&[]).is_empty()
++                || ((group.include_all.unwrap_or(false) || group.include_all_providers.unwrap_or(false))
++                    && raw.proxy_providers.as_ref().is_some_and(|map| !map.is_empty()))));
++        if !has_declared_members { return Err(format!("$.proxy-groups.{}: no declared proxies or providers", group.name)); }
++    }
++    crate::reject_declared_group_cycles(groups).map_err(|error| error.to_string())?;
++    let edges = crate::declared_dialer_edges(raw.proxies.as_deref().unwrap_or(&[]), groups, &names, true)
++        .map_err(|error| error.to_string())?;
++    crate::reject_named_group_membership_cycles(&edges, groups, &names, &static_names, !groups.iter().any(|group| group.name == "GLOBAL"))
++        .map_err(|error| error.to_string())?;
++
++    for (name, provider) in raw.proxy_providers.iter().flatten() {
++        let path = format!("$.proxy-providers.{name}");
++        validate_provider_location(&provider.provider_type, provider.url.as_deref(), provider.path.as_deref(), &path, false)?;
++        validate_filter(provider.filter.as_deref(), &format!("{path}.filter"))?;
++        validate_filter(provider.exclude_filter.as_deref(), &format!("{path}.exclude-filter"))?;
++        validate_optional_target(provider.proxy.as_deref(), &names, &format!("{path}.proxy"))?;
++        validate_optional_target(provider.dialer_proxy.as_deref(), &names, &format!("{path}.dialer-proxy"))?;
++        if let Some(overrides) = &provider.override_ {
++            for (key, value) in overrides {
++                if key != "dialer-proxy" { return Err(format!("{path}.override.{key}: unsupported provider override")); }
++                if value.is_null() { continue; }
++                let target = value.as_str().ok_or_else(|| format!("{path}.override.{key}: expected string or null"))?;
++                validate_optional_target(Some(target), &names, &format!("{path}.override.{key}"))?;
++            }
++        }
++    }
++    let mut rule_behaviors = HashMap::new();
++    for (name, provider) in raw.rule_providers.iter().flatten() {
++        let path = format!("$.rule-providers.{name}");
++        let behavior = validate_rule_definition(provider, &path)?;
++        validate_optional_target(provider.proxy.as_deref(), &names, &format!("{path}.proxy"))?;
++        rule_behaviors.insert(name.as_str(), behavior);
++    }
++    let empty_blocks = HashMap::new();
++    let blocks = raw.sub_rules.as_ref().unwrap_or(&empty_blocks);
++    crate::sub_rules_parser::validate_source_graph(blocks).map_err(|error| error.to_string())?;
++    for (name, lines) in blocks {
++        for (index, line) in lines.iter().enumerate() {
++            validate_rule_line(line, &names, &rule_behaviors, blocks, &format!("$.sub-rules.{name}[{index}]"))?;
++        }
++    }
++    for (index, line) in raw.rules.iter().flatten().enumerate() {
++        validate_rule_line(line, &names, &rule_behaviors, blocks, &format!("$.rules[{index}]"))?;
++    }
++    crate::dns_parser::validate_source_dns(raw, &names, &rule_behaviors)?;
++    Ok(())
++}
++
++fn require_name(name: &str, names: &HashSet<SmolStr>, path: &str) -> Result<(), String> {
++    if !names.contains(name) { return Err(format!("{path}: unknown outbound '{name}'")); }
++    Ok(())
++}
++
++fn validate_optional_target(target: Option<&str>, names: &HashSet<SmolStr>, path: &str) -> Result<(), String> {
++    if let Some(target) = target {
++        if target.is_empty() { return Ok(()); }
++        require_name(target.trim(), names, path)?;
++    }
++    Ok(())
++}
++
++fn validate_filter(pattern: Option<&str>, path: &str) -> Result<(), String> {
++    if let Some(pattern) = pattern { regex::Regex::new(pattern).map_err(|error| format!("{path}: {error}"))?; }
++    Ok(())
++}
++
++fn validate_provider_location(kind: &str, url: Option<&str>, path: Option<&str>, field: &str, inline: bool) -> Result<(), String> {
++    match kind {
++        "http" => {
++            let url = url.ok_or_else(|| format!("{field}.url: HTTP provider requires url"))?;
++            let parsed = url::Url::parse(url).map_err(|error| format!("{field}.url: {error}"))?;
++            if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
++                return Err(format!("{field}.url: expected HTTP(S) URL with host"));
++            }
++        }
++        "file" if path.is_some_and(|value| !value.is_empty()) => {}
++        "file" => return Err(format!("{field}.path: file provider requires path")),
++        "inline" if inline => {}
++        _ => return Err(format!("{field}.type: unsupported provider type '{kind}'")),
++    }
++    Ok(())
++}
++
++fn validate_rule_definition(provider: &RawRuleProvider, path: &str) -> Result<RuleSetBehavior, String> {
++    validate_provider_location(&provider.provider_type, provider.url.as_deref(), provider.path.as_deref(), path, true)?;
++    let behavior = provider.behavior.parse::<RuleSetBehavior>().map_err(|error| format!("{path}.behavior: {error}"))?;
++    if let Some(format) = provider.format.as_deref() {
++        format.parse::<RuleSetFormat>().map_err(|error| format!("{path}.format: {error}"))?;
++    }
++    if provider.provider_type == "inline" {
++        if provider.interval.is_some_and(|interval| interval > 0) { return Err(format!("{path}.interval: inline providers cannot refresh")); }
++        let payload = provider.payload.as_deref().ok_or_else(|| format!("{path}.payload: inline provider requires payload"))?;
++        meow_rules::rule_set::validate_source_payload(behavior, payload).map_err(|error| format!("{path}.payload: {error}"))?;
++    }
++    Ok(behavior)
++}
++
++fn validate_rule_line(line: &str, names: &HashSet<SmolStr>, providers: &HashMap<&str, RuleSetBehavior>, blocks: &HashMap<String, Vec<String>>, path: &str) -> Result<(), String> {
++    let line = line.trim();
++    if line.is_empty() || line.starts_with('#') { return Ok(()); }
++    let target = if let Some(reference) = crate::rule_parser::parse_rule_set_reference(line) {
++        let (provider, target, _flags) = reference.map_err(|error| format!("{path}: {error}"))?;
++        if !providers.contains_key(provider) { return Err(format!("{path}: unknown rule-provider '{provider}'")); }
++        target.to_owned()
++    } else if let Some(block) = crate::sub_rules_parser::parse_sub_rule_reference(line) {
++        let rest = line.split_once(',').map(|(_, rest)| rest.trim()).unwrap_or_default();
++        if rest.contains(',') { return Err(format!("{path}: SUB-RULE takes exactly <block-name>")); }
++        if !blocks.contains_key(&block) { return Err(format!("{path}: undefined sub-rule block '{block}'")); }
++        return Ok(());
++    } else {
++        meow_rules::parser::validate_rule_source(line).map_err(|error| format!("{path}: {error}"))?
++    };
++    require_name(&target, names, path)
++}
+--- a/crates/meow-config/src/sub_rules_parser.rs
++++ b/crates/meow-config/src/sub_rules_parser.rs
+@@ -70,0 +71,6 @@
++}
++
++pub(crate) fn validate_source_graph(raw: &HashMap<String, Vec<String>>) -> Result<(), anyhow::Error> {
++    let references = build_reference_graph(raw)?;
++    topo_order_with_cycle_check(raw, &references)?;
++    Ok(())
+--- a/crates/meow-proxy/src/gost_plugin.rs
++++ b/crates/meow-proxy/src/gost_plugin.rs
+@@ -108,0 +109,8 @@
++    parse_opts_mode(s, false)
++}
++
++pub fn validate_source_opts(s: &str) -> Result<()> {
++    parse_opts_mode(s, true).map(|_| ())
++}
++
++fn parse_opts_mode(s: &str, source_only: bool) -> Result<GostPluginConfig> {
+@@ -126,0 +135,2 @@
++    let mut cert_declared = false;
++    let mut key_declared = false;
+@@ -190,2 +200,6 @@
+-                cert_src = pem_source(&value).into_path();
+-                cert_pem = Some(load_pem_or_path(&value, "certificate", PLUGIN)?);
++                cert_declared = true;
++                if source_only { crate::plugin_util::validate_pem_reference(&value, "certificate", PLUGIN)?; }
++                else {
++                    cert_src = pem_source(&value).into_path();
++                    cert_pem = Some(load_pem_or_path(&value, "certificate", PLUGIN)?);
++                }
+@@ -194,2 +208,6 @@
+-                key_src = pem_source(&value).into_path();
+-                key_pem = Some(load_pem_or_path(&value, "private-key", PLUGIN)?);
++                key_declared = true;
++                if source_only { crate::plugin_util::validate_pem_reference(&value, "private-key", PLUGIN)?; }
++                else {
++                    key_src = pem_source(&value).into_path();
++                    key_pem = Some(load_pem_or_path(&value, "private-key", PLUGIN)?);
++                }
+@@ -248,0 +267,3 @@
++    if source_only && cert_declared != key_declared {
++        return Err(MeowError::Config(format!("{PLUGIN}: 'certificate' and 'private-key' must both be set")));
++    }
+--- a/crates/meow-proxy/src/plugin_util.rs
++++ b/crates/meow-proxy/src/plugin_util.rs
+@@ -108,0 +109,14 @@
++pub(crate) fn validate_pem_reference(value: &str, opt: &str, plugin: &str) -> Result<()> {
++    if value.is_empty() || value.contains('\0') {
++        return Err(MeowError::Config(format!("{plugin}: '{opt}' requires nonempty PEM or path without NUL")));
++    }
++    if value.contains("-----BEGIN") {
++        let complete = if opt == "certificate" { value.contains("-----END CERTIFICATE-----") }
++            else { value.contains("-----END ") && value.contains("PRIVATE KEY-----") };
++        if !complete {
++            return Err(MeowError::Config(format!("{plugin}: '{opt}' has incomplete inline PEM")));
++        }
++    }
++    Ok(())
++}
++
+--- a/crates/meow-proxy/src/shadow_tls_plugin.rs
++++ b/crates/meow-proxy/src/shadow_tls_plugin.rs
+@@ -78,0 +79,8 @@
++    parse_opts_mode(s, false)
++}
++
++pub fn validate_source_opts(s: &str) -> Result<()> {
++    parse_opts_mode(s, true).map(|_| ())
++}
++
++fn parse_opts_mode(s: &str, source_only: bool) -> Result<ShadowTlsConfig> {
+@@ -93,0 +102,2 @@
++    let mut cert_declared = false;
++    let mut key_declared = false;
+@@ -132,2 +142,10 @@
+-            "certificate" => cert_pem = Some(load_pem_or_path(&value, "certificate", PLUGIN)?),
+-            "private-key" => key_pem = Some(load_pem_or_path(&value, "private-key", PLUGIN)?),
++            "certificate" => {
++                cert_declared = true;
++                if source_only { crate::plugin_util::validate_pem_reference(&value, "certificate", PLUGIN)?; }
++                else { cert_pem = Some(load_pem_or_path(&value, "certificate", PLUGIN)?); }
++            }
++            "private-key" => {
++                key_declared = true;
++                if source_only { crate::plugin_util::validate_pem_reference(&value, "private-key", PLUGIN)?; }
++                else { key_pem = Some(load_pem_or_path(&value, "private-key", PLUGIN)?); }
++            }
+@@ -159,0 +178,3 @@
++    if source_only && cert_declared != key_declared {
++        return Err(MeowError::Config(format!("{PLUGIN}: 'certificate' and 'private-key' must both be set")));
++    }
+--- a/crates/meow-proxy/src/shadowsocks_adapter.rs
++++ b/crates/meow-proxy/src/shadowsocks_adapter.rs
+@@ -141,0 +142,7 @@
++fn parse_server_config(server: &str, port: u16, password: &str, cipher: &str) -> Result<ServerConfig> {
++    let cipher_kind = cipher.parse::<CipherKind>()
++        .map_err(|_| MeowError::Config(format!("unknown cipher: {cipher}")))?;
++    ServerConfig::new((server, port), password, cipher_kind)
++        .map_err(|error| MeowError::Config(format!("invalid ss config: {error}")))
++}
++
+@@ -142,0 +150,26 @@
++    pub fn validate_source_options(
++        server: &str,
++        port: u16,
++        password: &str,
++        cipher: &str,
++        plugin_name: Option<&str>,
++        plugin_opts: Option<&str>,
++    ) -> Result<()> {
++        parse_server_config(server, port, password, cipher)?;
++        match plugin_name {
++            Some(plugin) if is_builtin_obfs_plugin(plugin) => { parse_obfs_opts(plugin_opts, server)?; }
++            Some("v2ray-plugin") => { v2ray_plugin::parse_opts(plugin_opts.unwrap_or(""))?; }
++            Some("gost-plugin") => gost_plugin::validate_source_opts(plugin_opts.unwrap_or(""))?,
++            Some("shadow-tls") => shadow_tls_plugin::validate_source_opts(plugin_opts.unwrap_or(""))?,
++            Some("restls") => { restls_plugin::parse_opts(plugin_opts.unwrap_or(""))?; }
++            Some("jls") => { jls_plugin::parse_opts(plugin_opts.unwrap_or(""))?; }
++            #[cfg(feature = "kcptun")]
++            Some("kcptun") => { kcptun_plugin::parse_opts(plugin_opts.unwrap_or(""))?; }
++            #[cfg(feature = "ech-tls-tunnel")]
++            Some("ech-tls-tunnel") => { ech_tls_tunnel::parse_opts(plugin_opts.unwrap_or(""))?; }
++            Some(plugin) => return Err(MeowError::Config(format!("ss: plugin '{plugin}' is unavailable for pure source admission"))),
++            None => {}
++        }
++        Ok(())
++    }
++
+@@ -161,5 +194 @@
+-        let cipher_kind = cipher
+-            .parse::<CipherKind>()
+-            .map_err(|_| MeowError::Config(format!("unknown cipher: {cipher}")))?;
+-        let mut server_config = ServerConfig::new((server, port), password, cipher_kind)
+-            .map_err(|e| MeowError::Config(format!("invalid ss config: {e}")))?;
++        let mut server_config = parse_server_config(server, port, password, cipher)?;
+--- a/crates/meow-rules/src/parser.rs
++++ b/crates/meow-rules/src/parser.rs
+@@ -297,0 +298,32 @@
++    let (groups, adapter) = logic_rule_parts(rule_type, rest, logic_depth)?;
++
++    let mut inner_rules: Vec<Box<dyn Rule>> = Vec::with_capacity(groups.len());
++    for g in &groups {
++        // Upstream `payloadToRule` rejects MATCH inside logic sub-rules —
++        // it would splice into an always-true `FinalRule` leg. Nested
++        // groups recurse through here, so the check covers any depth.
++        validate_logic_child(rule_type, g)?;
++        let patched = splice_inner_adapter(g.trim());
++        inner_rules.push(parse_rule_depth(&patched, ctx, logic_depth + 1)?);
++    }
++
++    match rule_type {
++        "AND" => Ok(Box::new(AndRule::new(inner_rules, adapter))),
++        "OR" => Ok(Box::new(OrRule::new(inner_rules, adapter))),
++        "NOT" => {
++            if inner_rules.len() != 1 {
++                return Err(format!(
++                    "NOT rule requires exactly 1 inner rule, got {}",
++                    inner_rules.len()
++                ));
++            }
++            Ok(Box::new(NotRule::new(
++                inner_rules.into_iter().next().unwrap(),
++                adapter,
++            )))
++        }
++        _ => unreachable!("caller upper-cased rule_type"),
++    }
++}
++
++fn logic_rule_parts<'a>(rule_type: &str, rest: &'a str, logic_depth: usize) -> Result<(Vec<String>, &'a str), String> {
+@@ -351,5 +383,4 @@
+-    let mut inner_rules: Vec<Box<dyn Rule>> = Vec::with_capacity(groups.len());
+-    for g in &groups {
+-        // Upstream `payloadToRule` rejects MATCH inside logic sub-rules —
+-        // it would splice into an always-true `FinalRule` leg. Nested
+-        // groups recurse through here, so the check covers any depth.
++    Ok((groups, adapter))
++}
++
++fn validate_logic_child(rule_type: &str, g: &str) -> Result<(), String> {
+@@ -381,13 +412,16 @@
+-        let patched = splice_inner_adapter(g.trim());
+-        inner_rules.push(parse_rule_depth(&patched, ctx, logic_depth + 1)?);
+-    }
+-
+-    match rule_type {
+-        "AND" => Ok(Box::new(AndRule::new(inner_rules, adapter))),
+-        "OR" => Ok(Box::new(OrRule::new(inner_rules, adapter))),
+-        "NOT" => {
+-            if inner_rules.len() != 1 {
+-                return Err(format!(
+-                    "NOT rule requires exactly 1 inner rule, got {}",
+-                    inner_rules.len()
+-                ));
++    Ok(())
++}
++
++pub fn validate_rule_source(line: &str) -> Result<String, String> {
++    validate_rule_source_depth(line, 0)
++}
++
++fn validate_rule_source_depth(line: &str, logic_depth: usize) -> Result<String, String> {
++    if line.len() > MAX_RULE_LINE_LEN { return Err(format!("rule line exceeds {MAX_RULE_LINE_LEN} bytes")); }
++    if let Some((kind, rest)) = split_once_trimmed(line, ',') {
++        let upper = kind.to_ascii_uppercase();
++        if matches!(upper.as_str(), "AND" | "OR" | "NOT") {
++            let (groups, adapter) = logic_rule_parts(&upper, rest, logic_depth)?;
++            for group in &groups {
++                validate_logic_child(&upper, &group)?;
++                validate_rule_source_depth(&splice_inner_adapter(group.trim()), logic_depth + 1)?;
+@@ -395,7 +429,16 @@
+-            Ok(Box::new(NotRule::new(
+-                inner_rules.into_iter().next().unwrap(),
+-                adapter,
+-            )))
+-        }
+-        _ => unreachable!("caller upper-cased rule_type"),
+-    }
++            if upper == "NOT" && groups.len() != 1 {
++                return Err(format!("NOT rule requires exactly 1 inner rule, got {}", groups.len()));
++            }
++            return Ok(adapter.to_owned());
++        }
++    }
++    let parts: Vec<_> = line.splitn(4, ',').map(str::trim).collect();
++    match parts.first().copied().unwrap_or("") {
++        "GEOIP" | "SRC-GEOIP" | "IP-ASN" | "SRC-IP-ASN" => {
++            if parts.len() < 3 { return Err(format!("rule needs at least 3 parts: {line}")); }
++            if parts[0].ends_with("ASN") { parse_asn_payload(parts[1])?; }
++            return Ok(parts[2].to_owned());
++        }
++        _ => {}
++    }
++    parse_rule_depth(line, &ParserContext::empty(), logic_depth).map(|rule| rule.adapter().to_owned())

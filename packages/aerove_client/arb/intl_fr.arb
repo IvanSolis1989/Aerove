@@ -1000,5 +1000,21 @@
   "outboundModeCurrent": "Mode sortant : {mode}",
   "outboundModeNext": "Passer à {mode}",
   "trafficUploadSpeed": "Vitesse montante : {speed}",
-  "trafficDownloadSpeed": "Vitesse descendante : {speed}"
+  "trafficDownloadSpeed": "Vitesse descendante : {speed}",
+  "subscriptionCompatibilitySummary": "{removed} nœuds non pris en charge par ce noyau ont été ignorés ({protocols}). {adjustments}",
+  "@subscriptionCompatibilitySummary": {
+    "description": "Compatibility summary shown only after a subscription commit succeeds.",
+    "placeholders": {
+      "protocols": {
+        "type": "String"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "adjustments": {
+        "type": "String"
+      }
+    }
+  },
+  "subscriptionCompatibilityTunStack": "La pile TUN lwIP prise en charge par ce noyau a été appliquée."
 }

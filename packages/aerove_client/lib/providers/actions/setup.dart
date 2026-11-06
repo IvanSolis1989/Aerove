@@ -19,6 +19,7 @@ typedef BuiltProfile = ({
   ConfigCounts counts,
   SetupBase? base,
   ProfileSelectionPolicy? selectionPolicy,
+  List<String> providerSourceWitness,
 });
 
 class _RunRequest {
@@ -75,6 +76,73 @@ class SetupAction extends _$SetupAction {
   }
 
   final _setupScheduler = SerialTaskScheduler();
+  final _providerCancellations = <ValueNotifier<bool>>{};
+  final _providerCompletions = <ValueNotifier<bool>, Completer<void>>{};
+  int _providerSourceWriters = 0;
+  final _providerSourceScheduler = SerialTaskScheduler();
+  final _providerSourceLease = Object();
+
+  Future<T> withProviderSourceWrite<T>(Future<T> Function() write) async {
+    return _withProviderSourceWrite(write);
+  }
+
+  Future<T> _withProviderSourceWrite<T>(
+    Future<T> Function() write, {
+    ValueNotifier<bool>? operation,
+  }) async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs') return write();
+    if (identical(Zone.current[_providerSourceLease], this)) return write();
+    _providerSourceWriters++;
+    try {
+      return await _providerSourceScheduler.run(() async {
+        final pending = Map.of(_providerCompletions)..remove(operation);
+        for (final signal in pending.keys) {
+          signal.value = true;
+        }
+        await Future.wait(pending.values.map((done) => done.future));
+        return runZoned(() async {
+          await _recoverProviderSources();
+          return write();
+        }, zoneValues: {_providerSourceLease: this});
+      });
+    } finally {
+      _providerSourceWriters--;
+    }
+  }
+
+  Future<Map<String, dynamic>> _providerBusinessProof({
+    bool saveCurrent = false,
+  }) async {
+    await waitForDatabaseWrites();
+    final storage = await preferences.sharedPreferences;
+    if (storage == null) throw StateError('Shared data storage is unavailable');
+    if (saveCurrent) debouncer.cancel(FunctionTag.savePreferences);
+    return nativeLiteBusinessSource(
+      database,
+      Directory(await appPath.homeDirPath),
+      storage,
+      saveCurrent ? ref.read(configProvider) : null,
+    );
+  }
+
+  Future<void> _recoverProviderSources() async {
+    final journals = await FileProviderSourceJournal.pending(
+      Directory(await appPath.homeDirPath),
+    );
+    for (final journal in journals) {
+      await journal.recover(
+        invoke: _core.invokeMeowProviderSource,
+        readProof: _providerBusinessProof,
+      );
+    }
+  }
+
+  void _cancelProviderRequests() {
+    for (final cancellation in _providerCancellations) {
+      cancellation.value = true;
+    }
+  }
+
   final _listenerScheduler = SerialTaskScheduler();
   final _updateScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
@@ -96,6 +164,14 @@ class SetupAction extends _$SetupAction {
 
   @override
   void build() {
+    ref.onDispose(_cancelProviderRequests);
+    ref.listen(currentProfileIdProvider, (_, _) => _cancelProviderRequests());
+    ref.listen(coreHandlerProvider, (_, _) => _cancelProviderRequests());
+    ref.listen(coreStatusProvider, (_, status) {
+      if (status != CoreStatus.connected) _cancelProviderRequests();
+    });
+    ref.listen(updateParamsProvider, (_, _) => _cancelProviderRequests());
+    ref.listen(setupPatchProvider, (_, _) => _cancelProviderRequests());
     ref.onDispose(_stopRuntimeTicker);
     ref.onDispose(_cancelGeoRequest);
     ref.listen(currentProfileIdProvider, (_, _) => _cancelGeoRequest());
@@ -980,6 +1056,335 @@ class SetupAction extends _$SetupAction {
     return result == _SetupTaskResult.completed;
   }
 
+  /// Provider replacement follows the same source producer and applied owner as setup.
+  Future<void> updateMeowProvider({
+    required String namespace,
+    required String name,
+    required String? expectedRuntimeRevision,
+    String? replacementData,
+    Uint8List? replacementBytes,
+    bool Function()? isCurrent,
+  }) async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs')
+      throw StateError('Meow provider operation requires Meow');
+    if (!{'proxy-providers', 'rule-providers'}.contains(namespace) ||
+        name.isEmpty) {
+      throw const FormatException('provider: invalid namespace or name');
+    }
+    if (expectedRuntimeRevision == null || expectedRuntimeRevision.isEmpty) {
+      throw const CoreMethodException(
+        code: 'superseded',
+        message: 'Provider selection has no captured runtime revision',
+      );
+    }
+    if ((replacementData != null || replacementBytes != null) &&
+        !identical(Zone.current[_providerSourceLease], this)) {
+      return withProviderSourceWrite(
+        () => updateMeowProvider(
+          namespace: namespace,
+          name: name,
+          expectedRuntimeRevision: expectedRuntimeRevision,
+          replacementData: replacementData,
+          replacementBytes: replacementBytes,
+          isCurrent: isCurrent,
+        ),
+      );
+    }
+    if (_providerSourceWriters != 0 &&
+        !identical(Zone.current[_providerSourceLease], this))
+      throw const UpdateCancelledException();
+    final owner = _core;
+    final revision = _runtimeRevision;
+    final profileId = ref.read(currentProfileIdProvider);
+    final cancellation = ValueNotifier(false);
+    _providerCancellations.add(cancellation);
+    final completion = Completer<void>();
+    unawaited(
+      completion.future.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
+    _providerCompletions[cancellation] = completion;
+    CoreRequestQuiescence? nativeRequest;
+    void Function()? closeSource;
+    bool current() =>
+        !cancellation.value &&
+        ref.mounted &&
+        identical(owner, _core) &&
+        revision == _runtimeRevision &&
+        ref.read(coreStatusProvider) == CoreStatus.connected &&
+        ref.read(currentProfileIdProvider) == profileId &&
+        (isCurrent?.call() ?? true);
+    try {
+      var observedSource = ref.read(setupStateProvider(profileId)).value;
+      final sourceSubscription = ref.listen(setupStateProvider(profileId), (
+        _,
+        next,
+      ) {
+        if (next.hasError) cancellation.value = true;
+        if (next.value case final source?) {
+          if (observedSource != null && observedSource != source)
+            cancellation.value = true;
+          observedSource = source;
+        }
+      });
+      closeSource = sourceSubscription.close;
+      final before = await owner.readMeowProviderApplied();
+      if (before.revision != expectedRuntimeRevision) {
+        throw const CoreMethodException(
+          code: 'superseded',
+          message: 'Provider selection belongs to another runtime',
+        );
+      }
+      checkUpdateCurrent(current);
+      if (replacementData != null || replacementBytes != null) {
+        await _withProviderSourceWrite(
+          () => _publishManagedProviderSource(
+            namespace: namespace,
+            name: name,
+            profileId: profileId,
+            before: before,
+            owner: owner,
+            cancellation: cancellation,
+            current: current,
+            bytes:
+                replacementBytes ??
+                Uint8List.fromList(utf8.encode(replacementData!)),
+            observeQuiescence: (state) => nativeRequest = state,
+          ),
+          operation: cancellation,
+        );
+        return;
+      }
+      final update = <String, dynamic>{
+        'namespace': namespace,
+        'name': name,
+        'expected': before.applied.toJson(),
+        'expectedRevision': expectedRuntimeRevision,
+      };
+      await _setupScheduler.run(() async {
+        checkUpdateCurrent(current);
+        final result = await _setupConfig(
+          force: true,
+          silence: true,
+          providerUpdate: update,
+          metadataIsCurrent: current,
+          cancellation: cancellation,
+          observeQuiescence: (state) => nativeRequest = state,
+          providerApplied: (record) async {
+            checkUpdateCurrent(current);
+            final actual = await owner.readMeowProviderApplied();
+            checkUpdateCurrent(current);
+            if (actual.revision == before.revision ||
+                actual.applied != record) {
+              throw const CoreMethodException(
+                code: 'runtime_receipt_mismatch',
+                message:
+                    'Provider update has no new actual applied runtime receipt',
+              );
+            }
+          },
+          onUpdated: () async {
+            await ref.read(proxiesActionProvider.notifier).updateGroups();
+            await ref.read(providersProvider.notifier).syncProviders();
+          },
+        );
+        if (result != _SetupTaskResult.completed) {
+          throw const CoreMethodException(
+            code: 'provider_update_failed',
+            message: 'Provider runtime update did not commit',
+          );
+        }
+      });
+    } finally {
+      closeSource?.call();
+      _providerCancellations.remove(cancellation);
+      {
+        void release() {
+          _providerCompletions.remove(cancellation);
+          if (!completion.isCompleted) completion.complete();
+          cancellation.dispose();
+        }
+
+        final native = nativeRequest;
+        if (native == null || native.isQuiescent)
+          release();
+        else {
+          completion.completeError(
+            const CoreMethodException(
+              code: 'termination_unconfirmed',
+              message: 'Provider cancellation has not been confirmed',
+            ),
+          );
+          unawaited(native.whenQuiescent.then((_) => release()));
+        }
+      }
+    }
+  }
+
+  Future<void> _publishManagedProviderSource({
+    required String namespace,
+    required String name,
+    required int? profileId,
+    required ({SetupRecord applied, String revision}) before,
+    required CoreController owner,
+    required ValueNotifier<bool> cancellation,
+    required bool Function() current,
+    required Uint8List bytes,
+    required void Function(CoreRequestQuiescence) observeQuiescence,
+  }) async {
+    if (profileId == null)
+      throw const FormatException(
+        'provider source: selected profile is required',
+      );
+    await _setupScheduler.run(() async {
+      checkUpdateCurrent(current);
+      final state = await ref.read(setupStateProvider(profileId).future);
+      final key = '$namespace/$name';
+      if (state.overrides.localProviderSources.containsKey(key) ||
+          state.overrides.nativeResourceInputs.containsKey(
+            '\$.$namespace.$name',
+          ) ||
+          namespace == 'proxy-providers' &&
+              state.profileProviders.containsKey(name) ||
+          namespace == 'rule-providers' &&
+              (state.overrides.ruleProviderBindings.containsKey(name) ||
+                  state.clashProviders.any(
+                    (provider) => provider.label == name,
+                  ))) {
+        throw const CoreMethodException(
+          code: 'source_owner_mismatch',
+          message:
+              'Provider source requires its independently owned publication transaction',
+        );
+      }
+      final config = state.profileType == ProfileType.custom
+          ? <String, dynamic>{
+              'proxy-providers': state.overrides.sourceProxyProviders,
+              'rule-providers': state.overrides.sourceRuleProviders,
+            }
+          : jsonDecode(await owner.getConfigJson(profileId)) as Map;
+      final declaration = (config[namespace] as Map?)?[name];
+      final home = Directory(
+        await Directory(await appPath.homeDirPath).resolveSymbolicLinks(),
+      );
+      final relative = fileProviderSourcePath(profileId, namespace, name);
+      if (declaration is! Map || declaration['type'] != 'file') {
+        throw const CoreMethodException(
+          code: 'source_owner_mismatch',
+          message:
+              'Provider does not belong to the selected managed file source',
+        );
+      }
+      if (!(await fileProviderSourceBackupEntriesTask(home.path, [
+        profileId,
+      ])).contains(relative)) {
+        throw const CoreMethodException(
+          code: 'source_owner_mismatch',
+          message:
+              'Managed provider source has no validated source registration',
+        );
+      }
+      checkUpdateCurrent(current);
+      final proof = await _providerBusinessProof(saveCurrent: true);
+      final journal = await FileProviderSourceJournal.prepare(
+        home: home,
+        id: uuidV4,
+        profileId: profileId,
+        namespace: namespace,
+        name: name,
+        expectedRevision: before.revision,
+        expected: before.applied.toJson(),
+        beforeProof: proof,
+        bytes: bytes,
+      );
+      var beginAttempted = false;
+      try {
+        checkUpdateCurrent(current);
+        beginAttempted = true;
+        final prepared = await owner.invokeMeowProviderSource(
+          journal.beginRequest(proof),
+          cancellation: cancellation,
+          observeQuiescence: observeQuiescence,
+        );
+        journal.checkReply(prepared);
+        if (prepared['state'] != 'PREPARED' ||
+            prepared['decision'] != 'UNDECIDED') {
+          throw const CoreMethodException(
+            code: 'source_prepare_failed',
+            message: 'Provider source preparation did not complete',
+          );
+        }
+        checkUpdateCurrent(current);
+        await journal.publish();
+        final result = await _setupConfig(
+          force: true,
+          silence: true,
+          metadataIsCurrent: current,
+          cancellation: cancellation,
+          providerSourceApply: (params) async {
+            checkUpdateCurrent(current);
+            final reply = await owner.invokeMeowProviderSource(
+              {
+                ...journal.envelope('apply'),
+                'publication': {
+                  'sourceJournalSha256': journal.journalSha256,
+                  'afterStateSha256': nativeLiteJsonHash(
+                    params.dataSourceProof!,
+                  ),
+                },
+                'setupParams': params.toJson(),
+              },
+              cancellation: cancellation,
+              observeQuiescence: observeQuiescence,
+            );
+            journal.checkReply(reply);
+            if (reply['decision'] != 'COMMITTED' ||
+                reply['revision'] is! String ||
+                reply['revision'] == before.revision ||
+                reply['applied'] is! Map ||
+                SetupRecord.fromJson(
+                      Map<String, dynamic>.from(reply['applied'] as Map),
+                    ) !=
+                    params.applied) {
+              throw const CoreMethodException(
+                code: 'runtime_receipt_mismatch',
+                message:
+                    'Provider source has no matching actual committed runtime',
+              );
+            }
+          },
+          onUpdated: () async {
+            await ref.read(proxiesActionProvider.notifier).updateGroups();
+            await ref.read(providersProvider.notifier).syncProviders();
+          },
+        );
+        if (result != _SetupTaskResult.completed)
+          throw const CoreMethodException(
+            code: 'provider_update_failed',
+            message: 'Provider source runtime update did not commit',
+          );
+      } catch (_) {
+        // Cancellation/transport errors are not a rollback decision. Query must
+        // first join Native work and read its sole durable commit point.
+        if (!beginAttempted)
+          await journal.discardUnbegun();
+        else
+          await journal.recover(
+            invoke: owner.invokeMeowProviderSource,
+            readProof: _providerBusinessProof,
+          );
+        rethrow;
+      }
+      await journal.recover(
+        invoke: owner.invokeMeowProviderSource,
+        readProof: _providerBusinessProof,
+      );
+      checkUpdateCurrent(current);
+    });
+  }
+
   /// Runs Geo requests through the same profile and JS producer as setup.
   Future<void> updateMeowGeo(String type, {bool Function()? isCurrent}) async {
     if (ClientProduct.current.expectedCoreId != 'meow-rs') {
@@ -1139,6 +1544,7 @@ class SetupAction extends _$SetupAction {
         counts: configCountsOf(const {}),
         base: null,
         selectionPolicy: null,
+        providerSourceWitness: const <String>[],
       );
     }
     final defaultUA = globalState.packageInfo.ua;
@@ -1160,7 +1566,9 @@ class SetupAction extends _$SetupAction {
         ? await setupState.script?.content
         : null;
     final hasScript = scriptContent?.isNotEmpty == true;
-    final profileBase = profileId != null && !isCustom && !hasScript
+    final materializeMeow = ClientProduct.current.expectedCoreId == 'meow-rs';
+    final profileBase =
+        profileId != null && !isCustom && !hasScript && !materializeMeow
         ? await _core.getProfileBase(profileId)
         : null;
     final resolvedGroups = isCustom
@@ -1185,7 +1593,12 @@ class SetupAction extends _$SetupAction {
               groups: resolvedGroups,
             ),
           }
-        : profileBase?.base.config ?? const <String, dynamic>{};
+        : profileBase?.base.config ??
+              (materializeMeow && profileId != null
+                  ? Map<String, dynamic>.from(
+                      jsonDecode(await _core.getConfigJson(profileId)) as Map,
+                    )
+                  : <String, dynamic>{});
     final proxyGroups = resolvedGroups;
     final rules = isCustom ? setupState.rules : <Rule>[];
     final directory = await appPath.profilesPath;
@@ -1205,6 +1618,17 @@ class SetupAction extends _$SetupAction {
           entry.key: entry.value,
       };
     }
+    if (hasScript && setupState.overrides.localProviderSources.isNotEmpty) {
+      rawConfig.addAll(
+        await applyLocalProviderSourcesTask(
+          rawConfig,
+          profileId: profileId,
+          homeDirPath: await appPath.homeDirPath,
+          bindings: setupState.overrides.localProviderSources,
+          coreId: ClientProduct.current.expectedCoreId,
+        ),
+      );
+    }
     final scriptOutput = profileId != null && hasScript
         ? await handleEvaluate(
             scriptContent!,
@@ -1221,9 +1645,11 @@ class SetupAction extends _$SetupAction {
                 : nativeProxyProviderScriptInput(
                     ClientProduct.current.expectedCoreId == 'meow-rs'
                         ? meowDnsScriptInput(
-                            await _core.getConfigJson(profileId),
+                            jsonEncode(rawConfig),
                             overrides: setupState.overrides,
                           )
+                        : setupState.overrides.localProviderSources.isNotEmpty
+                        ? jsonEncode(rawConfig)
                         : await _core.getConfigJson(profileId),
                     setupState.overrides,
                   ),
@@ -1277,6 +1703,7 @@ class SetupAction extends _$SetupAction {
         counts: res.counts,
         base: null,
         selectionPolicy: res.selectionPolicy,
+        providerSourceWitness: res.providerSourceWitness,
       );
     }
     final (:base, :path) = profileBase;
@@ -1290,6 +1717,7 @@ class SetupAction extends _$SetupAction {
       ),
       base: SetupBase(path: path, overlay: res.yaml),
       selectionPolicy: res.selectionPolicy,
+      providerSourceWitness: res.providerSourceWitness,
     );
   }
 
@@ -1331,7 +1759,10 @@ class SetupAction extends _$SetupAction {
     final proxyFiles = <String, String>{};
     final ruleFiles = <String, String>{};
     for (final entry in setupState.profileProviders.entries) {
-      if (!usedProxyProviders.contains(entry.key)) {
+      if (!usedProxyProviders.contains(entry.key) ||
+          setupState.overrides.localProviderSources.containsKey(
+            'proxy-providers/${entry.key}',
+          )) {
         continue;
       }
       final path = await appPath.getProfilePath(entry.value.toString());
@@ -1351,6 +1782,14 @@ class SetupAction extends _$SetupAction {
         for (final entry in setupState.overrides.ruleProviderBindings.entries)
           if (entry.value == provider.id) entry.key,
       ];
+      final labels = (aliases.isEmpty ? [provider.label] : aliases)
+          .where(
+            (label) => !setupState.overrides.localProviderSources.containsKey(
+              'rule-providers/$label',
+            ),
+          )
+          .toList();
+      if (labels.isEmpty) continue;
       if (aliases.isEmpty &&
           setupState.overrides.sourceRuleProviders.containsKey(provider.label))
         continue;
@@ -1363,7 +1802,7 @@ class SetupAction extends _$SetupAction {
       final filePath = prepared.sourceDefinition != null
           ? await prepared.path
           : path;
-      for (final label in aliases.isEmpty ? [prepared.label] : aliases) {
+      for (final label in labels) {
         ruleProviders[label] = prepared.definition(path);
         ruleFiles[label] = filePath;
       }
@@ -1480,9 +1919,21 @@ class SetupAction extends _$SetupAction {
     bool metadataOnly = false,
     String? geoType,
     String? geoTransactionId,
+    Map<String, dynamic>? providerUpdate,
+    Future<void> Function(SetupParams params)? providerSourceApply,
+    Future<void> Function(SetupRecord record)? providerApplied,
+    ValueListenable<bool>? cancellation,
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
     bool Function()? metadataIsCurrent,
   }) async {
-    final producerOnly = metadataOnly || geoType != null;
+    final producerOnly =
+        metadataOnly ||
+        geoType != null ||
+        providerUpdate != null ||
+        providerSourceApply != null;
+    if (ClientProduct.current.expectedCoreId == 'meow-rs' && !producerOnly) {
+      await _recoverProviderSources();
+    }
     var profile = ref.read(currentProfileProvider);
     if (producerOnly &&
         (profile == null || !(metadataIsCurrent?.call() ?? false)))
@@ -1589,11 +2040,16 @@ class SetupAction extends _$SetupAction {
                   businessFilterIds,
                 ),
               ) ||
-          jsonEncode(readBack) != jsonEncode(dataSourceProof)) {
+          readBack == null) {
         throw StateError(
           'Shared configuration changed while preparing the runtime',
         );
       }
+      dataSourceProof = admitProviderSourceRegistration(
+        dataSourceProof!,
+        readBack,
+        realProfile!.providerSourceWitness,
+      );
     }
     var setupParams = _setupParams.copyWith(
       base: realProfile?.base,
@@ -1740,9 +2196,11 @@ class SetupAction extends _$SetupAction {
     if (bindSharedSource && meowRecord == null) return _SetupTaskResult.failed;
     // Go answers a config it rejects by running its built-in default, which
     // has no proxies, so until this push succeeds no applied config is known.
-    _appliedInputs = null;
-    globalState.lastConfigMd5 = null;
-    _publishAppliedCounts(null);
+    if (providerUpdate == null && providerSourceApply == null) {
+      _appliedInputs = null;
+      globalState.lastConfigMd5 = null;
+      _publishAppliedCounts(null);
+    }
     final record = bindSharedSource
         ? meowRecord
         : realProfile == null
@@ -1758,6 +2216,7 @@ class SetupAction extends _$SetupAction {
     await globalState.loadingRun(
       () async {
         try {
+          if (providerUpdate != null) checkUpdateCurrent(metadataIsCurrent);
           if (setupParams.base == null) {
             final configFilePath = await appPath.configFilePath;
             await File(configFilePath).writeAsStringAtomically(yamlString);
@@ -1766,18 +2225,34 @@ class SetupAction extends _$SetupAction {
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
           }
-          final message = await _core.setupConfig(
-            params: setupParams.copyWith(applied: record),
-            preloadInvoke: preloadInvoke,
-          );
+          final message = providerSourceApply != null
+              ? await (() async {
+                  await providerSourceApply(
+                    setupParams.copyWith(applied: record),
+                  );
+                  return '';
+                })()
+              : await _core.setupConfig(
+                  params: setupParams.copyWith(
+                    applied: record,
+                    providerUpdate: providerUpdate,
+                  ),
+                  preloadInvoke: preloadInvoke,
+                  cancellation: cancellation,
+                  observeQuiescence: observeQuiescence,
+                );
           if (message.isNotEmpty) {
-            _publishAppliedCounts(configCountsOf(const {}));
+            if (providerUpdate == null)
+              _publishAppliedCounts(configCountsOf(const {}));
             await globalState.safeRun(() => onUpdated?.call());
             throw MessageException(message);
           }
+          if (providerApplied != null) await providerApplied(record!);
         } catch (e, s) {
           setupFailed = true;
-          if (preloadInvoke != null) {
+          if (preloadInvoke != null ||
+              cancellation != null ||
+              providerSourceApply != null) {
             handoffFailure = (e, s);
           }
           rethrow;

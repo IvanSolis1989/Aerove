@@ -13,7 +13,7 @@ class MeowDns99StageTest {
   val path=System.getProperty("dns99.fixture");org.junit.Assume.assumeNotNull("Supply actual getProfile/Node fixture",path)
   return JSONObject(File(checkNotNull(path)).readText())
  }
- private suspend fun stage(source:String,ipv6:Boolean):MeowRuntimeSnapshot {
+ private suspend fun stage(source:String,ipv6:Boolean,dnsIpv6:Boolean?=null):MeowRuntimeSnapshot {
   val home=temporary.newFolder();File(home,"config.yaml").writeText(source)
   val store=RuntimeHandoffStore(home,validateProjection=MeowRuntimeSnapshotSettings::validate)
   val effects=object:MeowSetupEffects {
@@ -26,7 +26,7 @@ class MeowDns99StageTest {
   MeowConfigProtocol(home,NativeConfigValidator {null},{emptySet()}).use {config ->
    val api=MeowSetupProtocol(home,store,config,effects,NativePreparedConfigValidator { yaml,_ ->
     val root=ConfigYaml.parse(yaml);assertEquals(ipv6,root["ipv6"])
-    val dns=root["dns"] as Map<*,*>;assertFalse(dns.containsKey("ipv6"));assertFalse(dns.containsKey("fake-ip-range6"));assertFalse(dns.containsKey("__aerove_dns_defaults"));null
+    val dns=root["dns"] as Map<*,*>;assertEquals(dnsIpv6!=null,dns.containsKey("ipv6"));assertEquals(dnsIpv6,dns["ipv6"]);assertFalse(dns.containsKey("fake-ip-range6"));assertFalse(dns.containsKey("__aerove_dns_defaults"));null
    },verifiedFeatures={emptySet()},validator=NativeConfigValidator {null})
    api.syncState(mapOf("setupParams" to null,"vpnOptions" to mapOf("enable" to false,"port" to 7890,"ipv6" to ipv6,"dnsHijacking" to false,"allowBypass" to false,"systemProxy" to false,
     "bypassDomain" to emptyList<String>(),"stack" to "lwip","routeAddress" to emptyList<String>(),"mtu" to 9000,"congestionController" to "builtin",
@@ -44,8 +44,13 @@ class MeowDns99StageTest {
   stage(data.getString("rootFalseYaml"),false)
   stage(data.getString("scriptYaml"),true)
  }
- @Test fun allFourteenExplicitPathsStillFailTheUnchangedCompleteNativeStage()=runBlocking<Unit> {
-  val values=linkedMapOf<String,Any?>("listen-routing-mark" to 0,"prefer-h3" to false,"respect-rules" to false,"ipv6" to true,"ipv6-timeout" to 100,"cache-algorithm" to "lru","cache-max-size" to 4096,"fake-ip-range6" to "fdfe:dcba:9876::1/64","fake-ip-ttl" to 1,"fallback-lazy-query" to false,"proxy-server-nameserver-policy" to emptyMap<String,Any?>(),"direct-nameserver" to emptyList<String>(),"direct-nameserver-follow-policy" to false,"fallback-filter.geosite" to emptyList<String>())
+ @Test fun explicitDnsIpv6BooleanPassesCompleteStageForBothRootStates()=runBlocking<Unit> {
+  for(root in listOf(true,false))for(dns in listOf(true,false)) {
+   stage("ipv6: $root\ndns: {enable: true, ipv6: $dns, nameserver: ['udp://1.1.1.1']}\nrules: ['MATCH,DIRECT']\n",root,dns)
+  }
+ }
+ @Test fun remainingThirteenUnsupportedPathsStillFailCompleteNativeStage()=runBlocking<Unit> {
+  val values=linkedMapOf<String,Any?>("listen-routing-mark" to 0,"prefer-h3" to false,"respect-rules" to false,"ipv6-timeout" to 100,"cache-algorithm" to "lru","cache-max-size" to 4096,"fake-ip-range6" to "fdfe:dcba:9876::1/64","fake-ip-ttl" to 1,"fallback-lazy-query" to false,"proxy-server-nameserver-policy" to emptyMap<String,Any?>(),"direct-nameserver" to emptyList<String>(),"direct-nameserver-follow-policy" to false,"fallback-filter.geosite" to emptyList<String>())
   for((path,value) in values) {
    val dns=linkedMapOf<String,Any?>("enable" to true,"nameserver" to listOf("https://1.1.1.1/dns-query"));val parts=path.split('.')
    if(parts.size==1)dns[path]=value else dns[parts[0]]=mapOf(parts[1] to value)

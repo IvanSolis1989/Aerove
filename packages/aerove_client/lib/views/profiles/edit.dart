@@ -8,7 +8,6 @@ import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/action.dart';
-import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
@@ -35,6 +34,7 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
   late bool _autoUpdate;
   Uint8List? _editedData;
   bool _attempted = false;
+  bool _saving = false;
   final _fileInfoNotifier = ValueNotifier<FileInfo?>(null);
   late SetupAction _setupAction;
   Uint8List? _fileData;
@@ -117,6 +117,16 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
   }
 
   Future<void> _handleConfirm() async {
+    if (_saving) return;
+    _saving = true;
+    try {
+      await _saveConfirmed();
+    } finally {
+      _saving = false;
+    }
+  }
+
+  Future<void> _saveConfirmed() async {
     if (_issue(context.appLocalizations) != null) {
       setState(() {
         _attempted = true;
@@ -152,27 +162,22 @@ class _EditProfileViewState extends ConsumerState<EditProfileView> {
         }
       }
       final savedProfile = await globalState.safeRun(
-        () => profile.saveFile(
-          _fileData!,
-          validate: (path, key) =>
-              ref.read(coreHandlerProvider).validateProfile(path, key),
-        ),
+        () => profilesAction.saveProfileEdit(profile, fileData: _fileData!),
       );
       if (savedProfile == null) {
         return;
       }
-      profilesAction.putProfile(savedProfile);
     } else if (!hasUpdate) {
-      profilesAction.putProfile(profile);
-    } else {
-      unawaited(
-        globalState.safeRun(() async {
-          await Future.delayed(commonDuration);
-          if (hasUpdate) {
-            await profilesAction.updateProfile(profile);
-          }
-        }),
+      final saved = await globalState.safeRun(
+        () => profilesAction.saveProfileEdit(profile),
       );
+      if (saved == null) return;
+    } else {
+      final saved = await globalState.safeRun(() async {
+        await profilesAction.updateProfile(profile);
+        return true;
+      });
+      if (saved != true) return;
     }
     if (mounted) {
       Navigator.of(context).pop();

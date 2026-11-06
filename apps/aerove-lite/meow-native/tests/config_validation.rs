@@ -3,6 +3,101 @@ use aerove_meow_core::config_validation::{self as validation, dump_rule_set, ins
 #[path="support/resource_roots.rs"] mod preflight_roots;
 #[path="support/upstream_mrs.rs"] mod upstream_mrs;
 
+fn admit_source(source: &str) -> Result<(), String> {
+    validation::validate_source_config(source, Default::default())
+}
+
+#[test]
+fn provider_source_admission_never_fetches_or_requires_files_and_preserves_fields() {
+    let counter = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    counter.set_nonblocking(true).unwrap();
+    let endpoint = counter.local_addr().unwrap();
+    let missing = std::env::temp_dir().join(format!("aerove-source-unprepared-{}", std::process::id()));
+    assert!(!missing.exists());
+    let source = format!("ipv6: false\nproxy-providers:\n remote: {{type: http, url: 'http://{endpoint}/nodes', path: {:?}, interval: 3600}}\nrule-providers:\n domains: {{type: http, behavior: domain, url: 'http://{endpoint}/rules', path: {:?}, interval: 3600}}\nproxy-groups:\n - {{name: PICK, type: select, use: [remote]}}\nrules: ['RULE-SET,domains,PICK', 'MATCH,DIRECT']\n", missing.join("nodes.yaml").to_str().unwrap(), missing.join("rules.yaml").to_str().unwrap());
+    let original = source.clone();
+    admit_source(&source).unwrap();
+    assert_eq!(source, original);
+    let normalized: serde_yaml::Value = serde_yaml::from_str(&validation::normalize_config_fields(&source).unwrap()).unwrap();
+    let input: serde_yaml::Value = serde_yaml::from_str(&source).unwrap();
+    for field in ["proxy-providers", "rule-providers", "proxy-groups", "rules"] {
+        assert_eq!(normalized[field], input[field], "{field}");
+    }
+    assert!(!missing.exists());
+    assert_eq!(counter.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+}
+
+#[test]
+fn source_admission_rejects_invalid_definitions_symbols_and_cycles() {
+    for source in [
+        "unknown-root: true",
+        "ipv6: [false]",
+        "proxies: [{name: broken, type: socks5, server: localhost, port: 1080, unknown-option: true}]",
+        "proxy-groups: [{name: PICK, type: select, use: [missing]}]",
+        "proxy-groups: [{name: PICK, type: invalid, proxies: [DIRECT]}]",
+        "proxy-groups: [{name: PICK, type: select, proxies: [missing]}]",
+        "proxy-groups: [{name: A, type: select, proxies: [B]}, {name: B, type: select, proxies: [A]}]",
+        "rules: ['RULE-SET,missing,DIRECT']",
+        "rules: ['BOGUS,example.com,DIRECT']",
+        "rules: ['IP-CIDR,broken,DIRECT']",
+        "rules: ['IP-ASN,broken,DIRECT']",
+        "rules: ['AND,((GEOIP,CN),(IP-CIDR,broken)),DIRECT']",
+        "rules: ['MATCH,missing']",
+        "sub-rules: {a: ['SUB-RULE,b'], b: ['SUB-RULE,a']}\nrules: ['SUB-RULE,a']",
+        "proxy-providers: {remote: {type: http}}",
+        "rule-providers: {remote: {type: file, path: missing, behavior: invalid}}",
+    ] {
+        assert!(admit_source(source).is_err(), "admitted: {source}");
+    }
+    for value in ["true", "false"] {
+        admit_source(&format!("ipv6: {value}\nrules: ['MATCH,DIRECT']")).unwrap();
+    }
+    admit_source("rules: ['AND,((GEOIP,CN),(DST-PORT,443)),DIRECT', 'IP-ASN,64512,DIRECT', 'GEOSITE,example,DIRECT']").unwrap();
+    admit_source("rule-providers: {local: {type: inline, behavior: classical, payload: ['GEOIP,CN', 'IP-ASN,64512']}}\nrules: ['RULE-SET,local,DIRECT']").unwrap();
+}
+
+#[test]
+fn source_admission_honors_an_already_cancelled_owner() {
+    let cancel = tokio_util::sync::CancellationToken::new();
+    cancel.cancel();
+    assert_eq!(validation::validate_source_config("rules: ['MATCH,DIRECT']", cancel).unwrap_err(), "resourceReadCancelled");
+}
+
+#[tokio::test]
+async fn source_plugin_material_references_are_not_opened_and_runtime_still_rejects_bad_material() {
+    let material = Fixture::new(b"controlled invalid certificate/key material");
+    for (plugin, options) in [
+        ("gost-plugin", "mode: websocket, mux: false"),
+        ("shadow-tls", "host: cover.example.test, version: 3, password: secret"),
+    ] {
+        for path in [material.0.clone(), material.0.with_extension("missing-source-material")] {
+            let source = format!("proxies:\n - name: NODE\n   type: ss\n   server: example.test\n   port: 443\n   cipher: aes-128-gcm\n   password: secret\n   plugin: {plugin}\n   plugin-opts: {{{options}, certificate: {:?}, private-key: {:?}}}\nrules: ['MATCH,NODE']\n", path.to_str().unwrap(), path.to_str().unwrap());
+            admit_source(&source).unwrap();
+            assert!(validation::validate_config(&source).await.is_err(), "runtime accepted invalid material: {plugin}");
+        }
+    }
+    assert_eq!(fs::read(&material.0).unwrap(), b"controlled invalid certificate/key material");
+    for (plugin, options) in [("gost-plugin", "mode: invalid"), ("shadow-tls", "host: cover.test, version: 8")] {
+        let source = format!("proxies: [{{name: NODE, type: ss, server: example.test, port: 443, cipher: aes-128-gcm, password: secret, plugin: {plugin}, plugin-opts: {{{options}}}}}]\nrules: ['MATCH,NODE']\n");
+        assert!(admit_source(&source).is_err());
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+#[tokio::test]
+async fn source_admission_uses_owned_read_join_and_does_not_admit_unprepared_runtime() {
+    use aerove_meow_core::resource_fetch::OfflineResourceOwner;
+    let roots = preflight_roots::Roots::new();
+    let source = format!("proxy-providers: {{remote: {{type: file, path: {:?}}}}}\nproxy-groups: [{{name: PICK, type: select, use: [remote]}}]\nrules: ['MATCH,PICK']\n", roots.read.join("missing-nodes.yaml").to_str().unwrap());
+    let owner = OfflineResourceOwner::new();
+    let captured = source.to_owned();
+    owner.read(move |cancel| validation::validate_source_config(&captured, cancel)).await.unwrap();
+    assert!(owner.validate_prepared(source, roots.read.to_str().unwrap().into(), roots.cache.to_str().unwrap().into()).await.unwrap().is_err());
+    owner.cancel();
+    owner.close_and_join().await.unwrap();
+    assert!(owner.read(|_| Ok(())).await.is_err());
+}
+
 // Keep the offline converter's concrete future out of each Tokio test's layout query.
 fn validate_resource<'a>(kind: &'a str, path: &'a std::path::Path, behavior: &'a str, format: &'a str)
     -> std::pin::Pin<Box<dyn std::future::Future<Output=Result<(),String>>+Send+'a>> {

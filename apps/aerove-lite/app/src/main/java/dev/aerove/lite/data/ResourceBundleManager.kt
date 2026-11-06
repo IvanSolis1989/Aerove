@@ -113,7 +113,8 @@ class ResourceBundleManager(
         refreshKeys: Set<String>? = null, logicalOriginalSource: String = source,
         policyFingerprint: String = "", geoUrls: Map<String, String> = emptyMap(),
         requestPolicy: ProviderRequestPolicy? = null, selectedMap: Map<String, String> = emptyMap(),
-        sealedInputs: SealedResourceInputs? = null, tunReconciliation: MeowTunReconciliation? = null, geoResourceReader: HostGeoResourceReader? = null): ResourceBundle = state.snapshotFence.mutation { state.preparation.withPermit {
+        sealedInputs: SealedResourceInputs? = null, tunReconciliation: MeowTunReconciliation? = null, geoResourceReader: HostGeoResourceReader? = null,
+        replacements: Map<String, SealedFlutterResource> = emptyMap(), manualOverrides: Map<String, ProviderManualOverride> = emptyMap()): ResourceBundle = state.snapshotFence.mutation { state.preparation.withPermit {
         require(policyFingerprint.isEmpty() || policyFingerprint.matches(Regex("[0-9a-f]{64}"))) { "Invalid source policy fingerprint" }
         checkIdentifier(profileId)
         val generation = UUID.randomUUID().toString()
@@ -121,7 +122,7 @@ class ResourceBundleManager(
         synchronized(state) { state.candidates.add(identity) }
         var completed = false
         try {
-            val bundle = withContext(Dispatchers.IO) { build(profileId, source, generation, previous, refreshKeys, logicalOriginalSource, policyFingerprint, geoUrls, requestPolicy, selectedMap, sealedInputs,tunReconciliation,geoResourceReader) }
+            val bundle = withContext(Dispatchers.IO) { build(profileId, source, generation, previous, refreshKeys, logicalOriginalSource, policyFingerprint, geoUrls, requestPolicy, selectedMap, sealedInputs,tunReconciliation,geoResourceReader,replacements,manualOverrides) }
             completed = true
             bundle
         } finally {
@@ -138,7 +139,7 @@ class ResourceBundleManager(
 
     private suspend fun build(profileId: String, source: String, generation: String,
         previous: ResourceBundle?, refreshKeys: Set<String>?, logicalOriginalSource: String, policyFingerprint: String,
-        geoUrls: Map<String, String>, requestPolicy: ProviderRequestPolicy?, selectedMap: Map<String, String>, sealedInputs: SealedResourceInputs?, tunReconciliation: MeowTunReconciliation?, geoResourceReader: HostGeoResourceReader?): ResourceBundle {
+        geoUrls: Map<String, String>, requestPolicy: ProviderRequestPolicy?, selectedMap: Map<String, String>, sealedInputs: SealedResourceInputs?, tunReconciliation: MeowTunReconciliation?, geoResourceReader: HostGeoResourceReader?, replacements: Map<String, SealedFlutterResource>, manualOverrides: Map<String, ProviderManualOverride>): ResourceBundle {
         val validator=this.validator.withTunReconciliation(tunReconciliation)
         checkIdentifier(profileId)
         validator.validateManagedSource(source)
@@ -257,13 +258,14 @@ class ResourceBundleManager(
             val identity = if (effectiveFetch == null) sourceIdentity else sha256(sourceIdentity + "\n" + effectiveFetch.identity() +
                 (requestPolicy?.let { "\n" + it.json().toString() } ?: ""))
             val file = File(assets, "$identity.bin")
+            val replacement = replacements[key]
             val limit = when (kind) {
                 "proxy-provider", "source-proxy" -> MAX_PROFILE_BYTES.toLong()
                 "ruleset" -> MAX_RULE_INPUT_BYTES
                 else -> MAX_GEO_BYTES
             }
             val override = overridePath(key, identity).takeIf { localFile(profileId, it).isFile }
-            val forced = key in refreshKeys.orEmpty() || ("*" in refreshKeys.orEmpty() && kind in setOf("proxy-provider", "ruleset"))
+            val forced = key in refreshKeys.orEmpty() || ("*" in refreshKeys.orEmpty() && kind in setOf("proxy-provider", "source-proxy", "ruleset"))
             val sharedKind = effectiveFetch == null && kind in setOf("ruleset", "mmdb", "geosite")
             val libraryAtPreparation = if ((url != null || globalLocalId != null) && sharedKind)
                 library.snapshot(key, url ?: "", behavior, format, kind, globalLocalId) else null
@@ -272,7 +274,9 @@ class ResourceBundleManager(
                 (effectiveFetch == null || it.optString("transportOrigin") in setOf("captured-transport", "verified-generation", "private-override")) &&
                 (it.optString("sharedCacheBaselineSha", it.getString("sha256")) == (libraryAtPreparation?.sha256 ?: "") ||
                     libraryAtPreparation == null || libraryAtPreparation.sha256 == it.getString("sha256")) }
-            val migratedCandidate = if(url!=null && !forced && override==null) sealedInputs?.cached(key,url,behavior,format,effectiveFetch,requestPolicy,clock()) else null
+            val migratedCandidate = if(!forced && override==null && replacement==null) {
+                if(url!=null) sealedInputs?.cached(key,url,behavior,format,effectiveFetch,requestPolicy,clock()) else sealedInputs?.fileOverride(key)
+            } else null
             val migrated = migratedCandidate?.takeIf { input ->
                 val original=input.metadata?.optJSONObject("nativeRecord")
                 val baseline=original?.optString("sharedCacheBaselineSha")?.takeIf {it.isNotEmpty()}
@@ -292,7 +296,14 @@ class ResourceBundleManager(
                         require(copy.updatedAt != null && copy.updatedAt > 0 && copy.updatedAt <= clock()) { "Host geo copy age is missing or invalid" }
                     } ?: require(!file.exists()) { "Host geo reader left a partial declined copy" }
                 }
-                if (hostCopy != null) {
+                if (replacement != null) {
+                    val original = File(replacement.sourcePath)
+                    require(original.toPath() == original.toPath().toRealPath() && Files.isRegularFile(original.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+                        sha256(original) == replacement.sha256) { "Replacement resource changed before snapshot" }
+                    Files.newInputStream(original.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS).use { copyResource(it, file, limit) }.also {
+                        require(it.sha256 == replacement.sha256 && sha256(original) == replacement.sha256) { "Replacement resource changed during snapshot" }
+                    }
+                } else if (hostCopy != null) {
                     ResourceDigest(hostCopy.sha256, hostCopy.bytes, sourceUpdatedAt = hostCopy.updatedAt)
                 } else if(migrated!=null) {
                     File(migrated.file.sourcePath).inputStream().use {copyResource(it,file,limit)}.also {
@@ -329,26 +340,32 @@ class ResourceBundleManager(
             if (total > MAX_BUNDLE_BYTES || records.size >= MAX_RESOURCES) throw problem(key, "Resource bundle limit exceeded")
             val record = Record(key, kind, identity, digest.sha256, digest.bytes, "assets/${file.name}", behavior, effectiveFormat, url,
                 override ?: localPath, interval, (if (hostCopy != null) digest.sourceUpdatedAt ?: clock() else cached?.optLong("updatedAt", previousManifest?.getLong("createdAt") ?: clock()) ?: digest.sourceUpdatedAt ?: clock()),
-                if (hostCopy == null && cached != null && !cached.isNull("subscriptionUserInfo")) cached.getString("subscriptionUserInfo") else digest.subscriptionUserInfo, override != null,
-                if ((url != null || globalLocalId != null) && sharedKind) libraryAtPreparation?.sha256 ?: "" else null, format, globalLocalId, if (hostCopy != null) "host-catalog" else if (effectiveFetch == null) null else when {
+                if (replacement == null && hostCopy == null && cached != null && !cached.isNull("subscriptionUserInfo")) cached.getString("subscriptionUserInfo") else digest.subscriptionUserInfo,
+                replacement != null || override != null || cached?.optBoolean("localOverride") == true || migrated?.metadata?.optJSONObject("nativeRecord")?.optBoolean("localOverride") == true,
+                if ((url != null || globalLocalId != null) && sharedKind) libraryAtPreparation?.sha256 ?: "" else null, format, globalLocalId, when {
+                    manualOverrides[key] != null || migrated?.manualOverride != null -> "private-override"
+                    hostCopy != null -> "host-catalog"
+                    effectiveFetch == null -> null
+                    replacement != null || cached?.optBoolean("localOverride") == true || migrated?.metadata?.optJSONObject("nativeRecord")?.optBoolean("localOverride") == true -> "private-override"
                     cached != null || migrated != null -> "verified-generation"
                     override != null -> "private-override"
                     else -> "captured-transport"
-                })
+                }, manualOverride = manualOverrides[key] ?: migrated?.manualOverride ?: cached?.optJSONObject("manualOverride")?.let(ProviderManualOverride::parse))
             val boundRecord = if (hostCopy != null) record.copy(hostGeoPreferencesSha256 = sha256(ConfigYaml.dump(mapOf("geodata" to rootConfig["geodata"])))) else record
             records += boundRecord
-            if (url != null && (hostCopy != null || cached == null) && override == null) refreshReceipts[key] =
+            if (url != null && replacement == null && (hostCopy != null || cached == null) && override == null) refreshReceipts[key] =
                 ResourceCheckReceipt((if (hostCopy != null) hostCopy.updatedAt else migrated?.metadata?.getLong("checkedAt")) ?: clock(), identity, digest.sha256, digest.subscriptionUserInfo)
             return boundRecord
         }
 
         fun finalPath(record: Record): String = File(destination, record.file).path
-        fun derived(key: String, kind: String, content: String, behavior: String = "", format: String = "yaml"): Record {
+        fun derived(key: String, kind: String, content: String, behavior: String = "", format: String = "yaml",
+            compatibility: MeowProviderCompatibility? = null): Record {
             val identity = sha256(JSONArray(listOf(key, kind, "derived")).toString())
             val filename = "$identity.yaml"
             PrivateStorage(assets).write(filename, content)
             val record = Record(key, kind, identity, sha256(content), content.toByteArray(Charsets.UTF_8).size.toLong(),
-                "assets/$filename", behavior, format, null, null, 0, clock())
+                "assets/$filename", behavior, format, null, null, 0, clock(), compatibility = compatibility)
             records += record
             total += record.bytes
             return record
@@ -431,8 +448,9 @@ class ResourceBundleManager(
                     }
                     if (!rule) {
                         val text = payloadFile.inputStream().use { it.readBounded(MAX_PROFILE_BYTES).strictUtf8() }
-                        validator.validateProxyPayload(text)
-                        val payload = ConfigYaml.parse(text)
+                        val projection = if (validator.coreVersion == MeowUnsupportedOutbounds.CORE) MeowProviderProjection.prepare(text) else null
+                        val payload = projection?.payload ?: ConfigYaml.parse(text)
+                        validator.validateProxyPayload(ConfigYaml.dump(payload))
                         (payload["proxies"] as List<*>).forEachIndexed { index, value ->
                             @Suppress("UNCHECKED_CAST")
                             val proxy = value as MutableMap<String, Any?>
@@ -442,7 +460,9 @@ class ResourceBundleManager(
                                 proxy[keyName] = finalPath(cert)
                             }
                         }
-                        provider["path"] = finalPath(derived("$key.prepared", "proxy-provider", ConfigYaml.dump(payload)))
+                        val preparedPayload = ConfigYaml.dump(payload)
+                        val compatibility = projection?.let { MeowProviderCompatibility(record.sha256, sha256(preparedPayload), it.retained, it.removedByType) }
+                        provider["path"] = finalPath(derived("$key.prepared", "proxy-provider", preparedPayload, compatibility = compatibility))
                     }
                     provider["type"] = "file"
                     provider.remove("url")
@@ -546,7 +566,7 @@ class ResourceBundleManager(
                         }
                     }
                 }
-                val providerNames = records.filter { it.kind in setOf("proxy-provider", "source-proxy") }.flatMap { record ->
+                val providerNames = records.filter { it.kind == "proxy-provider" }.flatMap { record ->
                     val nodes = ConfigYaml.parse(privateResource(destination, record.file).readText())["proxies"] as? List<*> ?: emptyList<Any?>()
                     nodes.mapNotNull { ((it as? Map<*, *>)?.get("name") as? String) }
                 }.toSet()
@@ -717,7 +737,7 @@ class ResourceBundleManager(
         if (profileId in state.importing) state.committedImports.add(profileId)
     }
 
-    internal fun retainSealedInputs(config: Map<String, Any?>): SealedResourceInputs {
+    internal fun retainSealedInputs(config: Map<String, Any?>, sourceBindings: Map<String, SealedFlutterResource> = emptyMap()): SealedResourceInputs {
         val retained = linkedMapOf<File, SealedResourceInputs.Origin>()
         val shared=linkedMapOf<String,SealedResourceInputs.SharedInput>()
         val privateRoot=root.parentFile.parentFile.canonicalFile
@@ -730,6 +750,12 @@ class ResourceBundleManager(
         }
         fun captureShared(key: String,path: String,required: Boolean) {
             val file=privateShared(path) ?: return
+            val binding = sourceBindings[key]
+            if (binding != null && File(binding.sourcePath).absoluteFile == file) {
+                require(file.isFile && file.length() <= 64L * 1024 * 1024 && sha256(file) == binding.sha256) { "Verified local provider binding changed" }
+                shared[key] = SealedResourceInputs.SharedInput(key, binding, null, null)
+                return
+            }
             if(!file.isFile) {require(!required) { "Shared local resource is missing" };return}
             require(file.length()<=64L*1024*1024) { "Shared resource exceeds budget" }
             val receiptName=java.security.MessageDigest.getInstance("MD5").digest("native-receipt/$key".toByteArray(Charsets.UTF_8)).joinToString("") {"%02x".format(it.toInt() and 255)}
@@ -739,9 +765,11 @@ class ResourceBundleManager(
                 require(data.getInt("schema")==1 && data.getString("key")==key && File(privateRoot,data.getString("file")).absoluteFile==file &&
                     file.length()==data.getLong("bytes") && sha256(file)==data.getString("sha256")) { "Shared resource receipt changed" }
             }
-            shared[key]?.let {require(File(it.file.sourcePath).absoluteFile==file) { "Ambiguous shared source file" }}
-            shared[key]=SealedResourceInputs.SharedInput(key,SealedFlutterResource("assets/shared-${shared.size}",file.path,sha256(file)),
-                data?.let {SealedFlutterResource("receipts/shared-${shared.size}",receipt.path,sha256(receipt))},data)
+            if (binding == null) {
+                shared[key]?.let {require(File(it.file.sourcePath).absoluteFile==file) { "Ambiguous shared source file" }}
+                shared[key]=SealedResourceInputs.SharedInput(key,SealedFlutterResource("assets/shared-${shared.size}",file.path,sha256(file)),
+                    data?.let {SealedFlutterResource("receipts/shared-${shared.size}",receipt.path,sha256(receipt))},data)
+            }
             val dependencies=data?.optJSONArray("dependencies")
             if(dependencies!=null) for(index in 0 until dependencies.length()) {
                 val child=dependencies.getJSONObject(index)
@@ -779,6 +807,11 @@ class ResourceBundleManager(
             (config[namespace] as? Map<*,*>)?.forEach {(name,raw) ->
                 val provider=raw as? Map<*,*> ?: return@forEach
                 (provider["path"] as? String)?.let {captureShared("$.$namespace.$name",it,provider["type"]=="file")}
+            }
+        }
+        sourceBindings.forEach { (key, binding) ->
+            require(shared[key]?.file?.let { File(it.sourcePath).absoluteFile == File(binding.sourcePath).absoluteFile && it.sha256 == binding.sha256 } == true) {
+                "Verified provider binding is absent from the compiled source: $key"
             }
         }
 
@@ -1105,6 +1138,8 @@ class ResourceBundleManager(
         val globalLocalId: String? = null,
         val transportOrigin: String? = null,
         val hostGeoPreferencesSha256: String? = null,
+        val compatibility: MeowProviderCompatibility? = null,
+        val manualOverride: ProviderManualOverride? = null,
     ) {
         fun toJson(): JSONObject = JSONObject().put("key", key).put("kind", kind).put("sourceSha256", sourceId)
             .put("sha256", sha256).put("bytes", bytes).put("file", file).put("behavior", behavior)
@@ -1112,7 +1147,7 @@ class ResourceBundleManager(
             .put("interval", interval).put("updatedAt", updatedAt).put("subscriptionUserInfo", subscriptionUserInfo ?: JSONObject.NULL)
             .put("localOverride", localOverride).put("sharedCacheBaselineSha", sharedCacheBaselineSha ?: JSONObject.NULL)
             .put("sourceFormat", sourceFormat).put("globalLocalId", globalLocalId ?: JSONObject.NULL)
-            .apply { transportOrigin?.let { put("transportOrigin", it) }; hostGeoPreferencesSha256?.let { put("hostGeoPreferencesSha256", it) } }
+            .apply { transportOrigin?.let { put("transportOrigin", it) }; hostGeoPreferencesSha256?.let { put("hostGeoPreferencesSha256", it) }; compatibility?.let { put("compatibility", it.json()) }; manualOverride?.let { put("manualOverride", it.json()) } }
     }
 
     companion object {

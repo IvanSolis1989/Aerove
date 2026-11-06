@@ -13,6 +13,72 @@ import org.junit.rules.TemporaryFolder
 
 class MeowLegacyMigrationOwnerTest {
     @get:Rule val temporary=TemporaryFolder()
+    @Test fun providerOwnerUsesStableProfileIdentityAndSeparatesGlobalScope() {
+        val profile = nativeLiteProviderOwnerKey(41L)
+        assertEquals(profile, nativeLiteProviderOwnerKey(41L))
+        assertNotEquals(profile, nativeLiteProviderOwnerKey(42L))
+        assertNotEquals(profile, nativeLiteProviderOwnerKey(null))
+        assertTrue(profile.matches(Regex("[0-9a-f]{64}")))
+    }
+    @Test fun detachedProviderBindingReadsOnlyTheSelectedProfilesVerifiedOwnedFile() {
+        val root = temporary.newFolder().canonicalFile
+        val key = "proxy-providers/airport"
+        val hash = java.security.MessageDigest.getInstance("MD5").digest("detached/$key".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val relative = "profiles/providers/41/proxies/$hash"
+        val source = File(root, relative).apply { parentFile.mkdirs(); writeText("proxies: []\n") }
+        val row = mapOf("schema" to 1, "kind" to "detached", "relativePath" to relative,
+            "sha256" to sha256(source), "originalDefinition" to mapOf("type" to "file", "path" to "original.yaml"))
+        val overrides = mapOf("localProviderSources" to mapOf(key to row))
+        val actual = nativeLiteDetachedProviderBindings(root, 41L, overrides).getValue("$.proxy-providers.airport")
+        assertEquals(relative, actual.relativePath)
+        assertEquals(source.absolutePath, actual.sourcePath)
+        assertEquals(sha256(source), actual.sha256)
+        assertTrue(runCatching { nativeLiteDetachedProviderBindings(root, 42L, overrides) }.isFailure)
+        assertTrue(runCatching { nativeLiteDetachedProviderBindings(root, null, overrides) }.isFailure)
+        source.appendText("changed")
+        assertTrue(runCatching { nativeLiteDetachedProviderBindings(root, 41L, overrides) }.isFailure)
+    }
+
+    @Test fun detachedProviderBindingRejectsImmutablePathsAndParentSymlinksWithoutEditingThem() {
+        val root = temporary.newFolder().canonicalFile
+        val original = File(root, "profiles/original.yaml").apply { parentFile.mkdirs(); writeText("original") }
+        val key = "proxy-providers/airport"
+        fun overrides(path: String) = mapOf("localProviderSources" to mapOf(key to
+            mapOf("schema" to 1, "kind" to "detached", "relativePath" to path,
+                "sha256" to sha256(original), "originalDefinition" to emptyMap<String, Any>())))
+        assertTrue(runCatching { nativeLiteDetachedProviderBindings(root, 41L, overrides("profiles/original.yaml")) }.isFailure)
+        val hash = java.security.MessageDigest.getInstance("MD5").digest("detached/$key".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val external = temporary.newFolder().canonicalFile
+        File(external, hash).writeText("original")
+        val directory = File(root, "profiles/providers/41/proxies")
+        directory.parentFile.mkdirs()
+        java.nio.file.Files.createSymbolicLink(directory.toPath(), external.toPath())
+        assertTrue(runCatching { nativeLiteDetachedProviderBindings(root, 41L, overrides("profiles/providers/41/proxies/$hash")) }.isFailure)
+        assertEquals("original", original.readText())
+        assertEquals("original", File(external, hash).readText())
+    }
+
+    @Test fun registeredProviderProofScopesByProfileAndNeverTreatsAnHttpCacheAsASource() {
+        val root = temporary.newFolder().canonicalFile
+        val section = "proxy-providers"
+        val name = "airport"
+        val hash = java.security.MessageDigest.getInstance("MD5").digest("$section/$name".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val relative = "profiles/providers/41/proxies/$hash"
+        File(root, relative).apply { parentFile.mkdirs(); writeText("proxies: []\n") }
+        val marker = File(root, "$relative.source.json")
+        val metadata = JSONObject().put("schema", 1).put("kind", "file-provider-source")
+            .put("profileId", 41).put("section", section).put("name", name).put("relativePath", relative)
+        marker.writeText(metadata.toString())
+        File(marker.parentFile, "00000000000000000000000000000000").writeText("HTTP cache")
+        assertEquals(setOf(relative, "$relative.source.json"), nativeLiteRegisteredProviderFiles(root, setOf(41L)))
+        assertEquals(emptySet<String>(), nativeLiteRegisteredProviderFiles(root, setOf(42L)))
+        marker.writeText(metadata.put("relativePath", "profiles/original.yaml").toString())
+        assertTrue(runCatching { nativeLiteRegisteredProviderFiles(root, setOf(41L)) }.isFailure)
+        assertEquals("proxies: []\n", File(root, relative).readText())
+    }
     @Test fun sharedConfigReadsTheSameBytesThroughATrustedSystemRootAlias() {
         val root = temporary.newFolder().canonicalFile
         val file = File(root, "shared_prefs/FlutterSharedPreferences.xml")

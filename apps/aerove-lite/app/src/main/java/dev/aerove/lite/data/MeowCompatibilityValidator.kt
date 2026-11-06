@@ -31,7 +31,7 @@ internal object MeowCompatibilityValidator {
 
     private fun proxy(p: MutableMap<String, Any?>, path: String, features: Set<String>) {
         val type = string(p["type"], "$path.type")
-        if (type in setOf("tuic", "ssh", "wireguard", "tailscale", "shadowquic", "mieru")) fail("$path.type", "No outbound implementation in fixed Meow v0.26.1: $type")
+        if (type in MeowUnsupportedOutbounds.types) fail("$path.type", "No outbound implementation in fixed Meow v0.26.1: $type")
         if (type in setOf("ss", "trojan", "anytls", "vmess", "vless", "hysteria2", "snell", "trusttunnel") && type !in features)
             fail("$path.type", "Core supports $type; native feature verification required: $type")
         MeowProxySchema.validateDialer(p, path)
@@ -87,7 +87,8 @@ internal object MeowCompatibilityValidator {
 
     private fun dns(d: MutableMap<String, Any?>) {
         val path = "$.dns"
-        checkFields(d, path, setOf("enable", "listen", "enhanced-mode", "fake-ip-range", "fake-ip-filter-mode", "store-fake-ip", "default-nameserver", "nameserver", "fallback", "proxy-server-nameserver", "fake-ip-filter", "use-hosts", "use-system-hosts", "nameserver-policy", "fallback-filter"))
+        checkFields(d, path, setOf("enable", "ipv6", "listen", "enhanced-mode", "fake-ip-range", "fake-ip-filter-mode", "store-fake-ip", "default-nameserver", "nameserver", "fallback", "proxy-server-nameserver", "fake-ip-filter", "use-hosts", "use-system-hosts", "nameserver-policy", "fallback-filter"))
+        if (d.containsKey("ipv6")) bool(d["ipv6"], "$path.ipv6")
         for (key in listOf("enable", "store-fake-ip", "use-hosts", "use-system-hosts")) d[key]?.let { bool(it, "$path.$key") }
         for (key in listOf("listen", "fake-ip-range")) d[key]?.let { string(it, "$path.$key") }
         d["enhanced-mode"]?.let { choice(it, "$path.enhanced-mode", setOf("normal", "redir-host", "fake-ip")) }

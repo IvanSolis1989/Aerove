@@ -983,6 +983,49 @@ void main() {
       return (legacyPath: legacyPath, newPath: newPath);
     }
 
+    for (final targetExists in [false, true])
+      test(
+        'file+url uses stable source key and never overwrites an existing target ($targetExists)',
+        () async {
+          final profiles = join(tempDir.path, 'profiles');
+          final directory = Directory(
+            join(profiles, 'providers', '17', 'proxies'),
+          )..createSync(recursive: true);
+          final old = File(join(directory.path, '$name@$url'.toMd5()))
+            ..writeAsStringSync('legacy file source');
+          final source = File(
+            join(directory.path, 'proxy-providers/$name'.toMd5()),
+          );
+          if (targetExists) source.writeAsStringSync('newest source');
+          final result = await makeRealProfileTask(
+            MakeRealProfileState(
+              profilesPath: profiles,
+              profileId: 17,
+              rawConfig: {
+                'proxy-providers': {
+                  name: {'type': 'file', 'path': old.path, 'url': url},
+                },
+              },
+              realPatchConfig: const PatchClashConfig(),
+              appendSystemDns: false,
+              proxyGroups: const [],
+              rules: const [],
+              addedRules: const [],
+              defaultUA: 'fixture',
+            ),
+          );
+          final config = loadYaml(result.yaml) as YamlMap;
+          expect(config['proxy-providers'][name]['path'], source.path);
+          expect(config['proxy-providers'][name]['url'], url);
+          expect(
+            source.readAsStringSync(),
+            targetExists ? 'newest source' : 'legacy file source',
+          );
+          expect(old.existsSync(), targetExists);
+          expect(File('${source.path}.source.json').existsSync(), true);
+        },
+      );
+
     test('renames a file cached under the legacy url-only key', () async {
       final providerDir = join(
         tempDir.path,

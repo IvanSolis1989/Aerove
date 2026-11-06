@@ -26,7 +26,11 @@ data class VpnPlan(val profileId: String, val settings: LiteSettings,
     val vpnNetwork: NetworkSettings? = null, val vpnIpv6: Boolean? = null,
     val vpnSettings: LiteSettings? = null, val vpnReservedFakeIpRanges: List<String>? = null,
     val vpnDnsEnabled: Boolean? = null, val ownerIntentToken: Long? = null,
-    val runtimeSessionGeneration: Long? = null)
+    val runtimeSessionGeneration: Long? = null) {
+    internal var providerSourcePermit: dev.aerove.lite.flutter.ProviderSourcePermit? = null
+        private set
+    internal fun withProviderSourcePermit(permit: dev.aerove.lite.flutter.ProviderSourcePermit?): VpnPlan = apply { providerSourcePermit = permit }
+}
 class CoreEndpoint @JvmOverloads constructor(
     val port: Int,
     val secret: String,
@@ -143,7 +147,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                 withContext(NonCancellable) {
                     // Read after the previous session's join barrier, immediately before opening its successor.
                     openedPlan = if (request.internalReconnect) reconnectPlan(requestedPlan) else requestedPlan
-                    openedPlan = openedPlan.copy(runtimeSessionGeneration = request.generation)
+                    openedPlan = openedPlan.copy(runtimeSessionGeneration = request.generation).withProviderSourcePermit(openedPlan.providerSourcePermit)
                     session = try { backend.open(openedPlan) }
                     catch (failure: Throwable) { openingFailure = failure; throw failure }
                 }

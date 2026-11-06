@@ -166,13 +166,31 @@ class FixedSelectionTest(unittest.TestCase):
         self.assertEqual(producer.receipt["status"], "cancelled")
         self.assertFalse(producer.receipt["collectionComplete"])
 
-    def test_real_parser_accepts_exact_28_terminal_passes(self):
+    def test_real_parser_accepts_exact_31_terminal_passes(self):
         p = self.root / "platform.log"; p.write_text(log(self.contract["platformSelectors"]))
         self.assertEqual(v.platform_log(p)["selectors"], self.contract["platformSelectors"])
 
+    def test_original_28_proof_cannot_replace_required_jni_cases(self):
+        required = {
+            "dev.aerove.lite.NativeDnsIpv6Test#actualJniParserAcceptsDnsIpv6BooleansAndOmissionButRejectsInvalidTypes",
+            "dev.aerove.lite.NativeSourceAdmissionTest#actualJniPreservesBooleanTypesDiagnosticsAndOwnerLifetime",
+            "dev.aerove.lite.NativeSourceAdmissionTest#providerDeclarationsNeedNoDownloadButPreparedRuntimeStillNeedsRealResources",
+        }
+        selectors = self.contract["platformSelectors"]
+        self.assertTrue(required.issubset(selectors))
+        original = [case for case in selectors if case not in required]
+        self.assertEqual(len(original), 28)
+        p = self.root / "platform.log"; p.write_text(log(original))
+        with self.assertRaisesRegex(ValueError, "exactly the fixed 31"):
+            v.platform_log(p)
+        for case in sorted(required):
+            p.write_text(log([case] + [other for other in selectors if other != case], skipped=True))
+            with self.assertRaisesRegex(ValueError, "Skipped"):
+                v.platform_log(p)
+
     def test_two_discovered_ui_methods_cannot_satisfy_platform(self):
         p = self.root / "platform.log"; p.write_text(log(self.contract["uiSelectors"][:2]))
-        with self.assertRaisesRegex(ValueError, "exactly the fixed 28"):
+        with self.assertRaisesRegex(ValueError, "exactly the fixed 31"):
             v.platform_log(p)
 
     def test_skipped_platform_method_and_missing_terminal_are_rejected(self):
@@ -591,7 +609,7 @@ class RuntimeDeviceReplayTests(unittest.TestCase):
         self.assertEqual(contract["uiSelectors"][:7], [prefix + method for method in original])
         self.assertEqual(contract["uiSelectors"][7:], [prefix + "listenerRebindFailureRecoveryAndNotificationLifecycle",
             prefix + "independentApplicationTcpUdpNativeAttribution"])
-        self.assertEqual(contract["platformCount"], 28)
+        self.assertEqual(contract["platformCount"], 31)
         self.assertFalse(contract["fullAcceptance"])
         self.assertFalse(contract["visualApproved"])
 

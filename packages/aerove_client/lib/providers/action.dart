@@ -3,17 +3,22 @@ import 'package:fl_clash/common/native_lite_migration.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
 
 import 'package:fl_clash/common/app_data.dart';
 import 'package:fl_clash/common/boot_guard.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/subscription_compatibility.dart';
+import 'package:fl_clash/common/file_provider_source.dart';
+import 'package:fl_clash/common/source_plan.dart';
 import 'package:fl_clash/common/profile_update.dart';
 import 'package:fl_clash/common/system_dns.dart';
 import 'package:fl_clash/common/update_download.dart';
 import 'package:fl_clash/common/xclash_defaults.dart';
 import 'package:fl_clash/core/core.dart';
+import 'package:fl_clash/core/interface.dart' show CoreRequestQuiescence;
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -25,7 +30,8 @@ import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/frame_pacer.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:flutter/foundation.dart' show compute;
+import 'package:flutter/foundation.dart'
+    show compute, ValueListenable, ValueNotifier;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' show basename, join;

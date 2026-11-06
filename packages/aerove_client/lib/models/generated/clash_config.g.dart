@@ -603,6 +603,14 @@ _ProfileOverrides _$ProfileOverridesFromJson(
         (k, e) => MapEntry(k, e as Map<String, dynamic>),
       ) ??
       const {},
+  localProviderSources:
+      (json['localProviderSources'] as Map<String, dynamic>?)?.map(
+        (k, e) => MapEntry(
+          k,
+          LocalProviderSource.fromJson(e as Map<String, dynamic>),
+        ),
+      ) ??
+      const {},
   nativeProfileUuid: json['nativeProfileUuid'] as String?,
   sourceProxyProviders:
       (json['sourceProxyProviders'] as Map<String, dynamic>?)?.map(
@@ -677,6 +685,7 @@ Map<String, dynamic> _$ProfileOverridesToJson(_ProfileOverrides instance) =>
       ),
       'baseConfig': instance.baseConfig,
       'nativeResourceInputs': instance.nativeResourceInputs,
+      'localProviderSources': instance.localProviderSources,
       'nativeProfileUuid': instance.nativeProfileUuid,
       'sourceProxyProviders': instance.sourceProxyProviders,
       'sourceRuleProviders': instance.sourceRuleProviders,

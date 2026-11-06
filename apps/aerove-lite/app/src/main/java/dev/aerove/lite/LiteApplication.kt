@@ -14,6 +14,7 @@ import dev.aerove.lite.vpn.VpnSnapshot
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -35,7 +36,9 @@ class LiteApplication : Application() {
             canPrepare = { !maintenanceActive }, canConnect = { !maintenanceActive })
     }
 
-    internal fun verifySharedStartSource(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot): org.json.JSONObject {
+    internal fun verifySharedStartSource(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot,
+        permit: dev.aerove.lite.flutter.ProviderSourcePermit? = null): org.json.JSONObject {
+        check(runtimeHandoffs.providerSourceAllowsAdmission(snapshot, permit)) { "provider_source_recovery_required" }
         val phase=dev.aerove.lite.flutter.NativeLiteDataAuthority.phase(filesDir)
         check(phase == "shared" || phase == null && !hasLegacyBusinessSource()) { "native_data_migration_required" }
         val proof=org.json.JSONObject(snapshot.handoff.runtimeSettingsJson).getJSONObject("flutterSetup").getJSONObject("data-source-proof")
@@ -45,26 +48,29 @@ class LiteApplication : Application() {
         return config
     }
 
-    suspend fun startSharedExternal(autoRun: Boolean, expectedStartEpoch: Long): Boolean {
+    suspend fun startSharedExternal(autoRun: Boolean, expectedStartEpoch: Long): Boolean = startSharedExternalOwned(autoRun, expectedStartEpoch, null)
+
+    private suspend fun startSharedExternalOwned(autoRun: Boolean, expectedStartEpoch: Long, permit: dev.aerove.lite.flutter.ProviderSourcePermit?): Boolean {
         val requested=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             nativeLifecycle.withLock {
                 check(usesSharedFlutterClient && !maintenanceActive && startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
                 val snapshot=checkNotNull(runtimeHandoffs.readCurrent()) { "shared_runtime_configuration_required" }
-                val config=verifySharedStartSource(snapshot)
+                if (autoRun && runtimeHandoffs.providerSourceKeepStopped()) return@withLock null
+                val config=verifySharedStartSource(snapshot, permit)
                 if(autoRun && !config.getJSONObject("appSettingProps").getBoolean("autoRun")) return@withLock null
                 val vpnRequired=org.json.JSONObject(snapshot.handoff.vpnOptionsJson).getBoolean("enable")
                 check(!vpnRequired || android.net.VpnService.prepare(this@LiteApplication) == null) { "shared_vpn_authorization_required" }
                 check(vpnRequired || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) { "shared_notification_authorization_required" }
                 check(startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
                 retireParkedGraph()
-                runtimeHandoffs.beginStart(snapshot.revision,snapshot.intentEpoch)
+                runtimeHandoffs.beginStart(snapshot.revision,snapshot.intentEpoch, permit)
             }
         } ?: return false
         var sent=false
         try {
             sent=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
                 if(startIntentEpoch() != expectedStartEpoch) return@withContext false
-                val request=externalSharedCommands.prepareOwnedConnect(dev.aerove.lite.flutter.MeowFlutterRuntimeBinding(requested.revision,requested.intentEpoch)) ?: return@withContext false
+                val request=externalSharedCommands.prepareOwnedConnect(dev.aerove.lite.flutter.MeowFlutterRuntimeBinding(requested.revision,requested.intentEpoch, requested.sourcePermit)) ?: return@withContext false
                 externalSharedCommands.connectOwned(request)
             }
             return sent
@@ -142,6 +148,38 @@ class LiteApplication : Application() {
         }, verifyMetadata = { previous, params -> dev.aerove.lite.flutter.meowVerifyMetadataSource(this,previous,params) })
     }
     internal suspend fun retireParkedGraph() = parkedGraph.retire()
+    internal suspend fun quiesceProviderSourceCandidate() {
+        retireParkedGraph()
+        val service = synchronized(this) { flutterRuntimeOwner?.takeIf { it.first == owner }?.second }
+        service?.quiesceProviderSourceCandidate()
+    }
+    internal suspend fun restoreProviderSourceGraph(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot): dev.aerove.lite.flutter.RuntimeAppliedIdentity? {
+        check(runtimeHandoffs.providerSourceAllowsAdmission(snapshot, snapshot.sourcePermit)) { "provider_source_recovery_required" }
+        if (!snapshot.userRequested) return ensureParkedGraph(snapshot)
+        val service = synchronized(this) { flutterRuntimeOwner?.takeIf { it.first == owner }?.second }
+        if (service != null) return service.restoreProviderSourceGraph(snapshot)
+        check(startSharedExternalOwned(false, startIntentEpoch(), snapshot.sourcePermit)) { "provider_source_restore_start_failed" }
+        return kotlinx.coroutines.withTimeout(45_000) {
+            flutterRuntimeIdentity.first { identity -> identity != null && identity.revision == snapshot.revision && runtimeHandoffs.isGraphCurrent(identity) }
+        }
+    }
+    internal suspend fun recoverProviderSourceBeforeAdmission(arguments: Map<String, Any?>): Map<String, Any?> {
+        require(arguments["operation"] in setOf("query", "abort", "sourceFinalized"))
+        return dev.aerove.lite.flutter.MeowProviderSourceTransactions(filesDir.canonicalFile, runtimeHandoffs,
+            verifySource = { proof ->
+                val verified = dev.aerove.lite.flutter.verifyNativeLiteBusinessSourceReceipt(this, proof)
+                dev.aerove.lite.flutter.nativeLiteProviderOwnerKey(dev.aerove.lite.flutter.nativeLiteCurrentProfileId(verified.config))
+            }, actualIdentity = {
+                val identity = runtimeHandoffs.readAppliedIdentity()
+                val endpoint = flutterQueryGraph()?.endpoint ?: vpn.value.endpoint
+                if (identity == null || endpoint == null || !flutterRuntimeIdentityIsCurrent(identity) || !runtimeHandoffs.isGraphCurrent(identity)) null else {
+                    val epoch = dev.aerove.lite.data.CoreApiClient(dev.aerove.lite.data.ControlEndpoint(endpoint.port, endpoint.secret)).use { it.routeSnapshot().coreEpoch.toString() }
+                    identity.takeIf { epoch == it.proof.coreEpoch && flutterRuntimeIdentityIsCurrent(it) && runtimeHandoffs.isGraphCurrent(it) }
+                }
+            },
+            apply = { _, _, _ -> error("provider_source_apply_requires_attached_setup") },
+            quiesce = ::quiesceProviderSourceCandidate, restore = ::restoreProviderSourceGraph).invoke(arguments)
+    }
     suspend fun ensureParkedGraph(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot): dev.aerove.lite.flutter.RuntimeAppliedIdentity = parkedGraphGate.withLock {
         val existing = parkedGraph.queryGraph()
         if (existing != null && existing.identity.revision == snapshot.revision && existing.identity.intentEpoch == snapshot.intentEpoch &&
@@ -153,6 +191,8 @@ class LiteApplication : Application() {
         runtimeScope.launch {
             if (!ownsVpnOwner(expectedOwner) || maintenanceActive || vpn.value.phase != VpnPhase.Stopped) return@launch
             val snapshot = runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested } ?: return@launch
+            if (!runtimeHandoffs.providerSourceAllowsAdmission(snapshot)) return@launch
+            if (runtimeHandoffs.providerSourceKeepStopped()) return@launch
             try { ensureParkedGraph(snapshot) }
             catch (failure: Exception) { android.util.Log.w("MeowGraph", "Stopped runtime graph could not be restored", failure) }
         }

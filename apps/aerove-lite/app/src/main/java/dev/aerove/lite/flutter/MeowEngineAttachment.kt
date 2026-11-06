@@ -27,7 +27,9 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     definitionSourceVerifier: ((JSONObject) -> String)? = null,
     geoSourceVerifier: ((JSONObject) -> Triple<JSONObject,Map<String,String>,String>)? = null,
     rulePayloadInspector: NativeRulePayloadInspector = nativeRulePayloadInspector(),
-    private val geoCatalog: dev.aerove.lite.resources.GeoResourceCatalog? = null) : MeowSetupEffects {
+    private val geoCatalog: dev.aerove.lite.resources.GeoResourceCatalog? = null,
+    providerOwnerSourceVerifier: ((JSONObject) -> String)? = null,
+    providerBindingsSourceVerifier: ((JSONObject) -> Map<String, dev.aerove.lite.data.SealedFlutterResource>)? = null) : MeowSetupEffects {
     private val home = MeowFlutterSpill.checkedHome(homeDir)
     private val config = MeowConfigProtocol(home)
     private val offline = MeowOfflineMethods(home)
@@ -37,8 +39,18 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     @Volatile private var closed = false
     private var uiActive = false
     private var session: Session? = null
+    private val providerSources by lazy { MeowProviderSourceTransactions(home, store,
+        verifySource = { proof -> checkNotNull(providerOwnerSourceVerifier) { "Independent provider business ownership is required" }(proof) },
+        actualIdentity = {
+            val actual = readRuntime()
+            store.readAppliedIdentity()?.takeIf { actual != null && actual.revision == it.revision && actual.intentEpoch == it.intentEpoch &&
+                actual.coreEpoch == it.proof.coreEpoch && actual.serviceOwner == it.proof.serviceOwner && actual.sessionGeneration == it.proof.sessionGeneration }
+        },
+        apply = { params, id, publication -> setup.applyProviderSource(params, id, publication); Unit },
+        quiesce = { actions.quiesceProviderSourceCandidate() }, restore = { actions.restoreProviderSourceGraph(it) }) }
     val setup = MeowSetupProtocol(home, store, config, this, preparedValidator, resourceSealer = resourceSealer, sourceVerifier = sourceVerifier, selectedSourceVerifier = selectedSourceVerifier, definitionSourceVerifier = definitionSourceVerifier, geoSourceVerifier = geoSourceVerifier,
-        geoResourceReaderFactory = geoCatalog?.let { catalog -> { settings, current -> catalog.reader(settings.geoResources,settings.requests,current) } })
+        geoResourceReaderFactory = geoCatalog?.let { catalog -> { settings, current -> catalog.reader(settings.geoResources,settings.requests,current) } },
+        providerOwnerSourceVerifier = providerOwnerSourceVerifier, providerBindingsSourceVerifier = providerBindingsSourceVerifier)
     val dispatcher: MeowProtocolDispatcher
     private class GeoRequest(val id:String,val requestJson:String,val intent:MeowGeoResourceIntent) {
         var outcome:MeowGeoRuntimeResult?=null
@@ -94,6 +106,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
         }
         offline.methods.forEach { method -> methods[method] = MeowProtocolMethod { offline.invoke(method, it) } }
         methods["dumpRuleSet"] = MeowProtocolMethod { ruleSets.dump(it) }
+        methods["updateExternalProvider"] = MeowProtocolMethod { providerSources.invoke(meowObject(it)) }
         QUERY_METHODS.forEach { method -> methods[method] = MeowProtocolMethod { query(method, it) } }
         methods["initClash"] = MeowProtocolMethod { args ->
             val row = meowObject(args)
@@ -307,6 +320,17 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
                         ?: throw MeowProtocolFailure("invalid_config", "Applied proxy key is not a string")) to value }
                 }
                 override suspend fun latestDelays(): MeowDelayHistorySnapshot = history.read()
+                override suspend fun providerMetadata(name: String, kind: String, raw: Map<String, Any?>): MeowAppliedProvider {
+                    if (!owns(identity, endpoint) || !store.isGraphCurrent(identity))
+                        throw MeowProtocolFailure("superseded", "Provider report runtime was retired")
+                    val report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        val actual = checkNotNull(endpoint.configuration) { "Provider report requires actual engine readback" }.read()
+                        meowProviderMetadata(home, applied, name, kind, raw, actual)
+                    }
+                    if (!owns(identity, endpoint) || !store.isGraphCurrent(identity))
+                        throw MeowProtocolFailure("superseded", "Provider report runtime changed during readback")
+                    return report
+                }
             }
             // The owner publishes only after native policy readback and its Store CAS.
             val onlyProxy = MeowRuntimeSnapshotSettings.decode(applied.handoff.runtimeSettingsJson).backgroundPolicy.onlyStatisticsProxy

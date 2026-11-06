@@ -242,6 +242,18 @@ async fn validation_future<T>(work: impl std::future::Future<Output = Result<T, 
         .unwrap_or_else(|_| Err("native_validation_panicked".into()))
 }
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validateSource<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, source: JString<'local>) -> JString<'local> {
+    env.with_env(|env| -> Result<JString<'local>, BridgeError> {
+        let source = source.try_to_string(env)?;
+        let owner = resource_fetch(handle)?;
+        let work = owner.reader.read(move |cancel| Ok(crate::config_validation::validate_source_config(&source, cancel)));
+        match resource_result(env, work)? {
+            Ok(()) => Ok(JString::null()),
+            Err(error) => Ok(env.new_string(error)?),
+        }
+    }).resolve::<ThrowRuntimeExAndDefault>()
+}
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_aerove_lite_core_MeowNativeCore_validate<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, source: JString<'local>) -> JString<'local> {
     env.with_env(|env| -> Result<JString<'local>, BridgeError> {
         let source = source.try_to_string(env)?;

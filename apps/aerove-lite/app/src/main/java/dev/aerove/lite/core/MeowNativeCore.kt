@@ -21,6 +21,8 @@ object MeowNativeCore {
     @JvmStatic external fun policyStatus(handle: Long): String
     @JvmStatic external fun hostPolicyCommand(handle: Long, requestJson: String): String
 
+    // Source declarations only; does not load providers/Geo or grant runtime activation.
+    @JvmStatic external fun validateSource(handle: Long, config: String): String?
     // Offline conversion only: null means valid; diagnostics preserve native parser errors.
     @JvmStatic external fun validate(handle: Long, config: String): String?
     @JvmStatic external fun validateResource(handle: Long, kind: String, path: String, behavior: String, format: String): String?

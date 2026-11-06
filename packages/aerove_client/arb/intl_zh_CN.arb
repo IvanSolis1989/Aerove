@@ -1000,5 +1000,21 @@
   "outboundModeCurrent": "出站模式：{mode}",
   "outboundModeNext": "切换到{mode}",
   "trafficUploadSpeed": "上传速度：{speed}",
-  "trafficDownloadSpeed": "下载速度：{speed}"
+  "trafficDownloadSpeed": "下载速度：{speed}",
+  "subscriptionCompatibilitySummary": "已跳过当前内核不支持的 {removed} 个节点（{protocols}）。{adjustments}",
+  "@subscriptionCompatibilitySummary": {
+    "description": "Compatibility summary shown only after a subscription commit succeeds.",
+    "placeholders": {
+      "protocols": {
+        "type": "String"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "adjustments": {
+        "type": "String"
+      }
+    }
+  },
+  "subscriptionCompatibilityTunStack": "已使用当前内核支持的 lwIP 网络栈。"
 }

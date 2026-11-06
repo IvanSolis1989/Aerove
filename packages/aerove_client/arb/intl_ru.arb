@@ -1000,5 +1000,21 @@
   "outboundModeCurrent": "Режим исходящего трафика: {mode}",
   "outboundModeNext": "Переключить на «{mode}»",
   "trafficUploadSpeed": "Скорость отправки: {speed}",
-  "trafficDownloadSpeed": "Скорость загрузки: {speed}"
+  "trafficDownloadSpeed": "Скорость загрузки: {speed}",
+  "subscriptionCompatibilitySummary": "Пропущено узлов, не поддерживаемых этим ядром: {removed} ({protocols}). {adjustments}",
+  "@subscriptionCompatibilitySummary": {
+    "description": "Compatibility summary shown only after a subscription commit succeeds.",
+    "placeholders": {
+      "protocols": {
+        "type": "String"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "adjustments": {
+        "type": "String"
+      }
+    }
+  },
+  "subscriptionCompatibilityTunStack": "Применён поддерживаемый текущим ядром стек TUN lwIP."
 }

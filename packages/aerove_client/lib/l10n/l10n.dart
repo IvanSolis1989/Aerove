@@ -8427,6 +8427,31 @@ class AppLocalizations {
       args: [speed],
     );
   }
+
+  /// `Skipped {removed} nodes not supported by this core ({protocols}). {adjustments}`
+  String subscriptionCompatibilitySummary(
+    String protocols,
+    int removed,
+    String adjustments,
+  ) {
+    return Intl.message(
+      'Skipped $removed nodes not supported by this core ($protocols). $adjustments',
+      name: 'subscriptionCompatibilitySummary',
+      desc:
+          'Compatibility summary shown only after a subscription commit succeeds.',
+      args: [protocols, removed, adjustments],
+    );
+  }
+
+  /// `Applied the current core's supported lwIP TUN stack.`
+  String get subscriptionCompatibilityTunStack {
+    return Intl.message(
+      'Applied the current core\'s supported lwIP TUN stack.',
+      name: 'subscriptionCompatibilityTunStack',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

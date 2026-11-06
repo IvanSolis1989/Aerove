@@ -43,6 +43,17 @@ pub fn validate_config_syntax(source: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Pure source admission; resource-dependent membership and Geo contents remain runtime obligations.
+pub fn validate_source_config(source: &str, cancel: CancellationToken) -> Result<(), String> {
+    check_cancelled(&cancel)?;
+    let normalized = normalize_config_fields(source)?;
+    check_cancelled(&cancel)?;
+    let raw = meow_config::parse_raw_yaml(&normalized).map_err(|cause| format!("$: {cause}"))?;
+    let result = meow_config::validate_source_config(&raw);
+    check_cancelled(&cancel)?;
+    result
+}
+
 /// Runs the real fixed parser/converter inside an owned offline load scope; never flips CLI globals.
 pub async fn validate_config(source: &str) -> Result<(), String> {
     let normalized = normalize_config_fields(source)?;

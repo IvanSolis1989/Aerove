@@ -19,6 +19,7 @@ import org.json.JSONObject
 interface MeowAppliedQueries {
     suspend fun proxyGroupOrder(): List<String>
     suspend fun proxyDefinition(name: String): Map<String, Any?>?
+    suspend fun providerMetadata(name: String, kind: String, raw: Map<String, Any?>): MeowAppliedProvider? = null
     /** Must include actual native health-check results and their test URL, not an assumed global URL. */
     suspend fun latestDelays(): MeowDelayHistorySnapshot = missing("getLatestDelays", "native ProxyHealth.history has no URL keys; a complete committed URL-aware producer is required")
 }
@@ -26,6 +27,8 @@ interface MeowAppliedQueries {
 /** Complete native history from one committed graph; owner/generation are attached by that endpoint's owner. */
 data class MeowDelayHistorySnapshot(val owner: String, val generation: Long, val coreEpoch: ULong,
     val routeVersion: ULong, val historyRevision: ULong, val delays: List<Map<String, Any?>>)
+
+data class MeowAppliedProvider(val path: String, val runtimeRevision: String, val compatibility: Map<String, Any?>?)
 
 class MeowQueryException(val code: String, message: String,
     val details: Map<String, Any?> = emptyMap(), cause: Throwable? = null) : IOException(message, cause)
@@ -321,7 +324,7 @@ internal class MeowQueryProtocol(private val client: CoreApiClient,
         return result.toSortedMap().values.toList()
     }
 
-    private fun provider(name: String, kind: String, raw: Map<String, Any?>): Map<String, Any?>? {
+    private suspend fun provider(name: String, kind: String, raw: Map<String, Any?>): Map<String, Any?>? {
         val vehicle = protocolText(raw["vehicleType"], "vehicleType")
         if (vehicle.equals("Compatible", true) || vehicle.equals("Inline", true)) return null
         if (raw["name"] != null && raw["name"] != name) invalidCore("Provider name does not match its lookup identity")
@@ -333,8 +336,10 @@ internal class MeowQueryProtocol(private val client: CoreApiClient,
             else -> protocolInteger(raw["ruleCount"], "ruleCount")
         }
         if (count < 0) invalidCore("Negative provider count")
-        // Keep every native field alongside the shared aliases (including subscriptionInfo/path/revision).
-        return protocolMap(protocolCopy(raw + mapOf("name" to name, "type" to type, "count" to count,
+        // Native provider revision and applied graph runtimeRevision have distinct owners.
+        val metadata = applied?.providerMetadata(name, kind, raw)
+        return protocolMap(protocolCopy((raw - setOf("compatibility", "runtimeRevision", "path")) + mapOf("compatibility" to metadata?.compatibility,
+            "runtimeRevision" to metadata?.runtimeRevision, "path" to metadata?.path, "name" to name, "type" to type, "count" to count,
             "vehicle-type" to vehicle, "update-at" to updated,
             "subscription-info" to raw["subscriptionInfo"])), "provider")
     }

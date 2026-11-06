@@ -24,6 +24,19 @@ class _NoopSetupAction extends SetupAction {
   void autoApplyProfile() {}
 }
 
+class _MemoryEditProfiles extends TestProfiles {
+  _MemoryEditProfiles(super.initial);
+  @override
+  Future<void> putCommitted(
+    Profile profile, {
+    void Function()? publishFile,
+    void Function()? rollbackFile,
+  }) async {
+    publishFile?.call();
+    put(profile);
+  }
+}
+
 Profile _urlProfile() =>
     Profile.normal(label: 'test', url: 'https://example.com/sub');
 
@@ -183,7 +196,7 @@ void main() {
       tester,
       profile: profile,
       overrides: [
-        profilesProvider.overrideWith(() => TestProfiles([profile])),
+        profilesProvider.overrideWith(() => _MemoryEditProfiles([profile])),
       ],
     );
     final interval = find.byWidgetPredicate(

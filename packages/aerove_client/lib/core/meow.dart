@@ -5,13 +5,15 @@ import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 
 import 'desktop/model.dart';
 import 'interface.dart';
 import 'method.dart';
 import 'spill.dart';
 
-class MeowCoreHandler extends CoreHandlerInterface {
+class MeowCoreHandler extends CoreHandlerInterface
+    implements CancellableCoreRequest {
   MeowCoreHandler() : this.scoped(Service());
 
   MeowCoreHandler.scoped(
@@ -29,6 +31,18 @@ class MeowCoreHandler extends CoreHandlerInterface {
   final String _session =
       '${DateTime.now().microsecondsSinceEpoch}:${_nextSession++}';
   final Map<String, _MeowCall> _calls = {};
+  final Set<_MeowCall> _unsettledNative = {};
+  void _settleCall(_MeowCall call) {
+    _unsettledNative.remove(call);
+    if (!call._quiescent.isCompleted) call._quiescent.complete();
+  }
+
+  void _settleDetachedCalls() {
+    for (final call in _unsettledNative.toList()) {
+      _settleCall(call);
+    }
+  }
+
   Completer<void> _connection = Completer<void>();
   Future<void> _lifecycleTail = Future.value();
   Future<CoreLifecycleResult>? _closeOperation;
@@ -128,6 +142,7 @@ class MeowCoreHandler extends CoreHandlerInterface {
       if (!await _service.shutdown()) {
         throw StateError('Meow service detach failed');
       }
+      _settleDetachedCalls();
       return _result(revision, CoreLifecycleOutcome.applied);
     });
   }
@@ -156,6 +171,7 @@ class MeowCoreHandler extends CoreHandlerInterface {
       if (!await _service.shutdown()) {
         throw StateError('Meow service detach failed');
       }
+      _settleDetachedCalls();
       return _result(revision, CoreLifecycleOutcome.applied);
     });
   }
@@ -204,10 +220,34 @@ class MeowCoreHandler extends CoreHandlerInterface {
     required CoreMethod method,
     Object? arguments,
     Duration? timeout,
+  }) => _invokeOwned<T>(method: method, arguments: arguments, timeout: timeout);
+
+  @override
+  Future<T?> invokeCancellableMethod<T>({
+    required CoreMethod method,
+    Object? arguments,
+    Duration? timeout,
+    required ValueListenable<bool> cancellation,
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
+  }) => _invokeOwned<T>(
+    method: method,
+    arguments: arguments,
+    timeout: timeout,
+    cancellation: cancellation,
+    observeQuiescence: observeQuiescence,
+  );
+
+  Future<T?> _invokeOwned<T>({
+    required CoreMethod method,
+    Object? arguments,
+    Duration? timeout,
+    ValueListenable<bool>? cancellation,
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
   }) async {
     _ensureOpen();
     final id = '$_session:$_epoch:${++_callId}';
     final call = _MeowCall(id, _epoch, method);
+    observeQuiescence?.call(call);
     _calls[id] = call;
     final limit = timeout ?? requestTimeout;
     call.timer = Timer(limit, () {
@@ -215,6 +255,21 @@ class MeowCoreHandler extends CoreHandlerInterface {
         _cancel(call, TimeoutException('Meow ${method.name} timed out', limit)),
       );
     });
+    void cancelRequested() {
+      if (cancellation?.value == true)
+        unawaited(
+          _cancel(
+            call,
+            const CoreMethodException(
+              code: 'cancelled',
+              message: 'Meow request was cancelled',
+            ),
+          ),
+        );
+    }
+
+    cancellation?.addListener(cancelRequested);
+    cancelRequested();
     unawaited(_dispatch(call, arguments, _connection.future));
     try {
       final response = await call.response.future;
@@ -227,6 +282,8 @@ class MeowCoreHandler extends CoreHandlerInterface {
         );
       }
     } finally {
+      cancellation?.removeListener(cancelRequested);
+      await call.cancellation;
       call.timer?.cancel();
       _calls.remove(id);
     }
@@ -248,11 +305,16 @@ class MeowCoreHandler extends CoreHandlerInterface {
         connection,
         call.response.future.then<void>((_) {}),
       ]).timeout(connectionTimeout);
-      if (!_current(call)) return;
+      if (!_current(call)) {
+        _settleCall(call);
+        return;
+      }
       call.sent = true;
+      _unsettledNative.add(call);
       var response = await _service.invokeMethod(
         CoreMethodCall(id: call.id, method: call.method, arguments: arguments),
       );
+      _settleCall(call);
       if (response == null || response.id != call.id) {
         throw const CoreMethodException(
           code: 'invalid_response',
@@ -280,6 +342,7 @@ class MeowCoreHandler extends CoreHandlerInterface {
       }
       call.response.complete(response);
     } catch (error, stack) {
+      if (!call.sent) _settleCall(call);
       if (_current(call)) {
         call.response.completeError(_transportError(error), stack);
       }
@@ -303,6 +366,7 @@ class MeowCoreHandler extends CoreHandlerInterface {
     call.timer?.cancel();
     try {
       if (call.sent) await _service.cancelMethod(call.id);
+      _settleCall(call);
       if (!call.response.isCompleted) call.response.completeError(reason);
     } catch (error, stack) {
       if (!call.response.isCompleted) {
@@ -340,7 +404,7 @@ class MeowCoreHandler extends CoreHandlerInterface {
   };
 }
 
-class _MeowCall {
+class _MeowCall implements CoreRequestQuiescence {
   _MeowCall(this.id, this.epoch, this.method);
 
   final String id;
@@ -350,4 +414,9 @@ class _MeowCall {
   Timer? timer;
   Future<void>? cancellation;
   bool sent = false;
+  final _quiescent = Completer<void>();
+  @override
+  bool get isQuiescent => _quiescent.isCompleted;
+  @override
+  Future<void> get whenQuiescent => _quiescent.future;
 }

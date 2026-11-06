@@ -576,11 +576,39 @@ Lite 端口释放探针另只读核对 `1.54.0` / tag `tokio-1.54.0` / commit [`
 
 **许可证、署名与证据：** MIT；[固定 LICENSE](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/LICENSE) 原始 SHA256 `b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5`；[固定 Cargo.toml](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/Cargo.toml)。
 
+固定核心订阅处理另核对 `crates/meow-config/src/subscription.rs` 的贡献追踪与移除语义。其同名远端覆盖及远端规则前插不适合保留合集主配置；本项目复用既有客户端命名与引用处理，不接入核心另一套定时刷新，也不使用 `strict=false` 跳过一般解析错误。
+
+#### [mihomo-party-org/clash-party](https://github.com/mihomo-party-org/clash-party)
+
+**固定版本 / revision：** `v2.0.4` / `ac294fed972c0c25c641abe603c3a6fe709dfdb3`
+
+**用途与采用方式：** 只读参照 `scripts/prepare.mjs` 与 `src/main/resolve/server.ts` 的 Sub-Store 集成。该版构建下载上游 latest，没有锁定实际捆绑的 Sub-Store；其 Node Worker 后端不直接引入 Android，未复制源码或新增依赖。
+
+**许可证、署名与证据：** GPL-3.0；[固定 LICENSE](https://github.com/mihomo-party-org/clash-party/blob/ac294fed972c0c25c641abe603c3a6fe709dfdb3/LICENSE)。
+
+#### [sub-store-org/Sub-Store](https://github.com/sub-store-org/Sub-Store)
+
+**固定版本 / revision：** `2.44.4` / `ae85aa63b0c1699dafde0894a0a1c29d24d5af51`
+
+**用途与采用方式：** 只读参照节点过滤、字段操作，以及 `scripts/demo.js` 的 `produceArtifact` / `includeRaw` 来源保留与合集流水线。其 Mihomo 能力表包含 Mieru，不能作为 Meow 能力表。未复制 AGPL 代码、执行外部脚本或引入 Node 服务；本项目沿用已有配置解析和引用重写。
+
+**许可证、署名与证据：** AGPL-3.0；[固定 LICENSE](https://github.com/sub-store-org/Sub-Store/blob/ae85aa63b0c1699dafde0894a0a1c29d24d5af51/LICENSE)。
+
+#### [MetaCubeX/ClashMetaForAndroid](https://github.com/MetaCubeX/ClashMetaForAndroid)
+
+**固定版本 / revision：** `v2.11.36` / `043a6072225405b285a73e3d7b7e53431ccfc04`
+
+**用途与采用方式：** 只读参照 `ProfileProcessor.kt` 的暂存、抓取校验与成功后提交顺序。其单配置更新不能替代静态节点清洗和多订阅合集；未复制源码或引入依赖。
+
+**许可证、署名与证据：** GPL-3.0；[固定 LICENSE](https://github.com/MetaCubeX/ClashMetaForAndroid/blob/043a6072225405b285a73e3d7b7e53431ccfc04/LICENSE)。
+
 #### [meow-rs/meow-android](https://github.com/meow-rs/meow-android)
 
 **固定版本 / revision：** `4740012bf0efdb8bae8fbeeefaf4937dfa309f26`；该参考自身 Meow 依赖仍为 `v0.26.0`
 
 **用途与采用方式：** 已逐 Git blob 核查 14 份原文件；Lite Android JNI、socket protect、TUN FD、配置装配、网络切换、订阅及 NDK/CMake 实现参照；不照搬删监听/sniffer、公共 DNS fallback 或未等待退出的路径，不作为已验收实现
+
+订阅与计量另只读参照未发布主线 `6012d3a3bee2440c62a172c0cdc74c08081c5839` 的 `SubscriptionService.kt`、`DailyTrafficRecorder.kt` 和 `VpnStateRepository.kt`：下载校验后替换单条订阅，核心累计值经串行差分写入设备日账本。其没有多订阅合集或明确的核心 epoch，设备日累计不能当作机场账单或订阅归因。未复制源码、未引入 Room 或额外轮询。
 
 **许可证、署名与证据：** MIT；[固定提交 LICENSE](https://github.com/meow-rs/meow-android/blob/4740012bf0efdb8bae8fbeeefaf4937dfa309f26/LICENSE)，SHA256 `9efa36b633149025223074bc471560d9aec5111d31a874d133cb1e1eec38f59e`；实际采用桥接另保原始署名与许可
 
@@ -629,6 +657,8 @@ Lite 端口释放探针另只读核对 `1.54.0` / tag `tokio-1.54.0` / commit [`
 **固定版本 / revision：** `a32df0ba845d706659cb531aa9250e769011f651`
 
 **用途与采用方式：** 官方客户端检索参考：核查仓库结构、平台和许可；未移植 iOS 网络扩展或称其为 Android SDK
+
+订阅转换另核对 `v2.0.0` / `fe288b1eea60fb9a2da18a0749cce1ca0bd538f7` 的 `core/rust/meow-ios-ffi/src/subscription.rs`。其 URI 转 YAML 可作格式转换参考，Clash YAML 原样验证不能替代 Lite 的协议过滤与合集；未复制源码。
 
 **许可证、署名与证据：** MIT，Max Lv；[固定 LICENSE](https://github.com/meow-rs/meow-ios/blob/a32df0ba845d706659cb531aa9250e769011f651/LICENSE)；未复制源码
 

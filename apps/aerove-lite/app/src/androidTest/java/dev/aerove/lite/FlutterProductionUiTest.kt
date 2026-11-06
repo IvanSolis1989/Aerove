@@ -1138,20 +1138,40 @@ class FlutterProductionUiTest {
     }
 
     private fun click(label: String, scroll: Boolean = false, dock: Boolean = false, appOnly: Boolean = true) {
-        val node = if (scroll) reveal(label) else requireLabel(label, dock, appOnly)
-        performClick(node)
-        action("click", node, label)
+        if (scroll) reveal(label)
+        var clicked: AccessibilityNodeInfo? = null
+        awaitCondition("enabled advertised ACTION_CLICK for $label") {
+            for (node in nodes()) {
+                if (!node.isVisibleToUser || !matches(node, label) ||
+                    appOnly && node.packageName?.toString() != PACKAGE ||
+                    dock && bounds(node).centerY() <= context.resources.displayMetrics.heightPixels / 2) continue
+                val target = clickTarget(node) ?: continue
+                if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    clicked = node
+                    return@awaitCondition true
+                }
+            }
+            false
+        }
+        action("click", requireNotNull(clicked), label)
     }
 
-    private fun performClick(node: AccessibilityNodeInfo) {
+    private fun clickTarget(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         var current: AccessibilityNodeInfo? = node
         repeat(5) {
             val target = current
-            if (target != null && target.isEnabled && target.isClickable &&
-                target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
+            if (target != null && target.isVisibleToUser && target.isEnabled && target.isClickable &&
+                target.actionList.any { action -> action.id == AccessibilityNodeInfo.ACTION_CLICK }) return target
             current = target?.parent
         }
-        error("No enabled ACTION_CLICK for ${node.text ?: node.contentDescription}; no coordinate fallback")
+        return null
+    }
+
+    private fun performClick(node: AccessibilityNodeInfo) {
+        val target = clickTarget(node)
+        check(target != null && target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            "No enabled ACTION_CLICK for ${node.text ?: node.contentDescription}; no coordinate fallback"
+        }
     }
 
     private fun reveal(label: String, end: Long = SystemClock.elapsedRealtime() + 25_000): AccessibilityNodeInfo {

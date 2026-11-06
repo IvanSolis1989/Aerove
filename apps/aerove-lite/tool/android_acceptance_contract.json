@@ -5,6 +5,9 @@
     "dev.aerove.lite.platformqa.NativeLegacyMigrationFixtureTest#receiptPathFailureRecoversThroughProductionLauncherWithoutChangingSource"
   ],
   "platformSelectors": [
+    "dev.aerove.lite.NativeDnsIpv6Test#actualJniParserAcceptsDnsIpv6BooleansAndOmissionButRejectsInvalidTypes",
+    "dev.aerove.lite.NativeSourceAdmissionTest#actualJniPreservesBooleanTypesDiagnosticsAndOwnerLifetime",
+    "dev.aerove.lite.NativeSourceAdmissionTest#providerDeclarationsNeedNoDownloadButPreparedRuntimeStillNeedsRealResources",
     "dev.aerove.lite.RuleFileNativeTest#corruptedAndMismatchedFilesThrowInsteadOfReportingAnEmptySuccess",
     "dev.aerove.lite.RuleFileNativeTest#emptyLocalFilesRemainEmptyClassicalSets",
     "dev.aerove.lite.RuleFileNativeTest#textIsInspectedAndDumpedThroughRealJniWithoutChangingTheSource",
@@ -34,7 +37,7 @@
     "dev.aerove.lite.scan.ScanSessionTest#deniedPermissionStaysRecoverableAndAlbumCancellationDoesNotStartCamera",
     "dev.aerove.lite.scan.ScanSessionTest#inactiveRouteNeverStartsCameraAndCloseIsIdempotent"
   ],
-  "platformCount": 28,
+  "platformCount": 31,
   "uiSelectors": [
     "dev.aerove.lite.FlutterProductionUiTest#consentNavigationTheme12",
     "dev.aerove.lite.FlutterProductionUiTest#persistedConsentAfterProcessRestart",

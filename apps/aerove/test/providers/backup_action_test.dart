@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/file_provider_source.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -272,18 +273,94 @@ void main() {
       );
     });
 
+    test(
+      'restoring a normalized source without an input archive removes an obsolete original',
+      () async {
+        final source = File(await appPath.getProfilePath('41'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('old source');
+        final original = File(
+          BackupEntries.resolve(
+            await appPath.homeDirPath,
+            BackupEntries.profileInput(41),
+          ),
+        )..writeAsStringSync('obsolete original');
+        final staging = Directory.systemTemp.createTempSync(
+          'profile-input-restore-',
+        );
+        addTearDown(() => staging.deleteSync(recursive: true));
+        File(BackupEntries.resolve(staging.path, BackupEntries.profile(41)))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('restored source');
+        await actionOf(buildContainer()).applyRestore(
+          MigrationData(profiles: [_profile(41, 'Restored')]),
+          RestoreOption.onlyProfiles,
+          stagingDirPath: staging.path,
+        );
+        expect(source.readAsStringSync(), 'restored source');
+        expect(original.existsSync(), false);
+      },
+    );
+
     test('rows that fail to restore take their files back out', () async {
       final replaced = File(await appPath.getProfilePath('41'))
         ..createSync(recursive: true)
         ..writeAsStringSync('current');
       final added = File(await appPath.getProfilePath('42'));
+      final original = File(
+        BackupEntries.resolve(
+          await appPath.homeDirPath,
+          BackupEntries.profileInput(41),
+        ),
+      )..writeAsStringSync('old original');
+      final addedOriginal = File(
+        BackupEntries.resolve(
+          await appPath.homeDirPath,
+          BackupEntries.profileInput(42),
+        ),
+      );
       final staging = Directory.systemTemp.createTempSync('flclash-staging-');
+      final source41 =
+          File(
+              BackupEntries.resolve(
+                await appPath.homeDirPath,
+                fileProviderSourcePath(41, 'proxy-providers', 'fixture'),
+              ),
+            )
+            ..createSync(recursive: true)
+            ..writeAsStringSync('current managed file');
+      registerFileProviderSource(
+        homeDirPath: await appPath.homeDirPath,
+        profileId: 41,
+        section: 'proxy-providers',
+        name: 'fixture',
+        sourcePath: source41.path,
+      );
+      final marker41 = File('${source41.path}.source.json').readAsBytesSync();
       addTearDown(() => staging.deleteSync(recursive: true));
       for (final id in [41, 42]) {
         File(BackupEntries.resolve(staging.path, BackupEntries.profile(id)))
           ..createSync(recursive: true)
           ..writeAsStringSync('from backup');
+        final source =
+            File(
+                BackupEntries.resolve(
+                  staging.path,
+                  fileProviderSourcePath(id, 'proxy-providers', 'fixture'),
+                ),
+              )
+              ..createSync(recursive: true)
+              ..writeAsStringSync('restored managed file');
+        registerFileProviderSource(
+          homeDirPath: staging.path,
+          profileId: id,
+          section: 'proxy-providers',
+          name: 'fixture',
+          sourcePath: source.path,
+        );
       }
+      File(BackupEntries.resolve(staging.path, BackupEntries.profileInput(42)))
+        ..writeAsStringSync('new original');
       await testDatabase.customStatement(
         'CREATE TRIGGER refuse_profiles BEFORE INSERT ON profiles '
         "BEGIN SELECT RAISE(ABORT, 'refused'); END",
@@ -299,6 +376,18 @@ void main() {
       );
 
       expect(replaced.readAsStringSync(), 'current');
+      expect(source41.readAsStringSync(), 'current managed file');
+      expect(File('${source41.path}.source.json').readAsBytesSync(), marker41);
+      final source42 = File(
+        BackupEntries.resolve(
+          await appPath.homeDirPath,
+          fileProviderSourcePath(42, 'proxy-providers', 'fixture'),
+        ),
+      );
+      expect(source42.existsSync(), false);
+      expect(File('${source42.path}.source.json').existsSync(), false);
+      expect(original.readAsStringSync(), 'old original');
+      expect(addedOriginal.existsSync(), false);
       expect(added.existsSync(), isFalse);
     });
 

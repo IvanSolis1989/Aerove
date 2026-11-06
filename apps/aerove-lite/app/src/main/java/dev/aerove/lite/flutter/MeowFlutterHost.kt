@@ -42,6 +42,25 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun meowHostFailureDiagnostic(code: String, method: String, failure: Throwable): String {
+    val known = setOf("service.init", "service.shutdown", "service.syncState", "service.getRunTime", "service.setUiTelemetryActive",
+        "service.start", "service.stop", "service.park", "service.observeRuntime", "core.invokeMethod", "core.cancel", "telemetry.event",
+        "migration.begin", "migration.validate", "migration.commit", "migration.prepareFiles", "migration.confirm", "migration.release", "migration.providerSourceRecovery")
+    val safeMethod = method.takeIf { it in known } ?: "unknown"
+    val safeCode = code.takeIf { it.matches(Regex("[A-Za-z][A-Za-z0-9_]{0,63}")) } ?: "invalid_code"
+    val causes = generateSequence(failure) { it.cause }.take(3).joinToString(" <- ") { cause ->
+        val frames = cause.stackTrace.take(3).joinToString(",") { frame ->
+            "${frame.className.take(96)}.${frame.methodName.take(64)}:${frame.lineNumber}"
+        }
+        "${cause.javaClass.name.take(128)}[$frames]"
+    }
+    return "transport_failure code=$safeCode method=$safeMethod causes=$causes".take(2048)
+}
+
+private fun logMeowHostFailure(code: String, method: String, failure: Throwable) {
+    android.util.Log.w("MeowFlutter", meowHostFailureDiagnostic(code, method, failure))
+}
+
 /** Flutter owns its attachment; the Service alone owns VPN authorization and descriptors. */
 object MeowFlutterHost {
     fun attach(activity: FlutterActivity, engine: FlutterEngine) {
@@ -79,14 +98,16 @@ private class MeowLegacyMigrationPlugin : FlutterPlugin, MethodChannel.MethodCal
                     "prepareFiles" -> { graph.prepareLegacyMigrationFiles(text("leaseId"), text("plan"), text("sha256")); null }
                     "confirm" -> { graph.confirmLegacyMigration(text("sourceDigest"), text("receiptSha256")); null }
                     "release" -> { graph.releaseLegacyMigration(text("leaseId")); null }
+                    "providerSourceRecovery" -> graph.recoverProviderSourceBeforeAdmission(meowObject(call.arguments))
                     else -> error("migration_method_unknown")
                 }
                 reply.success(value)
             } catch (_: CancellationException) { reply.error("migration_cancelled") }
             catch (failure: Exception) {
                 val reason = (failure as? MeowLegacyExportException)?.legacyField ?: failure.message?.takeIf {
-                    it.matches(Regex("migration_[a-z0-9_:.-]+"))
-                } ?: "migration_private_source_or_target_invalid"
+                    it.matches(Regex("(?:migration|provider_source|shared_source|runtime)_[a-z0-9_:.-]+"))
+                } ?: if (call.method == "providerSourceRecovery") "provider_source_recovery_failed" else "migration_private_source_or_target_invalid"
+                logMeowHostFailure(reason, "migration.${call.method}", failure)
                 reply.error(reason, (failure as? MeowLegacyExportException)?.safeDiagnostic())
             } finally { replies.remove(reply) }
         }
@@ -167,7 +188,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                 val observedIntent = startIntent
                 try { current?.updateRuntime(snapshot) }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (failure: Exception) { android.util.Log.w("MeowFlutter", "Runtime observation could not attach", failure) }
+                catch (failure: Exception) { logMeowHostFailure("runtime_observation_failed", "service.observeRuntime", failure) }
                 onMain {
                     val followsStart = observedIntent != null && (snapshot.serviceOwner == observedIntent.owner &&
                         (snapshot.sessionGeneration > observedIntent.generation || observedIntent.adopted && snapshot.sessionGeneration == observedIntent.generation) ||
@@ -186,6 +207,8 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
     private fun serviceCall(call: MethodCall, result: MethodChannel.Result) {
         val reply = Reply(result).also(replies::add)
         if (!attached) return reply.error("detached", "Meow engine is detached")
+        if (call.method == "start" && graph.runtimeHandoffs.peekCurrent()?.let { !graph.runtimeHandoffs.providerSourceAllowsAdmission(it) } == true)
+            return reply.error("provider_source_recovery_required", "A provider source transaction owns graph admission")
         val revision = when (call.method) {
             "start", "park", "stop" -> {
                 val number = call.arguments as? Int
@@ -199,7 +222,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
             else -> intent.get()
         }
         val sharedRevision = if (call.method == "syncState") sharedState.nextRevision() else 0L
-        run(reply) {
+        run(reply, "service.${call.method}") {
             when (call.method) {
                 "init" -> sharedState.withLatest { pending ->
                     retiring?.let {
@@ -212,11 +235,13 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                         MeowNativeCore.readCapabilities()
                         val candidate = MeowEngineAttachment(graph.filesDir.canonicalFile, graph.runtimeHandoffs, graph.vpn, scope,
                             JniResourceFetch.preparedValidator(graph), { MeowNativeCore.readCapabilities(); Unit }, ::events,
-                            { failure -> android.util.Log.w("MeowFlutter", "UI telemetry failed for the owned runtime", failure) },
+                            { failure -> logMeowHostFailure("telemetry_failed", "telemetry.event", failure) },
                             object : MeowFlutterRuntime {
                                 override fun identityIsCurrent(identity: RuntimeAppliedIdentity) = graph.flutterRuntimeIdentityIsCurrent(identity)
                                 override fun hasRequestedIntent() = graph.flutterHasRequestedIntent()
                                 override fun queryGraph() = graph.flutterQueryGraph()
+                                override suspend fun quiesceProviderSourceCandidate() = graph.quiesceProviderSourceCandidate()
+                                override suspend fun restoreProviderSourceGraph(snapshot: MeowRuntimeSnapshot) = graph.restoreProviderSourceGraph(snapshot)
                                 override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
                                     return meowApplyStagedGraph(snapshot, graph.runtimeHandoffs,
                                         graph::replaceFlutterRuntimeGraph, graph::ensureParkedGraph)
@@ -237,7 +262,11 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                                 verifyNativeLiteBusinessSource(graph, proof) { selected = it }
                                 checkNotNull(selected)
                             }, definitionSourceVerifier = { proof -> verifyNativeLiteBusinessSourceReceipt(graph, proof).definitionSha256 },
-                            geoSourceVerifier = { proof -> verifyNativeLiteBusinessSourceReceipt(graph, proof).let { Triple(it.config,it.selectedMap,it.definitionSha256) } })
+                            geoSourceVerifier = { proof -> verifyNativeLiteBusinessSourceReceipt(graph, proof).let { Triple(it.config,it.selectedMap,it.definitionSha256) } },
+                            providerOwnerSourceVerifier = { proof ->
+                                val verified = verifyNativeLiteBusinessSourceReceipt(graph, proof)
+                                nativeLiteProviderOwnerKey(nativeLiteCurrentProfileId(verified.config))
+                            }, providerBindingsSourceVerifier = { proof -> verifyNativeLiteProviderBindings(graph, proof) })
                         try {
                             pending?.let { candidate.setup.syncState(it) }
                             kotlinx.coroutines.currentCoroutineContext().ensureActive()
@@ -279,7 +308,8 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                         commands.disconnectAndJoin() is MeowFlutterStopResult.Confirmed
                     }
                     if (stopped && revision == intent.get()) {
-                        graph.runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested }?.let { graph.ensureParkedGraph(it) }
+                        graph.runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested && graph.runtimeHandoffs.providerSourceAllowsAdmission(it) &&
+                            !graph.runtimeHandoffs.providerSourceKeepStopped() }?.let { graph.ensureParkedGraph(it) }
                     }
                     stopped
                 }
@@ -299,7 +329,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
     private fun coreCall(call: MethodCall, result: MethodChannel.Result) {
         val reply = Reply(result).also(replies::add)
         if (!attached) return reply.error("detached", "Meow engine is detached")
-        run(reply) {
+        run(reply, "core.${call.method}") {
             val owner = requireAttachment()
             when (call.method) {
                 "invokeMethod" -> owner.dispatcher.invoke(call.arguments as? String
@@ -348,7 +378,8 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                         catch (superseded: IllegalStateException) { if (superseded.message != "runtime_stop_superseded") throw superseded }
                     }
                 }
-                graph.runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested }?.let { graph.ensureParkedGraph(it) }
+                graph.runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested && graph.runtimeHandoffs.providerSourceAllowsAdmission(it) &&
+                    !graph.runtimeHandoffs.providerSourceKeepStopped() }?.let { graph.ensureParkedGraph(it) }
             }
         }
     }
@@ -468,13 +499,22 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
         onMain { if (attached && current === owner) serviceChannel.invokeMethod("event", data) }
     }
 
-    private fun run(reply: Reply, work: suspend () -> Any?) {
+    private fun run(reply: Reply, method: String, work: suspend () -> Any?) {
         scope.launch {
             try { reply.success(work()) }
             catch (failure: CancellationException) { reply.error("cancelled", "Meow attachment operation cancelled") }
-            catch (failure: MeowProtocolFailure) { reply.error(failure.code, failure.message ?: failure.code, failure.details) }
-            catch (failure: MeowConfigProtocolException) { reply.error(failure.code, failure.message ?: failure.code, failure.details) }
-            catch (failure: Exception) { reply.error("method_failed", failure.message ?: failure.javaClass.simpleName) }
+            catch (failure: MeowProtocolFailure) {
+                logMeowHostFailure(failure.code, method, failure)
+                reply.error(failure.code, failure.message ?: failure.code, failure.details)
+            }
+            catch (failure: MeowConfigProtocolException) {
+                logMeowHostFailure(failure.code, method, failure)
+                reply.error(failure.code, failure.message ?: failure.code, failure.details)
+            }
+            catch (failure: Exception) {
+                logMeowHostFailure("method_failed", method, failure)
+                reply.error("method_failed", "Meow attachment method failed", mapOf("cause" to failure.javaClass.simpleName.take(128)))
+            }
         }
     }
 

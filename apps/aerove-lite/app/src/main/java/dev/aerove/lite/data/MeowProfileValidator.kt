@@ -7,6 +7,10 @@ fun interface NativePreparedConfigValidator {
     suspend fun validate(yaml: String, resourceReadRoot: File): String?
 }
 
+fun interface NativeSourceConfigValidator {
+    suspend fun validate(yaml: String): String?
+}
+
 internal interface ProfileCompatibilitySchema {
     fun withTunReconciliation(value: MeowTunReconciliation): ProfileCompatibilitySchema = error("TUN reconciliation requires the Meow schema")
     val coreVersion: String
@@ -29,9 +33,10 @@ internal class RuleLineCheck(private val path: String, private val issue: (Strin
 internal class MeowProfileValidator(private val native: NativeConfigValidator,
     private val preparedNative: NativePreparedConfigValidator, private val resourceDirectory: File,
     verifiedFeatures: () -> Set<String>, private val preparedRules: NativePreparedRuleValidator? = null,
-    private val tunReconciliation: MeowTunReconciliation? = null) : ProfileCompatibilitySchema {
-    override fun withTunReconciliation(value: MeowTunReconciliation): ProfileCompatibilitySchema = MeowProfileValidator(native, preparedNative, resourceDirectory, { features }, preparedRules, value)
-    override val coreVersion = "meow-rs/0.26.1/727ddcd06f592e2f12c5222c4de6cce328df808c"
+    private val tunReconciliation: MeowTunReconciliation? = null,
+    private val sourceNative: NativeSourceConfigValidator? = null) : ProfileCompatibilitySchema {
+    override fun withTunReconciliation(value: MeowTunReconciliation): ProfileCompatibilitySchema = MeowProfileValidator(native, preparedNative, resourceDirectory, { features }, preparedRules, value, sourceNative)
+    override val coreVersion = MeowUnsupportedOutbounds.CORE
     private val features by lazy { verifiedFeatures().toSet() }
 
     override fun resourceInput(yaml: String): MutableMap<String, Any?> = resourceInput(yaml, sourceAdmission = false)
@@ -75,6 +80,10 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
     override suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?, sourceAdmission: Boolean) {
         tunReconciliation?.verify(yaml)
         val engine = engineView(yaml, sourceAdmission = sourceAdmission && !managed && bundleDirectory == null)
+        if (sourceAdmission && !managed && bundleDirectory == null && sourceNative != null) {
+            sourceNative.validate(ConfigYaml.dump(engine))?.let(::nativeFailure)
+            return
+        }
         val problems = mutableListOf<ConfigIssue>()
         fun check(value: Any?, path: String) {
             if (value is String) checkProfileResource(value, path, problems, resourceDirectory, bundleDirectory)

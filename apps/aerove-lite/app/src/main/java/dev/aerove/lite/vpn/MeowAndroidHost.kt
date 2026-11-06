@@ -53,8 +53,8 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
             if (plan.profileId.startsWith("flutter:")) {
                 val snapshot = checkNotNull(application.runtimeHandoffs.readCurrent()) { "runtime_snapshot_missing" }
                 check(snapshot.profileId == plan.profileId) { "runtime_start_superseded" }
-                resources.runtimeSnapshot = if (graphOnly) application.runtimeHandoffs.admitGraph(snapshot.revision, snapshot.intentEpoch)
-                    else application.runtimeHandoffs.admit(snapshot.revision, snapshot.intentEpoch)
+                resources.runtimeSnapshot = if (graphOnly) application.runtimeHandoffs.admitGraph(snapshot.revision, snapshot.intentEpoch, plan.providerSourcePermit)
+                    else application.runtimeHandoffs.admit(snapshot.revision, snapshot.intentEpoch, plan.providerSourcePermit)
                 val relocated = FlutterRuntimeResources.create(application.filesDir, snapshot, resources::isCurrent)
                 resources.flutterResources = relocated
                 val projected = dev.aerove.lite.flutter.meowProjectGroupTestUrl(ConfigYaml.parse(relocated.yaml),
@@ -311,8 +311,8 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
         override suspend fun reloadRules(next: PreparedProfile, endpoint: CoreEndpoint, current: () -> Boolean): Boolean =
             ruleResources?.reload(next, endpoint, current) ?: false
         override fun isCurrent() = admission.current() && (runtimeSnapshot?.let {
-            if (graphOnly) application.runtimeHandoffs.isGraphCandidate(it.revision, it.intentEpoch)
-                else application.runtimeHandoffs.isCurrent(it.revision, it.intentEpoch)
+            (if (graphOnly) application.runtimeHandoffs.isGraphCandidate(it.revision, it.intentEpoch)
+                else application.runtimeHandoffs.isCurrent(it.revision, it.intentEpoch)) && application.runtimeHandoffs.providerSourceLeaseAllows(it, it.sourcePermit)
         } ?: true)
         override suspend fun verifyControl(endpoint: CoreEndpoint) = verifyMeowControl(endpoint)
         override suspend fun release() = withContext(NonCancellable + Dispatchers.IO) { cleanup.withLock {

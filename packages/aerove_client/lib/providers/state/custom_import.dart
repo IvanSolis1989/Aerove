@@ -283,132 +283,17 @@ ProxyProviderOptions _proxyProviderOptions(
   return _decodeEntry(name, () => ProxyProviderOptions.fromJson(json));
 }
 
-Map<String, dynamic> _withoutName(Map<String, dynamic> definition) =>
-    {...definition}..remove('name');
-
-/// Each profile picks a proxy's dialer, so the proxy keeps none of its own.
-Map<String, dynamic> _withoutDialer(Map<String, dynamic> definition) =>
-    {...definition}..remove('dialer-proxy');
-
-Object? _weaklyTyped(Object? value) => switch (value) {
-  final Map map => {
-    for (final MapEntry(:key, :value) in map.entries)
-      key.toString(): _weaklyTyped(value),
-  },
-  final List list => [for (final item in list) _weaklyTyped(item)],
-  final num number => number.toString(),
-  _ => value,
-};
-
-Object? _comparable(Map<String, dynamic> definition) =>
-    _weaklyTyped(_withoutName(_withoutDialer(definition)));
-
-List<Object?>? _identityOf(Map<String, dynamic> definition) {
-  final proxy = CustomProxy(id: 0, definition: definition);
-  final server = proxy.server;
-  if (server == null || server.isEmpty || proxy.credentials.isEmpty) {
-    return null;
-  }
-  return [
-    proxy.name,
-    proxy.type,
-    server,
-    proxy.port,
-    for (final credential in proxy.credentials)
-      proxy.valueOf(credential)?.toString(),
-  ];
-}
-
-/// Proxies and groups share one namespace in mihomo, and in a custom profile
-/// that namespace takes in the app's proxies, so a group is moved off an app
-/// proxy's name as a proxy is, and a proxy off other profiles' [groupNames].
-({
-  Map<String, String> names,
-  List<String> importedGroupNames,
-  List<Map<String, dynamic>> added,
-  Map<String, String> dialers,
-})
-_importProxies(
+ProxyNamespaceImport _importProxies(
   List<Map<String, dynamic>> proxies, {
   required List<Map<String, Object?>> groups,
   required List<Map<String, dynamic>> existing,
   required Set<String> groupNames,
-}) {
-  const equality = DeepCollectionEquality();
-  final held = LinkedHashMap<Object?, String>(
-    equals: equality.equals,
-    hashCode: equality.hash,
-  );
-  final identities = HashSet<List<Object?>>(
-    equals: equality.equals,
-    hashCode: equality.hash,
-  );
-  for (final definition in existing) {
-    final name = _nameOf(definition);
-    if (name.isNotEmpty) {
-      held.putIfAbsent(_comparable(definition), () => name);
-      if (_identityOf(definition) case final identity?) {
-        identities.add(identity);
-      }
-    }
-  }
-  final existingNames = {for (final item in existing) _nameOf(item)};
-  final kept = {
-    for (final proxy in proxies)
-      if (!existingNames.contains(_nameOf(proxy)) &&
-          !groupNames.contains(_nameOf(proxy)))
-        _nameOf(proxy),
-    for (final group in groups)
-      if (!existingNames.contains(_nameOf(group))) _nameOf(group),
-  };
-  final taken = {
-    ...reservedCustomProxyNames,
-    ...existingNames,
-    ...groupNames,
-    ...kept,
-  };
-  final used = <String>{};
-  String freeName(String name) =>
-      kept.contains(name) && used.add(name) ? name : freeProxyName(name, taken);
-  final names = <String, String>{};
-  final proxyNames = <String>[];
-  final added = <Map<String, dynamic>>[];
-  for (final proxy in proxies) {
-    final name = _nameOf(proxy);
-    final definition = _withoutDialer(proxy);
-    final String imported;
-    if (held[_comparable(definition)] case final same?) {
-      imported = same;
-    } else if (identities.contains(_identityOf(definition))) {
-      imported = name;
-    } else {
-      imported = reservedCustomProxyNames.contains(name)
-          ? freeProxyName(name, taken)
-          : freeName(name);
-      added.add({...definition, 'name': imported});
-    }
-    names.putIfAbsent(name, () => imported);
-    proxyNames.add(imported);
-  }
-  final importedGroupNames = <String>[];
-  for (final group in groups) {
-    final imported = freeName(_nameOf(group));
-    names.putIfAbsent(_nameOf(group), () => imported);
-    importedGroupNames.add(imported);
-  }
-  final dialers = {
-    for (final (index, proxy) in proxies.indexed)
-      if (proxy['dialer-proxy']?.toString() case final dialer?
-          when dialer.isNotEmpty)
-        proxyNames[index]: names[dialer] ?? dialer,
-  };
-  return (
-    names: names,
-    importedGroupNames: importedGroupNames,
-    added: added,
-    dialers: dialers,
-  );
-}
+}) => importProxyNamespace(
+  proxies,
+  groups: groups,
+  existing: existing,
+  groupNames: groupNames,
+);
 
 /// The app proxy [definition] would be imported as: one that already holds it
 /// leaves nothing [added].

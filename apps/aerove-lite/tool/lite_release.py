@@ -127,7 +127,7 @@ def _source_shard_count(root, source):
 
 FLUTTER_AGGREGATE_STEP = "Verify current Android execution and retain pending release gates"
 FLUTTER_ACCEPTANCE = {
-    "acceptance (fixed 28 native/platform regressions)": ("Real API 33 flutter-platform verification",),
+    "acceptance (fixed 31 native/platform regressions)": ("Real API 33 flutter-platform verification",),
     "acceptance (Flutter UI and same-session native lifecycle)": ("Real API 33 flutter-full verification",),
 }
 
@@ -149,7 +149,7 @@ def _source_acceptance_plan(root, source):
             raise PromotionError("Original workflow has no unique Flutter producer/aggregate")
         sections[job] = matches[0]
     matrices = re.findall(r"(?ms)^      matrix:\n        include:\n(.*?)^    name: acceptance \(\$\{\{ matrix.label \}\}\)\n", sections["acceptance"])
-    expected = ("        - phase: flutter-platform\n          label: fixed 28 native/platform regressions\n"
+    expected = ("        - phase: flutter-platform\n          label: fixed 31 native/platform regressions\n"
                 "          artifact_suffix: flutter-platform\n"
                 "        - phase: flutter-full\n          label: Flutter UI and same-session native lifecycle\n"
                 "          artifact_suffix: flutter-full\n")

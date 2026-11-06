@@ -15,6 +15,16 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.sync.Mutex
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -25,6 +35,222 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 
 class MeowSetupProtocolTest {
+    @Test fun sharedFileTransactionCommitsOnceAndRealAbortReappliesPriorGraphAfterFailureOrCancellation() = runBlocking<Unit> {
+        val home = home(); val runtime = File(home, "runtime")
+        val original = File(home, "profiles/providers/1/proxies/${"a".repeat(32)}").apply {
+            parentFile.mkdirs(); writeText("proxies: [{name: original,type: direct}]\n")
+        }
+        val configFile = File(home, "config.yaml")
+        fun source(mode: String) = "mode: $mode\nproxy-providers: {feed: {type: file,path: '${original.path.replace('\\', '/')}'}}\n" +
+            "proxy-groups: [{name: Pick,type: select,use: [feed]}]\nrules: ['MATCH,Pick']\n"
+        configFile.writeText(source("rule"))
+        val entered = CompletableDeferred<Unit>(); val block = java.util.concurrent.atomic.AtomicBoolean()
+        val prepared = NativePreparedConfigValidator { _, _ -> if (block.get()) { entered.complete(Unit); awaitCancellation() }; null }
+        val schema = dev.aerove.lite.data.CompatibilityValidator.forMeow(NativeConfigValidator { null }, runtime, prepared) { emptySet() }
+        val manager = dev.aerove.lite.data.ResourceBundleManager(runtime, schema, dev.aerove.lite.data.NativeResourceValidator { _, _, _, _ -> null })
+        val store = RuntimeHandoffStore(home); val effects = Effects(); var applications = 0L; var joined = 0
+        effects.onStaged = { snapshot ->
+            val proof = RuntimeAppliedProof(1, ++applications, applications.toString())
+            store.commitGraphApplied(snapshot.revision, snapshot.intentEpoch, proof, snapshot.handoff)
+            effects.runtime = MeowSetupRuntime(snapshot.revision, snapshot.intentEpoch, snapshot.handoff.compiledSha256,
+                proof.coreEpoch, proof.serviceOwner, proof.sessionGeneration, false)
+        }
+        config(home).use { config ->
+            val owner = dev.aerove.lite.data.sha256("verified-profile-1")
+            fun proof() = JSONObject().put("sourceHash", dev.aerove.lite.data.sha256(original))
+            fun verify(proof: JSONObject): String { require(proof.getString("sourceHash") == dev.aerove.lite.data.sha256(original)); return owner }
+            fun params(digest: String) = setup().apply {
+                put("selected-map", emptyMap<String, String>()); put("data-source-proof", protocolObject(proof().toString())); put("applied", record(digest))
+            }
+            val runtimeApi = MeowSetupProtocol(home, store, config, effects, prepared, verifiedFeatures = { emptySet() },
+                validator = NativeConfigValidator { null }, resourceSealer = dev.aerove.lite.data.FlutterResourceSealer(manager, "AEROVE"),
+                providerOwnerSourceVerifier = ::verify)
+            runtimeApi.syncState(shared())
+            assertEquals("", runtimeApi.setupConfig(params("initial")))
+            val transactions = MeowProviderSourceTransactions(home, store, ::verify,
+                actualIdentity = { store.readAppliedIdentity()?.takeIf { effects.runtime?.revision == it.revision && store.isGraphCurrent(it) } },
+                apply = { args, id, publication -> runtimeApi.applyProviderSource(args, id, publication); Unit },
+                quiesce = { joined++; effects.runtime = null }, restore = { snapshot -> effects.onStaged(snapshot); store.readAppliedIdentity() })
+            suspend fun raw(): Pair<JSONObject, File> {
+                val current = store.readLastApplied()!!
+                val rows = JSONObject(File(current.resourceDirectory, "manifest.json").readText()).getJSONArray("records")
+                val row = (0 until rows.length()).map(rows::getJSONObject).single { it.getString("kind") == "source-proxy" }
+                return row to File(current.resourceDirectory, row.getString("file"))
+            }
+            suspend fun begin(after: String): Pair<MutableMap<String, Any?>, JSONObject> {
+                val current = store.readLastApplied()!!; val id = java.util.UUID.randomUUID().toString()
+                val sourcePlan = JSONObject().put("beforeStateSha256", nativeLiteJsonHash(proof())).put("afterSha256", dev.aerove.lite.data.sha256(after))
+                val plan = JSONObject().put("ownerSha256", owner).put("namespace", "proxy-providers").put("name", "feed")
+                    .put("expectedRevision", current.revision).put("expected", JSONObject(current.handoff.setupRecordJson)).put("sourcePlanSha256", nativeLiteJsonHash(sourcePlan))
+                val journal = File(home, "provider-source-transactions/$id/source-journal.json").apply {
+                    parentFile.mkdirs(); writeText(JSONObject().put("schema", 1).put("id", id).put("sourcePlan", sourcePlan).put("sourcePlanSha256", nativeLiteJsonHash(sourcePlan)).toString())
+                }
+                val descriptor = JSONObject().put("relativePath", "provider-source-transactions/$id/source-journal.json").put("sha256", dev.aerove.lite.data.sha256(journal))
+                val response = transactions.invoke(mapOf("schemaVersion" to 1, "operation" to "begin", "transactionId" to id,
+                    "plan" to protocolObject(plan.toString()), "sourceJournal" to protocolObject(descriptor.toString()), "proof" to protocolObject(proof().toString())))
+                assertEquals("UNDECIDED", response["decision"])
+                return mutableMapOf<String, Any?>("schemaVersion" to 1, "transactionId" to id, "planSha256" to nativeLiteJsonHash(plan)) to descriptor
+            }
+            fun applyRequest(base: Map<String, Any?>, descriptor: JSONObject, digest: String) = base + mapOf("operation" to "apply",
+                "publication" to mapOf("sourceJournalSha256" to descriptor.getString("sha256"), "afterStateSha256" to nativeLiteJsonHash(proof())), "setupParams" to params(digest))
+            val edited = "proxies: [{name: edited,type: direct}]\n"
+            val (commit, commitJournal) = begin(edited)
+            original.writeText(edited)
+            val committed = transactions.invoke(applyRequest(commit, commitJournal, "edited"))
+            assertEquals("COMMITTED", committed["decision"]); assertEquals(committed["plannedRevision"], committed["revision"])
+            val lostReply = transactions.invoke(commit + ("operation" to "query"))
+            assertEquals("COMMITTED", lostReply["decision"])
+            assertEquals("COMMITTED", transactions.invoke(commit + ("operation" to "abort"))["decision"]); assertEquals(0, joined)
+            transactions.invoke(commit + mapOf("operation" to "query", "sourceFinalized" to true))
+            configFile.writeText(source("global"))
+            assertEquals("", runtimeApi.setupConfig(params("unrelated")))
+            assertEquals(edited, raw().second.readText()); assertFalse(raw().first.has("manualOverride"))
+            for ((cancel, replacement) in listOf(false to "proxies: [{name: invalid,type: unknown}]\n", true to "proxies: [{name: cancelled,type: direct}]\n")) {
+                val before = store.readAppliedIdentity()!!; val beforeProof = proof(); val beforeBytes = original.readText()
+                val (pending, descriptor) = begin(replacement)
+                original.writeText(replacement)
+                if (cancel) {
+                    block.set(true)
+                    val request = async { transactions.invoke(applyRequest(pending, descriptor, "cancelled")) }
+                    try { withTimeout(5000) { entered.await() } } finally { request.cancel(); withTimeout(5000) { request.join() }; block.set(false) }
+                    assertTrue(request.isCancelled)
+                } else {
+                    try { transactions.invoke(applyRequest(pending, descriptor, "invalid")); fail("Invalid source was published") }
+                    catch (_: dev.aerove.lite.data.ConfigValidationException) { }
+                }
+                assertEquals(before, store.readAppliedIdentity())
+                assertEquals("restore-old", transactions.invoke(pending + ("operation" to "query"))["sourceAction"])
+                original.writeText(beforeBytes)
+                val restored = transactions.invoke(pending + mapOf("operation" to "abort", "restored" to mapOf(
+                    "sourceJournalSha256" to descriptor.getString("sha256"), "beforeStateSha256" to nativeLiteJsonHash(beforeProof), "proof" to protocolObject(beforeProof.toString()))))
+                assertEquals("ABORTED", restored["decision"]); assertEquals(before.revision, restored["revision"])
+                assertNotEquals(before.proof, store.readAppliedIdentity()!!.proof)
+                assertEquals(edited, raw().second.readText())
+                transactions.invoke(pending + mapOf("operation" to "query", "sourceFinalized" to true))
+            }
+            assertEquals(5L, applications); assertEquals(4, joined)
+        }
+    }
+    @Test fun providerCancellationJoinsTheActualCandidateWriterBeforeCleanupAndKeepsAppliedLeaseUntilRecovery() = runBlocking<Unit> {
+        val home = home(); val runtime = File(home, "runtime")
+        File(home, "config.yaml").writeText("proxy-providers: {feed: {type: http,url: 'https://example.invalid/feed',path: feed.yaml}}\n" +
+            "proxy-groups: [{name: Pick,type: select,use: [feed]}]\nrules: ['MATCH,Pick']\n")
+        val downloads = java.util.concurrent.atomic.AtomicInteger()
+        val writerEntered = CompletableDeferred<Unit>(); val writerJoining = CompletableDeferred<Unit>(); val releaseWriter = CompletableDeferred<Unit>()
+        val writerJoined = java.util.concurrent.atomic.AtomicBoolean()
+        val prepareEntered = CompletableDeferred<Unit>(); val prepareCancelled = CompletableDeferred<Unit>()
+        val blockPrepared = java.util.concurrent.atomic.AtomicBoolean()
+        val transportsJoined = java.util.concurrent.atomic.AtomicInteger()
+        var cancelledCandidate: File? = null
+        val prepared = NativePreparedConfigValidator { _, _ ->
+            if (blockPrepared.get()) {
+                prepareEntered.complete(Unit)
+                try { awaitCancellation() } finally { prepareCancelled.complete(Unit) }
+            }
+            null
+        }
+        val schema = dev.aerove.lite.data.CompatibilityValidator.forMeow(NativeConfigValidator { null }, runtime, prepared) { emptySet() }
+        val factory = dev.aerove.lite.data.ProviderDownloadFactory { context ->
+            val writers = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+            object : dev.aerove.lite.data.ProviderDownloadScope {
+                private var writer: Job? = null
+                override suspend fun download(request: dev.aerove.lite.data.ProviderDownloadRequest): dev.aerove.lite.data.ProviderDownloadResult {
+                    val attempt = downloads.incrementAndGet()
+                    if (attempt == 2) {
+                        cancelledCandidate = context.stagingRoot.parentFile
+                        writer = writers.launch {
+                            request.destination.outputStream().use { output ->
+                                output.write("proxies: [".toByteArray()); output.flush(); writerEntered.complete(Unit)
+                                try { awaitCancellation() } finally {
+                                    withContext(NonCancellable) { writerJoining.complete(Unit); releaseWriter.await() }
+                                }
+                            }
+                        }
+                        awaitCancellation()
+                    }
+                    val yaml = "proxies: [{name: ${if (attempt == 1) "old" else "new"},type: direct}]\n"
+                    val digest = yaml.byteInputStream().use { dev.aerove.lite.data.copyResource(it, request.destination, request.maxBytes) }
+                    return dev.aerove.lite.data.ProviderDownloadResult(digest.bytes, digest.sha256)
+                }
+                override suspend fun closeAndJoin() {
+                    try { writer?.cancelAndJoin(); if (writer != null) writerJoined.set(true); transportsJoined.incrementAndGet() } finally { writers.cancel() }
+                }
+            }
+        }
+        val manager = dev.aerove.lite.data.ResourceBundleManager(runtime, schema, dev.aerove.lite.data.NativeResourceValidator { _, _, _, _ -> null },
+            dev.aerove.lite.data.ResourceDownloader(), providerDownloads = factory)
+        val store = RuntimeHandoffStore(home); val effects = Effects(); var applications = 0L
+        effects.onStaged = { snapshot ->
+            val proof = RuntimeAppliedProof(1, ++applications, applications.toString())
+            store.commitGraphApplied(snapshot.revision, snapshot.intentEpoch, proof, snapshot.handoff)
+            effects.runtime = MeowSetupRuntime(snapshot.revision, snapshot.intentEpoch, snapshot.handoff.compiledSha256,
+                proof.coreEpoch, proof.serviceOwner, proof.sessionGeneration, false)
+        }
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects, prepared, verifiedFeatures = { emptySet() },
+                validator = NativeConfigValidator { null }, resourceSealer = dev.aerove.lite.data.FlutterResourceSealer(manager, "AEROVE"))
+            api.syncState(shared())
+            val initial = setup().apply { put("selected-map", emptyMap<String, String>()) }
+            assertEquals("", api.setupConfig(initial))
+            val oldIdentity = store.readAppliedIdentity()!!; val oldSnapshot = store.readLastApplied()!!; val oldRuntime = effects.runtime
+            val oldFiles = oldSnapshot.handoff.resources.associate { it.relativePath to dev.aerove.lite.data.sha256(File(oldSnapshot.resourceDirectory, it.relativePath)) }
+            val lease = dev.aerove.lite.data.FlutterRuntimeResources.create(home, oldSnapshot) { store.isGraphCandidate(oldSnapshot.revision, oldSnapshot.intentEpoch) }
+            try {
+                val leaseFiles = lease.readRoot.walkTopDown().filter(File::isFile).associate { it.relativeTo(lease.readRoot).path to dev.aerove.lite.data.sha256(it) }
+                val appliedYaml = lease.yaml
+                fun request() = initial.toMutableMap().apply {
+                    put("applied", record("provider-refresh"))
+                    put("provider-update", mapOf("namespace" to "proxy-providers", "name" to "feed", "expected" to record(), "expectedRevision" to oldIdentity.revision))
+                }
+                val update = async { api.setupConfig(request()) }
+                try {
+                    withTimeout(5000) { writerEntered.await() }
+                    update.cancel()
+                    withTimeout(5000) { writerJoining.await() }
+                    assertFalse(update.isCompleted); assertFalse(writerJoined.get()); assertTrue(cancelledCandidate!!.isDirectory)
+                    assertEquals(oldIdentity, store.readAppliedIdentity()); assertEquals(oldSnapshot.revision, store.readCurrent()!!.revision)
+                    assertEquals(oldRuntime, effects.runtime); assertEquals(1L, applications)
+                    oldFiles.forEach { (path, hash) -> assertEquals(hash, dev.aerove.lite.data.sha256(File(oldSnapshot.resourceDirectory, path))) }
+                    assertEquals(appliedYaml, lease.yaml)
+                    leaseFiles.forEach { (path, hash) -> assertEquals(hash, dev.aerove.lite.data.sha256(File(lease.readRoot, path))) }
+                } finally { releaseWriter.complete(Unit); update.cancel(); withTimeout(5000) { update.join() } }
+                assertTrue(update.isCancelled); assertTrue(writerJoined.get()); assertFalse(cancelledCandidate!!.exists())
+                assertEquals(oldIdentity.revision, api.getAppliedSetup()["revision"])
+                assertEquals("", api.setupConfig(request()))
+                assertEquals(3, downloads.get()); assertEquals(2L, applications)
+                val recovered = store.readLastApplied()!!
+                assertNotEquals(oldIdentity.revision, recovered.revision)
+                assertEquals(recovered.revision, api.getAppliedSetup()["revision"])
+                assertEquals(record("provider-refresh"), api.getAppliedSetup()["applied"])
+                assertFalse(JSONObject(recovered.handoff.runtimeSettingsJson).getJSONObject("flutterSetup").has("provider-update"))
+                val recoveredIdentity = store.readAppliedIdentity()!!
+                val recoveredRuntime = effects.runtime
+                val recoveredFiles = recovered.handoff.resources.associate { it.relativePath to dev.aerove.lite.data.sha256(File(recovered.resourceDirectory, it.relativePath)) }
+                fun postDownloadRequest() = initial.toMutableMap().apply {
+                    put("applied", record("post-download-refresh"))
+                    put("provider-update", mapOf("namespace" to "proxy-providers", "name" to "feed", "expected" to record("provider-refresh"), "expectedRevision" to recovered.revision))
+                }
+                blockPrepared.set(true)
+                val beforeCommit = async { api.setupConfig(postDownloadRequest()) }
+                try {
+                    withTimeout(5000) { prepareEntered.await() }
+                    assertEquals(4, downloads.get()); assertEquals(4, transportsJoined.get())
+                    assertEquals(recoveredIdentity, store.readAppliedIdentity())
+                } finally { beforeCommit.cancel(); withTimeout(5000) { beforeCommit.join() }; blockPrepared.set(false) }
+                withTimeout(5000) { prepareCancelled.await() }
+                assertTrue(beforeCommit.isCancelled); assertEquals(2L, applications)
+                assertEquals(recoveredIdentity, store.readAppliedIdentity()); assertEquals(recoveredRuntime, effects.runtime)
+                assertEquals(recovered.revision, store.readCurrent()!!.revision)
+                recoveredFiles.forEach { (path, hash) -> assertEquals(hash, dev.aerove.lite.data.sha256(File(recovered.resourceDirectory, path))) }
+                assertEquals("", api.setupConfig(postDownloadRequest()))
+                assertEquals(5, downloads.get()); assertEquals(3L, applications)
+                assertNotEquals(recovered.revision, api.getAppliedSetup()["revision"])
+                assertTrue(lease.readRoot.isDirectory)
+                leaseFiles.forEach { (path, hash) -> assertEquals(hash, dev.aerove.lite.data.sha256(File(lease.readRoot, path))) }
+            } finally { lease.closeAfterNativeJoin() }
+        }
+    }
+
     @Test fun preinitClientStateIsValidatedCopiedAndLatestIsAppliedOnlyWhenAttachmentExists() = runBlocking<Unit> {
         val home = home(); val effects = Effects()
         val pending = MeowServiceSharedState(Mutex()) { true }
@@ -387,7 +613,7 @@ class MeowSetupProtocolTest {
             assertFalse(runtime.getJSONObject("requests").getBoolean("checkCertificate"))
             assertFalse(snapshot.userRequested)
             assertNull(store.readLastApplied())
-            assertEquals(mapOf("init" to true, "running" to false, "applied" to null), api.getAppliedSetup())
+            assertEquals(mapOf("init" to true, "running" to false, "revision" to null, "applied" to null), api.getAppliedSetup())
             assertArrayEquals(original, file.readBytes())
             assertFalse(File(home, "settings").exists())
         }
@@ -417,9 +643,10 @@ class MeowSetupProtocolTest {
             assertFalse(api.getAppliedSetup()["running"] as Boolean)
             store.commitApplied(staged.revision, staged.intentEpoch, RuntimeAppliedProof(1, 2, "4"))
             assertTrue(api.getAppliedSetup()["running"] as Boolean)
+            assertEquals(staged.revision, api.getAppliedSetup()["revision"])
             assertEquals(record(), api.getAppliedSetup()["applied"])
             effects.runtime = effects.runtime!!.copy(listening = false)
-            assertEquals(mapOf("init" to true, "running" to false, "applied" to record()), api.getAppliedSetup())
+            assertEquals(mapOf("init" to true, "running" to false, "revision" to staged.revision, "applied" to record()), api.getAppliedSetup())
             assertEquals(staged.revision, store.readLastApplied()!!.revision)
             val changed = setup().apply { put("applied", record("new metadata")) }
             assertFalse(api.refreshAppliedSetup(changed))

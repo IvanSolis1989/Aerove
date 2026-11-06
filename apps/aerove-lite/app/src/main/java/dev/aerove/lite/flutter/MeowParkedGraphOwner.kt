@@ -42,6 +42,7 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
     private var defaultUrl = MEOW_DEFAULT_TEST_URL
 
     override fun queryGraph(): MeowQueryGraph? = graph?.takeIf { identityIsCurrent(it.identity) }
+    override suspend fun quiesceProviderSourceCandidate() = retire()
     override fun identityIsCurrent(identity: RuntimeAppliedIdentity): Boolean = graph?.let {
         it.identity == identity && ownsOwner(identity.proof.serviceOwner) &&
             store.isGraphCandidate(identity.revision, identity.intentEpoch)
@@ -71,10 +72,11 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
     }
 
     override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
+        store.admitGraph(snapshot.revision, snapshot.intentEpoch, snapshot.sourcePermit)
         val requested = newIntent()
         return gate.withLock {
+            val candidate = store.admitGraph(snapshot.revision, snapshot.intentEpoch, snapshot.sourcePermit)
             release()
-            val candidate = store.admitGraph(snapshot.revision, snapshot.intentEpoch)
             val owner = claimOwner()
             ownerToken = owner
             val settings = MeowRuntimeSnapshotSettings.decode(candidate.handoff.runtimeSettingsJson)
@@ -91,7 +93,7 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
                 val proxySettings = effective.copy(network = effective.network.copy(vpnEnabled = false))
                 val reservedGeneration = ++generation
                 val running = owned.open(VpnPlan(candidate.profileId, effective, vpnSettings = proxySettings,
-                    ownerIntentToken = requested, runtimeSessionGeneration = reservedGeneration)).also { held = HeldSession(requested, it) }
+                    ownerIntentToken = requested, runtimeSessionGeneration = reservedGeneration).withProviderSourcePermit(candidate.sourcePermit)).also { held = HeldSession(requested, it) }
                 running.awaitReady()
                 running.configurePolicies(effective)
                 val endpoint = running.endpoint

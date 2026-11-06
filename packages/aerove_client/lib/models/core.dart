@@ -1,6 +1,7 @@
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'provider_compatibility.dart';
 
 part 'generated/core.freezed.dart';
 part 'generated/core.g.dart';
@@ -15,6 +16,8 @@ abstract class SetupParams with _$SetupParams {
     Map<String, dynamic>? dataSourceProof,
     @JsonKey(includeIfNull: false) SetupBase? base,
     @JsonKey(includeIfNull: false) SetupRecord? applied,
+    @JsonKey(name: 'provider-update', includeIfNull: false)
+    Map<String, dynamic>? providerUpdate,
   }) = _SetupParams;
 
   factory SetupParams.fromJson(Map<String, dynamic> json) =>
@@ -391,7 +394,9 @@ abstract class ExternalProvider with _$ExternalProvider {
     required String name,
     required String type,
     String? path,
+    String? runtimeRevision,
     required int count,
+    ProviderCompatibility? compatibility,
     @JsonKey(name: 'subscription-info', fromJson: subscriptionInfoFormCore)
     SubscriptionInfo? subscriptionInfo,
     @JsonKey(name: 'vehicle-type') required String vehicleType,

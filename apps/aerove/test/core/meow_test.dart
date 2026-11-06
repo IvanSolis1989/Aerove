@@ -5,10 +5,12 @@ import 'dart:io';
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/meow.dart';
+import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/app_paths.dart';
@@ -21,6 +23,11 @@ const _state = SharedState(
   stopText: 'stop',
   onlyStatisticsProxy: false,
 );
+
+class _CancellationSignal extends ValueNotifier<bool> {
+  _CancellationSignal(super.value);
+  bool get isObserved => hasListeners;
+}
 
 class _Service implements Service {
   final calls = <String>[];
@@ -116,6 +123,129 @@ void main() {
     ]);
     expect(service.requests, isEmpty);
   });
+
+  test(
+    'one request cancellation waits for native join and leaves other calls attached',
+    () async {
+      await core.start();
+      final signal = _CancellationSignal(false);
+      addTearDown(signal.dispose);
+      final late = Completer<CoreMethodResponse?>();
+      final cancelled = Completer<String>();
+      final joined = Completer<void>();
+      service.response = (call) async => call.method == CoreMethod.setupConfig
+          ? await late.future
+          : CoreMethodResponse(id: call.id, result: true);
+      service.cancel = (id) async {
+        cancelled.complete(id);
+        await joined.future;
+      };
+      var finished = false;
+      final pending = core.invokeCancellableMethod<String>(
+        method: CoreMethod.setupConfig,
+        cancellation: signal,
+      );
+      final checked = expectLater(
+        pending.whenComplete(() => finished = true),
+        throwsA(
+          isA<CoreMethodException>().having(
+            (error) => error.code,
+            'code',
+            'cancelled',
+          ),
+        ),
+      );
+      final request = await service.sent.future;
+      signal.value = true;
+      expect(await cancelled.future, request.id);
+      expect(finished, false);
+      expect(await core.invokeMethod<bool>(method: CoreMethod.getIsInit), true);
+      expect(service.calls, ['init', 'syncState']);
+      joined.complete();
+      await checked;
+      expect(service.cancelled, [request.id]);
+      late.complete(CoreMethodResponse(id: request.id, result: ''));
+      await pumpEventQueue();
+      expect(signal.isObserved, false);
+    },
+  );
+
+  test('a pre-cancelled scoped request never reaches native', () async {
+    await core.start();
+    final signal = _CancellationSignal(true);
+    try {
+      await expectLater(
+        core.invokeCancellableMethod<String>(
+          method: CoreMethod.setupConfig,
+          cancellation: signal,
+        ),
+        throwsA(isA<CoreMethodException>()),
+      );
+      expect(service.requests, isEmpty);
+      expect(service.cancelled, isEmpty);
+      expect(signal.isObserved, false);
+    } finally {
+      signal.dispose();
+    }
+  });
+
+  test(
+    'failed cancellation is not quiescence until the actual native request returns',
+    () async {
+      await core.start();
+      final signal = ValueNotifier(false);
+      final late = Completer<CoreMethodResponse?>();
+      service.response = (_) => late.future;
+      service.cancel = (_) async =>
+          throw PlatformException(code: 'termination_unconfirmed');
+      CoreRequestQuiescence? native;
+      final pending = core.invokeCancellableMethod<String>(
+        method: CoreMethod.setupConfig,
+        cancellation: signal,
+        observeQuiescence: (state) => native = state,
+      );
+      final checked = expectLater(pending, throwsA(isA<CoreMethodException>()));
+      final request = await service.sent.future;
+      signal.value = true;
+      await checked;
+      expect(native!.isQuiescent, false);
+      late.complete(CoreMethodResponse(id: request.id, result: ''));
+      await native!.whenQuiescent;
+      expect(native!.isQuiescent, true);
+      signal.dispose();
+    },
+  );
+
+  test(
+    'scoped cancellation discards a matching late spill after joined cancellation',
+    () async {
+      final root = await Directory.systemTemp.createTemp('scoped-meow-spill-');
+      addTearDown(() => root.delete(recursive: true));
+      await useAppPaths(root);
+      final directory = await Directory('${root.path}/responses').create();
+      final own = await File('${directory.path}/late.json').writeAsString('{}');
+      final foreign = await File(
+        '${directory.path}/foreign.json',
+      ).writeAsString('{}');
+      final late = Completer<CoreMethodResponse?>();
+      service.response = (_) => late.future;
+      await core.start();
+      final signal = ValueNotifier(false);
+      final pending = core.invokeCancellableMethod<String>(
+        method: CoreMethod.getConfig,
+        cancellation: signal,
+      );
+      final checked = expectLater(pending, throwsA(isA<CoreMethodException>()));
+      final request = await service.sent.future;
+      signal.value = true;
+      await checked;
+      late.complete(CoreMethodResponse(id: request.id, result: own.path));
+      await pumpEventQueue();
+      expect(await own.exists(), false);
+      expect(await foreign.exists(), true);
+      signal.dispose();
+    },
+  );
 
   test(
     'each listener intent uses one native command and no core RPC',

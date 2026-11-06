@@ -31,6 +31,101 @@ class MeowProviderPreparationTest {
     private fun validator(prepared: NativePreparedConfigValidator) = CompatibilityValidator.forMeow(
         NativeConfigValidator { error("source was prematurely fully converted") }, runtime, prepared) { emptySet() }
 
+    @Test fun verifiedDetachedBindingMasksOnlyItsImmutableIndexRootAndPreservesOriginalAndTlsDependencies() {
+        val key = "$.proxy-providers.feed"
+        val proxies = File(temporary.root, "profiles/providers/1/proxies").apply { mkdirs() }
+        val rules = File(temporary.root, "profiles/providers/1/rules").apply { mkdirs() }
+        val original = File(proxies, "a".repeat(32)).apply { writeText("proxies: [{name: original,type: direct}]\n") }
+        val detached = File(proxies, "b".repeat(32)).apply { writeText("proxies: [{name: detached,type: direct}]\n") }
+        val certificate = File(rules, "c".repeat(32)).apply { writeText("owned-ca-fixture") }
+        fun relative(file: File) = temporary.root.toPath().relativize(file.toPath()).joinToString("/")
+        val receiptName = java.security.MessageDigest.getInstance("MD5").digest("native-receipt/$key".toByteArray()).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val receipt = File(rules, receiptName).apply { writeText(org.json.JSONObject().put("schema", 1).put("key", key)
+            .put("file", relative(original)).put("sha256", sha256(original)).put("bytes", original.length())
+            .put("dependencies", org.json.JSONArray().put(org.json.JSONObject().put("key", "$key.proxies[0].ca")
+                .put("file", relative(certificate)).put("sha256", sha256(certificate)).put("bytes", certificate.length()))).toString()) }
+        val index = File(rules, "d".repeat(32)).apply { writeText(org.json.JSONObject().put("schema", 1).put("sourceProfileUuid", java.util.UUID.randomUUID().toString())
+            .put("inputs", org.json.JSONArray().put(org.json.JSONObject().put("key", key).put("file", relative(original)).put("bytes", original.length())
+                .put("sha256", sha256(original)).put("receiptFile", relative(receipt)).put("receiptSha256", sha256(receipt)))).toString()) }
+        val hashes = listOf(original, receipt, index, certificate).associateWith(::sha256)
+        val config = mapOf("aerove-native-resource-manifest" to index.absolutePath,
+            "proxy-providers" to mapOf("feed" to mapOf("type" to "file", "path" to detached.absolutePath)))
+        val manager = ResourceBundleManager(runtime, validator(NativePreparedConfigValidator { _, _ -> null }), NativeResourceValidator { _, _, _, _ -> null })
+        try { manager.retainSealedInputs(config); fail("Unverified hint masked an immutable source") } catch (_: IllegalArgumentException) { }
+        val inputs = manager.retainSealedInputs(config, mapOf(key to SealedFlutterResource(relative(detached), detached.absolutePath, sha256(detached))))
+        try {
+            assertEquals(sha256(detached), inputs.resolve(detached.absolutePath, key)!!.sha256)
+            assertEquals(sha256(certificate), inputs.resolve(certificate.absolutePath, "$key.proxies[0].ca")!!.sha256)
+            inputs.verify()
+            hashes.forEach { (file, hash) -> assertEquals(hash, sha256(file)) }
+        } finally { inputs.close() }
+    }
+
+    @Test fun providerProjectionPreservesOriginalAndAttestsOnlyPreparedNodes() = runBlocking<Unit> {
+        val original = "proxies: [{name: unsupported,type: tuic,server: example.invalid}, {name: kept,type: direct}]\n"
+        var downloads = 0
+        val schema = validator(NativePreparedConfigValidator { _, _ -> null })
+        val manager = ResourceBundleManager(runtime, schema, NativeResourceValidator { _, _, _, _ -> null },
+            ResourceDownloader(), providerDownloads = ProviderDownloadFactory { object : ProviderDownloadScope {
+                override suspend fun download(request: ProviderDownloadRequest): ProviderDownloadResult {
+                    downloads++
+                    val digest = original.byteInputStream().use { copyResource(it, request.destination, request.maxBytes) }
+                    return ProviderDownloadResult(digest.bytes, digest.sha256)
+                }
+                override suspend fun closeAndJoin() = Unit
+            } })
+        val id = java.util.UUID.randomUUID().toString()
+        val source = "proxy-providers: {feed: {type: http,url: 'https://example.invalid/feed',path: feed.yaml}}\n" +
+            "proxy-groups: [{name: PICK,type: select,use: [feed]}]\nrules: ['MATCH,PICK']\n"
+        val bundle = manager.prepare(id, source, requestPolicy = ProviderRequestPolicy("AEROVE", true))
+        val manifest = org.json.JSONObject(File(bundle.directory, "manifest.json").readText())
+        val records = manifest.getJSONArray("records").let { rows -> (0 until rows.length()).map(rows::getJSONObject) }
+        val raw = records.single { it.getString("kind") == "source-proxy" }
+        val prepared = records.single { it.getString("key") == "$.proxy-providers.feed.prepared" }
+        assertEquals(original, File(bundle.directory, raw.getString("file")).readText())
+        val payload = File(bundle.directory, prepared.getString("file")).readText()
+        assertEquals(listOf("kept"), (ConfigYaml.parse(payload)["proxies"] as List<*>).map { (it as Map<*, *>)["name"] })
+        val report = prepared.getJSONObject("compatibility")
+        assertEquals(sha256(original), report.getString("sourceSha256"))
+        assertEquals(sha256(payload), report.getString("derivedSha256"))
+        assertEquals(1, report.getInt("retained")); assertEquals(1, report.getJSONObject("removedByType").getInt("tuic"))
+        assertFalse(raw.has("compatibility")); assertEquals(1, downloads)
+        val reused = manager.prepare(id, source, previous = bundle, refreshKeys = emptySet(), requestPolicy = ProviderRequestPolicy("AEROVE", true))
+        assertEquals(1, downloads); assertEquals(bundle.generation, reused.generation)
+        manager.prepare(id, source, previous = reused, refreshKeys = setOf("*"), requestPolicy = ProviderRequestPolicy("AEROVE", true))
+        assertEquals("Refresh-all must acquire the source-proxy payload", 2, downloads)
+        val replacement = File(temporary.root, "replacement.yaml").apply { writeText("proxies: [{name: side,type: direct},{name: removed,type: ssh}]\n") }
+        val sided = manager.prepare(id, source, previous = reused, refreshKeys = setOf("$.proxy-providers.feed"),
+            requestPolicy = ProviderRequestPolicy("AEROVE", true), replacements = mapOf("$.proxy-providers.feed" to SealedFlutterResource("replacement", replacement.path, sha256(replacement))))
+        assertEquals("Sideload must not download its replacement", 2, downloads)
+        val sideRecords = org.json.JSONObject(File(sided.directory, "manifest.json").readText()).getJSONArray("records")
+        val sideRaw = (0 until sideRecords.length()).map(sideRecords::getJSONObject).single { it.getString("kind") == "source-proxy" }
+        assertTrue(sideRaw.getBoolean("localOverride")); assertEquals("private-override", sideRaw.getString("transportOrigin"))
+        assertEquals(replacement.readText(), File(sided.directory, sideRaw.getString("file")).readText())
+        val handoff = dev.aerove.lite.flutter.RuntimeHandoff(dev.aerove.lite.flutter.MEOW_RUNTIME_CORE_SHA, "source", "revision", sha256(source),
+            sided.yaml, sha256(sided.yaml), "{}", "{}", "{}", "{}", SealedResourceInputs.readFiles(sided.directory).map {
+                dev.aerove.lite.flutter.RuntimeHandoffResource(it.relativePath, it.sourcePath, it.sha256)
+            })
+        val snapshot = dev.aerove.lite.flutter.MeowRuntimeSnapshot(java.util.UUID.randomUUID().toString(), 1, false, handoff, sided.directory)
+        val retained = FlutterResourceSealer(manager, "AEROVE").prepare(source, true, previous = snapshot)
+        try {
+            assertEquals("A later setup must retain the applied sideload rather than redownload or use old shared bytes", 2, downloads)
+            val retainedRows = org.json.JSONObject(File(retained.directory, "manifest.json").readText()).getJSONArray("records")
+            val retainedRaw = (0 until retainedRows.length()).map(retainedRows::getJSONObject).single { it.getString("kind") == "source-proxy" }
+            assertTrue(retainedRaw.getBoolean("localOverride"))
+            assertEquals(sha256(replacement), retainedRaw.getString("sha256"))
+        } finally { retained.closeAndJoin() }
+    }
+
+    @Test fun projectionDoesNotDiscardUnknownOrMalformedNodesAndRejectsEmptyResult() {
+        val unknown = MeowProviderProjection.prepare("proxies: [{name: unknown,type: unknown},{name: invalid}]\n")
+        assertEquals(2, unknown.retained); assertTrue(unknown.removedByType.isEmpty())
+        try {
+            MeowProviderProjection.prepare("proxies: [{name: removed,type: ssh}]\n")
+            fail("An empty projected provider must fail")
+        } catch (expected: ConfigValidationException) { assertTrue(expected.message!!.contains("没有可用节点")) }
+    }
+
     @Test fun namedRouteAndRepeatedHeadersUseOneOwnedScopeBeforeSealingAndFinalValidation() = runBlocking<Unit> {
         val origin = MockWebServer(); val proxy = MockWebServer(); origin.start(); proxy.start()
         try {

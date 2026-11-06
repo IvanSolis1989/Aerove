@@ -5,8 +5,12 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import org.json.JSONObject
 
-internal class SealedResourceInputs(val origins: List<Origin>, val shared: List<SharedInput> = emptyList()) {
-    class SharedInput(val key: String, val file: SealedFlutterResource, val receiptFile: SealedFlutterResource?, val metadata: JSONObject?)
+internal class SealedResourceInputs(val origins: List<Origin>, val shared: List<SharedInput> = emptyList(),
+    val witnesses: List<SealedFlutterResource> = emptyList()) {
+    class SharedInput(val key: String, val file: SealedFlutterResource, val receiptFile: SealedFlutterResource?, val metadata: JSONObject?,
+        val manualOverride: ProviderManualOverride? = null)
+
+    fun fileOverride(key: String): SharedInput? = shared.singleOrNull { it.key == key && it.manualOverride != null }?.also(::checkedShared)
 
     fun cached(key: String, url: String, behavior: String, format: String, fetch: ProviderFetchPolicy?, policy: ProviderRequestPolicy?, now: Long): SharedInput? {
         val input=shared.singleOrNull {it.key==key} ?: return null
@@ -44,6 +48,7 @@ internal class SealedResourceInputs(val origins: List<Origin>, val shared: List<
     fun verify() {
         origins.forEach { origin ->require(readFiles(origin.lease.directory)==origin.files) { "Sealed input changed during preparation" } }
         shared.forEach(::checkedShared)
+        witnesses.forEach { row -> checkedShared(SharedInput("witness", row, null, null)) }
     }
 
     fun close() {

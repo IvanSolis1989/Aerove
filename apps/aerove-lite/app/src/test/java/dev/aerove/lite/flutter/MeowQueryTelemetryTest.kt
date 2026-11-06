@@ -112,6 +112,35 @@ class MeowQueryTelemetryTest {
         }
     }
 
+    @Test fun providerReadPathsAndRuntimeRevisionComeOnlyFromTheAppliedOwnerForBothNamespaces() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            val proxy = """{"name":"P","type":"Proxy","vehicleType":"File","updatedAt":"2026-10-30T00:00:00Z","proxies":[{"name":"Node"}],"path":"untrusted","runtimeRevision":"forged","compatibility":{"retained":999},"revision":"17"}"""
+            val rule = """{"name":"R","type":"Rule","vehicleType":"File","updatedAt":"2026-10-30T00:00:00Z","ruleCount":1,"path":"untrusted","runtimeRevision":"forged","compatibility":{"retained":999}}"""
+            server.enqueue(MockResponse().setBody("""{"providers":{"P":$proxy}}"""))
+            server.enqueue(MockResponse().setBody("""{"providers":{"R":$rule}}"""))
+            server.enqueue(MockResponse().setBody(rule))
+            val source = object : MeowAppliedQueries {
+                override suspend fun proxyGroupOrder() = emptyList<String>()
+                override suspend fun proxyDefinition(name: String): Map<String, Any?>? = null
+                override suspend fun providerMetadata(name: String, kind: String, raw: Map<String, Any?>) =
+                    MeowAppliedProvider("/verified/$kind/$name", "actual-runtime", null)
+            }
+            api(server).use { client ->
+                val session = MeowProtocolSession(client, "test-owner", 4, 7uL, this, { true }, {}, {}, source, false)
+                try {
+                    val rows = protocolList(session.invoke("getExternalProviders", null), "providers").map { protocolMap(it, "provider") }.associateBy { it["name"] }
+                    for ((name, kind) in listOf("P" to "proxies", "R" to "rules")) {
+                        assertEquals("/verified/$kind/$name", rows[name]!!["path"])
+                        assertEquals("actual-runtime", rows[name]!!["runtimeRevision"]); assertNull(rows[name]!!["compatibility"])
+                    }
+                    assertEquals("17", rows["P"]!!["revision"])
+                    val single = protocolMap(session.invoke("getExternalProvider", "R"), "provider")
+                    assertEquals("/verified/rules/R", single["path"]); assertEquals("actual-runtime", single["runtimeRevision"])
+                } finally { session.closeAndJoin() }
+            }
+        }
+    }
+
     @Test fun mutationAcknowledgementRequiresRealHttpSuccessAndFailureSurvives() = runBlocking<Unit> {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setBody("""{"connections":[${tracker()}]}"""))

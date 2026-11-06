@@ -989,13 +989,18 @@ jobs:
           --dart-define="RESOURCE89_OUTPUT=$inputs/resource" test/common/native_lite_resource89_test.dart)
         (cd apps/aerove && flutter test --no-pub --concurrency 1 \
           --dart-define="SOURCE_PROOF89_OUTPUT=$inputs/source-proof89.json" test/common/native_lite_source_proof89_test.dart)
+        export AEROVE_TEST_NODE="$(command -v node)"
+        (cd apps/aerove && flutter test --no-pub --concurrency 1 \
+          --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+          --dart-define=DNS99_CORE=meow-rs --dart-define="DNS99_OUTPUT=$inputs/dns-meow.json" \
+          test/common/native_lite_dns99_test.dart)
         python3 - <<'PY'
         import hashlib, json, os
         from pathlib import Path
         root = Path(os.environ['RUNNER_TEMP']) / 'lite-client-fixtures'
         for name in ('resource/ordinary-compiled.yaml', 'source-proof89.json',
                      'source-proof89.json.resources', 'source-proof89.json.producer.yaml',
-                     'source-proof89.json.empty'):
+                     'source-proof89.json.empty', 'dns-meow.json'):
             assert (root / name).is_file(), name
         receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
                        attempt=os.environ['GITHUB_RUN_ATTEMPT'], files={
@@ -1010,11 +1015,23 @@ jobs:
       env:
         AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
       run: |-
-        export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Daerove.age.fixtures=\"$GITHUB_WORKSPACE/apps/aerove-lite/regexp2/agebridge/testdata\" -Daerove.age.helper=\"$RUNNER_TEMP/lite-client-helper/bin/ageverify\""
+        export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:+$JAVA_TOOL_OPTIONS }-Daerove.age.fixtures=\"$GITHUB_WORKSPACE/apps/aerove-lite/regexp2/agebridge/testdata\" -Daerove.age.helper=\"$RUNNER_TEMP/lite-client-helper/bin/ageverify\" -Dresource.fixture=\"$RUNNER_TEMP/lite-client-fixtures/resource\" -DsourceProof89.fixture=\"$RUNNER_TEMP/lite-client-fixtures/source-proof89.json\" -Dorigin95.fixture=\"$RUNNER_TEMP/lite-client-fixtures/dns-meow.json\" -Ddns99.fixture=\"$RUNNER_TEMP/lite-client-fixtures/dns-meow.json\" -Dtun90.fixture=\"$RUNNER_TEMP/lite-client-fixtures/resource\""
         gradle --no-daemon --continue \
-          -Dresource.fixture="$RUNNER_TEMP/lite-client-fixtures/resource" \
-          -DsourceProof89.fixture="$RUNNER_TEMP/lite-client-fixtures/source-proof89.json" \
           --init-script tool/compose_ui_graphs.gradle :app:reportComposeUiResolution :app:checkReleaseAarMetadata :app:testReleaseUnitTest :app:lintRelease :app:compileReleaseAndroidTestKotlin :app:minifyReleaseWithR8
+        python3 - <<'PY'
+        from pathlib import Path
+        import xml.etree.ElementTree as ET
+        expected = {
+            ('dev.aerove.lite.data.GeoOrigin95Test', 'actualTaskProducerIsStrictlyConsumedPersistedAndRebasedWithoutCoveringProfileIntent'),
+            ('dev.aerove.lite.data.MeowDns99StageTest', 'actualGetProfileDefaultsAndSingleJsOutputPassCompleteStageForBothRootIpv6States'),
+            ('dev.aerove.lite.data.MeowTunReconciliation90Test', 'actualTaskYamlTraversesSameSealerAndStageWithoutGrantingStartAuthority'),
+        }
+        rows = [case for report in Path('app/build/test-results/testReleaseUnitTest').glob('TEST-*.xml')
+                for case in ET.parse(report).getroot().iter('testcase')]
+        for identity in sorted(expected):
+            cases = [case for case in rows if (case.get('classname'), case.get('name')) == identity]
+            assert len(cases) == 1 and not any(cases[0].find(status) is not None for status in ('skipped', 'failure', 'error')), identity
+        PY
     - name: Inspect Android tasks after verification failure
       if: ${{ always() && steps.kotlin_checks.outcome == 'failure' }}
       timeout-minutes: 3
@@ -1114,6 +1131,79 @@ jobs:
     - name: Prepare the pinned Standard source required by the existing test hooks and assets
       working-directory: apps/aerove
       run: python3 tool/mihomo_source.py prepare
+    - name: Execute subscription source transactions and affected shared client regressions
+      timeout-minutes: 30
+      working-directory: apps/aerove
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/subscription-behavior"
+        mkdir -p "$evidence"
+        suites=(
+          common/subscription_compatibility_test.dart
+          common/subscription_collection_test.dart
+          common/source_plan_test.dart
+          common/file_provider_source_test.dart
+          models/profile_input_transaction_test.dart
+          widgets/profile_edit_commit_test.dart
+          providers/custom_import_test.dart
+          providers/custom_state_test.dart
+          views/custom_providers_view_test.dart
+          providers/profile_update_cancel_test.dart
+          features/profile_update_cancel_view_test.dart
+          state_storage/profile_write_test.dart
+          providers/database_test.dart
+          providers/backup_action_test.dart
+          common/backup_task_test.dart
+          providers/store_action_test.dart
+          common/task_test.dart
+          core/meow_test.dart
+          widgets/edit_profile_focus_test.dart
+        )
+        for suite in "${suites[@]}"; do
+          label="${suite//\//_}"
+          printf '%q ' flutter test --no-pub --concurrency 1 --machine "test/$suite" > "$evidence/$label.command.txt"
+          printf '\n' >> "$evidence/$label.command.txt"
+          set +e
+          flutter test --no-pub --concurrency 1 --machine "test/$suite" 2>&1 | tee "$evidence/$label.jsonl"
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          printf '%s %s\n' "${statuses[0]}" "${statuses[1]}" > "$evidence/$label.status.txt"
+        done
+        python3 - <<'PY'
+        import hashlib, json, os
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/subscription-behavior'
+        results = {}
+        for status in sorted(output.glob('*.status.txt')):
+            label = status.name.removesuffix('.status.txt')
+            command = output / (label + '.command.txt')
+            log = output / (label + '.jsonl')
+            code, tee = map(int, status.read_text().split())
+            events = []
+            for line in log.read_text().splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    events.append(event)
+            tests = {e['test']['id']: e['test'] for e in events if e.get('type') == 'testStart'}
+            terminals = [e for e in events if e.get('type') == 'testDone']
+            visible = [e for e in terminals if e.get('hidden') is False]
+            done = [e for e in events if e.get('type') == 'done']
+            passed = bool(visible) and len(terminals) == len(tests) and {e['testID'] for e in terminals} == set(tests)
+            passed = passed and all(e.get('result') == 'success' and e.get('skipped') is False for e in terminals)
+            passed = passed and len(done) == 1 and done[0].get('success') is True and not any(e.get('type') == 'error' for e in events)
+            results[label] = dict(command=command.read_text().strip(), testExit=code, logExit=tee,
+                visibleCases=len(visible), allCasesPassed=passed, logSha256=hashlib.sha256(log.read_bytes()).hexdigest(),
+                cases=[dict(name=tests[e['testID']]['name'], result=e.get('result'), skipped=e.get('skipped')) for e in visible if e['testID'] in tests])
+        receipt = dict(schema=1, source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+            attempt=os.environ['GITHUB_RUN_ATTEMPT'], independentProcesses=True, productionHooksEnabled=True,
+            composition='Standard test entry; explicit core arguments and MeowCoreHandler fixtures retain their own identities',
+            results=results, appApkBuilt=False, acceptance=False)
+        (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        assert len(results) == 19 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        PY
     - name: Compile the Flutter host and actual platform acceptance runner
       working-directory: apps/aerove-lite
       run: |-
@@ -1770,7 +1860,7 @@ jobs:
       matrix:
         include:
         - phase: flutter-platform
-          label: fixed 28 native/platform regressions
+          label: fixed 31 native/platform regressions
           artifact_suffix: flutter-platform
         - phase: flutter-full
           label: Flutter UI and same-session native lifecycle
@@ -2123,7 +2213,7 @@ jobs:
       matrix:
         include:
         - phase: flutter-platform
-          label: fixed 28 native/platform regressions
+          label: fixed 31 native/platform regressions
           artifact_suffix: flutter-platform
         - phase: flutter-full
           label: Flutter UI and same-session native lifecycle

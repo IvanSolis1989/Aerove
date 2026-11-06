@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive_io.dart';
+import 'package:fl_clash/common/file_provider_source.dart';
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/migration.dart';
@@ -43,6 +44,52 @@ void main() {
     ..writeAsStringSync(content);
 
   group('shakeOrphanFiles', () {
+    test(
+      'only orphan provider directories are removed, not live registered source data',
+      () async {
+        final home = makeDir('source-owner-home');
+        final relative = fileProviderSourcePath(
+          1,
+          'proxy-providers',
+          'fixture',
+        );
+        final source = writeFile(
+          BackupEntries.resolve(home.path, relative),
+          'user source',
+        );
+        registerFileProviderSource(
+          homeDirPath: home.path,
+          profileId: 1,
+          section: 'proxy-providers',
+          name: 'fixture',
+          sourcePath: source.path,
+        );
+        final orphan = writeFile(
+          join(
+            home.path,
+            'profiles',
+            'providers',
+            '99',
+            'proxies',
+            'http-cache',
+          ),
+          'discard cache',
+        );
+        final paths = shakeOrphanFiles(
+          profileIds: [1],
+          scriptIds: const [],
+          profilesDirPath: join(home.path, 'profiles'),
+          providersDirPath: join(home.path, 'profiles', 'providers'),
+          scriptsDirPath: join(home.path, 'scripts'),
+          providerFileNames: const [],
+          providerCacheDirPath: join(home.path, 'missing'),
+        );
+        await Future.wait(paths.map(safeDeletePath));
+        expect(source.readAsStringSync(), 'user source');
+        expect(File('${source.path}.source.json').existsSync(), true);
+        expect(orphan.existsSync(), false);
+      },
+    );
     test('reports only the files whose name is not a live id', () {
       final profiles = makeDir('profiles');
       final scripts = makeDir('scripts');
@@ -572,6 +619,26 @@ void main() {
     test('restoring returns the rows and stages the files', () async {
       await seedDatabase();
       writeFile(join(home.path, 'profiles', '1.yaml'), 'proxies: []');
+      writeFile(
+        join(home.path, 'profiles', '1.input'),
+        'original subscription fixture',
+      );
+      final fileSource = fileProviderSourcePath(
+        1,
+        'proxy-providers',
+        'fixture',
+      );
+      writeFile(
+        BackupEntries.resolve(home.path, fileSource),
+        'managed file payload',
+      );
+      registerFileProviderSource(
+        homeDirPath: home.path,
+        profileId: 1,
+        section: 'proxy-providers',
+        name: 'fixture',
+        sourcePath: BackupEntries.resolve(home.path, fileSource),
+      );
       writeFile(join(home.path, 'scripts', '2.js'), 'body');
       writeFile(
         join(home.path, 'providers', 'rules', localProvider.fileName),
@@ -582,6 +649,16 @@ void main() {
       final data = await restore(archivePath);
 
       expect(data.profiles.single.label, 'Backed up');
+      expect(
+        File(
+          BackupEntries.resolve(staging.path, fileSource),
+        ).readAsStringSync(),
+        'managed file payload',
+      );
+      expect(fileProviderSourceBackupEntries(staging.path, [1]), [
+        fileSource,
+        '$fileSource.source.json',
+      ]);
       expect(data.scripts.single.label, 'Script');
       expect(data.rules.single.content, 'example.com');
       expect(data.rules.single.profileId, 1);
@@ -593,7 +670,7 @@ void main() {
             BackupEntries.resolve(staging.path, entry),
           ).readAsStringSync(),
         ),
-        ['proxies: []', 'body', 'payload: []'],
+        ['proxies: []', 'original subscription fixture', 'body', 'payload: []'],
       );
     });
 

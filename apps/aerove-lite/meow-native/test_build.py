@@ -396,9 +396,9 @@ class AndroidRecipeTests(unittest.TestCase):
 
 
 class ResourceHealthContractTests(unittest.TestCase):
-    def test_all_26_symbols_are_independently_required_in_defined_dynamic_exports(self):
+    def test_all_27_symbols_are_independently_required_in_defined_dynamic_exports(self):
         required=build.RUNTIME_JNI_SYMBOLS+build.SCRIPT_JNI_SYMBOLS+list(build.RESOURCE_JNI_SYMBOLS)
-        self.assertEqual(26,len(set(required)))
+        self.assertEqual(27,len(set(required)))
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'lib.so';header=bytearray(20);header[:6]=b'\x7fELF\x02\x01';header[16:18]=(3).to_bytes(2,'little');header[18:20]=(62).to_bytes(2,'little');path.write_bytes(header)
             for omitted in [None]+required:
@@ -412,7 +412,7 @@ class ResourceHealthContractTests(unittest.TestCase):
         source=(build.ROOT/'src/meow_jni.rs').read_text()
         actual=re.findall(r'pub extern \"system\" fn (Java_\w+)',source+(build.ROOT/'src/script_jni.rs').read_text())
         self.assertEqual(set(build.RUNTIME_JNI_SYMBOLS+build.SCRIPT_JNI_SYMBOLS+list(build.RESOURCE_JNI_SYMBOLS)),set(actual))
-        self.assertEqual(26,len(actual))
+        self.assertEqual(27,len(actual))
         self.assertEqual(build.RESOURCE_JNI_DESCRIPTORS,build.verify_resource_jni_source(build.ROOT))
         for symbol in build.RESOURCE_JNI_SYMBOLS:
             with self.subTest(symbol=symbol),tempfile.TemporaryDirectory() as directory:
@@ -523,7 +523,7 @@ def _load_verify_apk():
     return module
 
 class StrictJniAbiTests(unittest.TestCase):
-    """All 26 bridge exports: Rust signature, Kotlin external, build.py tables and verify_apk.py agree without wildcards."""
+    """All 27 bridge exports: Rust signature, Kotlin external, build.py tables and verify_apk.py agree without wildcards."""
     APPROVED={**build.RUNTIME_JNI_DESCRIPTORS,**build.SCRIPT_JNI_DESCRIPTORS,**build.RESOURCE_JNI_DESCRIPTORS}
     KOTLIN=['app/src/main/java/dev/aerove/lite/core/MeowNativeCore.kt','app/src/main/java/dev/aerove/lite/core/JniResourceFetch.kt',
         'app/src/main/java/dev/aerove/lite/overrides/NativeScriptEngine.kt','app/src/main/java/dev/aerove/lite/core/NativeCore.kt']
@@ -538,7 +538,7 @@ class StrictJniAbiTests(unittest.TestCase):
         return root
 
     def test_repository_exports_match_rust_kotlin_build_tables_and_apk_gate(self):
-        self.assertEqual(26,len(self.APPROVED));self.assertEqual(15,len(build.RUNTIME_JNI_DESCRIPTORS));self.assertEqual(4,len(build.SCRIPT_JNI_DESCRIPTORS))
+        self.assertEqual(27,len(self.APPROVED));self.assertEqual(16,len(build.RUNTIME_JNI_DESCRIPTORS));self.assertEqual(4,len(build.SCRIPT_JNI_DESCRIPTORS))
         self.assertEqual([],jni_abi.check(build.ROOT,self.APPROVED))
         self.assertEqual(list(build.RUNTIME_JNI_DESCRIPTORS),build.RUNTIME_JNI_SYMBOLS)
         self.assertEqual(list(build.SCRIPT_JNI_DESCRIPTORS),build.SCRIPT_JNI_SYMBOLS)
@@ -549,7 +549,8 @@ class StrictJniAbiTests(unittest.TestCase):
         core='app/src/main/java/dev/aerove/lite/core/MeowNativeCore.kt';jni='meow-native/src/meow_jni.rs';script='meow-native/src/script_jni.rs'
         release='pub extern "system" fn Java_dev_aerove_lite_overrides_NativeScriptEngine_nativeRelease<'
         drifts={
-            'Rust validate loses its owner handle':(jni,"_class: JClass<'local>, handle: i64, source: JString<'local>) -> JString<'local> {","_class: JClass<'local>, source: JString<'local>) -> JString<'local> {"),
+            'Rust validate loses its owner handle':(jni,"_MeowNativeCore_validate<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, source:","_MeowNativeCore_validate<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, source:"),
+            'Rust validateSource loses its owner handle':(jni,"_MeowNativeCore_validateSource<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, handle: i64, source:","_MeowNativeCore_validateSource<'local>(mut env: EnvUnowned<'local>, _class: JClass<'local>, source:"),
             'Kotlin dumpRuleSet loses its owner handle':(core,'external fun dumpRuleSet(handle: Long, path: String,','external fun dumpRuleSet(path: String,'),
             'Kotlin inspectRuleSet becomes an instance method':(core,'@JvmStatic external fun inspectRuleSet(','external fun inspectRuleSet('),
             'Kotlin parameter type without strict mapping':(core,'external fun awaitReady(handle: Long)','external fun awaitReady(handle: ByteArray)'),

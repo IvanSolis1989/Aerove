@@ -5,6 +5,7 @@ import 'package:fl_clash/common/native_lite_migration.dart';
 import 'package:fl_clash/common/path.dart';
 import 'package:fl_clash/common/preferences.dart';
 import 'package:fl_clash/common/snowflake.dart';
+import 'package:fl_clash/common/source_plan.dart';
 import 'package:fl_clash/common/xclash_defaults.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:flutter/services.dart';
@@ -52,6 +53,34 @@ Future<void> prepareNativeLegacyData() {
 }
 
 Future<void> _prepareNativeLegacyData() async {
+  // The platform owner alone restores the runtime graph.
+  final recoveryHome = Directory(
+    await Directory(await appPath.homeDirPath).resolveSymbolicLinks(),
+  );
+  final sourceJournals = await FileProviderSourceJournal.pending(recoveryHome);
+  if (sourceJournals.isNotEmpty) {
+    final storage = await preferences.sharedPreferences;
+    if (storage == null)
+      throw StateError(
+        'Shared data storage is unavailable for provider source recovery',
+      );
+    for (final journal in sourceJournals) {
+      await journal.recover(
+        invoke: (request) async {
+          final reply = await _migrationChannel
+              .invokeMapMethod<String, dynamic>(
+                'providerSourceRecovery',
+                request,
+              );
+          if (reply == null)
+            throw StateError('Native provider source recovery did not reply');
+          return reply;
+        },
+        readProof: () =>
+            nativeLiteBusinessSource(database, recoveryHome, storage, null),
+      );
+    }
+  }
   final status = await _migrationChannel.invokeMapMethod<String, dynamic>(
     'begin',
   );

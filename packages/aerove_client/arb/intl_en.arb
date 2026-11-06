@@ -1000,5 +1000,21 @@
   "outboundModeCurrent": "Outbound mode: {mode}",
   "outboundModeNext": "Switch to {mode}",
   "trafficUploadSpeed": "Upload speed: {speed}",
-  "trafficDownloadSpeed": "Download speed: {speed}"
+  "trafficDownloadSpeed": "Download speed: {speed}",
+  "subscriptionCompatibilitySummary": "Skipped {removed} nodes not supported by this core ({protocols}). {adjustments}",
+  "@subscriptionCompatibilitySummary": {
+    "description": "Compatibility summary shown only after a subscription commit succeeds.",
+    "placeholders": {
+      "protocols": {
+        "type": "String"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "adjustments": {
+        "type": "String"
+      }
+    }
+  },
+  "subscriptionCompatibilityTunStack": "Applied the current core's supported lwIP TUN stack."
 }

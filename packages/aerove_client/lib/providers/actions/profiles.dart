@@ -3,6 +3,90 @@ part of '../action.dart';
 @Riverpod(keepAlive: true)
 class ProfilesAction extends _$ProfilesAction {
   CoreController get _core => ref.read(coreHandlerProvider);
+
+  void _showCompatibility(SubscriptionCompatibilityReport? report) {
+    if (!ref.mounted || report == null || !report.changed) return;
+    final l10n = currentAppLocalizations;
+    final adjustments = report.tunStackProjected
+        ? l10n.subscriptionCompatibilityTunStack
+        : '';
+    final message = report.removed == 0
+        ? adjustments
+        : l10n.subscriptionCompatibilitySummary(
+            report.removedByType.entries
+                .map((entry) => '${entry.key}: ${entry.value}')
+                .join(', '),
+            report.removed,
+            adjustments,
+          );
+    dialogs.showNotifier(message, level: MessageLevel.info);
+  }
+
+  Future<Profile> _commitPreparedImport(
+    Profile profile,
+    PreparedProfileFile prepared,
+    SubscriptionCompatibilityReport? report, {
+    bool associateDefault = true,
+  }) => ref
+      .read(setupActionProvider.notifier)
+      .withProviderSourceWrite(
+        () => _commitPreparedImportSource(
+          profile,
+          prepared,
+          report,
+          associateDefault: associateDefault,
+        ),
+      );
+
+  Future<Profile> _commitPreparedImportSource(
+    Profile profile,
+    PreparedProfileFile prepared,
+    SubscriptionCompatibilityReport? report, {
+    bool associateDefault = true,
+  }) async {
+    try {
+      final selected = associateDefault
+          ? await xclashDefaults?.associateNewProfile(profile) ?? profile
+          : profile;
+      await ref
+          .read(profilesProvider.notifier)
+          .putCommitted(
+            selected,
+            publishFile: () => prepared.publish(isCurrent: () => ref.mounted),
+            rollbackFile: prepared.rollback,
+          );
+      if (ref.mounted && ref.read(currentProfileIdProvider) == null) {
+        ref.read(currentProfileIdProvider.notifier).value = selected.id;
+      }
+      _showCompatibility(report);
+      return selected;
+    } finally {
+      await prepared.dispose();
+    }
+  }
+
+  Future<Profile> _saveImportedBytes(
+    Profile profile,
+    Uint8List bytes, {
+    Uint8List? originalInputBytes,
+    bool associateDefault = true,
+  }) async {
+    SubscriptionCompatibilityReport? report;
+    final prepared = await profile.prepareFile(
+      bytes,
+      originalInputBytes: originalInputBytes,
+      validate: (path, key) =>
+          _core.validateProfile(path, key, (value) => report = value),
+      isCurrent: () => ref.mounted,
+    );
+    return _commitPreparedImport(
+      profile.copyWith(lastUpdateDate: DateTime.now()),
+      prepared,
+      report,
+      associateDefault: associateDefault,
+    );
+  }
+
   bool _autoUpdating = false;
   final _automaticBackoff = AutomaticUpdateBackoff();
 
@@ -57,6 +141,12 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> deleteProfile(int id) async {
+    await ref
+        .read(setupActionProvider.notifier)
+        .withProviderSourceWrite(() => _deleteProfileSource(id));
+  }
+
+  Future<void> _deleteProfileSource(int id) async {
     await cancelProfileUpdate(id);
     await ref.read(profilesProvider.notifier).del(id);
     await clearEffect(id);
@@ -75,6 +165,30 @@ class ProfilesAction extends _$ProfilesAction {
 
   Future<String> validateConfigWithData(List<int> data) async {
     return _core.validateConfigWithData(data);
+  }
+
+  Future<Profile> saveProfileEdit(
+    Profile profile, {
+    Uint8List? fileData,
+  }) async {
+    return ref
+        .read(setupActionProvider.notifier)
+        .withProviderSourceWrite(
+          () => _saveProfileEditSource(profile, fileData: fileData),
+        );
+  }
+
+  Future<Profile> _saveProfileEditSource(
+    Profile profile, {
+    Uint8List? fileData,
+  }) async {
+    if (fileData != null)
+      return _saveImportedBytes(profile, fileData, associateDefault: false);
+    await ref.read(profilesProvider.notifier).putCommitted(profile);
+    if (ref.mounted && ref.read(currentProfileIdProvider) == null) {
+      ref.read(currentProfileIdProvider.notifier).value = profile.id;
+    }
+    return profile;
   }
 
   Future<void> autoUpdateProfiles({bool Function()? isCurrent}) async {
@@ -198,6 +312,20 @@ class ProfilesAction extends _$ProfilesAction {
     Profile profile, {
     bool showLoading = false,
     bool Function()? isCurrent,
+  }) => ref
+      .read(setupActionProvider.notifier)
+      .withProviderSourceWrite(
+        () => _updateProfileSource(
+          profile,
+          showLoading: showLoading,
+          isCurrent: isCurrent,
+        ),
+      );
+
+  Future<void> _updateProfileSource(
+    Profile profile, {
+    bool showLoading = false,
+    bool Function()? isCurrent,
   }) async {
     checkUpdateCurrent(isCurrent);
     if (isCurrent == null) _automaticBackoff.reset(profile.id.toString());
@@ -238,6 +366,7 @@ class ProfilesAction extends _$ProfilesAction {
         ? ref.read(updatingKeysProvider.notifier).start(profile.updatingKey)
         : null;
     PreparedProfileUpdate? prepared;
+    SubscriptionCompatibilityReport? compatibility;
     try {
       await previous?.done;
       checkUpdateCurrent(() => intent.isCurrent);
@@ -298,7 +427,8 @@ class ProfilesAction extends _$ProfilesAction {
       admitted = true;
       ref.read(profilesProvider.notifier).put(source);
       prepared = await source.prepareUpdate(
-        validate: (path, key) => _core.validateProfile(path, key),
+        validate: (path, key) =>
+            _core.validateProfile(path, key, (value) => compatibility = value),
         isCurrent: () => intent.isCurrent,
         cancelToken: intent.cancelToken,
       );
@@ -318,6 +448,7 @@ class ProfilesAction extends _$ProfilesAction {
       if (!ref.mounted || !identical(_profileUpdates[profile.id], intent)) {
         return;
       }
+      _showCompatibility(compatibility);
       if (profile.id == ref.read(currentProfileIdProvider)) {
         final setup = ref.read(setupActionProvider.notifier);
         if (isCurrent == null) {
@@ -366,20 +497,14 @@ class ProfilesAction extends _$ProfilesAction {
     final bytes = await platformFile.readBytes();
     globalState.navigatorKey.currentState?.popUntil((route) => route.isFirst);
     ref.read(currentPageLabelProvider.notifier).toProfiles();
-    final profile = await globalState.loadingRun(
+    await globalState.loadingRun(
       tag: LoadingTag.profiles,
       () => _withAgeSecretKey(
         Profile.normal(label: platformFile.name),
-        (profile) => profile.saveFile(
-          bytes,
-          validate: (path, key) => _core.validateProfile(path, key),
-        ),
+        (profile) => _saveImportedBytes(profile, bytes),
       ),
       title: currentAppLocalizations.addProfile,
     );
-    if (profile != null) {
-      putProfile(await xclashDefaults?.associateNewProfile(profile) ?? profile);
-    }
   }
 
   int addCustomProfile(String label) {
@@ -463,12 +588,13 @@ class ProfilesAction extends _$ProfilesAction {
         label: label,
         load: url.isNotEmpty
             ? () => updateProfile(profile, showLoading: true)
-            : () async => profiles.put(
-                await profile.saveFile(
+            : () async {
+                await _saveImportedBytes(
+                  profile,
                   utf8.encode(content),
-                  validate: (path, key) => _core.validateProfile(path, key),
-                ),
-              ),
+                  associateDefault: false,
+                );
+              },
       ));
     }
     for (final (:label, :url, ageSecretKey: _, :content)
@@ -530,7 +656,7 @@ class ProfilesAction extends _$ProfilesAction {
     String ageSecretKey = '',
   }) async {
     _showProfiles();
-    final profile = await globalState.loadingRun(
+    await globalState.loadingRun(
       tag: LoadingTag.profiles,
       () => link.isShareLink
           ? _fromShareLinks(Profile.normal(label: label), [link])
@@ -543,9 +669,6 @@ class ProfilesAction extends _$ProfilesAction {
             ),
       title: currentAppLocalizations.addProfile,
     );
-    if (profile != null) {
-      putProfile(await xclashDefaults?.associateNewProfile(profile) ?? profile);
-    }
   }
 
   /// Ids are taken up front so the list keeps the order of [links]; the share
@@ -565,12 +688,9 @@ class ProfilesAction extends _$ProfilesAction {
             (profile: Profile.normal(), shareLinks: shareLinks),
       ],
       (item) async {
-        final profile = await (item.shareLinks.isEmpty
+        await (item.shareLinks.isEmpty
             ? _download(item.profile)
             : _fromShareLinks(item.profile, item.shareLinks));
-        putProfile(
-          await xclashDefaults?.associateNewProfile(profile) ?? profile,
-        );
       },
       label: (item) => item.shareLinks.firstOrNull ?? item.profile.url,
       concurrency: maxConcurrentImports,
@@ -578,10 +698,14 @@ class ProfilesAction extends _$ProfilesAction {
     );
   }
 
-  Future<Profile> _download(Profile profile) {
-    return profile.update(
-      validate: (path, key) => _core.validateProfile(path, key),
+  Future<Profile> _download(Profile profile) async {
+    SubscriptionCompatibilityReport? report;
+    final pending = await profile.prepareUpdate(
+      validate: (path, key) =>
+          _core.validateProfile(path, key, (value) => report = value),
+      isCurrent: () => ref.mounted,
     );
+    return _commitPreparedImport(pending.profile, pending.file, report);
   }
 
   Future<Profile> _withAgeSecretKey(
@@ -622,12 +746,11 @@ class ProfilesAction extends _$ProfilesAction {
         ? first
         : appLocalizations.proxiesProfileLabel(first, proxies.length);
     final config = await encodeYamlTask({'proxies': proxies});
-    return profile
-        .copyWith(label: profile.label.takeFirstValid([label]))
-        .saveFile(
-          utf8.encode(config),
-          validate: (path, _) => _core.validateConfig(path),
-        );
+    return _saveImportedBytes(
+      profile.copyWith(label: profile.label.takeFirstValid([label])),
+      utf8.encode(config),
+      originalInputBytes: utf8.encode(links.join('\n')),
+    );
   }
 
   Future<void> addProfileFormQrCode() async {
@@ -637,6 +760,12 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> clearEffect(int profileId) async {
+    await File(
+      BackupEntries.resolve(
+        await appPath.homeDirPath,
+        BackupEntries.profileInput(profileId),
+      ),
+    ).safeDelete();
     final profilePath = await appPath.getProfilePath(profileId.toString());
     final profileFile = File(profilePath);
     final isExists = await profileFile.exists();

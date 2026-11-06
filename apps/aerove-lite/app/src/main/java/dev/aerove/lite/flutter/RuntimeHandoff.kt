@@ -93,9 +93,20 @@ data class RuntimeAppliedIdentity(val revision: String, val intentEpoch: Long, v
     val proof: RuntimeAppliedProof, val expectedSetupRecordJson: String)
 
 class MeowRuntimeSnapshot internal constructor(val revision: String, val intentEpoch: Long, val userRequested: Boolean,
-    val handoff: RuntimeHandoff, val resourceDirectory: File) {
+    val handoff: RuntimeHandoff, val resourceDirectory: File, internal val sourcePermit: ProviderSourcePermit? = null) {
     val profileId: String get() = "flutter:$revision"
     override fun toString() = "MeowRuntimeSnapshot(revision=$revision, epoch=$intentEpoch, requested=$userRequested)"
+}
+
+internal enum class ProviderSourcePhase { Applying, RollingBack }
+
+class ProviderSourcePermit private constructor(private val authority: Any, internal val transactionId: String,
+    internal val planSha256: String, internal val phase: ProviderSourcePhase, internal val revision: String, internal val intentEpoch: Long) {
+    internal fun belongsTo(expected: Any): Boolean = authority === expected
+    internal companion object {
+        fun mint(authority: Any, id: String, plan: String, phase: ProviderSourcePhase, revision: String, epoch: Long) =
+            ProviderSourcePermit(authority, id, plan, phase, revision, epoch)
+    }
 }
 
 internal fun runtimeSha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes)

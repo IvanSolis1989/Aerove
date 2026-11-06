@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 
 import 'clash_config.dart';
 import 'common.dart';
@@ -213,6 +214,7 @@ extension ProfileExtension on Profile {
     final prepared = await updated.prepareFile(
       decompressUnlabeled(response.data ?? Uint8List(0)),
       validate: validate,
+      originalInputBytes: response.data,
       isCurrent: isCurrent,
     );
     return PreparedProfileUpdate(
@@ -240,11 +242,13 @@ extension ProfileExtension on Profile {
   Future<Profile> saveFile(
     Uint8List bytes, {
     required ValidateConfig validate,
+    Uint8List? originalInputBytes,
     bool Function()? isCurrent,
   }) async {
     final prepared = await prepareFile(
       bytes,
       validate: validate,
+      originalInputBytes: originalInputBytes,
       isCurrent: isCurrent,
     );
     try {
@@ -258,6 +262,7 @@ extension ProfileExtension on Profile {
   Future<PreparedProfileFile> prepareFile(
     Uint8List bytes, {
     required ValidateConfig validate,
+    Uint8List? originalInputBytes,
     bool Function()? isCurrent,
   }) async {
     checkUpdateCurrent(isCurrent);
@@ -275,8 +280,31 @@ extension ProfileExtension on Profile {
       await target.parent.create(recursive: true);
       final stage = File('${target.path}.${snowflake.id}.update');
       final backup = File('${stage.path}.previous');
-      prepared = PreparedProfileFile(target, stage, backup);
+      final original = File(
+        BackupEntries.resolve(
+          await appPath.homeDirPath,
+          BackupEntries.profileInput(id),
+        ),
+      );
+      final originalStage = File('${original.path}.${snowflake.id}.update');
+      final originalBackup = File('${originalStage.path}.previous');
+      prepared = PreparedProfileFile(
+        target,
+        stage,
+        backup,
+        original: original,
+        originalStage: originalStage,
+        originalBackup: originalBackup,
+      );
       await tempFile.copy(stage.path);
+      final originalBytes = originalInputBytes ?? bytes;
+      if (!listEquals(originalBytes, await tempFile.readAsBytes())) {
+        await originalStage.safeWriteAsBytes(originalBytes);
+      }
+      if (await original.exists()) {
+        await original.copy(originalBackup.path);
+        prepared.hadOriginal = true;
+      }
       checkUpdateCurrent(isCurrent);
       if (await target.exists()) {
         await target.copy(backup.path);
@@ -301,18 +329,40 @@ class PreparedProfileUpdate {
 }
 
 class PreparedProfileFile {
-  PreparedProfileFile(this.target, this.stage, this.backup);
+  PreparedProfileFile(
+    this.target,
+    this.stage,
+    this.backup, {
+    this.original,
+    this.originalStage,
+    this.originalBackup,
+  });
 
   final File target;
   final File stage;
   final File backup;
+  final File? original;
+  final File? originalStage;
+  final File? originalBackup;
   bool hadPrevious = false;
+  bool hadOriginal = false;
   bool _published = false;
 
   void publish({bool Function()? isCurrent}) {
     checkUpdateCurrent(isCurrent);
-    stage.renameSync(target.path);
-    _published = true;
+    try {
+      if (original case final file?) {
+        if (originalStage?.existsSync() == true)
+          originalStage!.renameSync(file.path);
+        else if (file.existsSync())
+          file.deleteSync();
+      }
+      stage.renameSync(target.path);
+      _published = true;
+    } catch (_) {
+      _restoreOriginal();
+      rethrow;
+    }
   }
 
   void rollback() {
@@ -322,11 +372,23 @@ class PreparedProfileFile {
     } else {
       target.deleteSync();
     }
+    _restoreOriginal();
     _published = false;
+  }
+
+  void _restoreOriginal() {
+    if (original case final file?) {
+      if (hadOriginal)
+        originalBackup!.copySync(file.path);
+      else if (file.existsSync())
+        file.deleteSync();
+    }
   }
 
   Future<void> dispose() async {
     await stage.safeDelete();
     await backup.safeDelete();
+    await originalStage?.safeDelete();
+    await originalBackup?.safeDelete();
   }
 }

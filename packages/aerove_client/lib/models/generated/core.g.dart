@@ -17,6 +17,7 @@ _SetupParams _$SetupParamsFromJson(Map<String, dynamic> json) => _SetupParams(
   applied: json['applied'] == null
       ? null
       : SetupRecord.fromJson(json['applied'] as Map<String, dynamic>),
+  providerUpdate: json['provider-update'] as Map<String, dynamic>?,
 );
 
 Map<String, dynamic> _$SetupParamsToJson(_SetupParams instance) =>
@@ -27,6 +28,7 @@ Map<String, dynamic> _$SetupParamsToJson(_SetupParams instance) =>
       'data-source-proof': ?instance.dataSourceProof,
       'base': ?instance.base,
       'applied': ?instance.applied,
+      'provider-update': ?instance.providerUpdate,
     };
 
 _SetupRecord _$SetupRecordFromJson(Map<String, dynamic> json) => _SetupRecord(
@@ -521,7 +523,13 @@ _ExternalProvider _$ExternalProviderFromJson(Map<String, dynamic> json) =>
       name: json['name'] as String,
       type: json['type'] as String,
       path: json['path'] as String?,
+      runtimeRevision: json['runtimeRevision'] as String?,
       count: (json['count'] as num).toInt(),
+      compatibility: json['compatibility'] == null
+          ? null
+          : ProviderCompatibility.fromJson(
+              json['compatibility'] as Map<String, dynamic>,
+            ),
       subscriptionInfo: subscriptionInfoFormCore(
         json['subscription-info'] as Map<String, Object?>?,
       ),
@@ -534,7 +542,9 @@ Map<String, dynamic> _$ExternalProviderToJson(_ExternalProvider instance) =>
       'name': instance.name,
       'type': instance.type,
       'path': instance.path,
+      'runtimeRevision': instance.runtimeRevision,
       'count': instance.count,
+      'compatibility': instance.compatibility,
       'subscription-info': instance.subscriptionInfo,
       'vehicle-type': instance.vehicleType,
       'update-at': instance.updateAt.toIso8601String(),

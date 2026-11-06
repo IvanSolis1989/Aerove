@@ -44,6 +44,21 @@ class MeowCompatibilityValidatorTest {
     @Test fun rejectsIgnoredWsHeader() = rejects("$.proxies[0].ws-opts.headers.Other", vmess("network: ws, ws-opts: {headers: {Other: value}}"))
     @Test fun rejectsIgnoredTlsOption() = rejects("$.proxies[0].servername", vmess("servername: example.com"))
     @Test fun rejectsUnknownNestedField() = rejects("$.dns.respect-rules", "dns: {respect-rules: true}")
+    @Test fun dnsIpv6RetainsExplicitBooleanAndOmissionIndependentlyOfRoot() {
+        for (root in listOf(true, false)) for (dns in listOf(true, false, null)) {
+            val values = linkedMapOf<String, Any?>("enable" to true)
+            if (dns != null) values["ipv6"] = dns
+            val result = normalize(mapOf("ipv6" to root, "dns" to values))
+            assertEquals(root, result["ipv6"])
+            val normalized = result["dns"] as Map<*, *>
+            assertEquals(dns != null, normalized.containsKey("ipv6"))
+            assertEquals(dns, normalized["ipv6"])
+        }
+        for (value in listOf("'true'", "yes", "1", "[]", "{}", "null")) {
+            rejects("$.dns.ipv6", "dns: {ipv6: $value}")
+        }
+        rejects("$.dns.fake-ip-range6", "dns: {fake-ip-range6: 'fd00::1/64'}")
+    }
     @Test fun rejectsNonMappingDnsListen() = rejects("$.dns.listen", "dns: {listen: {udp: '127.0.0.1:53'}}")
     @Test fun rejectsUnsupportedDnsScheme() = rejects("$.dns.nameserver[0]", "dns: {nameserver: ['quic://dns.example']}")
     @Test fun acceptsRedirHostAndPolicyLists() {

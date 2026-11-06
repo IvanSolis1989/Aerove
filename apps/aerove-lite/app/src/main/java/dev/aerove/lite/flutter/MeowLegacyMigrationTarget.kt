@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import dev.aerove.lite.data.sha256
+import dev.aerove.lite.data.SealedFlutterResource
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -184,7 +185,87 @@ internal fun nativeLiteConfigInput(systemDataDir: File): java.io.InputStream {
     return Files.newInputStream(file.toPath(), java.nio.file.StandardOpenOption.READ, java.nio.file.LinkOption.NOFOLLOW_LINKS)
 }
 
-internal class NativeLiteVerifiedSource(val config: JSONObject, val selectedMap: Map<String,String>, val definitionSha256: String)
+internal class NativeLiteVerifiedSource(val config: JSONObject, val selectedMap: Map<String,String>, val definitionSha256: String,
+    val providerBindings: Map<String, SealedFlutterResource> = emptyMap())
+
+internal fun nativeLiteProviderOwnerKey(profileId: Long?): String = nativeLiteJsonHash(
+    mapOf("schema" to 1, "scope" to "flutter-provider-owner", "profileId" to profileId))
+
+internal fun verifyNativeLiteProviderBindings(context: Context, proof: JSONObject): Map<String, SealedFlutterResource> =
+    verifyNativeLiteBusinessSourceReceipt(context, proof).providerBindings
+
+internal fun nativeLiteDetachedProviderBindings(root: File, profileId: Long?, overrides: Map<String, Any?>): Map<String, SealedFlutterResource> {
+    val bindings = nativeLiteObject(overrides["localProviderSources"])
+    if (bindings.isEmpty()) return emptyMap()
+    require(profileId != null) { "shared_provider_binding_owner_missing" }
+    val home = root.canonicalFile
+    return bindings.map { (key, value) ->
+        val section = listOf("proxy-providers", "rule-providers").singleOrNull { key.startsWith("$it/") }
+        require(section != null && key.length > section.length + 1) { "shared_provider_binding_key_invalid" }
+        val name = key.substring(section.length + 1)
+        val row = nativeLiteObject(value)
+        require(row.keys == setOf("schema", "kind", "relativePath", "sha256", "originalDefinition") &&
+            row["schema"] == 1 && row["kind"] == "detached" && row["originalDefinition"] is Map<*, *>) { "shared_provider_binding_invalid" }
+        val hash = MessageDigest.getInstance("MD5").digest("detached/$section/$name".toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+        val directory = if (section == "proxy-providers") "proxies" else "rules"
+        val relative = "profiles/providers/$profileId/$directory/$hash"
+        val expected = row["sha256"] as? String
+        require(row["relativePath"] == relative && expected != null && expected.matches(Regex("[0-9a-f]{64}"))) { "shared_provider_binding_path_invalid" }
+        var component = home
+        for (part in relative.split('/')) {
+            component = File(component, part)
+            require(component.canonicalFile == component.absoluteFile && !Files.isSymbolicLink(component.toPath())) { "shared_provider_binding_linked" }
+        }
+        val limit = (if (section == "proxy-providers") 4L else 64L) * 1024 * 1024
+        require(Files.isRegularFile(component.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+            component.length() <= limit && sha256(component) == expected) { "shared_provider_binding_file_changed" }
+        "$.${section}.${name}" to SealedFlutterResource(relative, component.absolutePath, expected)
+    }.toMap()
+}
+
+internal fun nativeLiteRegisteredProviderFiles(root: File, profileIds: Set<Long>): Set<String> {
+    val home = root.canonicalFile
+    fun checked(relative: String): File {
+        var current = home
+        for (part in relative.split('/')) {
+            require(part.isNotEmpty() && part != "." && part != "..") { "shared_provider_source_path_invalid" }
+            current = File(current, part)
+            require(current.canonicalFile == current.absoluteFile && !Files.isSymbolicLink(current.toPath())) { "shared_provider_source_linked" }
+        }
+        return current
+    }
+    val paths = linkedSetOf<String>()
+    for (id in profileIds) for (kind in listOf("proxies", "rules")) {
+        val directoryRelative = "profiles/providers/$id/$kind"
+        val directory = checked(directoryRelative)
+        if (!directory.isDirectory) continue
+        for (entry in checkNotNull(directory.listFiles())) {
+            if (!entry.name.matches(Regex("[0-9a-f]{32}\\.source\\.json"))) continue
+            val markerRelative = "$directoryRelative/${entry.name}"
+            val marker = checked(markerRelative)
+            require(Files.isRegularFile(marker.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) { "shared_provider_source_marker_invalid" }
+            val row = JSONObject(marker.readText())
+            val section = if (kind == "proxies") "proxy-providers" else "rule-providers"
+            require(row.keys().asSequence().toSet() == setOf("schema", "kind", "profileId", "section", "name", "relativePath") &&
+                row.get("schema") == 1 && row.getString("kind") == "file-provider-source" &&
+                row.get("profileId") is Number && row.get("profileId") !is Double && row.getLong("profileId") == id &&
+                row.getString("section") == section && row.get("name") is String && row.getString("name").isNotEmpty()) { "shared_provider_source_marker_invalid" }
+            val name = row.getString("name")
+            val allowed = listOf("$section/$name", "detached/$section/$name").map { key ->
+                val hash = MessageDigest.getInstance("MD5").digest(key.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+                "$directoryRelative/$hash"
+            }
+            val relative = row.getString("relativePath")
+            require(relative in allowed && markerRelative == "$relative.source.json") { "shared_provider_source_marker_path_invalid" }
+            val source = checked(relative)
+            if (!source.exists()) continue
+            require(Files.isRegularFile(source.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) { "shared_provider_source_file_invalid" }
+            paths += relative
+            paths += markerRelative
+        }
+    }
+    return paths
+}
 
 internal fun verifyNativeLiteBusinessSource(context: Context, proof: JSONObject): JSONObject =
     verifyNativeLiteBusinessSourceReceipt(context,proof).config
@@ -199,6 +280,7 @@ internal fun verifyNativeLiteBusinessSource(context: Context, proof: JSONObject,
 internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSONObject): NativeLiteVerifiedSource {
     var selectedMap: Map<String, String>? = null
     var definitionSha256: String? = null
+    var providerBindings: Map<String, SealedFlutterResource> = emptyMap()
     require(proof.keys().asSequence().toSet() == setOf("schema", "databaseSchema", "configSha256", "setupSha256", "liveSha256", "tables", "files") && proof.getInt("schema") == 2) { "shared_source_proof_invalid" }
     val phase = NativeLiteDataAuthority.phase(context.filesDir)
     check(phase == "shared" || phase == null && listOf("profiles/index.json", "settings/settings.json", "settings/overrides.json", "settings/builder-resources.yaml", "backups/webdav.json").none { File(context.filesDir, it).exists() }) { "native_data_migration_required" }
@@ -228,11 +310,18 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
         check(nativeLiteJsonHash(runtime) == proof.getString("configSha256") && nativeLiteJsonHash(nativeLiteSetupConfig(runtime)) == proof.getString("setupSha256") && nativeLiteJsonHash(nativeLiteLiveConfig(map)) == proof.getString("liveSha256")) { "shared_source_config_changed" }
         val paths = mutableSetOf<String>()
         rows.getValue("profiles").filter { it["type"] != "custom" }.forEach { paths += "profiles/${it["id"]}.yaml" }
+        paths += nativeLiteRegisteredProviderFiles(root, rows.getValue("profiles").map { (it["id"] as Number).toLong() }.toSet())
         rows.getValue("scripts").forEach { paths += "scripts/${it["id"]}.js" }
         rows.getValue("clash_providers").forEach { val hash = MessageDigest.getInstance("MD5").digest("${it["id"]}@${it["url"]}".toByteArray()).joinToString("") { "%02x".format(it) }; paths += "providers/rules/$hash" }
         fun resources(value: Any?) {
             if (value is Map<*, *>) value.forEach { (key, child) ->
-                if (key == "nativeResourceInputs") {
+                if (key == "localProviderSources") {
+                    nativeLiteObject(child).values.forEach { input ->
+                        val relative = nativeLiteObject(input)["relativePath"]
+                        require(relative is String) { "shared_provider_binding_path_invalid" }
+                        paths += relative
+                    }
+                } else if (key == "nativeResourceInputs") {
                     nativeLiteObject(child).values.forEach { input -> listOf("file", "receiptFile").forEach { key -> (nativeLiteObject(input)[key] as? String)?.let(paths::add) } }
                 } else if (key in setOf("path", "tls-cert", "tls-key", "ca", "mmdb-path", "asn-path", "geosite-path") && child is String && child.isNotEmpty()) {
                     paths += if (File(child).isAbsolute) root.toPath().relativize(File(child).toPath()).toString().replace('\\', '/') else child
@@ -245,6 +334,7 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
         val files = proof.getJSONArray("files")
         check((0 until files.length()).map { files.getJSONObject(it).getString("path") }.toSet() == paths && files.length() == paths.size) { "shared_source_file_set_changed" }
         verifyNativeLiteFiles(root, files)
+        providerBindings = nativeLiteDetachedProviderBindings(root, selectedId, overrides)
         check(nativeLiteJsonHash(nativeLiteCurrentConfig(context).also { nativeLiteCurrentProfileId(it) }.let(::nativeLiteMap).let { nativeLiteRuntimeConfig(it, filters) }) == proof.getString("configSha256")) { "shared_source_config_changed" }
         selectedMap = nativeLiteObject(selected?.get("selected_map")).mapValues { (_, value) ->
             require(value is String) { "shared_source_selected_map_invalid" }
@@ -256,7 +346,7 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
         definitionSha256=nativeLiteJsonHash(mapOf("schema" to proof.getInt("schema"),
             "setupSha256" to proof.getString("setupSha256"),"tables" to definitions,"files" to nativeLiteList(files)))
     }
-    return NativeLiteVerifiedSource(config,checkNotNull(selectedMap),checkNotNull(definitionSha256))
+    return NativeLiteVerifiedSource(config,checkNotNull(selectedMap),checkNotNull(definitionSha256),providerBindings)
 }
 
 private fun verifyNativeLiteFiles(root: File, files: org.json.JSONArray) {

@@ -3,6 +3,7 @@ package dev.aerove.lite.flutter
 import dev.aerove.lite.data.ConfigValidationException
 import dev.aerove.lite.data.ConfigYaml
 import dev.aerove.lite.data.NativeConfigValidator
+import dev.aerove.lite.data.NativeSourceConfigValidator
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -28,7 +29,32 @@ class MeowConfigProtocolTest {
     private fun source(home: File, text: String) = File(home, "profile.yaml").apply { writeText(text) }
     private fun protocol(home: File, validator: NativeConfigValidator = NativeConfigValidator { null },
         budget: MeowSpillBudget = MeowSpillBudget(), maxInputBytes: Int = 4 * 1024 * 1024) =
-        MeowConfigProtocol(home, validator, { emptySet() }, budget, maxInputBytes)
+        MeowConfigProtocol(home, validator, { emptySet() }, budget, maxInputBytes, NativeSourceConfigValidator { validator.validate(it) })
+
+    @Test fun providerImportRunsNativeSourceAdmissionWithoutRemovingDeclarationsOrInventingDownloadedCounts() = runBlocking<Unit> {
+        val home = home()
+        val input = source(home, "proxy-providers: {feed: {type: http,url: 'https://example.invalid/feed',path: cache/feed.yaml}}\n" +
+            "proxy-groups: [{name: Pick,type: select,use: [feed]}]\nrules: ['MATCH,Pick']\n")
+        var sourceCalls = 0
+        MeowConfigProtocol(home, NativeConfigValidator { fail("Unprepared source reached complete native conversion"); null }, { emptySet() },
+            sourceValidator = NativeSourceConfigValidator { yaml ->
+                sourceCalls++
+                val root = ConfigYaml.parse(yaml)
+                assertEquals("http", ((root["proxy-providers"] as Map<*, *>)["feed"] as Map<*, *>)["type"])
+                assertEquals(listOf("feed"), ((root["proxy-groups"] as List<*>).single() as Map<*, *>)["use"])
+                assertEquals(listOf("MATCH,Pick"), root["rules"])
+                null
+            }).use { api ->
+            assertEquals("", api.validateConfig(input.path)); assertEquals(1, sourceCalls)
+            val base = api.getProfileBase(input.path)
+            assertEquals(0, base["proxies"]); assertEquals(1, base["proxy-groups"])
+        }
+        MeowConfigProtocol(home, NativeConfigValidator { fail("Invalid source reached complete conversion"); null }, { emptySet() },
+            sourceValidator = NativeSourceConfigValidator { "$.rules[0]: unknown source adapter" }).use { api ->
+            val diagnostic = api.validateConfig(input.path)
+            assertTrue(diagnostic.contains("$.rules[0]")); assertTrue(diagnostic.contains("unknown source adapter"))
+        }
+    }
 
     @Test fun getConfigReturnsReadableJsonFileWithScriptKeysAndNoMihomoDefaults() = runBlocking {
         val home = home()
@@ -190,6 +216,24 @@ class MeowConfigProtocolTest {
             assertEquals(mapOf("enable" to false, "auto-route" to false), normalized["tun"])
         }
         protocol(home).use { assertEquals("", it.validateConfig(input.path)) }
+    }
+
+    @Test fun dnsIpv6BooleanReachesNativeWhileInvalidTypesFailBeforeNative() = runBlocking {
+        val home = home()
+        val received = mutableListOf<Map<String, Any?>>()
+        protocol(home, NativeConfigValidator { yaml -> received.add(ConfigYaml.parse(yaml)); null }).use { api ->
+            for (root in listOf(true, false)) for (dns in listOf(true, false)) {
+                assertEquals("", api.validateConfig(source(home, "ipv6: $root\ndns: {enable: true, ipv6: $dns}\n").path))
+                assertEquals(root, received.last()["ipv6"])
+                assertEquals(dns, (received.last()["dns"] as Map<*, *>)["ipv6"])
+            }
+            for (value in listOf("'true'", "1", "[]", "{}", "null")) {
+                assertTrue(api.validateConfig(source(home, "dns: {ipv6: $value}\n").path).contains("$.dns.ipv6"))
+            }
+            assertEquals(4, received.size)
+            assertEquals("", api.validateConfig(source(home, "ipv6: true\ndns: {enable: true}\n").path))
+            assertFalse((received.last()["dns"] as Map<*, *>).containsKey("ipv6"))
+        }
     }
 
     @Test fun nativeTransportFailureCannotBecomeEmptySuccess() = runBlocking {

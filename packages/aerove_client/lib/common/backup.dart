@@ -5,6 +5,7 @@ import 'package:archive/archive_io.dart';
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/file_provider_source.dart';
 import 'package:fl_clash/common/migration.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/models/models.dart';
@@ -26,6 +27,7 @@ final class BackupException implements Exception {
 /// file's path relative to the home directory.
 abstract final class BackupEntries {
   static String profile(Object id) => '$profilesDirectoryName/$id.yaml';
+  static String profileInput(Object id) => '$profilesDirectoryName/$id.input';
 
   static String script(Object id) => 'scripts/$id.js';
 
@@ -40,6 +42,7 @@ abstract final class BackupEntries {
   }) {
     return [
       ...profileIds.map(profile),
+      ...profileIds.map(profileInput),
       ...scriptIds.map(script),
       ...providers.where((item) => !item.isRemote).map(provider),
     ];
@@ -107,7 +110,15 @@ Future<void> writeBackupArchive({
       ArchiveFile.string(configJsonName, json.encode(configMap)),
     );
     await encoder.addFile(File(databaseSnapshotPath), backupDatabaseName);
-    for (final entry in entries) {
+    final listed = entries.toList();
+    final profileIds = listed
+        .map(
+          (entry) => RegExp(r'^profiles/(-?[0-9]+)\.yaml$').firstMatch(entry),
+        )
+        .whereType<RegExpMatch>()
+        .map((match) => int.parse(match.group(1)!));
+    final sources = fileProviderSourceBackupEntries(homeDirPath, profileIds);
+    for (final entry in {...listed, ...sources}) {
       final file = File(BackupEntries.resolve(homeDirPath, entry));
       if (await file.exists()) {
         await encoder.addFile(file, entry);

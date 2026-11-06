@@ -137,6 +137,19 @@ class LiteVpnService : VpnService() {
             }
             override suspend fun setListening(expected: MeowSetupRuntime, enabled: Boolean) = flutterSetListening(expected, enabled)
             override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) = flutterReplaceGraph(snapshot)
+            override suspend fun quiesceProviderSourceCandidate() {
+                withContext(NonCancellable) { if (!maintenanceHold) stopForMaintenance() else coordinator.stopAndJoin() }
+            }
+            override suspend fun restoreProviderSourceGraph(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
+                check(graph.runtimeHandoffs.providerSourceAllowsAdmission(snapshot, snapshot.sourcePermit)) { "provider_source_recovery_required" }
+                val context = heldMaintenance ?: stopForMaintenance()
+                runtimeSnapshot = snapshot
+                runtimeSettings = dev.aerove.lite.flutter.MeowRuntimeSnapshotSettings.decode(snapshot.handoff.runtimeSettingsJson)
+                resumeAfterMaintenanceOwned(context.copy(userRequested = true), snapshot.profileId, runtimeSettings, true, snapshot.sourcePermit)
+                return kotlinx.coroutines.withTimeout(45_000) {
+                    graph.flutterRuntimeIdentity.first { identity -> identity != null && identity.revision == snapshot.revision && graph.runtimeHandoffs.isGraphCurrent(identity) }
+                } ?: error("provider_source_restore_unconfirmed")
+            }
             override suspend fun applyUpdate(expected: MeowSetupRuntime, projection: MeowSetupProjection) = flutterApplyUpdate(expected, projection)
             override suspend fun refreshSetup(expected: MeowSetupRuntime, setupParamsJson: String) = flutterRefreshSetup(expected, setupParamsJson)
             override suspend fun applyGeo(expected: MeowSetupRuntime, transactionId: String, candidate: dev.aerove.lite.data.MeowGeoCandidate,
@@ -347,6 +360,13 @@ class LiteVpnService : VpnService() {
             }
             if (admitted == null) return rejectOwnedStart(startId)
         }
+        if (intent?.action != ACTION_STOP) {
+            val snapshot = graph.runtimeHandoffs.peekCurrent()
+            if (snapshot != null && !graph.runtimeHandoffs.providerSourceAllowsAdmission(snapshot, nextOwned?.request?.providerSourcePermit)) {
+                nextOwned?.request?.let(graph.ownedStarts::retire)
+                return rejectOwnedStart(startId)
+            }
+        }
         if (intent?.action in setOf(ACTION_START, ACTION_RECONFIGURE, SERVICE_INTERFACE) || intent == null)
             showForeground(if (::coordinator.isInitialized) coordinator.state.value.phase else VpnPhase.Starting)
         val generation = ++intentGeneration
@@ -406,9 +426,9 @@ class LiteVpnService : VpnService() {
                     val revision = intent?.getStringExtra(EXTRA_RUNTIME_REVISION)
                     if (intent?.action == ACTION_START) check(revision != null) { "runtime_snapshot_receipt_required" }
                     graph.runtimeHandoffs.admit(revision ?: saved.revision,
-                        if (explicitSnapshot) intent!!.getLongExtra(EXTRA_RUNTIME_EPOCH, -1) else saved.intentEpoch)
+                        if (explicitSnapshot) intent!!.getLongExtra(EXTRA_RUNTIME_EPOCH, -1) else saved.intentEpoch, nextOwned?.request?.providerSourcePermit)
                 } else null
-                if(graph.usesSharedFlutterClient) graph.verifySharedStartSource(checkNotNull(snapshot) { "shared_runtime_configuration_required" })
+                if(graph.usesSharedFlutterClient) graph.verifySharedStartSource(checkNotNull(snapshot) { "shared_runtime_configuration_required" }, snapshot.sourcePermit)
                 val profile = snapshot?.profileId ?: checkNotNull(graph.profiles.snapshot().selectedId) { "Import and select a configuration first" }
                 val settings = snapshot?.let { dev.aerove.lite.flutter.MeowRuntimeSnapshotSettings.decode(it.handoff.runtimeSettingsJson) }
                     ?: graph.settings.read()
@@ -428,12 +448,12 @@ class LiteVpnService : VpnService() {
                 traceLifecycle(VpnServiceLifecycleTrace.Event.StartRead, startId, command, generation)
                 if (generation != intentGeneration || nextOwned?.request?.cancelling == true) return@launch
                 val builder = snapshot?.let { meowFlutterBuilderSettings(settings, it.handoff.vpnOptionsJson) }
-                val plan = VpnPlan(profile, settings, vpnIpv6 = builder?.ipv6, vpnSettings = builder)
+                val plan = VpnPlan(profile, settings, vpnIpv6 = builder?.ipv6, vpnSettings = builder).withProviderSourcePermit(snapshot?.sourcePermit)
                 val actual = if (reconfigure) coordinator.requestedBuilderSettings() else settings
                 check(canStartRuntime(checkNotNull(actual).network.vpnEnabled, intent?.action == SERVICE_INTERFACE) {
                     prepare(this@LiteVpnService) == null
                 }) { "VPN authorization and TUN mode are required for a system VPN request" }
-                lastPlan = plan.copy(ownerIntentToken = generation)
+                lastPlan = plan.copy(ownerIntentToken = generation).withProviderSourcePermit(plan.providerSourcePermit)
                 syncListenerPolicy()
                 if (reconfigure) coordinator.reconfigure(checkNotNull(lastPlan)) else coordinator.start(checkNotNull(lastPlan), requestedAt)
                 traceLifecycle(VpnServiceLifecycleTrace.Event.StartSubmitted, startId, command, generation)
@@ -537,6 +557,10 @@ class LiteVpnService : VpnService() {
     }
 
     private suspend fun flutterReplaceGraph(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
+        check(graph.runtimeHandoffs.providerSourceAllowsAdmission(snapshot, snapshot.sourcePermit)) { "provider_source_recovery_required" }
+        if (snapshot.sourcePermit != null) {
+            return graph.restoreProviderSourceGraph(snapshot) ?: error("provider_source_apply_unconfirmed")
+        }
         withContext(Dispatchers.Main.immediate) {
             check(graph.ownsVpnOwner(owner) && wasRequested(this@LiteVpnService) &&
                 graph.runtimeHandoffs.isCurrent(snapshot.revision, snapshot.intentEpoch) &&
@@ -918,7 +942,10 @@ class LiteVpnService : VpnService() {
     }
 
     private suspend fun resumeAfterMaintenance(context: MaintenanceRuntimeContext, profileId: String?, settings: LiteSettings?,
-        resume: Boolean) = withContext(Dispatchers.Main.immediate) {
+        resume: Boolean) = resumeAfterMaintenanceOwned(context, profileId, settings, resume, null)
+
+    private suspend fun resumeAfterMaintenanceOwned(context: MaintenanceRuntimeContext, profileId: String?, settings: LiteSettings?,
+        resume: Boolean, sourcePermit: dev.aerove.lite.flutter.ProviderSourcePermit?) = withContext(Dispatchers.Main.immediate) {
         if (!maintenanceHold || context.ownerToken != owner || context.intentGeneration != intentGeneration) return@withContext
         maintenanceHold = false
         heldMaintenance = null
@@ -929,15 +956,15 @@ class LiteVpnService : VpnService() {
             if (startId > 0) stopSelf(startId)
             return@withContext
         }
-        val baseline = context.builderSettings ?: checkNotNull(context.previousPlan).builderSettings()
-        check(canStartRuntime(baseline.network.vpnEnabled) { prepare(this@LiteVpnService) == null }) { "VPN authorization is required" }
         val restored = checkNotNull(settings) { "Restored runtime settings are unavailable" }
+        val baseline = context.builderSettings ?: context.previousPlan?.builderSettings() ?: restored
+        check(canStartRuntime(baseline.network.vpnEnabled) { prepare(this@LiteVpnService) == null }) { "VPN authorization is required" }
         val plan = VpnPlan(checkNotNull(profileId) { "Restored profile is unavailable" }, restored, vpnSettings = baseline,
-            vpnReservedFakeIpRanges = context.previousPlan?.vpnReservedFakeIpRanges, vpnDnsEnabled = context.previousPlan?.vpnDnsEnabled)
+            vpnReservedFakeIpRanges = context.previousPlan?.vpnReservedFakeIpRanges, vpnDnsEnabled = context.previousPlan?.vpnDnsEnabled).withProviderSourcePermit(sourcePermit)
         ++intentGeneration
         val preparation = retireOwnedStart()
         preparation?.cancel()
-        lastPlan = plan.copy(ownerIntentToken = intentGeneration)
+        lastPlan = plan.copy(ownerIntentToken = intentGeneration).withProviderSourcePermit(plan.providerSourcePermit)
         requested(true)
         syncListenerPolicy()
         showForeground(VpnPhase.Starting)

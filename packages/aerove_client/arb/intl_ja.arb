@@ -1000,5 +1000,21 @@
   "outboundModeCurrent": "アウトバウンドモード：{mode}",
   "outboundModeNext": "{mode}に切り替え",
   "trafficUploadSpeed": "アップロード速度: {speed}",
-  "trafficDownloadSpeed": "ダウンロード速度: {speed}"
+  "trafficDownloadSpeed": "ダウンロード速度: {speed}",
+  "subscriptionCompatibilitySummary": "このコアが対応していないノード {removed} 件（{protocols}）を除外しました。{adjustments}",
+  "@subscriptionCompatibilitySummary": {
+    "description": "Compatibility summary shown only after a subscription commit succeeds.",
+    "placeholders": {
+      "protocols": {
+        "type": "String"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "adjustments": {
+        "type": "String"
+      }
+    }
+  },
+  "subscriptionCompatibilityTunStack": "現在のコアが対応する lwIP TUN スタックを適用しました。"
 }

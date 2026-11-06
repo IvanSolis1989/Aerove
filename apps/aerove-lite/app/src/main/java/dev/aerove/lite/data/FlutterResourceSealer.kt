@@ -41,7 +41,11 @@ class FlutterResourceSealer(private val manager: ResourceBundleManager, private 
         }
     }
 
-    suspend fun prepare(source: String, checkCertificate: Boolean, selectedMap: Map<String, String> = emptyMap(), tunReconciliation: MeowTunReconciliation? = null, geoResourceReader: HostGeoResourceReader? = null): FlutterResourceLease {
+    suspend fun prepare(source: String, checkCertificate: Boolean, selectedMap: Map<String, String> = emptyMap(), tunReconciliation: MeowTunReconciliation? = null, geoResourceReader: HostGeoResourceReader? = null,
+        refreshKeys: Set<String>? = null, replacements: Map<String, SealedFlutterResource> = emptyMap(),
+        previous: dev.aerove.lite.flutter.MeowRuntimeSnapshot? = null, sourceOwnerSha256: String? = null,
+        sourceBindings: Map<String, SealedFlutterResource> = emptyMap()): FlutterResourceLease {
+        require(sourceOwnerSha256 == null || sourceOwnerSha256.matches(Regex("[0-9a-f]{64}")))
         val root = ConfigYaml.parse(source)
         val userAgent = root["global-ua"]?.let {
             it as? String ?: throw ConfigValidationException(listOf(ConfigIssue("$.global-ua", "Expected string host policy")))
@@ -54,10 +58,29 @@ class FlutterResourceSealer(private val manager: ResourceBundleManager, private 
         var inputs = SealedResourceInputs(emptyList())
         var bundle: ResourceBundle? = null
         try {
-            withContext(Dispatchers.IO) { inputs = manager.retainSealedInputs(root) }
+            withContext(Dispatchers.IO) { inputs = manager.retainSealedInputs(root, sourceBindings) }
+            val manualOverrides = linkedMapOf<String, ProviderManualOverride>()
+            for (namespace in listOf("proxy-providers", "rule-providers")) {
+                (root[namespace] as? Map<*, *>)?.forEach { (name, raw) ->
+                    val definition = raw as? Map<*, *> ?: return@forEach
+                    val key = "$.$namespace.$name"
+                    if (definition["type"] == "file" && key in replacements) {
+                        val sourceOwner = checkNotNull(sourceOwnerSha256) { "A verified business owner is required for a persistent file-provider edit" }
+                        val path = definition["path"] as String
+                        val baseline = checkNotNull(inputs.resolve(path, key)) { "Original file-provider source is not captured" }
+                        manualOverrides[key] = ProviderManualOverride(sourceOwner, definitionHash(definition), baseline.sha256)
+                    }
+                }
+            }
+            if (previous != null) {
+                val preferred = previousProviderInputs(previous, root)
+                val shadowed = inputs.shared.filter { row -> preferred.any { it.key == row.key } }.flatMap { listOfNotNull(it.file, it.receiptFile) }
+                inputs = SealedResourceInputs(inputs.origins, preferred + inputs.shared.filter { row -> preferred.none { it.key == row.key } }, inputs.witnesses + shadowed)
+            }
             val executableSource=if(root.remove("aerove-native-resource-manifest")!=null) ConfigYaml.dump(root) else source
             val prepared = manager.prepare(owner, executableSource, logicalOriginalSource=source, policyFingerprint = sha256(policy.json().toString() + "\n" + JSONObject(selectedMap.toSortedMap())),
-                requestPolicy = policy, selectedMap = selectedMap.toMap(), sealedInputs = inputs,tunReconciliation=tunReconciliation,geoResourceReader=geoResourceReader)
+                requestPolicy = policy, selectedMap = selectedMap.toMap(), sealedInputs = inputs,tunReconciliation=tunReconciliation,geoResourceReader=geoResourceReader,
+                refreshKeys = refreshKeys, replacements = replacements, manualOverrides = manualOverrides)
             bundle = prepared
             currentCoroutineContext().ensureActive()
             val directory = prepared.directory.toPath().toRealPath().toFile()
@@ -73,6 +96,49 @@ class FlutterResourceSealer(private val manager: ResourceBundleManager, private 
                 try { bundle?.let { manager.discard(owner, it.generation) } } finally { inputs.close() }
             }
             throw failure
+        }
+    }
+
+    private fun definitionHash(definition: Map<*, *>): String = dev.aerove.lite.flutter.nativeLiteJsonHash(definition)
+
+    private fun previousProviderInputs(snapshot: dev.aerove.lite.flutter.MeowRuntimeSnapshot, current: Map<String, Any?>): List<SealedResourceInputs.SharedInput> {
+        fun owned(relative: String): File {
+            val asset = snapshot.handoff.resources.single { it.relativePath == relative }
+            val file = File(snapshot.resourceDirectory, relative)
+            require(file.toPath() == file.toPath().toRealPath() && Files.isRegularFile(file.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS) &&
+                file.toPath().startsWith(snapshot.resourceDirectory.toPath()) && sha256(file) == asset.sha256) { "Previous provider source changed" }
+            return file
+        }
+        if (snapshot.handoff.resources.none { it.relativePath == "manifest.json" }) return emptyList()
+        val manifest = JSONObject(owned("manifest.json").readText())
+        require(manifest.getString("coreVersion") == MeowUnsupportedOutbounds.CORE)
+        val input = owned("input.yaml")
+        require(sha256(input) == manifest.getString("compiledInputSha256"))
+        val source = ConfigYaml.parse(input.readText())
+        val rows = manifest.getJSONArray("records")
+        return (0 until rows.length()).map(rows::getJSONObject).mapNotNull { record ->
+            val kind = record.getString("kind")
+            val key = record.getString("key")
+            val namespace = when {
+                kind == "source-proxy" -> "proxy-providers"
+                kind == "ruleset" && key.startsWith("$.rule-providers.") && !key.endsWith(".payload") -> "rule-providers"
+                else -> return@mapNotNull null
+            }
+            val definition = (source[namespace] as? Map<*, *>)?.get(key.removePrefix("$.$namespace.")) as? Map<*, *> ?: return@mapNotNull null
+            val manualOverride = record.optJSONObject("manualOverride")?.let(ProviderManualOverride::parse)
+            if (definition["type"] == "file") {
+                return@mapNotNull null
+            } else if (definition["type"] != "http") return@mapNotNull null
+            val nextDefinition = (current[namespace] as? Map<*, *>)?.get(key.removePrefix("$.$namespace.")) as? Map<*, *> ?: return@mapNotNull null
+            if (nextDefinition["type"] != "http") return@mapNotNull null
+            val file = owned(record.getString("file"))
+            require(sha256(file) == record.getString("sha256"))
+            val metadata = JSONObject().put("sourceDefinition", JSONObject(definition)).put("nativeRecord", record)
+                .put("updatedAt", record.getLong("updatedAt")).put("checkedAt", record.getLong("updatedAt"))
+                .put("interval", if (record.optBoolean("localOverride")) 0 else record.getLong("interval"))
+                .put("subscriptionUserInfo", record.optString("subscriptionUserInfo").takeUnless { it == "null" } ?: "")
+            manifest.optJSONObject("requestPolicy")?.let { metadata.put("requestPolicy", it) }
+            SealedResourceInputs.SharedInput(key, SealedFlutterResource(record.getString("file"), file.path, record.getString("sha256")), null, metadata, manualOverride)
         }
     }
 }

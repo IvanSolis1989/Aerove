@@ -77,7 +77,7 @@ class FlutterRuntimeResources private constructor(private val privateRoot: File,
             preferences: dev.aerove.lite.resources.GeoResourcePreferences, requestedKind: dev.aerove.lite.resources.GeoResourceKind?,
             reader: HostGeoResourceReader, current: () -> Boolean): Geo = withContext(Dispatchers.IO) {
             val privateRoot=privateDirectory.toPath().toRealPath().toFile()
-            require(privateRoot == privateDirectory.absoluteFile)
+            require(Files.isDirectory(privateRoot.toPath(), NOFOLLOW_LINKS))
             val authority=File(privateRoot,"runtime/meow-read").apply { check(isDirectory || mkdirs()) }
             require(authority.toPath() == authority.toPath().toRealPath())
             val root=File(authority,UUID.randomUUID().toString()).apply { check(mkdir()) }
@@ -158,7 +158,7 @@ class FlutterRuntimeResources private constructor(private val privateRoot: File,
 
         suspend fun create(privateDirectory: File, snapshot: MeowRuntimeSnapshot, current: () -> Boolean): FlutterRuntimeResources = withContext(Dispatchers.IO) {
             val privateRoot = privateDirectory.toPath().toRealPath().toFile()
-            require(privateRoot == privateDirectory.absoluteFile) { "Canonical private directory required" }
+            require(Files.isDirectory(privateRoot.toPath(), NOFOLLOW_LINKS)) { "Private directory required" }
             val parent = File(privateRoot, "runtime/meow-read").apply { check(isDirectory || mkdirs()) }
             require(parent.toPath() == parent.toPath().toRealPath()) { "Redirected runtime resource parent" }
             val root = File(parent, UUID.randomUUID().toString()).apply { check(mkdir()) }

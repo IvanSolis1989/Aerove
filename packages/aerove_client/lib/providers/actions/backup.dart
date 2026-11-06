@@ -62,6 +62,12 @@ class BackupAction extends _$BackupAction {
   }
 
   Future<String> _createArchive(String workDir) async {
+    return ref
+        .read(setupActionProvider.notifier)
+        .withProviderSourceWrite(() => _createArchiveSnapshot(workDir));
+  }
+
+  Future<String> _createArchiveSnapshot(String workDir) async {
     final databaseSnapshotPath = join(workDir, backupDatabaseName);
     await database.customStatement('VACUUM INTO ?', [databaseSnapshotPath]);
     final (profileIds, scriptIds, providers) = await (
@@ -88,6 +94,16 @@ class BackupAction extends _$BackupAction {
 
   @visibleForTesting
   Future<void> applyRestore(
+    MigrationData data,
+    RestoreOption option, {
+    String? stagingDirPath,
+  }) => ref
+      .read(setupActionProvider.notifier)
+      .withProviderSourceWrite(
+        () => _applyRestoreSource(data, option, stagingDirPath: stagingDirPath),
+      );
+
+  Future<void> _applyRestoreSource(
     MigrationData data,
     RestoreOption option, {
     String? stagingDirPath,
@@ -148,6 +164,11 @@ class BackupAction extends _$BackupAction {
     final homeDirPath = await appPath.homeDirPath;
     final replacedDirPath = join(stagingDirPath, 'replaced');
     final copied = <String, bool>{};
+    final fileSources = await fileProviderSourceBackupEntriesTask(
+      stagingDirPath,
+      data.profiles.map((profile) => profile.id),
+    );
+    await checkFileProviderSourceRestorePathsTask(homeDirPath, fileSources);
     Future<void> putBack() async {
       for (final MapEntry(key: entry, value: replaced) in copied.entries) {
         final target = BackupEntries.resolve(homeDirPath, entry);
@@ -162,9 +183,19 @@ class BackupAction extends _$BackupAction {
     }
 
     try {
-      for (final entry in BackupEntries.ofData(data)) {
+      for (final entry in {...BackupEntries.ofData(data), ...fileSources}) {
         final staged = File(BackupEntries.resolve(stagingDirPath, entry));
         if (!await staged.exists()) {
+          if (entry.endsWith('.input')) {
+            final target = File(BackupEntries.resolve(homeDirPath, entry));
+            if (await target.exists()) {
+              await target.safeCopy(
+                BackupEntries.resolve(replacedDirPath, entry),
+              );
+              copied[entry] = true;
+              await target.safeDelete();
+            }
+          }
           continue;
         }
         final target = File(BackupEntries.resolve(homeDirPath, entry));

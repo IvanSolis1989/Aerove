@@ -286,10 +286,46 @@ class Profiles extends _$Profiles {
 
   /// A new provider label follows into custom profiles whatever path set it.
   void put(Profile profile) {
+    unawaited(
+      _put(profile, coalesceUi: true).catchError(_reportOptimisticFailure),
+    );
+  }
+
+  Future<void> putCommitted(
+    Profile profile, {
+    void Function()? publishFile,
+    void Function()? rollbackFile,
+  }) => _put(
+    profile,
+    coalesceUi: false,
+    publishFile: publishFile,
+    rollbackFile: rollbackFile,
+  );
+
+  Future<void> _put(
+    Profile profile, {
+    required bool coalesceUi,
+    void Function()? publishFile,
+    void Function()? rollbackFile,
+  }) async {
+    Future<void> persist(Future<void> Function() write) async {
+      if (publishFile == null) return write();
+      try {
+        await database.transaction(() async {
+          await write();
+          publishFile();
+        });
+      } catch (_) {
+        rollbackFile?.call();
+        rethrow;
+      }
+    }
+
     final newProfile = labeled(profile);
     final previous = state.getProfile(profile.id);
-    if (newProfile == previous) return;
-    if (previous != null &&
+    if (newProfile == previous && publishFile == null) return;
+    if (coalesceUi &&
+        previous != null &&
         newProfile.copyWith(
               currentGroupName: previous.currentGroupName,
               unfoldSet: previous.unfoldSet,
@@ -314,8 +350,10 @@ class Profiles extends _$Profiles {
     if (newProfile.type == ProfileType.custom ||
         previousLabel == null ||
         previousLabel == newProfile.realLabel) {
-      _optimistic(next, () => _serial(() => _putLatest([newProfile.id])));
-      return;
+      return _optimisticAsync(
+        next,
+        () => _serial(() => persist(() => _putLatest([newProfile.id]))),
+      );
     }
     final names = {previousLabel: newProfile.realLabel};
     final users = [
@@ -330,17 +368,22 @@ class Profiles extends _$Profiles {
     for (final user in users) {
       next = next.copyAndPut(user, (item) => item.id == user.id);
     }
-    _optimistic(
+    return _optimisticAsync(
       next,
       () => _serial(
-        () => database.transaction(() async {
-          await database.proxyGroupsDao.renameUse(
-            await database.profilesDao.customIds().get(),
-            oldName: previousLabel,
-            newName: newProfile.realLabel,
-          );
-          await _putLatest([for (final user in users) user.id, newProfile.id]);
-        }),
+        () => persist(
+          () => database.transaction(() async {
+            await database.proxyGroupsDao.renameUse(
+              await database.profilesDao.customIds().get(),
+              oldName: previousLabel,
+              newName: newProfile.realLabel,
+            );
+            await _putLatest([
+              for (final user in users) user.id,
+              newProfile.id,
+            ]);
+          }),
+        ),
       ),
     );
   }

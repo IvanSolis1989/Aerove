@@ -401,7 +401,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_await_exit_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_awaitExit"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(26, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(27, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
@@ -417,7 +417,7 @@ class ApkInspectionTests(unittest.TestCase):
     def test_packaged_core_requires_listener_command_runtime_export(self):
         symbol = "Java_dev_aerove_lite_core_MeowNativeCore_listenerCommand"
         self.assertIn(symbol, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(26, len(module.CORE_JNI_SYMBOLS))
+        self.assertEqual(27, len(module.CORE_JNI_SYMBOLS))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])
@@ -435,8 +435,9 @@ class ApkInspectionTests(unittest.TestCase):
             "configurePolicies", "policyStatus", "capabilities", "validate", "inspectRuleSet", "dumpRuleSet", "validateResource", "hostPolicyCommand")
         expected = tuple("Java_dev_aerove_lite_core_MeowNativeCore_" + name for name in runtime) + tuple(
             "Java_dev_aerove_lite_overrides_NativeScriptEngine_native" + name for name in ("Begin", "Evaluate", "Cancel", "Release"))
+        expected += ("Java_dev_aerove_lite_core_MeowNativeCore_validateSource",)
         self.assertEqual(expected + module.RESOURCE_JNI_SYMBOLS, module.CORE_JNI_SYMBOLS)
-        self.assertEqual(19, len(set(expected)))
+        self.assertEqual(20, len(set(expected)))
         with tempfile.TemporaryDirectory() as temp:
             apk = self.make_apk(temp)
             self.assertEqual("arm64-v8a", self.verify(apk, "arm64-v8a")["abi"])

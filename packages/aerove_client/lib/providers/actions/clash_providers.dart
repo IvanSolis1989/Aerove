@@ -43,6 +43,15 @@ class ClashProvidersAction extends _$ClashProvidersAction {
     checkUpdateCurrent(isCurrent);
     final before = await _stored(provider.id);
     checkUpdateCurrent(isCurrent);
+    final runtimeProvider =
+        ClientProduct.current.expectedCoreId == 'meow-rs' &&
+            before != null &&
+            await _currentUses(
+              (profileId) =>
+                  _isReferenced(profileId, ProviderKind.rule, {before.label}),
+            )
+        ? await _core.getExternalProvider(before.label)
+        : null;
     final download =
         provider.isRemote &&
         (refresh || provider.fileName != previous?.fileName);
@@ -77,24 +86,35 @@ class ClashProvidersAction extends _$ClashProvidersAction {
         _ => compiled,
       };
       if (staged != null) {
-        await staged.commit();
+        await ref
+            .read(setupActionProvider.notifier)
+            .withProviderSourceWrite(staged.commit);
         _pendingAutomaticApplies.addAll({next.label, ?previous?.label});
       }
-      ref.read(clashProvidersProvider.notifier).put(next);
+      await ref.read(setupActionProvider.notifier).withProviderSourceWrite(
+        () async {
+          ref.read(clashProvidersProvider.notifier).put(next);
+        },
+      );
       checkUpdateCurrent(isCurrent);
       if (previous != null && previous.fileName != next.fileName) {
         await _clearCache(previous);
       }
       final reread = content != null || download;
       final apply = reread && next == before
-          ? _reloadIfReferenced(next, isCurrent: isCurrent)
+          ? _reloadIfReferenced(
+              next,
+              isCurrent: isCurrent,
+              expectedRuntimeRevision: runtimeProvider?.runtimeRevision,
+            )
           : applyIfReferenced(
               ProviderKind.rule,
               {next.label, ?previous?.label},
               force: reread,
               isCurrent: isCurrent,
             );
-      if (isCurrent == null) {
+      if (isCurrent == null &&
+          !(ClientProduct.current.expectedCoreId == 'meow-rs' && reread)) {
         unawaited(apply);
       } else {
         await apply;
@@ -130,6 +150,17 @@ class ClashProvidersAction extends _$ClashProvidersAction {
   }
 
   Future<ClashProvider> _compile(
+    ClashProvider provider, {
+    bool download = false,
+  }) => !download
+      ? _compileSource(provider)
+      : ref
+            .read(setupActionProvider.notifier)
+            .withProviderSourceWrite(
+              () => _compileSource(provider, download: true),
+            );
+
+  Future<ClashProvider> _compileSource(
     ClashProvider provider, {
     bool download = false,
   }) async {
@@ -174,6 +205,13 @@ class ClashProvidersAction extends _$ClashProvidersAction {
   }
 
   Future<ClashProvider> _compileContent(
+    ClashProvider provider,
+    List<int> content,
+  ) => ref
+      .read(setupActionProvider.notifier)
+      .withProviderSourceWrite(() => _compileContentSource(provider, content));
+
+  Future<ClashProvider> _compileContentSource(
     ClashProvider provider,
     List<int> content,
   ) async {
@@ -247,8 +285,12 @@ class ClashProvidersAction extends _$ClashProvidersAction {
   }
 
   void delProvider(ClashProvider provider) {
-    ref.read(clashProvidersProvider.notifier).del(provider.id);
-    unawaited(_clearCache(provider));
+    unawaited(
+      ref.read(setupActionProvider.notifier).withProviderSourceWrite(() async {
+        ref.read(clashProvidersProvider.notifier).del(provider.id);
+        await _clearCacheSource(provider);
+      }),
+    );
   }
 
   Future<List<Profile>> profilesUsing(ClashProvider provider) {
@@ -276,6 +318,12 @@ class ClashProvidersAction extends _$ClashProvidersAction {
   }
 
   Future<void> _clearCache(ClashProvider provider) async {
+    await ref
+        .read(setupActionProvider.notifier)
+        .withProviderSourceWrite(() => _clearCacheSource(provider));
+  }
+
+  Future<void> _clearCacheSource(ClashProvider provider) async {
     await File(await provider.path).safeDelete();
     await File(await provider.compiledPath).safeDelete();
   }
@@ -339,6 +387,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
   Future<void> _reloadIfReferenced(
     ClashProvider provider, {
     bool Function()? isCurrent,
+    String? expectedRuntimeRevision,
   }) async {
     checkUpdateCurrent(isCurrent);
     if (!await _currentUses(
@@ -348,6 +397,20 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       return;
     }
     checkUpdateCurrent(isCurrent);
+    if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+      final bytes = await File(await provider.path).readAsBytes();
+      checkUpdateCurrent(isCurrent);
+      await ref
+          .read(setupActionProvider.notifier)
+          .updateMeowProvider(
+            namespace: 'rule-providers',
+            name: provider.label,
+            replacementBytes: bytes,
+            isCurrent: isCurrent,
+            expectedRuntimeRevision: expectedRuntimeRevision,
+          );
+      return;
+    }
     try {
       final message = await _core.updateExternalProvider(
         providerName: provider.label,

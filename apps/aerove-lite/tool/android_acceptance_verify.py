@@ -98,10 +98,10 @@ def platform_log(log, contract=None):
     contract = contract or load(CONTRACT)
     records = parse_log(log)
     actual = sorted(row["className"] + "#" + row["testName"] for row in records)
-    require(actual == sorted(contract["platformSelectors"]) and len(actual) == len(set(actual)) == 28,
-            "Platform execution must be exactly the fixed 28 cases, independent of discovery")
+    require(actual == sorted(contract["platformSelectors"]) and len(actual) == len(set(actual)) == 31,
+            "Platform execution must be exactly the fixed 31 cases, independent of discovery")
     require(all(row["status"] == "passed" for row in records), "Skipped/assumption platform case is not acceptance")
-    require(re.findall(r"OK \((\d+) tests?\)", Path(log).read_text()) == ["28"], "Exact JUnit 28 pass terminal required")
+    require(re.findall(r"OK \((\d+) tests?\)", Path(log).read_text()) == ["31"], "Exact JUnit 31 pass terminal required")
     return dict(logSha256=sha(log), selectors=actual, allPassed=True)
 
 

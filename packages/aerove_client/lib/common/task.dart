@@ -1,8 +1,12 @@
 import 'package:fl_clash/common/core_capabilities.dart';
+import 'package:fl_clash/common/subscription_compatibility.dart';
+import 'package:fl_clash/common/file_provider_source.dart';
+import 'package:fl_clash/common/source_plan.dart';
 import 'package:fl_clash/common/tun_policy.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:fl_clash/common/common.dart';
@@ -38,7 +42,10 @@ void _applyNativeProxyProviderEdits(Map config, ProfileOverrides overrides) {
   if (providers is! Map)
     throw const FormatException('proxy-providers: expected mapping');
   for (final entry in overrides.proxyProviders.entries) {
-    if (!_hasNativeProxyProviderEdits(entry.value) ||
+    if (overrides.localProviderSources.containsKey(
+          'proxy-providers/${entry.key}',
+        ) ||
+        !_hasNativeProxyProviderEdits(entry.value) ||
         !providers.containsKey(entry.key))
       continue;
     final current = providers[entry.key];
@@ -54,7 +61,6 @@ const _meowUnsupportedDnsPaths = {
   'listen-routing-mark',
   'prefer-h3',
   'respect-rules',
-  'ipv6',
   'ipv6-timeout',
   'cache-algorithm',
   'cache-max-size',
@@ -72,6 +78,9 @@ void _validateMeowSourceDns(Map config) {
   if (dns == null) return;
   if (dns is! Map)
     throw const FormatException('\$.dns: expected source DNS mapping');
+  if (dns.containsKey('ipv6') && dns['ipv6'] is! bool) {
+    throw const FormatException('\$.dns.ipv6: expected boolean');
+  }
   if (dns.containsKey(Dns.generatedDefaultsJsonKey))
     throw const FormatException(
       '\$.dns.__aerove_dns_defaults: reserved stored constructor provenance',
@@ -103,6 +112,11 @@ String meowDnsScriptInput(String configJson, {ProfileOverrides? overrides}) {
 Set<DnsOverrideKey> _meowDnsOverrideKeys(Dns dns, Set<DnsOverrideKey> keys) {
   final result = <DnsOverrideKey>{};
   for (final key in keys) {
+    if (key == DnsOverrideKey.ipv6 &&
+        dns.generatedDefaultKeys.contains(key) &&
+        dns.ipv6 == xclashDefaultDns.ipv6) {
+      continue;
+    }
     if (!_meowUnsupportedDnsPaths.contains(key.path)) {
       result.add(key);
       continue;
@@ -110,7 +124,6 @@ Set<DnsOverrideKey> _meowDnsOverrideKeys(Dns dns, Set<DnsOverrideKey> keys) {
     final generated =
         dns.generatedDefaultKeys.contains(key) &&
         switch (key) {
-          DnsOverrideKey.ipv6 => dns.ipv6 == xclashDefaultDns.ipv6,
           DnsOverrideKey.fakeIpRange6 =>
             dns.fakeIpRange6 == xclashDefaultDns.fakeIpRange6,
           _ => false,
@@ -266,6 +279,16 @@ Future<String> encodeYamlTask<T>(T data) async {
   return compute<T, String>(_encodeYaml, data);
 }
 
+Future<String> writeMeowProviderInputTask(
+  String path, {
+  String? text,
+  Uint8List? bytes,
+}) => compute((payload) {
+  final content = payload.bytes ?? utf8.encode(payload.text!);
+  File(payload.path).writeAsBytesSync(content, flush: true);
+  return sha256.convert(content).toString();
+}, (path: path, text: text, bytes: bytes));
+
 Future<String> _encodeYaml<T>(T content) async {
   return yaml.encode(content);
 }
@@ -408,6 +431,7 @@ typedef RealProfile = ({
   String md5,
   ConfigCounts counts,
   ProfileSelectionPolicy selectionPolicy,
+  List<String> providerSourceWitness,
 });
 
 /// Counts what the Core was handed, not what the profile file declares.
@@ -521,11 +545,16 @@ Future<RealProfile> _makeRealProfileTask(
   payload,
 ) async {
   final data = payload.data;
+  final providerSourceWitness = <String>[];
   final capabilities = CoreCapabilities.forCore(payload.coreId);
-  final rawConfig = switch (data.rawConfigJson) {
+  final inputConfig = switch (data.rawConfigJson) {
     final text? => decodeScriptResult(text),
     null => Map.from(data.rawConfig),
   };
+  final rawConfig = projectSubscriptionCompatibility(
+    Map<String, dynamic>.from(inputConfig),
+    coreId: payload.coreId,
+  ).config;
   final sourceStoreSelected = _sourceStoreSelected(
     data.rawConfig,
     meow: capabilities.androidHostTun,
@@ -650,6 +679,11 @@ Future<RealProfile> _makeRealProfileTask(
       if (provider is! Map || provider['type'] == 'inline') {
         continue;
       }
+      if (overrides.localProviderSources.containsKey('$section/$name')) {
+        // The verified detached binding was applied below. Its distinct owner
+        // path must not be confined back onto the original migration input.
+        continue;
+      }
       if (provider['type'] == 'file' &&
           fileReferences.containsKey(name) &&
           provider['path'] == fileReferences[name] &&
@@ -661,17 +695,45 @@ Future<RealProfile> _makeRealProfileTask(
       // Two providers may share a URL and differ only by header.
       final url = provider['url'];
       final hasUrl = url is String && url.isNotEmpty;
+      final isFile = provider['type'] == 'file';
       final path = getProvidersFilePathInner(
         type,
-        hasUrl ? '$name@$url' : '$section/$name',
+        !isFile && hasUrl ? '$name@$url' : '$section/$name',
       );
-      if (hasUrl) {
+      if (isFile && hasUrl) {
+        final legacy = getProvidersFilePathInner(type, '$name@$url');
+        if (File(legacy).existsSync() || File(path).existsSync()) {
+          final home = dirname(profilesPath);
+          checkFileProviderSourceRestorePaths(home, [
+            relative(legacy, from: home).replaceAll('\\', '/'),
+            relative(path, from: home).replaceAll('\\', '/'),
+          ]);
+        }
+        _migrateLegacyProviderFile(legacyPath: legacy, newPath: path);
+      } else if (hasUrl) {
         _migrateLegacyProviderFile(
           legacyPath: getProvidersFilePathInner(type, url),
           newPath: path,
         );
       }
       provider['path'] = path;
+      if (isFile) {
+        providerSourceWitness.addAll(
+          registerFileProviderSource(
+            homeDirPath: dirname(profilesPath),
+            profileId: profileId!,
+            section: section,
+            name: name as String,
+            sourcePath: path,
+          ),
+        );
+        if (capabilities.androidHostTun) {
+          for (final key in ['url', 'proxy', 'header']) {
+            provider.remove(key);
+          }
+          provider['interval'] = 0;
+        }
+      }
     }
   }
 
@@ -820,6 +882,15 @@ Future<RealProfile> _makeRealProfileTask(
   if (data.rawConfigJson == null) {
     _applyNativeProxyProviderEdits(rawConfig, overrides);
   }
+  rawConfig.addAll(
+    applyLocalProviderSources(
+      rawConfig,
+      profileId: profileId,
+      homeDirPath: dirname(profilesPath),
+      bindings: overrides.localProviderSources,
+      coreId: payload.coreId,
+    ),
+  );
   String resourcePath(Map<String, dynamic> item) {
     final relative = item['file'];
     if (relative is! String ||
@@ -1014,12 +1085,17 @@ Future<RealProfile> _makeRealProfileTask(
         .toList();
   }
   rawConfig['rules'] = rules;
-  final yaml = await _encodeYaml(Map<String, dynamic>.from(rawConfig));
+  final projected = projectSubscriptionCompatibility(
+    Map<String, dynamic>.from(rawConfig),
+    coreId: payload.coreId,
+  ).config;
+  final yaml = await _encodeYaml(projected);
   return (
     yaml: yaml,
     md5: yaml.toMd5(),
-    counts: configCountsOf(rawConfig),
+    counts: configCountsOf(projected),
     selectionPolicy: selectionPolicy,
+    providerSourceWitness: providerSourceWitness,
   );
 }
 
@@ -1253,6 +1329,17 @@ Future<MigrationData> migrateLegacyConfig({
       BackupEntries.profile(profileId),
     );
     await sourceFile.safeCopy(targetFilePath);
+    final originalInput = File(
+      BackupEntries.resolve(sourcePath, BackupEntries.profileInput(rawId)),
+    );
+    if (await originalInput.exists()) {
+      await originalInput.safeCopy(
+        BackupEntries.resolve(
+          targetPath,
+          BackupEntries.profileInput(profileId),
+        ),
+      );
+    }
     profiles.add(Profile.fromJson(rawProfile));
   }
   final currentProfileId = configMap['currentProfileId'];

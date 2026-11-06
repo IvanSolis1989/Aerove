@@ -9,6 +9,8 @@ interface MeowFlutterRuntime {
     fun identityIsCurrent(identity: RuntimeAppliedIdentity): Boolean
     fun hasRequestedIntent(): Boolean = false
     fun queryGraph(): MeowQueryGraph? = null
+    suspend fun quiesceProviderSourceCandidate() { error("Provider source runtime quiesce owner is unavailable") }
+    suspend fun restoreProviderSourceGraph(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity? = applyStaged(snapshot)
     suspend fun applyStaged(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity =
         throw MeowProtocolFailure("implementation_blocked", "The runtime owner has no graph loader")
     suspend fun setListening(expected: MeowSetupRuntime, enabled: Boolean): RuntimeAppliedIdentity

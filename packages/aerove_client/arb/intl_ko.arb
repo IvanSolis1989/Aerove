@@ -1000,5 +1000,21 @@
   "outboundModeCurrent": "아웃바운드 모드: {mode}",
   "outboundModeNext": "{mode}(으)로 전환",
   "trafficUploadSpeed": "업로드 속도: {speed}",
-  "trafficDownloadSpeed": "다운로드 속도: {speed}"
+  "trafficDownloadSpeed": "다운로드 속도: {speed}",
+  "subscriptionCompatibilitySummary": "이 코어가 지원하지 않는 노드 {removed}개({protocols})를 제외했습니다. {adjustments}",
+  "@subscriptionCompatibilitySummary": {
+    "description": "Compatibility summary shown only after a subscription commit succeeds.",
+    "placeholders": {
+      "protocols": {
+        "type": "String"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "adjustments": {
+        "type": "String"
+      }
+    }
+  },
+  "subscriptionCompatibilityTunStack": "현재 코어가 지원하는 lwIP TUN 스택을 적용했습니다."
 }

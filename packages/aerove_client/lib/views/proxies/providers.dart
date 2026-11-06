@@ -10,6 +10,7 @@ import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
+import 'package:fl_clash/product.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -429,7 +430,9 @@ Future<void> _sideLoadProvider(
       .read(proxiesActionProvider.notifier)
       .sideLoadExternalProvider(provider, data, showLoading: true);
   if (message.isNotEmpty) throw MessageException(message);
-  await File(path).safeWriteAsBytes(bytes);
+  if (ClientProduct.current.expectedCoreId != 'meow-rs') {
+    await File(path).safeWriteAsBytes(bytes);
+  }
 }
 
 class _EditProviderView extends ConsumerStatefulWidget {

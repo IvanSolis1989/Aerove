@@ -193,6 +193,65 @@ void main() {
       expect(read().map((item) => item.id), [3, 1, 2]);
     });
 
+    test(
+      'putCommitted resolves only after actual persistence and file publication',
+      () async {
+        var published = false;
+        await notifier.putCommitted(
+          profile(42, label: 'Committed'),
+          publishFile: () => published = true,
+        );
+        expect(published, true);
+        expect(
+          (await testDatabase.profilesDao.query().get()).single.label,
+          'Committed',
+        );
+        expect(read().single.label, 'Committed');
+      },
+    );
+
+    test(
+      'putCommitted propagates database failure without publishing a file or a success',
+      () async {
+        await testDatabase.customStatement(
+          'CREATE TRIGGER refuse_committed BEFORE INSERT ON profiles '
+          "BEGIN SELECT RAISE(ABORT, 'fixture rejection'); END",
+        );
+        var published = false;
+        var rolledBack = false;
+        await expectLater(
+          notifier.putCommitted(
+            profile(42, label: 'Rejected'),
+            publishFile: () => published = true,
+            rollbackFile: () => rolledBack = true,
+          ),
+          throwsA(anything),
+        );
+        expect(published, false);
+        expect(rolledBack, true);
+        expect(read(), isEmpty);
+        expect(await testDatabase.profilesDao.query().get(), isEmpty);
+      },
+    );
+
+    test(
+      'putCommitted rolls database and optimistic state back when file publication fails',
+      () async {
+        var rolledBack = false;
+        await expectLater(
+          notifier.putCommitted(
+            profile(42, label: 'File failure'),
+            publishFile: () => throw StateError('fixture publication failed'),
+            rollbackFile: () => rolledBack = true,
+          ),
+          throwsStateError,
+        );
+        expect(rolledBack, true);
+        expect(read(), isEmpty);
+        expect(await testDatabase.profilesDao.query().get(), isEmpty);
+      },
+    );
+
     test('put falls back to the id when the profile has no label', () async {
       // Profile.normal() leaves the label empty when the download exposed no
       // filename, and optimizeLabel is the only thing that names it.

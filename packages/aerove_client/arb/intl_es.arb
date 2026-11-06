@@ -1000,5 +1000,21 @@
   "outboundModeCurrent": "Modo de salida: {mode}",
   "outboundModeNext": "Cambiar a {mode}",
   "trafficUploadSpeed": "Velocidad de subida: {speed}",
-  "trafficDownloadSpeed": "Velocidad de descarga: {speed}"
+  "trafficDownloadSpeed": "Velocidad de descarga: {speed}",
+  "subscriptionCompatibilitySummary": "Se han omitido {removed} nodos no compatibles con este núcleo ({protocols}). {adjustments}",
+  "@subscriptionCompatibilitySummary": {
+    "description": "Compatibility summary shown only after a subscription commit succeeds.",
+    "placeholders": {
+      "protocols": {
+        "type": "String"
+      },
+      "removed": {
+        "type": "int"
+      },
+      "adjustments": {
+        "type": "String"
+      }
+    }
+  },
+  "subscriptionCompatibilityTunStack": "Se ha aplicado la pila TUN lwIP compatible con este núcleo."
 }

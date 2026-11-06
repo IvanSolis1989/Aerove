@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-data class MeowFlutterRuntimeBinding(val revision: String, val intentEpoch: Long) {
+data class MeowFlutterRuntimeBinding(val revision: String, val intentEpoch: Long, internal val sourcePermit: ProviderSourcePermit? = null) {
     init {
         require(revision.isNotBlank()) { "Runtime revision is required" }
         require(intentEpoch >= 0) { "Runtime intent epoch must be nonnegative" }
@@ -74,6 +74,7 @@ class MeowFlutterCommandFacade internal constructor(
     private fun issue(runtime: MeowFlutterRuntimeBinding?): OwnedStartRequest? {
         if (!runtimeAllowed(runtime)) return null
         return ownedStarts.prepare()?.also {
+            it.providerSourcePermit = runtime?.sourcePermit
             bindings[it] = RequestBinding(runtime, startIntentEpoch(), permissionIntents.beginStart())
         }
     }

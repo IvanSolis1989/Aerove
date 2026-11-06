@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'native_lite_mapping.dart';
+import 'file_provider_source.dart';
 import 'task.dart' show meowGlobalGeoDownloadUrls;
 
 abstract interface class NativeLiteAuthority {
@@ -818,6 +819,12 @@ Future<Map<String, dynamic>> nativeLiteBusinessSource(
               if ((input as Map)[key] case final String path) paths.add(path);
             }
           }
+        } else if (entry.key == 'localProviderSources') {
+          // Only the owned source is active. originalDefinition is historical
+          // lineage and may refer to an intentionally detached old resource.
+          for (final binding in (entry.value as Map).values) {
+            paths.add((binding as Map)['relativePath'] as String);
+          }
         } else if ([
               'path',
               'tls-cert',
@@ -850,6 +857,12 @@ Future<Map<String, dynamic>> nativeLiteBusinessSource(
   for (final row in rows['profiles']!) {
     resources(jsonDecode(row['overrides'] as String? ?? '{}'));
   }
+  paths.addAll(
+    await fileProviderSourceBackupEntriesTask(
+      home.path,
+      rows['profiles']!.map((row) => row['id'] as int),
+    ),
+  );
   resources(config['patchClashConfig']);
   for (final row in rows['custom_proxies']!) {
     resources(jsonDecode(row['definition'] as String));
