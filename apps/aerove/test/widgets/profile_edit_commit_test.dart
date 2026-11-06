@@ -177,6 +177,14 @@ void main() {
               DecorationListItem,
               currentAppLocalizations.profile,
             );
+            // As in edit_profile_focus_test, allow real file metadata I/O to
+            // finish before expecting the asynchronously revealed file row.
+            for (var i = 0; i < 20 && row.evaluate().isEmpty; i++) {
+              await tester.runAsync(
+                () => Future<void>.delayed(const Duration(milliseconds: 20)),
+              );
+              await tester.pump(const Duration(milliseconds: 400));
+            }
             expect(row, findsOneWidget);
             await tester.ensureVisible(row);
             await tester.runAsync(() async {

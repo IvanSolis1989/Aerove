@@ -467,7 +467,8 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
         commit(handoff, expectedEpoch, expectedRevision) {}
 
     internal suspend fun commit(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?,
-        sourceIsCurrent: () -> Unit): MeowRuntimeSnapshot = commit(handoff, expectedEpoch, expectedRevision, sourceIsCurrent) { false }
+        sourceIsCurrent: () -> Unit): MeowRuntimeSnapshot = commit(handoff, expectedEpoch, expectedRevision,
+            sourceIsCurrent = sourceIsCurrent, hasRequestedIntent = { false })
 
     internal suspend fun commitForSetup(handoff: RuntimeHandoff, expectedEpoch: Long, expectedRevision: String?,
         hasRequestedIntent: () -> Boolean, sourceIsCurrent: () -> Unit, providerPermit: ProviderSourcePermit? = null): MeowRuntimeSnapshot =

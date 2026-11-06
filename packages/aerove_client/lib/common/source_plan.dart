@@ -490,7 +490,11 @@ class FileProviderSourceJournal {
     }
   }
 
-  Future<void> _writeState({required bool after, Database? database}) async {
+  Future<void> _writeState({
+    required bool after,
+    Database? database,
+    bool decided = false,
+  }) async {
     final rows = sourcePlan['profileRow'] as Map?;
     if (rows == null) return _writeFiles(after: after);
     if (database == null)
@@ -525,17 +529,27 @@ class FileProviderSourceJournal {
           database,
           sourcePlan['profileId'] as int,
         );
-        final actualHash = nativeLiteJsonHash(actual);
-        priorRowHash = actualHash;
-        if (actualHash != nativeLiteJsonHash(rows['before']) &&
-            actualHash != nativeLiteJsonHash(rows['after'])) {
+        priorRowHash = nativeLiteJsonHash(actual);
+        Map<String, dynamic> comparable(Map row) {
+          final value = Map<String, dynamic>.from(row);
+          if (decided) value.remove('selected_map');
+          return value;
+        }
+
+        final actualHash = nativeLiteJsonHash(comparable(actual));
+        if (actualHash !=
+                nativeLiteJsonHash(comparable(rows['before'] as Map)) &&
+            actualHash !=
+                nativeLiteJsonHash(comparable(rows['after'] as Map))) {
           throw const FormatException(
             'provider source: profile row compare-and-swap failed',
           );
         }
-        final target = rows[after ? 'after' : 'before'] as Map;
-        if (actualHash != nativeLiteJsonHash(target)) {
-          // The complete row is a conflict detector, never a stale row upsert.
+        final target = <String, dynamic>{
+          ...Map<String, dynamic>.from(rows[after ? 'after' : 'before'] as Map),
+          if (decided) 'selected_map': actual['selected_map'],
+        };
+        if (nativeLiteJsonHash(actual) != nativeLiteJsonHash(target)) {
           await database.customUpdate(
             'UPDATE profiles SET overrides = ? WHERE id = ?',
             variables: [
@@ -770,10 +784,12 @@ class FileProviderSourceJournal {
     _checkReply(reply);
     final decision = reply['decision'];
     if (decision == 'COMMITTED') {
-      await publish(database: database);
-    } else if (decision == 'UNDECIDED' || decision == 'ABORTED') {
-      if (decision == 'UNDECIDED' &&
-          reply['state'] != 'PREPARED' &&
+      await _writeState(after: true, database: database, decided: true);
+    } else if (decision == 'ABORTED') {
+      // Native resolved the actual graph before persisting this terminal decision.
+      await _writeState(after: false, database: database, decided: true);
+    } else if (decision == 'UNDECIDED') {
+      if (reply['state'] != 'PREPARED' &&
           reply['sourceAction'] != 'restore-old') {
         throw const FormatException(
           'provider source: candidate quiescence is unconfirmed',
@@ -786,17 +802,15 @@ class FileProviderSourceJournal {
           'provider source: restored business proof changed',
         );
       }
-      if (decision == 'UNDECIDED') {
-        reply = await invoke({
-          ...envelope('abort'),
-          'restored': {
-            'sourceJournalSha256': journalSha256,
-            'beforeStateSha256': nativeLiteJsonHash(proof),
-            'proof': proof,
-          },
-        });
-        _checkReply(reply);
-      }
+      reply = await invoke({
+        ...envelope('abort'),
+        'restored': {
+          'sourceJournalSha256': journalSha256,
+          'beforeStateSha256': nativeLiteJsonHash(proof),
+          'proof': proof,
+        },
+      });
+      _checkReply(reply);
     }
     if (!{'COMMITTED', 'ABORTED'}.contains(reply['decision'])) {
       throw const FormatException(
@@ -804,7 +818,9 @@ class FileProviderSourceJournal {
       );
     }
     // If commitment raced with abort, the sole durable decision wins.
-    if (reply['decision'] == 'COMMITTED') await publish(database: database);
+    if (reply['decision'] == 'COMMITTED') {
+      await _writeState(after: true, database: database, decided: true);
+    }
     await finalize(reply['decision'] as String);
     final finished = await invoke({
       ...envelope('query'),

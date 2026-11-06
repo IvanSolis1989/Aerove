@@ -368,24 +368,69 @@ void main() {
     },
   );
 
-  test(
-    'a third raw source prevents restoring both the binding row and bytes',
-    () async {
-      final journal = await prepare();
-      await journal.publish(database: db);
-      final publishedRow = await rawRow();
-      await target().writeAsString('newer source writer');
-      await expectLater(
-        journal.recover(
+  for (final decision in ['COMMITTED', 'ABORTED'])
+    test(
+      '$decision source finalization after a crash preserves a later selection without replaying historical runtime proof',
+      () async {
+        final before = await rawRow();
+        final originalBytes = await original.readAsBytes();
+        final journal = await prepare();
+        await journal.publish(database: db);
+        final published = await rawRow();
+        final publishedBytes = await target().readAsBytes();
+        const selected = '{"choice":"later-user-selection"}';
+        await db.customStatement(
+          'UPDATE profiles SET selected_map = ? WHERE id = 7',
+          [selected],
+        );
+        await db.close();
+        db = Database(
+          NativeDatabase(File(p.join(home.path, 'database.sqlite'))),
+        );
+        final reopened = (await FileProviderSourceJournal.pending(home)).single;
+        await reopened.recover(
           database: db,
-          invoke: (_) async => reply(journal, 'UNDECIDED'),
-          readProof: proof,
-        ),
-        throwsFormatException,
-      );
-      expect(await rawRow(), publishedRow);
-      expect(await target().readAsString(), 'newer source writer');
-      expect(await FileProviderSourceJournal.pending(home), hasLength(1));
-    },
-  );
+          invoke: (request) async {
+            expect(request['operation'], isNot('abort'));
+            return reply(reopened, decision);
+          },
+          readProof: () => throw StateError(
+            'A durable terminal decision does not reconstruct the prior graph',
+          ),
+        );
+        expect(await rawRow(), {
+          ...(decision == 'COMMITTED' ? published : before),
+          'selected_map': selected,
+        });
+        if (decision == 'COMMITTED') {
+          expect(await target().readAsBytes(), publishedBytes);
+        } else {
+          expect(await target().exists(), false);
+        }
+        expect(await original.readAsBytes(), originalBytes);
+        expect(await FileProviderSourceJournal.pending(home), isEmpty);
+      },
+    );
+
+  for (final decision in ['UNDECIDED', 'COMMITTED', 'ABORTED'])
+    test(
+      'a third raw source blocks $decision finalization of both the binding row and bytes',
+      () async {
+        final journal = await prepare();
+        await journal.publish(database: db);
+        final publishedRow = await rawRow();
+        await target().writeAsString('newer source writer');
+        await expectLater(
+          journal.recover(
+            database: db,
+            invoke: (_) async => reply(journal, decision),
+            readProof: proof,
+          ),
+          throwsFormatException,
+        );
+        expect(await rawRow(), publishedRow);
+        expect(await target().readAsString(), 'newer source writer');
+        expect(await FileProviderSourceJournal.pending(home), hasLength(1));
+      },
+    );
 }
