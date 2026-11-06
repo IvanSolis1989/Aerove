@@ -90,9 +90,14 @@ def prepare(root, out):
                 require(not path.is_absolute() and '..' not in path.parts and '\\' not in entry.filename
                         and ':' not in entry.filename and not stat.S_ISLNK(entry.external_attr >> 16)
                         and not entry.flag_bits & 1, 'Unsafe ZIP entry')
-                require(not entry.filename.lower().endswith('.apk'), 'Fixture archive contains an APK')
             require(source.testzip() is None, 'Fixture ZIP CRC failure')
-            source.extractall(destination)
+            prefix = ('_temp/lite-client-fixtures/' if label == 'kotlin' else
+                      '_temp/lite-flutter-host/dart-closure/')
+            selected = [entry for entry in entries if entry.filename.startswith(prefix)]
+            require(selected and not any(entry.filename.lower().endswith('.apk') for entry in selected),
+                    'Required fixture subset missing or contains an APK')
+            # The sealed reports also contain unrelated owner-fixture APKs; never restore those.
+            source.extractall(destination, members=selected)
         records.append(dict(artifact=row, producer=job,
                             files={p.relative_to(destination).as_posix(): digest(p)
                                    for p in sorted(destination.rglob('*')) if p.is_file()}))
