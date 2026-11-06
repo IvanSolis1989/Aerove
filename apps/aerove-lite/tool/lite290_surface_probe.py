@@ -38,6 +38,7 @@ HARNESS = PACKAGE + '.test'
 SELECTOR = PACKAGE + '.SurfacePixelDiagnosticTest#testOriginal290MappedRendererAndSurface'
 OPT_IN = 'AEROVE_LITE290_SURFACE_PROBE'
 BRANCH = 'codex/lite290-same-apk-probe'
+LAVAPIPE_OPT_IN = 'AEROVE_LITE290_LAVAPIPE'
 
 
 def require(value, message):
@@ -61,6 +62,47 @@ def enabled():
         'AEROVE_GFXSTREAM_SOURCE_RECEIPT', 'AEROVE_EMULATOR_SIGILL_TRACE')),
         'Fixed290 diagnosis cannot mix historical runtime or renderer opt-ins')
     return True
+
+
+def lavapipe_requested():
+    value = os.environ.get(LAVAPIPE_OPT_IN)
+    if value is None:
+        return False
+    require(value == '1' and enabled(), 'Lavapipe comparison requires the fixed original290 diagnostic')
+    require(not any(os.environ.get(key) for key in ('VK_ICD_FILENAMES', 'VK_DRIVER_FILES',
+            'VK_ADD_DRIVER_FILES', 'MESA_LOADER_DRIVER_OVERRIDE')), 'Hidden graphics overrides cannot join this comparison')
+    return True
+
+
+def inspect_lavapipe_driver(sdk):
+    """Read the verified SDK ICD and its bundled library; install or select nothing."""
+    root = (Path(sdk) / 'emulator').resolve(strict=True)
+    directory = root / 'lib64/vulkan'
+    result = dict(sdkEmulator=str(root), candidates=[], passed=False)
+    for path in sorted(directory.glob('*.json')):
+        data = json.loads(path.read_text())
+        declared = data.get('ICD', {}).get('library_path')
+        if not isinstance(declared, str) or not any(word in (path.name + declared).lower() for word in ('lavapipe', 'lvp')):
+            continue
+        row = dict(icd=str(path), icdSha256=sha(path), declaredLibrary=declared, ready=False)
+        result['candidates'].append(row)
+        try:
+            library = (path.parent / declared).resolve(strict=True)
+            require(library.is_relative_to(root) and library.is_file(), 'Comparison library must belong to the verified SDK')
+            search = [str(root / 'lib64'), str(directory)]
+            search.extend(part for part in os.environ.get('LD_LIBRARY_PATH', '').split(os.pathsep) if part)
+            environment = dict(os.environ, LD_LIBRARY_PATH=os.pathsep.join(search))
+            dependencies = subprocess.run(['ldd', str(library)], capture_output=True, text=True,
+                                           timeout=20, env=environment)
+            row.update(library=str(library), bytes=library.stat().st_size, sha256=sha(library),
+                dependencyExit=dependencies.returncode, dependencies=dependencies.stdout,
+                dependencyError=dependencies.stderr, inspectionLibrarySearch=search,
+                dependencyInspectionOnly=True)
+            row['ready'] = dependencies.returncode == 0 and 'not found' not in dependencies.stdout
+        except (OSError, ValueError, subprocess.TimeoutExpired) as failure:
+            row['failureClass'] = type(failure).__name__
+    result['passed'] = bool(result['candidates']) and all(row['ready'] for row in result['candidates'])
+    return result
 
 
 def check_api(run, jobs, row):
@@ -114,7 +156,8 @@ def runtime(directory, installed=True):
         apkInspectorOutcome=manifest['apkInspectorOutcome'],
         bundledMeowScript=verify_bundled_script_apk(directory / 'apks/app-release.apk'),
         original290Probe=True, originalAppIdentity=IDENTITY, harnessIdentity=artifacts.identity(),
-        originalMapping=MAPPING, diagnosticOnly=True, accepted=False)
+        originalMapping=MAPPING, diagnosticOnly=True, accepted=False,
+        requestedGraphicsRoute='guest-angle-vulkan-lavapipe' if lavapipe_requested() else 'guest-angle-vulkan-swiftshader')
 
 
 def fetch(directory):

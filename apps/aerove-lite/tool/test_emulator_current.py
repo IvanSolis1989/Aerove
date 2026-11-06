@@ -193,6 +193,38 @@ class GuestAngleEvidenceTests(unittest.TestCase):
                         path.write_text(original)
                         proof_file.write_text(json.dumps(proof))
 
+    def test_fixed290_lavapipe_proof_replays_only_with_explicit_current_comparison(self):
+        import lite290_surface_probe as probe290
+        startup = ('INFO | vulkan_mode_selected:lavapipe gles_mode_selected:swangle\n'
+                   'Selecting Vulkan device: llvmpipe (LLVM 21.0.0, 256 bits), Version: 1.4.318')
+        guest = ('GLES: Google (Mesa), ANGLE (Mesa, Vulkan 1.3.0 '
+                 '(llvmpipe (LLVM 21.0.0 256 bits))), OpenGL ES 3.1.0')
+        harness = {'sourceRevision': 'separate-harness'}
+        runtime = dict(identity=probe290.IDENTITY, original290Probe=True, harnessIdentity=harness,
+                       diagnosticOnly=True, accepted=False)
+        env = dict(AEROVE_LITE290_SURFACE_PROBE='1', AEROVE_LITE290_LAVAPIPE='1',
+            GITHUB_REPOSITORY='IvanSolis1989/Aerove', GITHUB_ACTOR='IvanSolis1989',
+            GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF='refs/heads/codex/lite290-same-apk-probe',
+            AEROVE_GUEST_ANGLE='1', ANDROID_SERIAL='emulator-5554')
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            with patch.object(current.subprocess, 'run', side_effect=self.outputs(guest=guest)):
+                route = current.guest_angle_evidence(directory, {}, startup, vulkan_backend='lavapipe')
+            proof = dict(runtime, schema=1, owner='emulator_current.py', phase='flutter-ui',
+                runtimeDirectory='original290-runtime', deviceSerial='emulator-5554',
+                gpuBackend='lavapipe', rendererBackend='Guest ANGLE (Vulkan + Lavapipe)',
+                rendererEvidence=route['guestRenderer'] + route['hostVulkanDevice'],
+                guestGraphicsRoute=route, guestGraphicsEvidence=current.guest_angle_file_hashes(directory))
+            path = directory / 'proof.json'
+            path.write_text(json.dumps(proof))
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(current, 'verify_current_runtime', return_value=runtime), \
+                    patch.object(current.artifacts, 'identity', return_value=harness):
+                self.assertEqual(proof, current.validate_renderer_proof(path))
+                del os.environ[probe290.LAVAPIPE_OPT_IN]
+                with self.assertRaises(ValueError):
+                    current.validate_renderer_proof(path)
+
     def test_missing_original_image_library_retains_failure_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

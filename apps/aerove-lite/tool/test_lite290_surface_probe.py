@@ -1,8 +1,10 @@
 """Fixed original APK and separate harness boundaries; no simulated Android acceptance."""
 import copy
+import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -67,6 +69,47 @@ class Original290ProbeTests(unittest.TestCase):
                        {'AEROVE_LITE290_SURFACE_PROBE': 'false'}):
             with self.subTest(change=change), patch.dict(os.environ, {**env, **change}, clear=True), self.assertRaises(ValueError):
                 probe.enabled()
+
+    def test_only_fixed290_optin_changes_host_vulkan_and_rejects_hidden_overrides(self):
+        with patch.dict(os.environ, self.environment(), clear=True):
+            self.assertFalse(probe.lavapipe_requested())
+            self.assertEqual('swangle', current.graphics_configuration()['gpuBackend'])
+            self.assertEqual('swiftshader', current.graphics_configuration()['vulkanBackend'])
+        env = {**self.environment(), probe.LAVAPIPE_OPT_IN: '1'}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(dict(gpuBackend='lavapipe', vulkanBackend='lavapipe',
+                guestRenderer='Guest ANGLE (Vulkan + Lavapipe)'), current.graphics_configuration())
+        for change in ({probe.LAVAPIPE_OPT_IN: ''}, {probe.LAVAPIPE_OPT_IN: '0'},
+                       {probe.OPT_IN: ''}, {'GITHUB_REF': 'refs/heads/main'},
+                       {'AEROVE_LITE265_RECHECK': '1'}, {'VK_ICD_FILENAMES': '/outside.json'},
+                       {'MESA_LOADER_DRIVER_OVERRIDE': 'other'}):
+            with self.subTest(change=change), patch.dict(os.environ, {**env, **change}, clear=True), self.assertRaises(ValueError):
+                current.graphics_configuration()
+
+    def test_driver_inspection_binds_bundled_icd_and_rejects_external_or_missing_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            sdk = Path(temporary)
+            directory = sdk / 'emulator/lib64/vulkan'
+            directory.mkdir(parents=True)
+            library = directory / 'libvulkan_lvp.so'
+            library.write_bytes(b'fixture-only-not-an-ELF')
+            icd = directory / 'lvp-fixture.json'
+            icd.write_text(json.dumps({'ICD': {'library_path': library.name}}))
+            with patch.dict(os.environ, {'LD_LIBRARY_PATH': ''}), \
+                    patch.object(probe.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'libc => /lib/libc.so', '')) as ldd:
+                result = probe.inspect_lavapipe_driver(sdk)
+                self.assertTrue(result['passed'])
+                self.assertEqual(probe.sha(library), result['candidates'][0]['sha256'])
+                self.assertNotIn('', ldd.call_args.kwargs['env']['LD_LIBRARY_PATH'].split(os.pathsep))
+                self.assertTrue(result['candidates'][0]['dependencyInspectionOnly'])
+            with patch.object(probe.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'libmissing => not found', '')):
+                self.assertFalse(probe.inspect_lavapipe_driver(sdk)['passed'])
+            outside = sdk / 'outside-lvp.so'
+            outside.write_bytes(b'external')
+            icd.write_text(json.dumps({'ICD': {'library_path': str(outside)}}))
+            with patch.object(probe.subprocess, 'run') as ldd:
+                self.assertFalse(probe.inspect_lavapipe_driver(sdk)['passed'])
+                ldd.assert_not_called()
 
     def test_only_single_ui_probe_uses_original_and_separate_harness_identity(self):
         identity = dict(sourceRevision='f' * 40, sourceTree='e' * 40, workflowRun='999', runAttempt=1, runNumber=291)

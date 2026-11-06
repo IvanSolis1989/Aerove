@@ -1250,6 +1250,8 @@ LLVM/libc++ 的 ABI1 与容器硬化开关参照 [LLVM 18.1.8 __config](https://
 
 #### [Android Emulator Guest ANGLE](https://android.googlesource.com/platform/external/qemu/)
 
+固定原 Lite290 APK 的对照沿用同一 SDK 选择机制，以独立诊断 opt-in 仅改变 Host Vulkan 实现为 Lavapipe。保持同一原 App、Java 观察源、1080×2400、Impeller GLES、材质及原准入门；先记录 SDK 内实际 ICD、所指库摘要与依赖探测，再核对同次 host／guest 设备及完整 renderer 证明。该请求不能替代驱动现场可用性、像素或正式验收，失败不自动回退；不安装新驱动或更换原 App。
+
 原258在App安装前因guest SurfaceFlinger/EGL失败及host SIGSEGV停止。固定257 Surface诊断只做一次官方SDK内置 Lavapipe 对照，依据[官方图形选项](https://developer.android.com/studio/run/emulator-acceleration#accel-graphics)与同下述QEMU提交的 [emugl_config.cpp](https://android.googlesource.com/platform/external/qemu/+/cf0f40a0aad1aa3fca68f2f89372525c8d28ca68/android/android-ui/modules/aemu-gl-init/src/android/opengl/emugl_config.cpp)选择逻辑：`-gpu lavapipe` 保持GLES为SwANGLE，Host Vulkan改为Mesa Lavapipe；必须由同次Host设备选择及SurfaceFlinger实际ANGLE/Vulkan同设备、GLES≥3.1读回验证。API33、官方37.2.13原archive、原APK、分辨率、刷新率、Impeller及材质均不改变，236与正式SwiftShader校验保持。此为未接受诊断，不代表真实启动、像素或性能已通过；不复制驱动源码、不新增依赖或自动回退，保留原QEMU GPL与SDK NOTICE。
 
 原259已实际启动，Host与SurfaceFlinger的LLVM设备描述仅逗号排版不同，原完整字符串比较在安装App前拒绝。上述固定ANGLE的 [Context.cpp](https://android.googlesource.com/platform/external/angle/+/353815e0d958c63adc3425df35baf61f097d2da2/src/libANGLE/Context.cpp#3328) 会删除renderer描述中的逗号；诊断据此严格比较backend、完整LLVM版本和向量位宽，保留唯一Host设备、实际mode、API、GLES与原始日志门。该对应关系是同owner的软件驱动签名，不是物理UUID或硬件唯一性证明；未更换GPU或放宽其它断言。只参考既有BSD许可源码，不复制实现；App Surface及完整UI验收仍未完成。
