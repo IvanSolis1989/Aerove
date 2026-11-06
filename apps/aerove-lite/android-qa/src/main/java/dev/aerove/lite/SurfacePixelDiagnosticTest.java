@@ -208,6 +208,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             observe290("mapped-renderer-after", receipt, failures,
                     () -> onMain(() -> mapped290(activity, mappedAfter)));
             observe290("original-apk-after", receipt, failures, () -> receipt.put("originalAppAfter", originalIdentity()));
+            observeAfterBaseline294(activity, root, receipt, failures, worker, owned);
             receipt.put("collectionAttemptsFinished", true).put("captureCompleted", failures.length() == 0)
                     .put("status", failures.length() == 0 ? "captured" : "failed");
             saveReceipt(root, receipt);
@@ -223,6 +224,203 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
                     .put("original290NativePending", original290NativePending.get());
         }
     }
+
+    /** Nullable mapped fields preserve absent ImageView/previous-target as real data. */
+    private static Object nullableMapped294(Object owner, String ownerClass, String name, String type) throws Exception {
+        Class<?> declared = Class.forName(ownerClass, false, owner.getClass().getClassLoader());
+        check(declared.isInstance(owner), "Mapped observation owner differs");
+        java.lang.reflect.Field field = declared.getDeclaredField(name);
+        check(field.getType().getName().equals(type) && !Modifier.isStatic(field.getModifiers()), "Mapped observation signature differs");
+        field.setAccessible(true);
+        return field.get(owner);
+    }
+
+    private static JSONObject identity294(Object value) throws Exception {
+        return new JSONObject().put("present", value != null)
+                .put("class", value == null ? JSONObject.NULL : value.getClass().getName())
+                .put("identity", value == null ? JSONObject.NULL : System.identityHashCode(value));
+    }
+
+    private View flutterView294(Activity activity) throws Exception {
+        Class<?> type = Class.forName("p42", false, activity.getClassLoader());
+        List<View> views = new ArrayList<>();
+        findFlutterViews(activity.getWindow().getDecorView(), type, views, new int[1], 0);
+        check(views.size() == 1, "Require one actual mapped FlutterView");
+        View view = views.get(0);
+        check(view.isAttachedToWindow() && view.getWindowToken() == activity.getWindow().getDecorView().getWindowToken(),
+                "Mapped FlutterView is not attached to the current window");
+        return view;
+    }
+
+    private void targetAndViewport294(Activity activity, JSONObject observation) throws Exception {
+        check(Looper.myLooper() == Looper.getMainLooper(), "Target and viewport require main thread");
+        View flutter = flutterView294(activity);
+        Object surfaceView = nullableMapped294(flutter, "p42", "d", "h42");
+        Object textureView = nullableMapped294(flutter, "p42", "g", "j42");
+        Object imageView = nullableMapped294(flutter, "p42", "o", "f32");
+        Object current = nullableMapped294(flutter, "p42", "p", "pk5");
+        Object previous = nullableMapped294(flutter, "p42", "q", "pk5");
+        observation.put("deviceNanos", now()).put("mappingSha256", ORIGINAL290_MAP_SHA).put("pgMapId", ORIGINAL290_MAP_ID)
+                .put("flutterView", identity294(flutter)).put("surfaceView", identity294(surfaceView))
+                .put("textureView", identity294(textureView)).put("imageView", identity294(imageView))
+                .put("renderSurface", identity294(current)).put("previousRenderSurface", identity294(previous))
+                .put("renderSurfaceIsSurfaceView", current != null && current == surfaceView)
+                .put("renderSurfaceIsImageView", current != null && current == imageView);
+        Object metrics = required(nullableMapped294(flutter, "p42", "E", "u32"), "Missing viewport metrics");
+        JSONObject viewport = new JSONObject();
+        observation.put("viewport", viewport);
+        viewport.put("devicePixelRatio", nullableMapped294(metrics, "u32", "a", "float"));
+        String[] names = {"width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight", "paddingTop",
+                "paddingRight", "paddingBottom", "paddingLeft", "insetTop", "insetRight", "insetBottom", "insetLeft",
+                "systemGestureTop", "systemGestureRight", "systemGestureBottom", "systemGestureLeft"};
+        String[] fields = {"b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s"};
+        for (int index = 0; index < names.length; index++) {
+            viewport.put(names[index], nullableMapped294(metrics, "u32", fields[index], "int"));
+        }
+        observation.put("readCompleted", true);
+    }
+
+    private static void nativeViews294(View view, JSONArray rows, int depth) throws Exception {
+        check(depth <= 40 && rows.length() < 128, "Native View observation exceeds128 nodes or40 depth");
+        int[] xy = new int[2];
+        view.getLocationOnScreen(xy);
+        rows.put(new JSONObject().put("depth", depth).put("class", view.getClass().getName())
+                .put("identity", System.identityHashCode(view)).put("x", xy[0]).put("y", xy[1])
+                .put("width", view.getWidth()).put("height", view.getHeight()).put("alpha", view.getAlpha())
+                .put("visibility", view.getVisibility()).put("attached", view.isAttachedToWindow()).put("shown", view.isShown()));
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int index = 0; index < group.getChildCount(); index++) nativeViews294(group.getChildAt(index), rows, depth + 1);
+        }
+    }
+
+    private static String shortText294(CharSequence text) {
+        if (text == null) return "";
+        String value = text.toString();
+        return value.substring(0, Math.min(96, value.length()));
+    }
+
+    private static void semantics294(android.view.accessibility.AccessibilityNodeInfo node, JSONArray rows,
+            JSONObject observation, int depth) throws Exception {
+        check(depth <= 32 && rows.length() < 192, "Semantics observation exceeds192 nodes or32 depth");
+        String text = shortText294(node.getText());
+        String description = shortText294(node.getContentDescription());
+        String packageName = shortText294(node.getPackageName());
+        Rect bounds = new Rect();
+        node.getBoundsInScreen(bounds);
+        boolean agree = TARGET.equals(packageName) && ("Agree".equals(text) || "Agree".equals(description));
+        if (agree) observation.put("agreeFound", true).put("agreeBoundsPx", rect(bounds));
+        rows.put(new JSONObject().put("depth", depth).put("text", text).put("description", description)
+                .put("package", packageName).put("class", shortText294(node.getClassName()))
+                .put("boundsPx", rect(bounds)).put("visible", node.isVisibleToUser()).put("enabled", node.isEnabled()));
+        int children = node.getChildCount();
+        for (int index = 0; index < children; index++) {
+            android.view.accessibility.AccessibilityNodeInfo child = node.getChild(index);
+            if (child != null) {
+                try { semantics294(child, rows, observation, depth + 1); }
+                finally { child.recycle(); }
+            }
+        }
+    }
+
+    private void observeAfterBaseline294(Activity activity, File root, JSONObject receipt, JSONArray failures,
+            ExecutorService worker, List<Bitmap> owned) throws Exception {
+        JSONObject extra = new JSONObject().put("mappingSha256", ORIGINAL290_MAP_SHA).put("pgMapId", ORIGINAL290_MAP_ID)
+                .put("afterBaselineThreeCaptures", true).put("atomicSameFrame", false)
+                .put("accepted", false).put("visualApproved", false).put("startedNanos", now());
+        receipt.put("engineObservation", extra);
+        JSONObject target = new JSONObject();
+        extra.put("targetAndViewport", target);
+        observe290("target-viewport", receipt, failures, () -> {
+            JSONObject value = onMain(() -> {
+                JSONObject isolated = new JSONObject();
+                targetAndViewport294(activity, isolated);
+                return isolated;
+            });
+            extra.put("targetAndViewport", value);
+        });
+        JSONArray nativeRows = new JSONArray();
+        extra.put("nativeViews", nativeRows).put("nativeViewTraversalComplete", false);
+        observe290("native-view-tree", receipt, failures, () -> {
+            JSONArray value = onMain(() -> {
+                JSONArray isolated = new JSONArray();
+                nativeViews294(activity.getWindow().getDecorView(), isolated, 0);
+                return isolated;
+            });
+            extra.put("nativeViews", value);
+            extra.put("nativeViewTraversalComplete", true);
+        });
+        JSONObject engine = new JSONObject().put("method", "FlutterJNI.getBitmap").put("submittedNanos", now())
+                .put("returned", false).put("readablePixelsApproved", false)
+                .put("observation", "last layer tree offscreen reraster; shares Impeller; not original display frame");
+        extra.put("engineCopy", engine);
+        observe290("engine-last-layer-tree", receipt, failures, () -> {
+            check(!mainWorkTeardownRequired.get() && mainWorkOutstanding.get() == 0,
+                    "Earlier main work is still owned by runner teardown");
+            Bitmap bitmap;
+            try {
+                bitmap = onMain(() -> {
+                    View flutter = flutterView294(activity);
+                    Object engineOwner = required(nullableMapped294(flutter, "p42", "t", "r22"), "Missing actual FlutterEngine");
+                    Object jni = required(nullableMapped294(engineOwner, "r22", "a", "io.flutter.embedding.engine.FlutterJNI"), "Missing actual FlutterJNI");
+                    Method method = jni.getClass().getDeclaredMethod("getBitmap");
+                    check(method.getReturnType() == Bitmap.class && method.getParameterTypes().length == 0
+                            && !Modifier.isStatic(method.getModifiers()), "Original getBitmap signature differs");
+                    method.setAccessible(true);
+                    original290NativePending.incrementAndGet();
+                    try { return (Bitmap) method.invoke(jni); }
+                    finally { original290NativePending.decrementAndGet(); }
+                });
+            } catch (Exception | AssertionError failure) {
+                if (mainWorkTeardownRequired.get() || mainWorkOutstanding.get() != 0) original290RetainedResources.set(true);
+                throw failure;
+            }
+            engine.put("returned", true).put("returnedNull", bitmap == null).put("returnedNanos", now());
+            bitmap = required(bitmap, "Original engine returned no last-layer-tree bitmap");
+            owned.add(bitmap);
+            engine.put("image", savePng(root, "engine.png", bitmap));
+        });
+        // Query semantics only after original captures and engine readback; it may schedule new App frames.
+        JSONObject semantic = new JSONObject().put("submittedNanos", now()).put("rootObserved", false).put("agreeFound", false)
+                .put("singleReadOnlyQuery", true).put("traversalComplete", false).put("maxNodes", 192).put("maxTextChars", 96)
+                .put("observation", "UiAutomation accessibility may affect scheduling; no click or state mutation");
+        extra.put("semantics", semantic);
+        observe290("startup-agree-semantics", receipt, failures, () -> {
+            check(original290WorkerPending.compareAndSet(false, true), "Earlier worker is still pending; no replacement submitted");
+            Future<JSONObject> task;
+            try {
+                task = worker.submit(() -> {
+                    try {
+                        JSONObject isolated = new JSONObject().put("agreeFound", false);
+                        android.view.accessibility.AccessibilityNodeInfo node = instrumentation.getUiAutomation().getRootInActiveWindow();
+                        isolated.put("rootObserved", node != null).put("rootReadNanos", now());
+                        check(node != null, "No accessibility root in single observation");
+                        JSONArray rows = new JSONArray();
+                        isolated.put("nodes", rows);
+                        try { semantics294(node, rows, isolated, 0); }
+                        finally { node.recycle(); }
+                        isolated.put("traversalComplete", true).put("finishedNanos", now());
+                        return isolated;
+                    } finally { original290WorkerPending.set(false); }
+                });
+            } catch (RuntimeException rejected) {
+                original290WorkerPending.set(false);
+                throw rejected;
+            }
+            try {
+                JSONObject result = task.get(10, TimeUnit.SECONDS);
+                for (String name : new String[]{"agreeFound", "agreeBoundsPx", "rootObserved", "rootReadNanos", "nodes", "traversalComplete", "finishedNanos"}) {
+                    if (result.has(name)) semantic.put(name, result.get(name));
+                }
+            }
+            catch (TimeoutException | InterruptedException unfinished) {
+                original290RetainedResources.set(true);
+                throw unfinished;
+            }
+        });
+        extra.put("finishedNanos", now());
+    }
+
 
     private void copy290(Activity activity, Snapshot snapshot, boolean window, File root, JSONObject receipt,
             Handler handler, List<Bitmap> owned) throws Exception {
