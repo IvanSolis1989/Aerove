@@ -447,9 +447,9 @@ SubscriptionCollectionResult mergeSubscriptionCollection({
   return SubscriptionCollectionResult(
     config: output,
     sources: Map.unmodifiable(maps),
-    proxyOrigins: Map.unmodifiable({
+    proxyOrigins: Map<String, List<SubscriptionCollectionOrigin>>.unmodifiable({
       for (final entry in origins.entries)
-        entry.key: List.unmodifiable(entry.value),
+        entry.key: List<SubscriptionCollectionOrigin>.unmodifiable(entry.value),
     }),
     deduplicatedProxyCount: deduplicated,
     renamedProxyCount: renamed,

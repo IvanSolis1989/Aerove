@@ -26,6 +26,7 @@ class _NoApply extends SetupAction {
 
 class _ObservedEdit extends ProfilesAction {
   final saved = Completer<void>();
+  Object? rejection;
   @override
   Future<Profile> saveProfileEdit(
     Profile profile, {
@@ -33,6 +34,9 @@ class _ObservedEdit extends ProfilesAction {
   }) async {
     try {
       return await super.saveProfileEdit(profile, fileData: fileData);
+    } catch (error) {
+      rejection = error;
+      rethrow;
     } finally {
       if (!saved.isCompleted) saved.complete();
     }
@@ -59,15 +63,17 @@ class _EditCore extends CoreHandlerInterface {
 class _EditorReturn extends NavigatorObserver {
   bool returnEditedBytes = false;
   int editPops = 0;
+  final editorReturned = Completer<void>();
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
     if (returnEditedBytes) {
       returnEditedBytes = false;
-      scheduleMicrotask(
-        () => navigator!.pop<Uint8List>(
+      scheduleMicrotask(() {
+        navigator!.pop<Uint8List>(
           utf8.encode('mode: direct\nrules: ["MATCH,DIRECT"]\n'),
-        ),
-      );
+        );
+        editorReturned.complete();
+      });
     }
   }
 
@@ -82,41 +88,66 @@ void main() {
     testWidgets(
       'rejected ${fileEdit ? 'file' : 'metadata'} edit retains both source files and its route',
       (tester) async {
-        final home = await Directory.systemTemp.createTemp(
-          'profile-edit-commit-',
-        );
-        await useAppPaths(home);
-        final sql = db.Database(NativeDatabase.memory());
-        final previous = db.database;
-        db.database = sql;
         const profile = Profile(
           id: 41,
           label: 'Original',
           autoUpdateDuration: Duration.zero,
         );
-        await sql.profiles.put(profile.toCompanion());
-        final yaml = await profile.file;
-        await yaml.writeAsString('old normalized source');
-        final input = File(
-          BackupEntries.resolve(
-            await appPath.homeDirPath,
-            BackupEntries.profileInput(41),
-          ),
-        );
-        await input.writeAsString('old archived input');
-        final action = _ObservedEdit();
-        final container = ProviderContainer(
-          overrides: [
-            profilesActionProvider.overrideWith(() => action),
-            setupActionProvider.overrideWith(() => _NoApply()),
-            coreHandlerProvider.overrideWithValue(
-              CoreController.scoped(_EditCore()),
+        final fixture = (await tester.runAsync(() async {
+          final home = await Directory.systemTemp.createTemp(
+            'profile-edit-commit-',
+          );
+          await useAppPaths(home);
+          final sql = db.Database(NativeDatabase.memory());
+          final previous = db.database;
+          db.database = sql;
+          await sql.profiles.put(profile.toCompanion());
+          final yaml = await profile.file;
+          await yaml.writeAsString('old normalized source');
+          final input = File(
+            BackupEntries.resolve(
+              await appPath.homeDirPath,
+              BackupEntries.profileInput(41),
             ),
-          ],
-        );
-        globalState.container = container;
-        final hold = container.listen(profilesProvider, (_, _) {});
-        await container.read(profilesStreamProvider.future);
+          );
+          await input.writeAsString('old archived input');
+          final action = _ObservedEdit();
+          final previousContainer = globalState.container;
+          final container = ProviderContainer(
+            overrides: [
+              profilesActionProvider.overrideWith(() => action),
+              setupActionProvider.overrideWith(() => _NoApply()),
+              coreHandlerProvider.overrideWithValue(
+                CoreController.scoped(_EditCore()),
+              ),
+            ],
+          );
+          globalState.container = container;
+          final hold = container.listen(profilesProvider, (_, _) {});
+          await container.read(profilesStreamProvider.future);
+          return (
+            home: home,
+            sql: sql,
+            previous: previous,
+            yaml: yaml,
+            input: input,
+            action: action,
+            container: container,
+            hold: hold,
+            previousContainer: previousContainer,
+          );
+        }))!;
+        final (
+          :home,
+          :sql,
+          :previous,
+          :yaml,
+          :input,
+          :action,
+          :container,
+          :hold,
+          :previousContainer,
+        ) = fixture;
         final observer = _EditorReturn();
         try {
           await tester.pumpWidget(
@@ -143,10 +174,6 @@ void main() {
           );
           await tester.tap(find.text('open editor'));
           await tester.pumpAndSettle();
-          await tester.runAsync(
-            () => Future<void>.delayed(const Duration(milliseconds: 20)),
-          );
-          await tester.pumpAndSettle();
           if (fileEdit) {
             observer.returnEditedBytes = true;
             final row = find.widgetWithText(
@@ -155,8 +182,14 @@ void main() {
             );
             expect(row, findsOneWidget);
             await tester.ensureVisible(row);
-            await tester.tap(row);
-            await tester.pumpAndSettle();
+            await tester.runAsync(() async {
+              await tester.tap(row);
+              await observer.editorReturned.future.timeout(
+                const Duration(seconds: 10),
+              );
+            });
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 400));
           } else {
             await tester.enterText(
               find.byWidgetPredicate(
@@ -167,29 +200,39 @@ void main() {
               'Changed',
             );
           }
-          await sql.customStatement(
-            'CREATE TRIGGER reject_profile_edit BEFORE INSERT ON profiles '
-            "BEGIN SELECT RAISE(ABORT, 'fixture rejection'); END",
-          );
-          await tester.tap(find.byTooltip(currentAppLocalizations.save));
-          await tester.pump();
-          await tester.runAsync(
-            () => action.saved.future.timeout(const Duration(seconds: 10)),
-          );
+          await tester.runAsync(() async {
+            await sql.customStatement(
+              'CREATE TRIGGER reject_profile_edit BEFORE INSERT ON profiles '
+              "BEGIN SELECT RAISE(ABORT, 'fixture rejection'); END",
+            );
+            await tester.tap(find.byTooltip(currentAppLocalizations.save));
+            await action.saved.future.timeout(const Duration(seconds: 10));
+          });
           await tester.pumpAndSettle();
           expect(find.byType(EditProfileView), findsOneWidget);
           expect(observer.editPops, 0);
-          expect((await sql.profilesDao.get(41))!.label, 'Original');
-          expect(await yaml.readAsString(), 'old normalized source');
-          expect(await input.readAsString(), 'old archived input');
+          expect(action.rejection.toString(), contains('fixture rejection'));
+          final retained = (await tester.runAsync(
+            () async => (
+              label: (await sql.profilesDao.get(41))!.label,
+              yaml: await yaml.readAsString(),
+              input: await input.readAsString(),
+            ),
+          ))!;
+          expect(retained.label, 'Original');
+          expect(retained.yaml, 'old normalized source');
+          expect(retained.input, 'old archived input');
           expect(tester.takeException(), isNull);
         } finally {
           await tester.pumpWidget(const SizedBox());
-          hold.close();
-          container.dispose();
-          db.database = previous;
-          await sql.close();
-          await home.delete(recursive: true);
+          await tester.runAsync(() async {
+            hold.close();
+            container.dispose();
+            globalState.container = previousContainer;
+            db.database = previous;
+            await sql.close();
+            await home.delete(recursive: true);
+          });
         }
       },
     );
