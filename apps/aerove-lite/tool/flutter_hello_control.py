@@ -306,7 +306,7 @@ def prepare(output):
     try:
         sdk = Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ['ANDROID_HOME'])
         android, tools = installed_tools(sdk)
-        require((sdk / 'platforms/android-37/android.jar').is_file(), 'Control App requires already installed compile SDK37')
+        runner_jars(sdk, android)  # Check the actual37.1 system API jars before generating or building the App.
         require((sdk / 'ndk/28.2.13676358/source.properties').is_file(), 'Official Flutter template NDK28.2.13676358 must already be installed')
         flutter = shutil.which('flutter'); require(flutter, 'Existing pinned Flutter tool missing')
         flutter_root = Path(flutter).resolve().parents[1]
@@ -318,6 +318,7 @@ def prepare(output):
         license_file = flutter_root / 'LICENSE'; require(license_file.is_file(), 'Official Flutter license missing')
         require('javac 17' in command('javac-version', [tools['javac'], '-version']) or
                 'javac 17' in (logs / 'javac-version.err').read_text(), 'Existing Java17 required')
+        aligned_runner = compile_runner(output, work, sdk, android, tools, owner)
         project = work / 'project'
         command('flutter-create', [flutter, 'create', '--no-pub', '--platforms', 'android', '--org', 'dev.aerove.diagnostic',
             '--project-name', 'flutter_onscreen_control', project], timeout=180)
@@ -326,11 +327,26 @@ def prepare(output):
         (project / 'pubspec.yaml').write_text('name: flutter_onscreen_control\npublish_to: none\nversion: 1.0.0+1\nenvironment:\n  sdk: ">=3.13.0 <4.0.0"\ndependencies:\n  flutter:\n    sdk: flutter\n')
         gradle = project / 'android/app/build.gradle.kts'
         text = gradle.read_text()
-        for old, new in (('compileSdk = flutter.compileSdkVersion', 'compileSdk = 37'), ('minSdk = flutter.minSdkVersion', 'minSdk = 33'), ('targetSdk = flutter.targetSdkVersion', 'targetSdk = 37')):
+        for old, new in (('compileSdk = flutter.compileSdkVersion', 'compileSdk { version = release(37) { minorApiLevel = 1 } }'), ('minSdk = flutter.minSdkVersion', 'minSdk = 33'), ('targetSdk = flutter.targetSdkVersion', 'targetSdk = 37')):
             require(text.count(old) == 1, 'Official template contract differs: ' + old); text = text.replace(old, new)
         require('signingConfig = signingConfigs.getByName("debug")' in text, 'Official release debug signing template differs')
         gradle.write_text(text)
+        settings = project / 'android/settings.gradle.kts'
+        settings_text = settings.read_text()
+        old_agp = 'id("com.android.application") version "9.1.0" apply false'
+        require(settings_text.count(old_agp) == 1, 'Pinned Flutter template AGP version differs')
+        settings_text = settings_text.replace(old_agp, 'id("com.android.application") version "9.4.1" apply false')
+        old_kotlin = 'id("org.jetbrains.kotlin.android") version "2.4.0" apply false'
+        require(settings_text.count(old_kotlin) == 1, 'Pinned Flutter template Kotlin plugin differs')
+        settings.write_text(settings_text.replace(old_kotlin, 'id("org.jetbrains.kotlin.android") version "2.4.10" apply false'))
+        wrapper = project / 'android/gradle/wrapper/gradle-wrapper.properties'
+        wrapper_text = wrapper.read_text()
+        old_distribution = r'distributionUrl=https\://services.gradle.org/distributions/gradle-9.3.1-all.zip'
+        require(wrapper_text.count(old_distribution) == 1, 'Pinned Flutter template Gradle distribution differs')
+        wrapper.write_text(wrapper_text.replace(old_distribution, r'distributionUrl=https\://services.gradle.org/distributions/gradle-9.8.0-all.zip'))
         properties = project / 'android/gradle.properties'
+        require(properties.read_text().count('android.newDsl=false') == 1 and
+            properties.read_text().count('android.builtInKotlin=false') == 1, 'Pinned template classic Android/Kotlin flags differ')
         properties.write_text(properties.read_text() + '\norg.gradle.daemon=false\n')
         command('flutter-pub-get', [flutter, 'pub', 'get'], cwd=project, timeout=180)
         sources = output / 'sources'; sources.mkdir()
@@ -361,12 +377,13 @@ def prepare(output):
                 url='https://github.com/flutter/flutter/blob/' + FRAMEWORK + '/examples/hello_world/lib/main.dart'),
             adapterModuleSha256=sha(Path(__file__)), sourceFiles=source_files, flutterLibrary=library,
             actualBuildFlags=['build', 'apk', '--release', '--target-platform', 'android-x64'],
-            android=dict(compileSdk=37, minSdk=33, targetSdk=37, releaseDebugSigner=True, stockRenderer=True),
+            android=dict(compileSdk=37, compileSdkMinor=1, minSdk=33, targetSdk=37, releaseDebugSigner=True, stockRenderer=True),
+            buildToolchain=dict(agp='9.4.1', gradle='9.8.0', kotlin='2.4.10', ndk='28.2.13676358'),
             buildCommand=next(row for row in commands if row['label'] == 'flutter-build-once'),
-            adaptation='Official Android scaffold; original main bytes; isolated Flutter-only pubspec; SDK levels only',
+            adaptation='Official Android scaffold and original main; isolated Flutter-only pubspec; explicit SDK37.1/min33/target37 and original290 AGP9.4.1/Gradle9.8.0/Kotlin2.4.10',
             reuse='Retain this App checkpoint if the independent runner fails; rebuild only the runner')
         save(output / 'CONTROL-APP-BUILD.json', app_checkpoint)
-        signer = build_runner(output, work, sdk, android, tools, owner,
+        signer = sign_runner(output, aligned_runner, tools, owner,
             Path.home() / '.android/debug.keystore', app_signer)
         owner.close()
         save(logs / 'commands.json', commands)
@@ -382,16 +399,25 @@ def prepare(output):
         raise
 
 
-def build_runner(output, work, sdk, android, tools, owner, key, expected_signer):
-    command = owner.command
-    require(key.is_file() and not key.resolve().is_relative_to(output.resolve()), 'Original signing key missing or inside upload output')
-    command('runner-key-certificate', [tools['keytool'], '-exportcert', '-keystore', key,
-        '-alias', 'androiddebugkey', '-storepass', 'android'])
-    require(sha(owner.logs / 'runner-key-certificate.out') == expected_signer,
-        'Control-invalid: original signer key unavailable or certificate differs; never rebuild or resign App')
+def runner_jars(sdk, android):
     optional = sdk / 'platforms/android-37.1/optional'
     jars = [optional / (name + '.jar') for name in ('android.test.runner', 'android.test.base', 'android.test.mock')]
-    require(all(p.is_file() for p in jars), 'Required actual system test optional jars missing; no fallback')
+    require(android == sdk / 'platforms/android-37.1/android.jar' and android.is_file() and all(j.is_file() for j in jars),
+            'Installed37.1 platform and actual system optional jars required; no37.0 fallback')
+    names = set()
+    for jar in jars:
+        with zipfile.ZipFile(jar) as archive: names.update(archive.namelist())
+    require({'android/test/InstrumentationTestCase.class', 'android/test/InstrumentationTestRunner.class',
+             'junit/framework/TestCase.class'}.issubset(names), 'System JUnit3 optional class closure missing')
+    require((SOURCE / 'FlutterHelloWorldControlTest.java').is_file() and (SOURCE / 'AndroidManifest.xml').is_file(),
+            'Fixed runner source/manifest missing')
+    return jars
+
+
+def compile_runner(output, work, sdk, android, tools, owner):
+    """Compile/link/align this runner once, before the single control App build."""
+    command = owner.command
+    jars = runner_jars(sdk, android)
     classes = work / 'classes'; classes.mkdir()
     command('runner-javac', [tools['javac'], '-source', '17', '-target', '17', '-classpath', os.pathsep.join(map(str, [android, *jars])),
         '-d', classes, SOURCE / 'FlutterHelloWorldControlTest.java'])
@@ -399,18 +425,12 @@ def build_runner(output, work, sdk, android, tools, owner, key, expected_signer)
     argv = [tools['d8'], '--min-api', '33', '--lib', android, '--output', dex]
     for jar in jars: argv += ['--classpath', jar]
     command('runner-d8', [*argv, *sorted(classes.rglob('*.class'))])
-    unsigned, aligned, runner = work / 'runner-unsigned.apk', work / 'runner-aligned.apk', output / 'runner.apk'
+    unsigned, aligned = work / 'runner-unsigned.apk', work / 'runner-aligned.apk'
     command('runner-aapt2', [tools['aapt2'], 'link', '-I', android, '--manifest', SOURCE / 'AndroidManifest.xml', '-o', unsigned])
     with zipfile.ZipFile(unsigned, 'a') as z: z.write(dex / 'classes.dex', 'classes.dex')
     command('runner-align', [tools['zipalign'], '-f', '4', unsigned, aligned])
-    require(key.is_file(), 'Original Flutter debug keystore is required; no key creation or App rebuild')
-    command('runner-sign', [tools['apksigner'], 'sign', '--ks', key, '--ks-key-alias', 'androiddebugkey',
-        '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', runner, aligned])
-    signer = expected_signer
-    require(signing_certificate(command('runner-signature', [tools['apksigner'], 'verify', '--verbose', '--print-certs', runner])) == signer,
-            'Control and independent runner signing identities differ')
-    check_badging(command('runner-badging', [tools['aapt'], 'dump', 'badging', runner]), RUNNER)
-    manifest = command('runner-manifest', [tools['aapt'], 'dump', 'xmltree', runner, 'AndroidManifest.xml'])
+    check_badging(command('runner-badging', [tools['aapt'], 'dump', 'badging', aligned]), RUNNER)
+    manifest = command('runner-manifest', [tools['aapt'], 'dump', 'xmltree', aligned, 'AndroidManifest.xml'])
     require('android.test.InstrumentationTestRunner' in manifest and len(re.findall(r'E: instrumentation(?: |$)', manifest, re.M)) == 1
             and re.search(r'android:targetPackage[^=]*="' + re.escape(PACKAGE) + r'"', manifest) and
             re.search(r'android:testOnly[^=]*=\(type 0x12\)0xffffffff', manifest), 'Runner instrumentation boundary differs')
@@ -418,7 +438,37 @@ def build_runner(output, work, sdk, android, tools, owner, key, expected_signer)
     descriptors = re.findall(r"Class descriptor\s*:\s*'([^']+)'", defined)
     require(descriptors and all(n.startswith('Ldev/aerove/diagnostic/FlutterHelloWorldControlTest') for n in descriptors),
             'Runner duplicated framework/runtime classes')
+    return aligned
+
+
+def verify_runner_key(output, tools, owner, key, expected_signer):
+    command = owner.command
+    require(key.is_file() and not key.resolve().is_relative_to(output.resolve()), 'Original signing key missing or inside upload output')
+    command('runner-key-certificate', [tools['keytool'], '-exportcert', '-keystore', key,
+        '-alias', 'androiddebugkey', '-storepass', 'android'])
+    require(sha(owner.logs / 'runner-key-certificate.out') == expected_signer,
+        'Control-invalid: original signer key unavailable or certificate differs; never rebuild or resign App')
+
+
+def sign_runner(output, aligned, tools, owner, key, expected_signer, key_checked=False):
+    command = owner.command
+    if not key_checked: verify_runner_key(output, tools, owner, key, expected_signer)
+    runner = output / 'runner.apk'
+    require(key.is_file(), 'Original Flutter debug keystore is required; no key creation or App rebuild')
+    command('runner-sign', [tools['apksigner'], 'sign', '--ks', key, '--ks-key-alias', 'androiddebugkey',
+        '--ks-pass', 'pass:android', '--key-pass', 'pass:android', '--out', runner, aligned])
+    signer = expected_signer
+    require(signing_certificate(command('runner-signature', [tools['apksigner'], 'verify', '--verbose', '--print-certs', runner])) == signer,
+            'Control and independent runner signing identities differ')
     return signer
+
+
+def build_runner(output, work, sdk, android, tools, owner, key, expected_signer):
+    # Recovery checks the original key first, then reuses exactly the same compile/sign helpers.
+    verify_runner_key(output, tools, owner, key, expected_signer)
+    aligned = compile_runner(output, work, sdk, android, tools, owner)
+    return sign_runner(output, aligned, tools, owner, key, expected_signer, key_checked=True)
+
 
 def seal_control(output, checkpoint, signer, app_reused):
     identity = ci_artifacts.identity()
@@ -457,7 +507,8 @@ def verify_app_checkpoint(directory, expected_digest):
     source = value.get('officialSource', {})
     require(source.get('framework') == FRAMEWORK and source.get('engine') == ENGINE and source.get('mainSha256') == MAIN_SHA,
             'Original App official Git source differs')
-    require(value.get('android') == dict(compileSdk=37, minSdk=33, targetSdk=37, releaseDebugSigner=True, stockRenderer=True)
+    require(value.get('android') == dict(compileSdk=37, compileSdkMinor=1, minSdk=33, targetSdk=37, releaseDebugSigner=True, stockRenderer=True)
+        and value.get('buildToolchain') == dict(agp='9.4.1', gradle='9.8.0', kotlin='2.4.10', ndk='28.2.13676358')
         and value.get('actualBuildFlags') == ['build', 'apk', '--release', '--target-platform', 'android-x64'],
         'Original release/control build flags differ')
     apk = root / 'control.apk'
@@ -555,6 +606,33 @@ def runtime(directory):
 
 
 class Control(Producer):
+    def ordinary_launch(self, bound):
+        """Compare the same installed, stateless control outside instrumentation."""
+        self.adb_command('ordinary-stop-before', 'shell', 'am', 'force-stop', PACKAGE)
+        self.adb_command('ordinary-launch', 'shell', 'am', 'start', '-W', '-n', PACKAGE + '/' + ACTIVITY, timeout=35)
+        time.sleep(10)
+        pid = self.adb_command('ordinary-pid', 'shell', 'pidof', PACKAGE).decode().strip()
+        require(re.fullmatch('[1-9][0-9]*', pid), 'Ordinary control requires one live app process')
+        image = self.adb_command('ordinary-display', 'exec-out', 'screencap', '-p', timeout=20)
+        require(image[:8] == b'\x89PNG\r\n\x1a\n' and len(image) >= 33 and image[12:16] == b'IHDR'
+            and int.from_bytes(image[16:20], 'big') == 1080 and int.from_bytes(image[20:24], 'big') == 2400,
+            'Ordinary control original display PNG differs')
+        output = self.args.output / 'ordinary-display.png'
+        require(not output.exists(), 'Ordinary display output must be new')
+        output.write_bytes(image)
+        self.adb_command('ordinary-window', 'shell', 'dumpsys', '-t', '10', 'window', 'windows', timeout=15)
+        self.adb_command('ordinary-surfaceflinger', 'shell', 'dumpsys', '-t', '10', 'SurfaceFlinger', timeout=15)
+        log = self.adb_command('ordinary-renderer-log', 'logcat', '-d', '-v', 'threadtime', timeout=45).decode(errors='replace')
+        evidence = renderer(log, pid)
+        require(any('Using the Impeller rendering backend (OpenGLES)' in line for line in evidence['lines']),
+            'Ordinary control stock Impeller GLES not observed')
+        require(self.adb_command('ordinary-pid-after', 'shell', 'pidof', PACKAGE).decode().strip() == pid,
+            'Ordinary control process changed during observation')
+        installed = self.installed_hash('ordinary-after', PACKAGE, bound['apks']['control.apk'])
+        self.receipt['ordinaryLaunch'] = dict(mode='am-start-without-instrumentation', pid=pid,
+            display=dict(file=output.name, bytes=len(image), sha256=sha(output), width=1080, height=2400),
+            appRenderer=evidence, installedAfter=installed, accepted=False, atomicSameFrame=False)
+
     def run(self):
         ci_only()
         bound = runtime(self.args.runtime_directory)
@@ -605,6 +683,7 @@ class Control(Producer):
             self.receipt['installedAfter'] = self.installed_hash('control-after', PACKAGE, bound['apks']['control.apk'])
             self.adb_command('post-run-window', 'shell', 'dumpsys', '-t', '10', 'window', 'windows', timeout=15)
             self.adb_command('post-run-surfaceflinger', 'shell', 'dumpsys', '-t', '10', 'SurfaceFlinger', timeout=15)
+            self.ordinary_launch(bound)
             require(len(records) == 1 and records[0]['className'] + '#' + records[0]['testName'] == SELECTOR
                 and records[0]['status'] == 'passed' and capture.get('qaToken') == token and capture.get('captureCompleted') is True
                 and capture.get('resourceCleanup') == 'complete' and capture.get('accepted') is False, 'Actual control observation failed')

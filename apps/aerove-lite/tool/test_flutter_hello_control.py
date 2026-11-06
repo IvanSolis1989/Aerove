@@ -191,6 +191,24 @@ class RealBuildOwnerHostTests(unittest.TestCase):
             self.assertEqual(original,signal.getsignal(signal.SIGTERM))
 
 class RecoveryKeyAndCheckpointTests(unittest.TestCase):
+    def test_existing_minor_sdk_needs_no_separate_major_platform(self):
+        # The real299 host had37.1 only; this tests admission, not SDK execution.
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk = Path(tmp)
+            platform = sdk / 'platforms/android-37.1'
+            optional = platform / 'optional'; optional.mkdir(parents=True)
+            android = platform / 'android.jar'; android.touch()
+            classes = {'android.test.runner': ['android/test/InstrumentationTestCase.class', 'android/test/InstrumentationTestRunner.class'],
+                       'android.test.base': ['junit/framework/TestCase.class'], 'android.test.mock': []}
+            for name, members in classes.items():
+                with zipfile.ZipFile(optional / (name + '.jar'), 'w') as archive:
+                    for member in members: archive.writestr(member, b'not-executed-class')
+            self.assertEqual(3, len(control.runner_jars(sdk, android)))
+            self.assertFalse((sdk / 'platforms/android-37').exists())
+            (optional / 'android.test.base.jar').unlink()
+            with self.assertRaisesRegex(ValueError, 'optional jars'):
+                control.runner_jars(sdk, android)
+
     def test_changed_checkpoint_is_rejected_before_engine_or_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);(root/'CONTROL-APP-BUILD.json').write_text('{}')
