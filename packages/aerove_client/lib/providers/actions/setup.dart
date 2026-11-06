@@ -1872,12 +1872,17 @@ class SetupAction extends _$SetupAction {
         continue;
       }
       final prepared = await clashProvidersAction.prepare(provider);
-      final path = await prepared.corePath;
+      final path = await prepared.corePath(
+        ClientProduct.current.expectedCoreId,
+      );
       final filePath = prepared.sourceDefinition != null
           ? await prepared.path
           : path;
       for (final label in labels) {
-        ruleProviders[label] = prepared.definition(path);
+        ruleProviders[label] = prepared.definition(
+          path,
+          coreId: ClientProduct.current.expectedCoreId,
+        );
         ruleFiles[label] = filePath;
       }
     }

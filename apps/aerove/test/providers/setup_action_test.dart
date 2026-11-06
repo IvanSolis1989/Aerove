@@ -2023,8 +2023,8 @@ void main() {
             ..createSync(recursive: true)
             ..writeAsStringSync(body);
           addTearDown(source.deleteSync);
-          expect(provider.isCompiled, isTrue);
-          expect(await provider.corePath, '$sourcePath.mrs');
+          expect(provider.isCompiled('mihomo'), isTrue);
+          expect(await provider.corePath('mihomo'), '$sourcePath.mrs');
           final core = _MockCoreHandlerInterface();
           when(
             () => core.compileRuleSet(provider.fileName, url: ''),

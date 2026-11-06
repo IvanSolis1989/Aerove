@@ -1,4 +1,9 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:dio/dio.dart';
+import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/native_lite_migration.dart'
+    show nativeLitePrivateDestination;
 
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/plugins/service.dart';
@@ -19,11 +24,14 @@ class MeowCoreHandler extends CoreHandlerInterface
   MeowCoreHandler.scoped(
     this._service, {
     Future<SharedState> Function()? readSharedState,
+    Request? ruleSetRequest,
     this.connectionTimeout = const Duration(seconds: 10),
     this.requestTimeout = const Duration(minutes: 3),
-  }) : _readSharedState = readSharedState ?? _sharedState;
+  }) : _readSharedState = readSharedState ?? _sharedState,
+       _ruleSetRequest = ruleSetRequest ?? request;
 
   final Service _service;
+  final Request _ruleSetRequest;
   final Future<SharedState> Function() _readSharedState;
   final Duration connectionTimeout;
   final Duration requestTimeout;
@@ -33,6 +41,7 @@ class MeowCoreHandler extends CoreHandlerInterface
   final Map<String, _MeowCall> _calls = {};
   final Set<_MeowCall> _unsettledNative = {};
   void _settleCall(_MeowCall call) {
+    if (call.downloadOwner?.isQuiescent == false) return;
     _unsettledNative.remove(call);
     if (!call._quiescent.isCompleted) call._quiescent.complete();
   }
@@ -41,6 +50,16 @@ class MeowCoreHandler extends CoreHandlerInterface
     for (final call in _unsettledNative.toList()) {
       _settleCall(call);
     }
+    _requireDownloadsQuiescent();
+  }
+
+  void _requireDownloadsQuiescent() {
+    if (_unsettledNative.any(
+      (call) => call.downloadOwner?.isQuiescent == false,
+    ))
+      throw StateError(
+        'Rule download cleanup is unconfirmed; private candidates are retained',
+      );
   }
 
   Completer<void> _connection = Completer<void>();
@@ -181,8 +200,10 @@ class MeowCoreHandler extends CoreHandlerInterface
     _ensureOpen();
     final cancellations = _invalidate(detach: false);
     final epoch = _epoch;
-    final accepted = await _service.start();
     await cancellations;
+    _requireDownloadsQuiescent();
+    if (_closed || epoch != _epoch) return false;
+    final accepted = await _service.start();
     return !_closed && epoch == _epoch && accepted;
   }
 
@@ -196,6 +217,7 @@ class MeowCoreHandler extends CoreHandlerInterface
     final epoch = _epoch;
     final accepted = await _service.stop();
     await cancellations;
+    _requireDownloadsQuiescent();
     return !_closed && epoch == _epoch && accepted;
   }
 
@@ -206,6 +228,7 @@ class MeowCoreHandler extends CoreHandlerInterface
     final epoch = _epoch;
     final accepted = await _service.park();
     await cancellations;
+    _requireDownloadsQuiescent();
     return !_closed && epoch == _epoch && accepted;
   }
 
@@ -309,6 +332,43 @@ class MeowCoreHandler extends CoreHandlerInterface
         _settleCall(call);
         return;
       }
+      if (call.method == CoreMethod.compileRuleSet) {
+        final row = Map<String, dynamic>.from(arguments as Map);
+        final name = row['name'] as String;
+        final url = row['url'] as String;
+        if (!RegExp(r'^[0-9a-f]{32}\.[0-9]+\.new$').hasMatch(name))
+          throw const FormatException(
+            'Meow compile requires an owned SQL cache candidate',
+          );
+        if (url.isNotEmpty) {
+          final candidate = File(await appPath.getProviderCachePath(name));
+          await nativeLitePrivateDestination(
+            candidate,
+            Directory(await appPath.homeDirPath),
+          );
+          if (await FileSystemEntity.type(candidate.path, followLinks: false) !=
+              FileSystemEntityType.file)
+            throw const FormatException(
+              'Rule candidate is not an owned regular file',
+            );
+          call.downloadCancellation = CancelToken();
+          call.downloadOwner = RuleDownloadOwner(candidatePath: candidate.path);
+          _unsettledNative.add(call);
+          call.download = _ruleSetRequest.downloadRuleSetToOwnedFile(
+            url,
+            candidate,
+            cancellation: call.downloadCancellation!,
+            isCurrent: () => _current(call),
+            owner: call.downloadOwner!,
+          );
+          await call.download;
+        }
+        if (!_current(call)) {
+          _settleCall(call);
+          return;
+        }
+        arguments = {'name': name, 'url': '', 'allow-empty': url.isEmpty};
+      }
       call.sent = true;
       _unsettledNative.add(call);
       var response = await _service.invokeMethod(
@@ -365,6 +425,21 @@ class MeowCoreHandler extends CoreHandlerInterface
     if (call.response.isCompleted) return;
     call.timer?.cancel();
     try {
+      call.downloadCancellation?.cancel('Meow compile was cancelled');
+      Object? downloadFailure;
+      StackTrace? downloadStack;
+      try {
+        await call.download;
+      } catch (error, stack) {
+        downloadFailure = error;
+        downloadStack = stack;
+      }
+      if (call.downloadOwner?.isQuiescent == false) {
+        Error.throwWithStackTrace(
+          downloadFailure ?? StateError('Rule download cleanup is unconfirmed'),
+          downloadStack ?? StackTrace.current,
+        );
+      }
       if (call.sent) await _service.cancelMethod(call.id);
       _settleCall(call);
       if (!call.response.isCompleted) call.response.completeError(reason);
@@ -376,7 +451,10 @@ class MeowCoreHandler extends CoreHandlerInterface
   }
 
   Object _transportError(Object error) {
-    if (error is CoreMethodException || error is TimeoutException) return error;
+    if (error is CoreMethodException ||
+        error is TimeoutException ||
+        error is RuleDownloadCleanupFailure)
+      return error;
     return CoreMethodException(
       code: error is MissingPluginException
           ? 'transport_disconnected'
@@ -414,6 +492,9 @@ class _MeowCall implements CoreRequestQuiescence {
   Timer? timer;
   Future<void>? cancellation;
   bool sent = false;
+  CancelToken? downloadCancellation;
+  Future<void>? download;
+  RuleDownloadOwner? downloadOwner;
   final _quiescent = Completer<void>();
   @override
   bool get isQuiescent => _quiescent.isCompleted;

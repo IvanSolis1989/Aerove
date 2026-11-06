@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
+import 'package:crypto/crypto.dart';
 
 import 'package:fl_clash/common/app_data.dart';
 import 'package:fl_clash/common/boot_guard.dart';
@@ -31,7 +32,7 @@ import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/ui/frame_pacer.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/foundation.dart'
-    show compute, ValueListenable, ValueNotifier;
+    show compute, ValueListenable, ValueNotifier, visibleForTesting;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' show basename, join;

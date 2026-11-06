@@ -12,7 +12,7 @@ import 'package:fl_clash/core/spill.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:flutter/foundation.dart'
-    show visibleForTesting, ValueListenable;
+    show visibleForTesting, ValueListenable, ValueNotifier;
 import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 
@@ -470,8 +470,41 @@ class CoreController {
     return _interface.dumpRuleSet(path);
   }
 
-  Future<RuleSetInfo> compileRuleSet(String name, {String url = ''}) {
-    return _interface.compileRuleSet(name, url: url);
+  Future<RuleSetInfo> compileRuleSet(
+    String name, {
+    String url = '',
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
+    void Function(String digest)? inspectedDigest,
+  }) async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs')
+      return _interface.compileRuleSet(name, url: url);
+    final owner = _interface;
+    if (owner is! CancellableCoreRequest)
+      throw StateError('Meow compile requires a joined request owner');
+    final cancellation = ValueNotifier<bool>(false);
+    try {
+      final data = await (owner as CancellableCoreRequest)
+          .invokeCancellableMethod<Map>(
+            method: CoreMethod.compileRuleSet,
+            arguments: {'name': name, 'url': url},
+            cancellation: cancellation,
+            observeQuiescence: observeQuiescence,
+          );
+      if (data == null)
+        throw StateError('Meow did not inspect the rule candidate');
+      final digest = data['sourceSha256'];
+      if (digest is! String || !RegExp(r'^[0-9a-f]{64}$').hasMatch(digest))
+        throw StateError('Meow inspection has no exact source digest');
+      inspectedDigest?.call(digest);
+      return (
+        behavior: RuleProviderBehavior.values.byName(
+          data['behavior'] as String,
+        ),
+        format: RuleProviderFormat.values.byName(data['format'] as String),
+      );
+    } finally {
+      cancellation.dispose();
+    }
   }
 
   Future<String> updateExternalProvider({required String providerName}) async {

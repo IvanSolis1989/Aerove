@@ -1141,6 +1141,8 @@ jobs:
         suites=(
           common/subscription_compatibility_test.dart
           common/subscription_collection_test.dart
+          common/clash_provider_core_path_test.dart
+          common/rule_download_cleanup_test.dart
           common/source_plan_test.dart
           common/source_plan_detached_test.dart
           common/file_provider_source_test.dart
@@ -1155,6 +1157,8 @@ jobs:
           features/profile_update_cancel_view_test.dart
           state_storage/profile_write_test.dart
           providers/database_test.dart
+          providers/clash_providers_action_test.dart
+          providers/meow_rule_publication_commit_test.dart
           providers/backup_action_test.dart
           common/backup_task_test.dart
           providers/store_action_test.dart
@@ -1164,10 +1168,14 @@ jobs:
         )
         for suite in "${suites[@]}"; do
           label="${suite//\//_}"
-          printf '%q ' flutter test --no-pub --concurrency 1 --machine "test/$suite" > "$evidence/$label.command.txt"
+          suite_args=()
+          if [[ "$suite" == 'providers/meow_rule_publication_commit_test.dart' ]]; then
+            suite_args+=(--dart-define=AEROVE_TEST_SUITE_PRODUCT=true)
+          fi
+          printf '%q ' flutter test --no-pub --concurrency 1 --machine "${suite_args[@]}" "test/$suite" > "$evidence/$label.command.txt"
           printf '\n' >> "$evidence/$label.command.txt"
           set +e
-          flutter test --no-pub --concurrency 1 --machine "test/$suite" 2>&1 | tee "$evidence/$label.jsonl"
+          flutter test --no-pub --concurrency 1 --machine "${suite_args[@]}" "test/$suite" 2>&1 | tee "$evidence/$label.jsonl"
           statuses=("${PIPESTATUS[@]}")
           set -e
           printf '%s %s\n' "${statuses[0]}" "${statuses[1]}" > "$evidence/$label.status.txt"
@@ -1202,10 +1210,10 @@ jobs:
                 cases=[dict(name=tests[e['testID']]['name'], result=e.get('result'), skipped=e.get('skipped')) for e in visible if e['testID'] in tests])
         receipt = dict(schema=1, source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
             attempt=os.environ['GITHUB_RUN_ATTEMPT'], independentProcesses=True, productionHooksEnabled=True,
-            composition='Standard test entry; explicit core arguments and MeowCoreHandler fixtures retain their own identities',
+            composition='Standard and explicitly selected Lite test entries; core arguments and MeowCoreHandler fixtures retain their own identities',
             results=results, appApkBuilt=False, acceptance=False)
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert len(results) == 22 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        assert len(results) == 26 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
         PY
     - name: Compile the Flutter host and actual platform acceptance runner
       working-directory: apps/aerove-lite
@@ -1265,6 +1273,7 @@ jobs:
           --tests dev.aerove.lite.flutter.MeowLegacyMigrationExportTest \
           --tests dev.aerove.lite.flutter.MeowAppPluginTest \
           --tests dev.aerove.lite.core.MeowStartupDiagnosticTest \
+          --tests dev.aerove.lite.flutter.MeowRuleSetProtocolTest \
           --tests dev.aerove.lite.flutter.ResourceReaderFenceRegressionTest \
           --tests dev.aerove.lite.data.MeowTunReconciliation90Test \
           2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-migration-jvm.log"
@@ -1356,8 +1365,7 @@ jobs:
       working-directory: apps/aerove
       run: |-
         flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
-          test/common/native_lite_builder_test.dart \
-          --plain-name 'fresh null selection uses the real Lite producer and no core profile read'
+          test/common/native_lite_builder_test.dart
         flutter test --no-pub --concurrency 1 \
           test/common/path_test.dart test/providers/setup_action_test.dart
     - name: Verify shared-process RSS and confirmed memory cleanup in both products

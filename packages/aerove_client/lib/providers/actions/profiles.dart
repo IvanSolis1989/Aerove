@@ -588,7 +588,10 @@ class ProfilesAction extends _$ProfilesAction {
   /// [config] replaces what [profileId] holds. The providers it adds are saved
   /// before the groups and rules naming them, and loaded afterwards; the
   /// future completes once they have loaded.
-  Future<void> importCustomProfile(int profileId, CustomProfileImport config) {
+  Future<void> importCustomProfile(
+    int profileId,
+    CustomProfileImport config,
+  ) async {
     final profiles = ref.read(profilesProvider.notifier);
     final clashProviders = ref.read(clashProvidersProvider.notifier);
     final loads = <({String label, Future<void> Function() load})>[];
@@ -615,7 +618,9 @@ class ProfilesAction extends _$ProfilesAction {
     for (final (:label, :url, ageSecretKey: _, :content)
         in config.ruleProviders) {
       final provider = ClashProvider.create(label: label, url: url);
-      clashProviders.put(provider);
+      await ref
+          .read(setupActionProvider.notifier)
+          .withProviderSourceWrite(() => clashProviders.put(provider));
       loads.add((
         label: label,
         load: url.isNotEmpty

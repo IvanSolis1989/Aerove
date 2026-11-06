@@ -14,6 +14,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/changelog.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/providers/config.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 class Request {
@@ -119,6 +120,133 @@ class Request {
       timer.cancel();
       download.close(force: true);
       await adapter.join();
+    }
+  }
+
+  Future<void> downloadRuleSetToOwnedFile(
+    String url,
+    File destination, {
+    required CancelToken cancellation,
+    required bool Function() isCurrent,
+    required RuleDownloadOwner owner,
+  }) async {
+    _JoinedDownloadAdapter? adapter;
+    Dio? download;
+    Timer? timer;
+    Future<void>? cancellationClose;
+    IOSink? output;
+    StreamIterator<Uint8List>? input;
+    Object? primary;
+    StackTrace? primaryStack;
+    owner.begin();
+    try {
+      final read = _read;
+      if (read == null)
+        throw StateError('Shared request policy is not attached');
+      final userAgent = globalState.ua;
+      final checkCertificate = read(appSettingProvider).checkCertificate;
+      final proxy = FlClashHttpOverrides.findProxyForReader(
+        read,
+        Uri.https('rule-policy.invalid', '/'),
+      );
+      final target = downloadTarget(url);
+      final httpAdapter = _JoinedDownloadAdapter(
+        createHttpClient: () {
+          final client = HttpClient()..userAgent = userAgent;
+          client.badCertificateCallback = (_, _, _) => !checkCertificate;
+          client.findProxy = (uri) => uri.host == localhost ? 'DIRECT' : proxy;
+          return client;
+        },
+      );
+      adapter = httpAdapter;
+      final http = Dio()..httpClientAdapter = httpAdapter;
+      download = http;
+      timer = Timer(
+        downloadTimeoutDuration,
+        () => cancellation.cancel('Rule download timed out'),
+      );
+      cancellationClose = cancellation.whenCancel.then<void>((_) {
+        try {
+          http.close(force: true);
+        } catch (error, stack) {
+          owner.recordFailure('cancellation-http-close', error, stack);
+        }
+      });
+      if (!isCurrent() || cancellation.isCancelled)
+        throw StateError('Rule source changed');
+      final response = await http.getUri<ResponseBody>(
+        target.uri,
+        options: Options(
+          responseType: ResponseType.stream,
+          headers: {...target.headers, 'User-Agent': userAgent},
+        ),
+        cancelToken: cancellation,
+      );
+      final body = response.data;
+      if (body == null) throw const FormatException('Rule response is empty');
+      final declared = int.tryParse(
+        response.headers.value(HttpHeaders.contentLengthHeader) ?? '',
+      );
+      if (declared != null && declared > 64 * 1024 * 1024)
+        throw const FormatException('Rule response exceeds 67108864 bytes');
+      output = destination.openWrite();
+      var count = 0;
+      final reader = StreamIterator(body.stream);
+      input = reader;
+      final cancelled = cancellation.whenCancel.then<bool>((_) => false);
+      while (await Future.any([reader.moveNext(), cancelled])) {
+        final chunk = reader.current;
+        if (!isCurrent() || cancellation.isCancelled)
+          throw StateError('Rule download was superseded');
+        count += chunk.length;
+        if (count > 64 * 1024 * 1024)
+          throw const FormatException('Rule response exceeds 67108864 bytes');
+        output.add(chunk);
+        await output.flush();
+      }
+      if (count == 0) throw const FormatException('Remote rule set is empty');
+      if (!isCurrent() || cancellation.isCancelled)
+        throw StateError('Rule download was superseded');
+    } catch (error, stack) {
+      primary = error;
+      primaryStack = stack;
+    } finally {
+      await owner.closeAndJoin(
+        primary: primary,
+        primaryStack: primaryStack,
+        steps: [
+          (name: 'timer-cancel', close: () => timer?.cancel()),
+          (
+            name: 'token-cancel',
+            close: () => cancellation.cancel('Rule download finished'),
+          ),
+          (name: 'http-close', close: () => download?.close(force: true)),
+          (
+            name: 'cancellation-listener',
+            close: () async {
+              if (cancellation.isCancelled) await cancellationClose;
+            },
+          ),
+          (
+            name: 'reader-cancel',
+            close: () async {
+              await input?.cancel();
+            },
+          ),
+          (
+            name: 'http-join',
+            close: () async {
+              await adapter?.join();
+            },
+          ),
+          (
+            name: 'sink-close',
+            close: () async {
+              await output?.close();
+            },
+          ),
+        ],
+      );
     }
   }
 
@@ -233,6 +361,83 @@ class Request {
   );
 }
 
+typedef RuleDownloadCleanupStep = ({
+  String name,
+  FutureOr<void> Function() close,
+});
+typedef RuleDownloadCleanupError = ({
+  String step,
+  Object error,
+  StackTrace stack,
+});
+
+class RuleDownloadCleanupFailure implements Exception {
+  RuleDownloadCleanupFailure(
+    this.primary,
+    this.primaryStack,
+    this.failures, {
+    this.candidatePath,
+  });
+  final String? candidatePath;
+  final Object? primary;
+  final StackTrace? primaryStack;
+  final List<RuleDownloadCleanupError> failures;
+  @override
+  String toString() =>
+      'Rule download cleanup unconfirmed; candidate: $candidatePath; primary: $primary; '
+      'cleanup: ${failures.map((failure) => "${failure.step}: ${failure.error}").join("; ")}';
+}
+
+class RuleDownloadOwner {
+  RuleDownloadOwner({this.candidatePath});
+  final String? candidatePath;
+  bool _started = false;
+  bool _finished = false;
+  bool _quiescent = false;
+  final _failures = <RuleDownloadCleanupError>[];
+  bool get isQuiescent => !_started || _quiescent;
+
+  void begin() {
+    if (_started) throw StateError('Rule download owner is already started');
+    _started = true;
+  }
+
+  void recordFailure(String step, Object error, StackTrace stack) {
+    _failures.add((step: step, error: error, stack: stack));
+  }
+
+  Future<void> closeAndJoin({
+    Object? primary,
+    StackTrace? primaryStack,
+    required List<RuleDownloadCleanupStep> steps,
+  }) async {
+    if (!_started || _finished)
+      throw StateError('Rule download cleanup owner is not active');
+    _finished = true;
+    await Future.wait([
+      for (final step in steps)
+        Future<void>.sync(() async {
+          try {
+            await step.close();
+          } catch (error, stack) {
+            recordFailure(step.name, error, stack);
+          }
+        }),
+    ]);
+    _quiescent = _failures.isEmpty;
+    if (!_quiescent) {
+      throw RuleDownloadCleanupFailure(
+        primary,
+        primaryStack,
+        List.unmodifiable(_failures),
+        candidatePath: candidatePath,
+      );
+    }
+    if (primary != null)
+      Error.throwWithStackTrace(primary, primaryStack ?? StackTrace.current);
+  }
+}
+
 class _JoinedDownloadAdapter extends IOHttpClientAdapter {
   _JoinedDownloadAdapter({required super.createHttpClient});
 
@@ -259,8 +464,29 @@ class _JoinedDownloadAdapter extends IOHttpClientAdapter {
   }
 
   Future<void> join() async {
-    await Future.wait(_fetches);
-    await Future.wait(_bodies.map((body) => body.close()));
+    Object? fetchFailure;
+    StackTrace? fetchStack;
+    final fetchOwner = RuleDownloadOwner()..begin();
+    try {
+      await fetchOwner.closeAndJoin(
+        steps: [
+          for (final (index, fetch) in _fetches.indexed)
+            (name: 'fetch:$index', close: () => fetch),
+        ],
+      );
+    } catch (error, stack) {
+      fetchFailure = error;
+      fetchStack = stack;
+    }
+    final bodyOwner = RuleDownloadOwner()..begin();
+    await bodyOwner.closeAndJoin(
+      primary: fetchFailure,
+      primaryStack: fetchStack,
+      steps: [
+        for (final (index, body) in _bodies.indexed)
+          (name: 'body:$index', close: body.close),
+      ],
+    );
   }
 }
 

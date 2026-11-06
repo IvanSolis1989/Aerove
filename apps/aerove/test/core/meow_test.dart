@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:dio/dio.dart';
+import 'package:fl_clash/common/request.dart';
 
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/meow.dart';
+import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/models/models.dart';
@@ -100,6 +103,52 @@ class _Service implements Service {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _IncompleteRuleDownload extends Request {
+  _IncompleteRuleDownload({this.failCancel = true});
+  final bool failCancel;
+  final entered = Completer<void>();
+  final joinEntered = Completer<void>();
+  final joinRelease = Completer<void>();
+  bool sinkClosed = false;
+  @override
+  Future<void> downloadRuleSetToOwnedFile(
+    String url,
+    File destination, {
+    required CancelToken cancellation,
+    required bool Function() isCurrent,
+    required RuleDownloadOwner owner,
+  }) async {
+    owner.begin();
+    entered.complete();
+    await cancellation.whenCancel;
+    await owner.closeAndJoin(
+      primary: const FormatException('body interrupted'),
+      primaryStack: StackTrace.current,
+      steps: [
+        (
+          name: 'reader-cancel',
+          close: () {
+            if (failCancel) throw StateError('cancel failed');
+          },
+        ),
+        (
+          name: 'http-join',
+          close: () {
+            joinEntered.complete();
+            return joinRelease.future;
+          },
+        ),
+        (
+          name: 'sink-close',
+          close: () {
+            sinkClosed = true;
+          },
+        ),
+      ],
+    );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late _Service service;
@@ -109,6 +158,168 @@ void main() {
     service = _Service();
     core = MeowCoreHandler.scoped(service, readSharedState: () async => _state);
   });
+
+  test(
+    'failed HTTP cleanup never becomes quiescent or reaches native inspect',
+    () async {
+      final home = await Directory.systemTemp.createTemp('meow-rule-unjoined-');
+      addTearDown(() => home.delete(recursive: true));
+      await useAppPaths(home);
+      final download = _IncompleteRuleDownload();
+      core = MeowCoreHandler.scoped(
+        service,
+        readSharedState: () async => _state,
+        ruleSetRequest: download,
+      );
+      await core.start();
+      final signal = ValueNotifier(false);
+      addTearDown(signal.dispose);
+      CoreRequestQuiescence? state;
+      final name = List.filled(32, 'a').join() + '.1.new';
+      final file = File('${home.path}/providers/rules/$name');
+      await file.parent.create(recursive: true);
+      await file.writeAsString('owned candidate');
+      final pending = core.invokeCancellableMethod<Map>(
+        method: CoreMethod.compileRuleSet,
+        arguments: {'name': name, 'url': 'https://example.invalid/rules'},
+        cancellation: signal,
+        observeQuiescence: (value) => state = value,
+      );
+      final failed = expectLater(
+        pending,
+        throwsA(isA<RuleDownloadCleanupFailure>()),
+      );
+      await download.entered.future;
+      signal.value = true;
+      await download.joinEntered.future;
+      expect(state!.isQuiescent, isFalse);
+      expect(await file.exists(), isTrue);
+      expect(service.requests, isEmpty);
+      download.joinRelease.complete();
+      await failed;
+      expect(download.sinkClosed, isTrue);
+      expect(state!.isQuiescent, isFalse);
+      expect(await file.exists(), isTrue);
+      await expectLater(core.stop(), throwsA(isA<StateError>()));
+    },
+  );
+
+  for (final operation in ['start', 'stop', 'park']) {
+    test(
+      '$operation listener rejects unjoined HTTP without skipping safe stop or park',
+      () async {
+        final home = await Directory.systemTemp.createTemp(
+          'meow-listener-unjoined-',
+        );
+        addTearDown(() => home.delete(recursive: true));
+        await useAppPaths(home);
+        final download = _IncompleteRuleDownload();
+        core = MeowCoreHandler.scoped(
+          service,
+          readSharedState: () async => _state,
+          ruleSetRequest: download,
+        );
+        final controller = CoreController.scoped(core);
+        await core.start();
+        final signal = ValueNotifier(false);
+        addTearDown(signal.dispose);
+        final name = List.filled(32, 'a').join() + '.1.new';
+        final file = File('${home.path}/providers/rules/$name');
+        await file.parent.create(recursive: true);
+        await file.writeAsString('owned listener candidate');
+        CoreRequestQuiescence? state;
+        final request = core.invokeCancellableMethod<Map>(
+          method: CoreMethod.compileRuleSet,
+          arguments: {'name': name, 'url': 'https://example.invalid/rules'},
+          cancellation: signal,
+          observeQuiescence: (value) => state = value,
+        );
+        final requestFailure = expectLater(
+          request,
+          throwsA(isA<RuleDownloadCleanupFailure>()),
+        );
+        await download.entered.future;
+        var returned = false;
+        final lifecycle = switch (operation) {
+          'start' => controller.startListener(),
+          'stop' => controller.stopListener(),
+          _ => controller.parkListener(),
+        };
+        final lifecycleFailure = expectLater(
+          lifecycle.whenComplete(() => returned = true),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'unconfirmed HTTP cleanup',
+              contains('Rule download cleanup is unconfirmed'),
+            ),
+          ),
+        );
+        await download.joinEntered.future;
+        if (operation == 'start') {
+          expect(service.calls, isNot(contains('start')));
+        } else {
+          expect(service.calls, contains(operation));
+        }
+        expect(returned, isFalse);
+        expect(state!.isQuiescent, isFalse);
+        expect(await file.exists(), isTrue);
+        expect(service.requests, isEmpty);
+        download.joinRelease.complete();
+        await requestFailure;
+        await lifecycleFailure;
+        expect(download.sinkClosed, isTrue);
+        expect(state!.isQuiescent, isFalse);
+        expect(await file.exists(), isTrue);
+        expect(service.requests, isEmpty);
+      },
+    );
+  }
+
+  test(
+    'a newer stop supersedes a start waiting for joined HTTP cleanup',
+    () async {
+      final home = await Directory.systemTemp.createTemp(
+        'meow-start-preflight-',
+      );
+      addTearDown(() => home.delete(recursive: true));
+      await useAppPaths(home);
+      final download = _IncompleteRuleDownload(failCancel: false);
+      core = MeowCoreHandler.scoped(
+        service,
+        readSharedState: () async => _state,
+        ruleSetRequest: download,
+      );
+      final controller = CoreController.scoped(core);
+      await core.start();
+      final signal = ValueNotifier(false);
+      addTearDown(signal.dispose);
+      final name = List.filled(32, 'a').join() + '.2.new';
+      final file = File('${home.path}/providers/rules/$name');
+      await file.parent.create(recursive: true);
+      await file.writeAsString('owned preflight candidate');
+      final request = core.invokeCancellableMethod<Map>(
+        method: CoreMethod.compileRuleSet,
+        arguments: {'name': name, 'url': 'https://example.invalid/rules'},
+        cancellation: signal,
+      );
+      final requestFailure = expectLater(
+        request,
+        throwsA(isA<CoreMethodException>()),
+      );
+      await download.entered.future;
+      final starting = controller.startListener();
+      await download.joinEntered.future;
+      final stopping = controller.stopListener();
+      expect(service.calls, contains('stop'));
+      expect(service.calls, isNot(contains('start')));
+      download.joinRelease.complete();
+      await requestFailure;
+      expect(await starting, isFalse);
+      expect(await stopping, isTrue);
+      expect(service.calls, isNot(contains('start')));
+    },
+  );
 
   test('attach and restart never start or stop the VPN', () async {
     expect((await core.start()).outcome, CoreLifecycleOutcome.applied);

@@ -847,14 +847,17 @@ extension ClashProviderExt on ClashProvider {
   bool get isTextContent => format != RuleProviderFormat.mrs;
 
   /// [format] is the source's; classical rules have no mrs form.
-  bool get isCompiled =>
-      isTextContent && behavior != RuleProviderBehavior.classical;
+  bool isCompiled(String coreId) =>
+      coreId == 'mihomo' &&
+      isTextContent &&
+      behavior != RuleProviderBehavior.classical;
 
   Future<String> get path => appPath.getProviderCachePath(fileName);
 
   Future<String> get compiledPath async => '${await path}.mrs';
 
-  Future<String> get corePath => isCompiled ? compiledPath : path;
+  Future<String> corePath(String coreId) =>
+      isCompiled(coreId) ? compiledPath : path;
 
   Future<FileInfo?> get fileInfo async => File(await path).getFileInfo();
 
@@ -862,12 +865,12 @@ extension ClashProviderExt on ClashProvider {
     return copyWith(behavior: info.behavior, format: info.format);
   }
 
-  Map<String, dynamic> definition(String path) {
+  Map<String, dynamic> definition(String path, {required String coreId}) {
     if (sourceDefinition != null) {
       final source = {
         ...sourceDefinition!,
         'type': url.isEmpty ? 'file' : 'http',
-        'path': isCompiled && path.endsWith('.mrs')
+        'path': isCompiled(coreId) && path.endsWith('.mrs')
             ? path.substring(0, path.length - 4)
             : path,
         'behavior': behavior.name,
@@ -884,7 +887,7 @@ extension ClashProviderExt on ClashProvider {
       'type': 'file',
       'path': path,
       'behavior': behavior.name,
-      'format': isCompiled ? RuleProviderFormat.mrs.name : format.name,
+      'format': isCompiled(coreId) ? RuleProviderFormat.mrs.name : format.name,
     };
   }
 }

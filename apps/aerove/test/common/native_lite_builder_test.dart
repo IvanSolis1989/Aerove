@@ -192,9 +192,18 @@ void main() {
           url: 'https://example.invalid/edited',
           behavior: RuleProviderBehavior.ipcidr,
         );
-        expect(edited.definition('private.mrs')['url'], edited.url);
-        expect(edited.definition('private.mrs')['behavior'], 'ipcidr');
-        expect(edited.definition('private.mrs')['interval'], 3600);
+        expect(
+          edited.definition('private.mrs', coreId: 'mihomo')['url'],
+          edited.url,
+        );
+        expect(
+          edited.definition('private.mrs', coreId: 'mihomo')['behavior'],
+          'ipcidr',
+        );
+        expect(
+          edited.definition('private.mrs', coreId: 'mihomo')['interval'],
+          3600,
+        );
         expect(
           (await database.iconSetsDao.query().get())
               .single

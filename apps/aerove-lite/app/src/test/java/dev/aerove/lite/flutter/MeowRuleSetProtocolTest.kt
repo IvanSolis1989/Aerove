@@ -31,6 +31,55 @@ class MeowRuleSetProtocolTest {
     private fun receipt(format: String = "mrs", behavior: String = "domain", count: Int = 2) =
         """{"format":"$format","behavior":"$behavior","count":$count}"""
 
+    @Test fun compileReportsInspectedRawWithoutWritingAFormalCacheOrMrs() = runBlocking<Unit> {
+        val home = home()
+        val name = "a".repeat(32) + ".1.new"
+        val directory = File(home, "providers/rules").apply { mkdirs() }
+        val formal = File(directory, "a".repeat(32)).apply { writeText("previous raw") }
+        val source = File(directory, name).apply { writeText("payload:\n  - example.test\n") }
+        val bytes = source.readBytes()
+        val protocol = MeowRuleSetProtocol(home, NativeJsonRulePayloadInspector({ path ->
+            assertNotEquals(source, File(path))
+            assertArrayEquals(bytes, File(path).readBytes())
+            receipt("yaml", "domain")
+        }, { _, _, _ -> error("Compile must not dump or manufacture an MRS") }))
+        val result = protocol.compile(mapOf("name" to name, "url" to "", "allow-empty" to false))
+        assertEquals("yaml", result["format"])
+        assertEquals("domain", result["behavior"])
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+            .joinToString("") { "%02x".format(it) }
+        assertEquals(digest, result["sourceSha256"])
+        assertEquals("previous raw", formal.readText())
+        assertArrayEquals(bytes, source.readBytes())
+        assertFalse(File(directory, "$name.mrs").exists())
+        assertTrue(home.listFiles()!!.none { it.name.startsWith(".ruleset-preview-") })
+    }
+
+    @Test fun compileRejectsArbitraryNamesAndRemoteUrlsBeforeReading() = runBlocking<Unit> {
+        val home = home()
+        val protocol = MeowRuleSetProtocol(home, NativeJsonRulePayloadInspector({ error("Unsafe reader") }, { _, _, _ -> error("Unsafe dump") }))
+        val name = "a".repeat(32) + ".1.new"
+        for (row in listOf(
+            mapOf("name" to "../escape", "url" to "", "allow-empty" to false),
+            mapOf("name" to "a".repeat(32), "url" to "", "allow-empty" to false),
+            mapOf("name" to name, "url" to "https://example.test/rules", "allow-empty" to false),
+        )) assertEquals("bad_argument", assertThrows(MeowProtocolFailure::class.java) {
+            runBlocking { protocol.compile(row) }
+        }.code)
+    }
+
+    @Test fun compileDistinguishesEmptyRemoteAndLocalInspection() = runBlocking<Unit> {
+        val home = home()
+        val name = "a".repeat(32) + ".2.new"
+        File(home, "providers/rules").mkdirs()
+        File(home, "providers/rules/$name").writeText("empty fixture classified by native")
+        val protocol = MeowRuleSetProtocol(home, NativeJsonRulePayloadInspector({ receipt("text", "classical", 0) }, { _, _, _ -> error("Unexpected dump") }))
+        assertEquals("rule_set_empty", assertThrows(MeowProtocolFailure::class.java) {
+            runBlocking { protocol.compile(mapOf("name" to name, "url" to "", "allow-empty" to false)) }
+        }.code)
+        assertEquals("text", protocol.compile(mapOf("name" to name, "url" to "", "allow-empty" to true))["format"])
+    }
+
     @Test fun originalSharedPathProducesNativeInspectedTextFromOneImmutableSnapshot() = runBlocking<Unit> {
         val home = home()
         val source = File(home, "rules.mrs").apply { writeBytes(byteArrayOf(0x28, 0xb5.toByte(), 0x2f, 0xfd.toByte(), 7)) }

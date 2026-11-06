@@ -7,6 +7,7 @@ import dev.aerove.lite.data.MAX_RULE_TEXT_BYTES
 import dev.aerove.lite.data.NativeJsonRulePayloadInspector
 import dev.aerove.lite.data.NativeRulePayloadInspector
 import dev.aerove.lite.data.copyLocalRuleResource
+import dev.aerove.lite.data.sha256
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
@@ -25,9 +26,35 @@ internal class MeowRuleSetProtocol(homeDir: File,
     private val inspector: NativeRulePayloadInspector = nativeRulePayloadInspector()) {
     private val home = MeowFlutterSpill.checkedHome(homeDir)
 
-    suspend fun dump(arguments: Any?): String = withContext(Dispatchers.IO) {
-        currentCoroutineContext().ensureActive()
+    suspend fun compile(arguments: Any?): Map<String, String> {
+        val row = meowObject(arguments)
+        val name = row["name"] as? String
+        val empty = row["allow-empty"] as? Boolean
+        if (row.keys != setOf("name", "url", "allow-empty") || row["url"] != "" || empty == null ||
+            name == null || !name.matches(Regex("[0-9a-f]{32}\\.[0-9]+\\.new")))
+            throw MeowProtocolFailure("bad_argument", "Compile requires an owned SQL cache candidate", mapOf("field" to "name"))
+        val source = File(home, "providers/rules/$name")
+        return snapshot(source.path) { file ->
+            val inspection = inspector.inspect(file.path)
+            if (!empty && inspection.count == 0)
+                throw MeowProtocolFailure("rule_set_empty", "Remote rule set has no usable entries")
+            mapOf("behavior" to inspection.behavior, "format" to inspection.format, "sourceSha256" to sha256(file))
+        }
+    }
+
+    suspend fun dump(arguments: Any?): String {
         val requested = arguments as? String ?: badArgument("Expected a private rule-set path string")
+        return snapshot(requested) { file ->
+            val inspection = inspector.inspect(file.path)
+            val text = inspector.dump(file.path, inspection.behavior, inspection.format)
+            if (text.utf8Size() > MAX_RULE_TEXT_BYTES)
+                throw MeowProtocolFailure("output_too_large", "Rule-set preview exceeds $MAX_RULE_TEXT_BYTES UTF-8 bytes")
+            text
+        }
+    }
+
+    private suspend fun <T> snapshot(requested: String, read: suspend (File) -> T): T = withContext(Dispatchers.IO) {
+        currentCoroutineContext().ensureActive()
         if (requested.isBlank() || '\u0000' in requested) badArgument("Expected a non-empty private rule-set path")
         val source = checkedFile(requested)
         val before = attributes(source)
@@ -45,17 +72,13 @@ internal class MeowRuleSetProtocol(homeDir: File,
                 before.lastModifiedTime() != after.lastModifiedTime())
                 throw MeowProtocolFailure("source_changed", "Rule-set source changed while taking its preview snapshot")
             val snapshotIdentity = attributes(checkedFile(snapshot.path))
-            val inspection = inspector.inspect(snapshot.path)
+            val result = read(snapshot)
             currentCoroutineContext().ensureActive()
             val inspectedIdentity = attributes(checkedFile(snapshot.path))
             if (snapshotIdentity.fileKey() != inspectedIdentity.fileKey() || snapshotIdentity.size() != inspectedIdentity.size() ||
                 snapshotIdentity.lastModifiedTime() != inspectedIdentity.lastModifiedTime())
                 throw MeowProtocolFailure("source_changed", "Rule-set preview snapshot changed during inspection")
-            val text = inspector.dump(snapshot.path, inspection.behavior, inspection.format)
-            currentCoroutineContext().ensureActive()
-            if (text.utf8Size() > MAX_RULE_TEXT_BYTES)
-                throw MeowProtocolFailure("output_too_large", "Rule-set preview exceeds $MAX_RULE_TEXT_BYTES UTF-8 bytes")
-            text
+            result
         } catch (cancelled: CancellationException) { failure = cancelled; throw cancelled }
         catch (error: MeowProtocolFailure) { failure = error; throw error }
         catch (error: Exception) {

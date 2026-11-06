@@ -10,7 +10,7 @@ class _StagedRuleSet {
 
   Future<void> commit() async {
     // A format change must finish both files before its metadata is published.
-    if (provider.isCompiled) {
+    if (provider.isCompiled(ClientProduct.current.expectedCoreId)) {
       await File('$source.mrs').rename(compiledTarget);
     } else {
       await File(compiledTarget).safeDelete();
@@ -27,6 +27,10 @@ class _StagedRuleSet {
 @Riverpod(keepAlive: true)
 class ClashProvidersAction extends _$ClashProvidersAction {
   final _pendingAutomaticApplies = <String>{};
+  @visibleForTesting
+  Future<void> Function(String phase)? meowRulePublicationBarrier;
+  @visibleForTesting
+  void Function()? meowRuleCommitAdmitted;
 
   @override
   void build() {}
@@ -40,6 +44,15 @@ class ClashProvidersAction extends _$ClashProvidersAction {
     bool refresh = false,
     bool Function()? isCurrent,
   }) async {
+    if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+      return _putMeowProvider(
+        provider,
+        previous: previous,
+        content: content,
+        refresh: refresh,
+        isCurrent: isCurrent,
+      );
+    }
     checkUpdateCurrent(isCurrent);
     final before = await _stored(provider.id);
     checkUpdateCurrent(isCurrent);
@@ -93,7 +106,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       }
       await ref.read(setupActionProvider.notifier).withProviderSourceWrite(
         () async {
-          ref.read(clashProvidersProvider.notifier).put(next);
+          await ref.read(clashProvidersProvider.notifier).put(next);
         },
       );
       checkUpdateCurrent(isCurrent);
@@ -123,6 +136,309 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       return next;
     } finally {
       await staged?.cleanup();
+    }
+  }
+
+  Future<
+    ({
+      DateTime changed,
+      DateTime modified,
+      int size,
+      int mode,
+      FileSystemEntityType type,
+    })
+  >
+  _meowRuleStamp(String path) async {
+    final stat = await File(path).stat();
+    return (
+      changed: stat.changed,
+      modified: stat.modified,
+      size: stat.size,
+      mode: stat.mode,
+      type: await FileSystemEntity.type(path, followLinks: false),
+    );
+  }
+
+  Future<String?> _meowRuleDigest(String path) async {
+    final file = File(path);
+    await nativeLitePrivateDestination(
+      file,
+      Directory(await appPath.homeDirPath),
+    );
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return null;
+    if (type != FileSystemEntityType.file)
+      throw StateError('Rule cache is not a regular file');
+    if (await file.length() > 64 * 1024 * 1024)
+      throw StateError('Rule cache exceeds its input budget');
+    final before = await _meowRuleStamp(path);
+    var bytes = 0;
+    final digest = await sha256
+        .bind(
+          file.openRead().map((chunk) {
+            bytes += chunk.length;
+            if (bytes > 64 * 1024 * 1024)
+              throw StateError('Rule cache exceeds its input budget');
+            return chunk;
+          }),
+        )
+        .first;
+    if (await _meowRuleStamp(path) != before)
+      throw StateError('Rule cache changed while hashing');
+    return digest.toString();
+  }
+
+  Future<({ClashProvider provider, String path, String digest})> _stageMeowRule(
+    ClashProvider provider,
+    List<int>? content,
+    bool download,
+    bool Function()? isCurrent,
+  ) async {
+    final name = '${provider.fileName}.${snowflake.id}.new';
+    final path = await appPath.getProviderCachePath(name);
+    final file = File(path);
+    CoreRequestQuiescence? request;
+    var created = false;
+    var retained = false;
+    IOSink? output;
+    try {
+      checkUpdateCurrent(isCurrent);
+      await nativeLitePrivateDestination(
+        file,
+        Directory(await appPath.homeDirPath),
+      );
+      await file.parent.create(recursive: true);
+      await file.create(exclusive: true);
+      created = true;
+      if (!download) {
+        output = file.openWrite();
+        var bytes = 0;
+        final input = content == null
+            ? File(await provider.path).openRead()
+            : Stream<List<int>>.value(content);
+        await for (final chunk in input) {
+          checkUpdateCurrent(isCurrent);
+          bytes += chunk.length;
+          if (bytes > 64 * 1024 * 1024)
+            throw StateError('Rule candidate exceeds its input budget');
+          output.add(chunk);
+          await output.flush();
+        }
+        await output.close();
+        output = null;
+      }
+      String? inspected;
+      final info = await _core.compileRuleSet(
+        name,
+        url: download ? provider.url : '',
+        observeQuiescence: (owner) => request = owner,
+        inspectedDigest: (digest) => inspected = digest,
+      );
+      checkUpdateCurrent(isCurrent);
+      final actual = await _meowRuleDigest(path);
+      if (inspected == null || actual != inspected)
+        throw StateError('Inspected rule candidate changed');
+      retained = true;
+      return (
+        provider: provider.withInfo(info),
+        path: path,
+        digest: inspected!,
+      );
+    } finally {
+      await output?.close();
+      if (created && !retained && (request == null || request!.isQuiescent)) {
+        await file.safeDelete();
+      }
+    }
+  }
+
+  Future<ClashProvider?> _sqlMeowRule(int id) async {
+    final row = await (database.select(
+      database.clashProviders,
+    )..where((table) => table.id.equals(id))).getSingleOrNull();
+    if (row != null && row.kind != ProviderKind.rule)
+      throw StateError('SQL rule identity belongs to another resource kind');
+    return row?.toClashProvider();
+  }
+
+  Future<ClashProvider> _putMeowProvider(
+    ClashProvider provider, {
+    ClashProvider? previous,
+    List<int>? content,
+    bool refresh = false,
+    bool inspectExisting = false,
+    bool reload = true,
+    bool Function()? isCurrent,
+  }) async {
+    final setup = ref.read(setupActionProvider.notifier);
+    final target = await provider.path;
+    final baseline = await setup.withProviderSourceWrite(() async {
+      checkUpdateCurrent(isCurrent);
+      final before = await _sqlMeowRule(provider.id);
+      final sourceDigest = before == null
+          ? null
+          : await _meowRuleDigest(await before.path);
+      final targetDigest = await _meowRuleDigest(target);
+      await meowRulePublicationBarrier?.call('after-baseline');
+      return (
+        before: before,
+        sourceDigest: sourceDigest,
+        targetDigest: targetDigest,
+      );
+    });
+    final before = baseline.before;
+    final download =
+        content == null &&
+        provider.isRemote &&
+        (refresh ||
+            baseline.targetDigest == null ||
+            !inspectExisting && provider.fileName != previous?.fileName);
+    final staged = content != null || download || inspectExisting
+        ? await _stageMeowRule(provider, content, download, isCurrent)
+        : null;
+    final next = staged?.provider ?? provider;
+    final publishRaw = staged != null && staged.digest != baseline.targetDigest;
+    final rollback = File('${staged?.path ?? target}.rollback');
+    var published = false;
+    var commitAdmitted = false;
+    var preserveRollback = false;
+    var createdRollback = false;
+    try {
+      await setup.withProviderSourceWrite(() async {
+        try {
+          final targetStamp = await _meowRuleStamp(target);
+          final sourceStamp = before == null
+              ? null
+              : await _meowRuleStamp(await before.path);
+          final candidateStamp = staged == null
+              ? null
+              : await _meowRuleStamp(staged.path);
+          if (await _meowRuleDigest(target) != baseline.targetDigest ||
+              before != null &&
+                  await _meowRuleDigest(await before.path) !=
+                      baseline.sourceDigest)
+            throw StateError('SQL rule source changed during preparation');
+          if (staged != null) {
+            if (await _meowRuleDigest(staged.path) != staged.digest)
+              throw StateError('Rule candidate changed before publication');
+            if (publishRaw && baseline.targetDigest != null) {
+              await nativeLitePrivateDestination(
+                rollback,
+                Directory(await appPath.homeDirPath),
+              );
+              await rollback.create(exclusive: true);
+              createdRollback = true;
+              await File(target).copy(rollback.path);
+              if (await _meowRuleDigest(rollback.path) != baseline.targetDigest)
+                throw StateError('Rule rollback snapshot changed');
+            }
+          }
+          await ref
+              .read(clashProvidersProvider.notifier)
+              .put(
+                next,
+                previous: before,
+                beforePersist: () async {
+                  checkUpdateCurrent(isCurrent);
+                  final current = await _sqlMeowRule(provider.id);
+                  if (current != before ||
+                      await _meowRuleStamp(target) != targetStamp ||
+                      before != null &&
+                          await _meowRuleStamp(await before.path) !=
+                              sourceStamp ||
+                      staged != null &&
+                          await _meowRuleStamp(staged.path) != candidateStamp)
+                    throw StateError('SQL rule source changed before commit');
+                  await meowRulePublicationBarrier?.call('after-final-stamp');
+                  if (staged != null && publishRaw) {
+                    await File(staged.path).rename(target);
+                    published = true;
+                  }
+                  await meowRulePublicationBarrier?.call('after-rename');
+                },
+                beforeCommit: () {
+                  checkUpdateCurrent(isCurrent);
+                  commitAdmitted = true;
+                  meowRuleCommitAdmitted?.call();
+                },
+              );
+        } catch (failure, stack) {
+          if (published && staged != null) {
+            try {
+              if (await _meowRuleDigest(target) != staged.digest) {
+                preserveRollback = true;
+                throw StateError(
+                  'Rule rollback refused to overwrite a third value; snapshot: ${rollback.path}',
+                );
+              }
+              if (baseline.targetDigest == null) {
+                await File(target).safeDelete();
+              } else {
+                if (await _meowRuleDigest(rollback.path) !=
+                    baseline.targetDigest) {
+                  preserveRollback = true;
+                  throw StateError(
+                    'Rule rollback snapshot no longer matches the original',
+                  );
+                }
+                await rollback.rename(target);
+              }
+            } catch (rollbackFailure) {
+              preserveRollback = true;
+              Error.throwWithStackTrace(
+                StateError(
+                  'SQL rule publication failed: $failure; rollback failed: $rollbackFailure; retained snapshot: ${rollback.path}',
+                ),
+                stack,
+              );
+            }
+          }
+          rethrow;
+        }
+        await meowRulePublicationBarrier?.call('before-commit-readback');
+        if (await _sqlMeowRule(next.id) != next ||
+            await _meowRuleDigest(target) !=
+                (staged?.digest ?? baseline.targetDigest)) {
+          preserveRollback = true;
+          throw StateError(
+            'Committed SQL rule publication changed before readback; retained snapshot: ${rollback.path}',
+          );
+        }
+        if (before != null &&
+            before.fileName != next.fileName &&
+            await _meowRuleDigest(await before.path) == baseline.sourceDigest) {
+          await File(await before.path).safeDelete();
+          await File(await before.compiledPath).safeDelete();
+        }
+      });
+      if (reload) {
+        final labels = {next.label, ?before?.label};
+        if (staged != null && isCurrent != null)
+          _pendingAutomaticApplies.addAll(labels);
+        if (commitAdmitted && !(isCurrent?.call() ?? true)) return next;
+        final reread = staged != null;
+        try {
+          if (reread && next == before) {
+            await _reloadIfReferenced(next, isCurrent: isCurrent);
+          } else {
+            await applyIfReferenced(
+              ProviderKind.rule,
+              {next.label, ?before?.label},
+              force: reread,
+              isCurrent: isCurrent,
+            );
+          }
+        } on UpdateCancelledException {
+          if (commitAdmitted) return next;
+          rethrow;
+        }
+        _pendingAutomaticApplies.removeAll(labels);
+      }
+      return next;
+    } finally {
+      if (staged != null && await _meowRuleDigest(staged.path) == staged.digest)
+        await File(staged.path).safeDelete();
+      if (createdRollback && !preserveRollback) await rollback.safeDelete();
     }
   }
 
@@ -171,7 +487,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       url: download ? provider.url : '',
     );
     final next = provider.withInfo(info);
-    if (!next.isCompiled) {
+    if (!next.isCompiled(ClientProduct.current.expectedCoreId)) {
       await File(await next.compiledPath).safeDelete();
     }
     return next;
@@ -220,7 +536,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
     try {
       await File(staged).safeWriteAsBytes(content);
       final next = provider.withInfo(await _core.compileRuleSet(stagedName));
-      if (next.isCompiled) {
+      if (next.isCompiled(ClientProduct.current.expectedCoreId)) {
         await File('$staged.mrs').rename(await next.compiledPath);
       } else {
         await File(await next.compiledPath).safeDelete();
@@ -242,7 +558,9 @@ class ClashProvidersAction extends _$ClashProvidersAction {
       return null;
     }
     for (final provider in await database.clashProvidersDao.query().get()) {
-      if (provider.isRemote && await provider.corePath == path) {
+      if (provider.isRemote &&
+          await provider.corePath(ClientProduct.current.expectedCoreId) ==
+              path) {
         return provider;
       }
     }
@@ -251,6 +569,10 @@ class ClashProvidersAction extends _$ClashProvidersAction {
 
   /// Returns false when the set changed shape, which only a reapply loads.
   Future<bool> syncRemote(ClashProvider provider) async {
+    if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+      final next = await _putMeowProvider(provider, refresh: true);
+      return next == provider;
+    }
     final next = await _compile(provider, download: true);
     if (next == provider) {
       return true;
@@ -262,7 +584,12 @@ class ClashProvidersAction extends _$ClashProvidersAction {
 
   /// Backups leave remote sets out and older sets have no mrs yet.
   Future<ClashProvider> prepare(ClashProvider provider) async {
-    if (await File(await provider.corePath).exists()) {
+    if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+      return _putMeowProvider(provider, inspectExisting: true, reload: false);
+    }
+    if (await File(
+      await provider.corePath(ClientProduct.current.expectedCoreId),
+    ).exists()) {
       return provider;
     }
     try {
@@ -287,7 +614,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
   void delProvider(ClashProvider provider) {
     unawaited(
       ref.read(setupActionProvider.notifier).withProviderSourceWrite(() async {
-        ref.read(clashProvidersProvider.notifier).del(provider.id);
+        await ref.read(clashProvidersProvider.notifier).del(provider.id);
         await _clearCacheSource(provider);
       }),
     );

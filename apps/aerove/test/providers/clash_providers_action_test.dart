@@ -778,7 +778,7 @@ void main() {
 
     expect(compiles.single, (name: remote.fileName, url: remote.url));
     expect(prepared, remote);
-    expect(await read(remote.corePath), 'mrs of downloaded');
+    expect(await read(remote.corePath('mihomo')), 'mrs of downloaded');
   });
 
   test('prepare leaves a set the Core cannot build to the Core', () async {
@@ -840,17 +840,17 @@ void main() {
     );
 
     expect(
-      await action().remoteProviderOf(await loaded(remote.corePath)),
+      await action().remoteProviderOf(await loaded(remote.corePath('mihomo'))),
       remote,
     );
     expect(await action().remoteProviderOf(await loaded(remote.path)), isNull);
     expect(
-      await action().remoteProviderOf(await loaded(rules.corePath)),
+      await action().remoteProviderOf(await loaded(rules.corePath('mihomo'))),
       isNull,
     );
     expect(
       await action().remoteProviderOf(
-        await loaded(remote.corePath, vehicleType: 'HTTP'),
+        await loaded(remote.corePath('mihomo'), vehicleType: 'HTTP'),
       ),
       isNull,
     );

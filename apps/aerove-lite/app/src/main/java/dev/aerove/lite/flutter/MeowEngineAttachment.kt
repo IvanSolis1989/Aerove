@@ -106,6 +106,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
         }
         offline.methods.forEach { method -> methods[method] = MeowProtocolMethod { offline.invoke(method, it) } }
         methods["dumpRuleSet"] = MeowProtocolMethod { ruleSets.dump(it) }
+        methods["compileRuleSet"] = MeowProtocolMethod { ruleSets.compile(it) }
         methods["updateExternalProvider"] = MeowProtocolMethod { providerSources.invoke(meowObject(it)) }
         QUERY_METHODS.forEach { method -> methods[method] = MeowProtocolMethod { query(method, it) } }
         methods["initClash"] = MeowProtocolMethod { args ->

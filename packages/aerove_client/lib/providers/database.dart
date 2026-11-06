@@ -546,8 +546,9 @@ class Profiles extends _$Profiles {
   /// Applies the changes [body] returns to the state too, so a put landing
   /// before the rows read back writes them rather than the profile as it was.
   Future<void> rewriteCustom(
-    Future<Map<int, Profile Function(Profile profile)>> Function() body,
-  ) {
+    Future<Map<int, Profile Function(Profile profile)>> Function() body, {
+    void Function()? beforeCommit,
+  }) {
     return _writes.track(() async {
       (List<Profile>, List<Profile>)? applied;
       try {
@@ -575,6 +576,7 @@ class Profiles extends _$Profiles {
                 }
               }
             }
+            beforeCommit?.call();
           }),
         );
       } catch (e, s) {
@@ -699,10 +701,17 @@ class ClashProviders extends _$ClashProviders
   @override
   List<ClashProvider> get value => state.value ?? [];
 
-  void put(ClashProvider provider) {
+  Future<void> put(
+    ClashProvider provider, {
+    ClashProvider? previous,
+    Future<void> Function()? beforePersist,
+    void Function()? beforeCommit,
+  }) {
     final next = List<ClashProvider>.from(value);
     final index = next.indexWhere((item) => item.id == provider.id);
-    final renamedFrom = index != -1 && next[index].label != provider.label
+    final renamedFrom = previous != null && previous.label != provider.label
+        ? previous.label
+        : index != -1 && next[index].label != provider.label
         ? next[index].label
         : null;
     if (index != -1) {
@@ -711,16 +720,23 @@ class ClashProviders extends _$ClashProviders
       next.add(provider);
     }
     if (renamedFrom == null) {
-      optimistic(
-        next,
-        () => database.clashProviders.put(provider.toCompanion()),
-      );
-      return;
+      return optimisticAsync(next, () async {
+        if (beforePersist == null && beforeCommit == null) {
+          await database.clashProviders.put(provider.toCompanion());
+        } else {
+          await database.transaction(() async {
+            await beforePersist?.call();
+            await database.clashProviders.put(provider.toCompanion());
+            beforeCommit?.call();
+          });
+        }
+      });
     }
     final names = {renamedFrom: provider.label};
-    optimistic(
+    return optimisticAsync(
       next,
       () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
+        await beforePersist?.call();
         final profileIds = await database.profilesDao.customIds().get();
         await database.rulesDao.renameRuleProvider(
           profileIds,
@@ -734,16 +750,16 @@ class ClashProviders extends _$ClashProviders
               overrides: profile.overrides.renamedRuleSets(names),
             ),
         };
-      }),
+      }, beforeCommit: beforeCommit),
     );
   }
 
-  void del(int id) {
+  Future<void> del(int id) {
     final next = List<ClashProvider>.from(value);
     final index = next.indexWhere((item) => item.id == id);
-    if (index == -1) return;
+    if (index == -1) return Future.value();
     next.removeAt(index);
-    optimistic(
+    return optimisticAsync(
       next,
       () => database.clashProviders.remove((t) => t.id.equals(id)),
     );
