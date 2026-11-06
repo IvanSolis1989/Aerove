@@ -890,9 +890,12 @@ class SigillCaptureBoundaryTests(unittest.TestCase):
     def test_signal_extension_preserves_default_and_compiles_read_only_gdb_python(self):
         default = current.sigill_gdb_script(123, Path('/ready'), Path('/fault'))
         extended = current.sigill_gdb_script(123, Path('/ready'), Path('/fault'), None, ('SIGILL', 'SIGSEGV'))
+        startup = current.sigill_gdb_script(123, Path('/ready'), Path('/fault'), None, ('SIGILL', 'SIGSEGV'), True)
         self.assertNotIn('handle SIGSEGV stop print pass', default)
         self.assertIn('handle SIGSEGV stop print pass', extended)
-        for text in (default, extended):
+        self.assertIn('handle SIGTRAP stop print nopass', startup)
+        self.assertIn('resume_command = "signal SIGTRAP"', startup)
+        for text in (default, extended, startup):
             compile(text.split('python\n', 1)[1].rsplit('\nend', 1)[0], 'gdb-embedded-python', 'exec')
             self.assertIn('gdb.execute("attach " + str(pid)', text)
             self.assertIn('gdb.execute("detach")', text)
@@ -944,9 +947,10 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.receipt = {'interruptSignals': [], 'unexpectedEmulatorExit': False,
                         'cleanupRequested': False}
         self.child = subprocess.Popen([sys.executable, '-u', '-c',
-                                       'import sys\nfor line in sys.stdin:\n'
+                                       'import os,sys\nfor line in sys.stdin:\n'
                                        ' if line.strip() == \"exit\": break\n'
-                                       ' print(\"alive\", flush=True)\n'],
+                                       ' if line.strip() == \"exec\": os.execv(sys.executable,[sys.executable,\"-u\",sys.argv[1]])\n'
+                                       ' print(\"alive\", flush=True)\n', str(self.root / 'exec-target.py')],
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                       stderr=subprocess.DEVNULL, start_new_session=True)
         # LIFO: debugger must detach before the existing owner stops its target.
@@ -1067,6 +1071,48 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertTrue(observed['readbackComplete'])
         self.assertEqual(0, self.capture.child.returncode, self.logs())
         self.assertFalse(self.capture.state['accepted'])
+
+    def assert_startup_executes_second_image(self):
+        import selectors
+        (self.root / 'exec-target.py').write_text(
+            'import sys\nprint("exec-ready",flush=True)\nfor line in sys.stdin:\n'
+            ' if line.strip()=="exit": break\n print("alive",flush=True)\n')
+        self.capture.trace_exec = True
+        self.capture.start()
+        self.child.stdin.write(b'exec\n')
+        self.child.stdin.flush()
+        with selectors.DefaultSelector() as ready:
+            ready.register(self.child.stdout, selectors.EVENT_READ)
+            self.assertTrue(ready.select(timeout=10), self.logs())
+            self.assertEqual(b'exec-ready\n', self.child.stdout.readline(), self.logs())
+        observed = json.loads((self.root / 'startup-exec-events.json').read_text())
+        self.assertEqual(self.child.pid, observed['targetPid'])
+        self.assertEqual(1, len(observed['events']))
+        self.assertIsNone(self.child.poll())
+
+    def test_startup_exec_does_not_deliver_a_debugger_trap_and_detach_preserves_execution(self):
+        self.assert_startup_executes_second_image()
+        self.capture.close()
+        self.assertEqual(0, self.capture.child.returncode, self.logs())
+        self.assert_target_executes()
+        self.child.stdin.write(b'exit\n')
+        self.child.stdin.flush()
+        self.assertEqual(0, self.child.wait(timeout=5))
+
+    def test_startup_trace_records_and_delivers_genuine_external_sigtrap(self):
+        import signal
+        self.assert_startup_executes_second_image()
+        self.child.send_signal(signal.SIGTRAP)
+        self.assertEqual(-signal.SIGTRAP, self.child.wait(timeout=15), self.logs())
+        self.capture.close()
+        observed = json.loads(self.capture.fault.read_text())
+        self.assertEqual('SIGTRAP', observed['signal'])
+        self.assertEqual(self.child.pid, observed['targetPid'])
+        self.assertEqual('signal-event-forwarded', observed['classification'])
+        self.assertEqual(signal.SIGTRAP, observed['signalNumber'])
+        self.assertEqual(os.getpid(), observed['signalSenderPid'])
+        self.assertTrue(observed['readbackComplete'])
+        self.assertEqual(0, self.capture.child.returncode, self.logs())
 
     def test_owner_cancellation_detaches_then_original_cleanup_joins_only_owned_target(self):
         import signal
