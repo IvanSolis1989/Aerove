@@ -287,9 +287,11 @@ void main() {
               setupState: editedOrdinaryState,
               patchConfig: config.patchClashConfig,
             );
-        final editedOrdinaryText = await CoreController.scoped(
-          engine,
-        ).buildProfile(editedOrdinary.base!);
+        final editedOrdinaryText = editedOrdinary.base == null
+            ? editedOrdinary.yaml
+            : await CoreController.scoped(
+                engine,
+              ).buildProfile(editedOrdinary.base!);
         final editedProvider =
             (jsonDecode(jsonEncode(loadYaml(editedOrdinaryText)))
                     as Map)['proxy-providers']['remote']
