@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.pm.ShortcutInfoCompat
 import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
+import dev.aerove.lite.R
 import java.util.UUID
 
 enum class LauncherAction { STOP, START, TOGGLE }
@@ -49,17 +51,22 @@ object LauncherActions {
         return true
     }
 
-    fun publishDynamicShortcuts(context: Context, labels: Map<LauncherAction, Pair<String, String>>) {
+    fun publishDynamicShortcuts(context: Context, labels: Map<LauncherAction, Pair<String, String>>): Boolean {
         val shortcuts = order.mapIndexed { rank, action ->
             val (shortLabel, longLabel) = requireNotNull(labels[action]) { "Missing shortcut labels for $action" }
             ShortcutInfoCompat.Builder(context, action.name.lowercase())
                 .setShortLabel(shortLabel)
                 .setLongLabel(longLabel)
+                .setIcon(IconCompat.createWithResource(context, when (action) {
+                    LauncherAction.START -> R.drawable.ic_shortcut_start
+                    LauncherAction.STOP -> R.drawable.ic_shortcut_stop
+                    LauncherAction.TOGGLE -> R.drawable.ic_shortcut_toggle
+                }))
                 .setRank(rank)
                 .setIntent(shortcutIntent(context, action))
                 .build()
         }
-        ShortcutManagerCompat.setDynamicShortcuts(context, shortcuts)
+        return ShortcutManagerCompat.setDynamicShortcuts(context, shortcuts)
     }
 
 }

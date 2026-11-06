@@ -24,6 +24,7 @@ import dev.aerove.lite.appaccess.InstalledApplication
 import dev.aerove.lite.appaccess.InstalledApplicationSnapshot
 import dev.aerove.lite.appaccess.validAccessPackage
 import dev.aerove.lite.platform.LauncherAction
+import dev.aerove.lite.platform.LauncherActions
 import dev.aerove.lite.updates.LITE_APK_NAME
 import dev.aerove.lite.updates.ProductVersion
 import dev.aerove.lite.updates.trustedAssetUrl
@@ -138,9 +139,13 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
                     requireNotNull(call.argument<Boolean>("value")) { "Missing value" },
                 ))
                 "initShortcuts" -> {
-                    meowShortcutLabels(call.arguments)
-                    reply.error("platform_integration_required",
-                        "Lite quick actions still read the retired Kotlin profile/settings stores; runtime-handoff dispatch must be connected before publishing")
+                    val labels = meowShortcutLabels(call.arguments)
+                    try {
+                        reply.success(LauncherActions.publishDynamicShortcuts(context,
+                            labels.mapValues { (_, label) -> label to label }))
+                    } catch (error: Exception) {
+                        reply.error("platform_error", error.message ?: error.toString())
+                    }
                 }
                 "downloadUpdate" -> {
                     val url = requireNotNull(call.argument<String>("url")) { "Missing url" }

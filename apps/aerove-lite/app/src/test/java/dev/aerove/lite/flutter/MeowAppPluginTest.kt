@@ -28,6 +28,8 @@ class MeowAppPluginTest {
         val labels = mapOf("start" to "启动", "stop" to "停止", "toggle" to "切换")
         assertEquals(LauncherAction.entries.toSet(), meowShortcutLabels(labels).keys)
         assertEquals("启动", meowShortcutLabels(labels)[LauncherAction.START])
+        assertEquals("停止", meowShortcutLabels(labels)[LauncherAction.STOP])
+        assertEquals("切换", meowShortcutLabels(labels)[LauncherAction.TOGGLE])
         assertThrows(IllegalArgumentException::class.java) { meowShortcutLabels(labels - "stop") }
         assertThrows(IllegalArgumentException::class.java) { meowShortcutLabels(labels + ("stop" to false)) }
         assertThrows(IllegalArgumentException::class.java) { meowShortcutLabels(null) }

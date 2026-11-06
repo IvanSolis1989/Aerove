@@ -166,8 +166,7 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                         null,
                     )
                 } else {
-                    initShortcuts(labels)
-                    result.success(true)
+                    result.success(initShortcuts(labels))
                 }
             }
 
@@ -249,7 +248,7 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         }
     }
 
-    private fun initShortcuts(labels: Map<QuickAction, String>) {
+    private fun initShortcuts(labels: Map<QuickAction, String>): Boolean {
         val shortcuts = SHORTCUT_ORDER.mapIndexed { rank, action ->
             with(ShortcutInfoCompat.Builder(GlobalState.application, action.shortcutId)) {
                 setShortLabel(labels.getValue(action))
@@ -259,7 +258,7 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
                 build()
             }
         }
-        ShortcutManagerCompat.setDynamicShortcuts(GlobalState.application, shortcuts)
+        return ShortcutManagerCompat.setDynamicShortcuts(GlobalState.application, shortcuts)
     }
 
     // Plain circles, not adaptive icons: an adaptive shortcut icon takes the
