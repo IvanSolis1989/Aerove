@@ -293,6 +293,7 @@ class OwnedBuildCommands:
 
 def prepare(output):
     ci_only()
+    require(not signed301_requested(), 'Signed301 mode cannot build any App or runner')
     output = Path(output).resolve()
     temp = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
     require(output.is_relative_to(temp) and output != temp and not output.exists(), 'New RUNNER_TEMP output required')
@@ -553,6 +554,7 @@ def verify_app_checkpoint(directory, expected_digest):
 def runner_only(original, output, expected_checkpoint, signing_key=None):
     """Recover only the independent runner, with an unchanged, fully identified original App."""
     ci_only()
+    require(not signed301_requested(), 'Signed301 mode cannot compile or resign a runner')
     original = Path(original).resolve(strict=True)
     checkpoint = verify_app_checkpoint(original, expected_checkpoint)
     output = Path(output).resolve()
@@ -596,11 +598,231 @@ def runner_only(original, output, expected_checkpoint, signing_key=None):
         raise
 
 
+SIGNED301_OPT_IN = 'AEROVE_FLUTTER_HELLO_SIGNED301'
+PRODUCER301 = dict(sourceRevision='179df017429574f02fbe2fd985ff43b7d28553e3',
+    sourceTree='1cdbec58893acbe7ddd0574365be07feb9793c52', workflowRun='42287798957', runAttempt=1, runNumber=301)
+ARTIFACT301 = dict(id=13538781823, name='Flutter-hello-world-control-attempt-1', size_in_bytes=7088269,
+    digest='sha256:72bc45b1455366330e00079acd1b662170186458dd2c5758024a0dfe73620960')
+CP301_SHA = '6936781492d5facbe718a5bb481810df22f50e5c9ae3b3aea1b31f3774c0d930'
+APP301_SHA = 'fa58ff5b9b35e37f6fbf599c6ed2ee81e1f7d399c123e7a1ea343d4bf11d77ef'
+RUNNER301_SHA = '85c45d7dbe5e70488ab3ec81440c9847a1d37115b88e397d60aa5b7fce549f65'
+CERT301_SHA = '2ef6e74aea287af187c7440a2e287daa330e5f02f9faa7efcaaea0e1e0e108d9'
+JAVA301_SHA = 'e4059656ca9faacde6feb4abd1fb820845bc2d6929ee1748196b968c85bfcaff'
+MANIFEST301_SHA = '14631f6eff5209b739cf709e5b87f679e28f9f7fb4996c2c1728dc6d4f5c0412'
+UNAVAILABLE301 = {'generated-project/.metadata': {'bytes': 968, 'sha256': '7e9c8e03dc7262a6715cea8e8499c633904bb6b13bd7c2f0593ab4c947a95e85'}, 'generated-project/.gitignore': {'bytes': 746, 'sha256': '441eaa1de5b3db9fae056e7503567e9f8dd94173e1389c60f76956abf729015a'}, 'generated-project/.idea/modules.xml': {'bytes': 452, 'sha256': 'b78d7b5a36fc08ea04a202ed9fd5ef550e21935f1efc7f2c4be1c743ed0b236f'}, 'generated-project/.idea/workspace.xml': {'bytes': 1517, 'sha256': '1f4bdf93fa0c89b32a2f788bcbd55363a23cd0db9b4c05a905247ac270c7061b'}, 'generated-project/android/.gitignore': {'bytes': 253, 'sha256': 'b027c9de1011765c015e5819bf857c0d75bfcd0886fb01721c091159012e50f1'}, 'generated-project/.idea/libraries/KotlinJavaRuntime.xml': {'bytes': 599, 'sha256': '82dff6dd065164518cd13ff2b677527601ef22bd9fd7cc4e607c38a2412e6cf9'}, 'generated-project/.idea/libraries/Dart_SDK.xml': {'bytes': 1392, 'sha256': 'c2efcca403c3cf14849da01b9197ce985981021469772e46f1b7637305b57e7e'}, 'generated-project/.idea/runConfigurations/main_dart.xml': {'bytes': 271, 'sha256': '0b2227c29b468c49f41b8b3138433e0de33d83dbe13b4002c069800e1d9b9322'}}
+
+
+def signed301_requested():
+    if SIGNED301_OPT_IN not in os.environ: return False
+    require(os.environ[SIGNED301_OPT_IN] == '1' and enabled(), 'Signed301 adoption requires the fixed control request')
+    return True
+
+
+def fixed301_runner_certificate(report, apk, producer):
+    """API33 V3 verification only for the already-built immutable301 runner; never a product parser."""
+    require(producer == PRODUCER301 and Path(apk).stat().st_size == 41363 and sha(apk) == RUNNER301_SHA,
+            'V3 reader is restricted to the exact signed301 runner/producer')
+    lines = report.splitlines()
+    expected = ('Verifies', 'Verified using v1 scheme (JAR signing): false',
+        'Verified using v2 scheme (APK Signature Scheme v2): false',
+        'Verified using v3 scheme (APK Signature Scheme v3): true',
+        'Verified using v3.1 scheme (APK Signature Scheme v3.1): false',
+        'Verified using v3.2 scheme (APK Signature Scheme v3.2): false',
+        'Verified using v4 scheme (APK Signature Scheme v4): false', 'Number of signers: 1')
+    require(all(lines.count(line) == 1 for line in expected), 'Unexpected fixed301 verification scheme/count report')
+    require(len([line for line in lines if line.startswith('Verified using ')]) == 6
+        and len([line for line in lines if line.startswith('Number of signers:')]) == 1, 'Ambiguous fixed301 verification markers')
+    digests = [line for line in lines if 'Signer' in line and 'certificate SHA-256 digest:' in line]
+    require(digests == ['V3.0 Signer: certificate SHA-256 digest: ' + CERT301_SHA], 'Fixed301 unique V3.0 certificate differs')
+    return CERT301_SHA
+
+
+def source_verification301(root, checkpoint):
+    """Only original301's exact eight absent metadata records are unavailable; never reconstruct them."""
+    sources=Path(root)/'sources'; declared=checkpoint.get('sourceFiles')
+    require(isinstance(declared,dict) and len(declared)==42 and set(UNAVAILABLE301).issubset(declared), 'Original301 declared source set differs')
+    verified=[];unavailable=[]
+    for name,row in sorted(declared.items()):
+        path=sources/name
+        require(not Path(name).is_absolute() and '..' not in Path(name).parts and ':' not in name and '\\' not in name,
+                'Unsafe original301 source path')
+        if name in UNAVAILABLE301:
+            require(row==UNAVAILABLE301[name] and not path.exists() and not path.is_symlink(), 'Original301 unavailable metadata record changed or was fabricated')
+            unavailable.append(dict(path=name,**row,status='unavailable-in-original301-artifact'))
+            continue
+        require(path.is_file() and not path.is_symlink() and path.resolve(strict=True).is_relative_to(sources.resolve(strict=True))
+            and path.stat().st_size==row['bytes'] and sha(path)==row['sha256'], 'Required original301 source missing or changed')
+        verified.append(dict(path=name,**row))
+    required={'FLUTTER-LICENSE','FlutterHelloWorldControlTest.java','RunnerManifest.xml','generated-project/lib/main.dart',
+        'generated-project/pubspec.yaml','generated-project/android/settings.gradle.kts',
+        'generated-project/android/app/build.gradle.kts','generated-project/android/app/src/main/AndroidManifest.xml',
+        'generated-project/android/gradle/wrapper/gradle-wrapper.properties'}
+    require(required.issubset({row['path'] for row in verified}) and
+        any(row['path'].endswith('/MainActivity.kt') for row in verified) and len(verified)==34 and len(unavailable)==8,
+        'Original301 mandatory source or verification counts differ')
+    return dict(declared=42,verified=34,unavailable=8,verifiedFiles=verified,unavailableFiles=unavailable,
+        sourceArchiveComplete=False,scope='fixed301-onscreen-control-diagnostic-only',
+        flutterProjectMetadata='generated-project/.metadata was not retained; build-input status is not inferred')
+
+
+def check301_files(root):
+    root = Path(root)
+    require(sha(root / 'CONTROL-APP-BUILD.json') == CP301_SHA, 'Original301 checkpoint bytes differ')
+    checkpoint = json.loads((root / 'CONTROL-APP-BUILD.json').read_text())
+    require(checkpoint.get('schema')==1 and checkpoint.get('kind')=='official-flutter-control-app-build'
+        and checkpoint.get('status')=='app-built-and-verified' and checkpoint.get('accepted') is False
+        and checkpoint.get('productAppCompiled') is False and checkpoint.get('controlCompiled') is True
+        and checkpoint.get('package')==PACKAGE and checkpoint.get('activity')==ACTIVITY and checkpoint.get('apkFile')=='control.apk'
+        and checkpoint.get('officialSource',{}).get('framework')==FRAMEWORK and checkpoint.get('officialSource',{}).get('engine')==ENGINE
+        and checkpoint.get('officialSource',{}).get('mainSha256')==MAIN_SHA, 'Original301 exact checkpoint contract differs')
+    source_verification301(root,checkpoint)
+    require(engine_identity(root/'control.apk')==checkpoint['flutterLibrary'], 'Original301 engine differs')
+    require(checkpoint['identity'] == PRODUCER301 and checkpoint['signerSha256'] == CERT301_SHA
+        and (root / 'control.apk').stat().st_size == 15477599 and sha(root / 'control.apk') == APP301_SHA
+        and (root / 'runner.apk').stat().st_size == 41363 and sha(root / 'runner.apk') == RUNNER301_SHA,
+        'Original301 App/runner/producer binding differs')
+    require(sha(root / 'sources/FlutterHelloWorldControlTest.java') == JAVA301_SHA
+        and sha(root / 'sources/RunnerManifest.xml') == MANIFEST301_SHA
+        and sha(SOURCE / 'FlutterHelloWorldControlTest.java') == JAVA301_SHA
+        and sha(SOURCE / 'AndroidManifest.xml') == MANIFEST301_SHA, 'Original301 exact runner source/manifest differs')
+    with zipfile.ZipFile(root / 'runner.apk') as z:
+        require(len(z.namelist()) == len(set(z.namelist())) and z.read('classes.dex').startswith(b'dex\n')
+            and not any(n.startswith(('lib/', 'assets/')) for n in z.namelist()), 'Original301 runner payload boundary differs')
+    return checkpoint
+
+
+def check301_api(run, artifact):
+    require(run.get('id') == 42287798957 and run.get('run_attempt') == 1 and run.get('run_number') == 301
+        and run.get('head_sha') == PRODUCER301['sourceRevision'] and run.get('head_branch') == BRANCH
+        and run.get('path') == '.github/workflows/aerove-lite.yaml' and run.get('status') == 'completed'
+        and run.get('conclusion') == 'failure' and run.get('repository', {}).get('full_name') == 'IvanSolis1989/Aerove',
+        'Original301 failed run/source identity differs')
+    require(all(artifact.get(k) == v for k,v in ARTIFACT301.items()) and artifact.get('expired') is False
+        and artifact.get('workflow_run') == dict(id=42287798957, repository_id=1429390079,
+            head_repository_id=1429390079, head_branch=BRANCH, head_sha=PRODUCER301['sourceRevision']),
+        'Original301 artifact API identity differs')
+
+
+def adopt_signed301(output):
+    ci_only(); require(signed301_requested(), 'Explicit signed301 adoption required')
+    temp = Path(os.environ['RUNNER_TEMP']).resolve(strict=True); output = Path(output).resolve()
+    require(output.is_relative_to(temp) and output != temp and not output.exists(), 'New controlled adoption directory required')
+    output.mkdir(parents=True)
+    logs = output / 'adoption-evidence'; logs.mkdir()
+    work = temp / ('signed301-adopt-work-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
+    work.mkdir(exist_ok=False)
+    owner = OwnedBuildCommands(logs, work, budget=360)
+    try:
+        # Reuse repository read/download helpers inside the bounded owned command session.
+        code = 'import json,sys;from lite_release import _gh_json;json.dump(_gh_json(sys.argv[1]),sys.stdout)'
+        base = 'repos/IvanSolis1989/Aerove/actions/'
+        run = json.loads(owner.command('original301-run-api', [sys.executable, '-c', code, base+'runs/42287798957'], cwd=Path(__file__).parent, timeout=30))
+        row = json.loads(owner.command('original301-artifact-api', [sys.executable, '-c', code, base+'artifacts/13538781823'], cwd=Path(__file__).parent, timeout=30))
+        check301_api(run, row)
+        save(logs / 'ORIGINAL-RUN.json', run); save(logs / 'ORIGINAL-ARTIFACT.json', row)
+        archive = output / 'ORIGINAL301.zip'
+        code = 'import sys;from pathlib import Path;from lite_release import _gh_binary;_gh_binary(sys.argv[1],Path(sys.argv[2]))'
+        owner.command('original301-download', [sys.executable, '-c', code, base+'artifacts/13538781823/zip', archive], cwd=Path(__file__).parent, timeout=180)
+        require(archive.stat().st_size == ARTIFACT301['size_in_bytes'] and 'sha256:'+sha(archive) == ARTIFACT301['digest'], 'Original301 ZIP size/hash differs')
+        raw = output / 'original301'; raw.mkdir()
+        with zipfile.ZipFile(archive) as z:
+            entries=z.infolist()
+            require(entries and len({e.filename for e in entries}) == len(entries) and sum(e.file_size for e in entries) <= 128*1024*1024,
+                    'Unsafe original301 ZIP inventory')
+            import stat
+            for item in entries:
+                parts=item.filename.rstrip('/').split('/'); mode=stat.S_IFMT(item.external_attr>>16)
+                require(item.filename and not item.filename.startswith('/') and '\\' not in item.filename
+                    and all(p not in ('','.','..') and ':' not in p for p in parts)
+                    and mode in (0,stat.S_IFREG,stat.S_IFDIR), 'Unsafe original301 ZIP path/type')
+            require(z.testzip() is None, 'Original301 ZIP CRC failed')
+            z.extractall(raw)
+        import lite_release as release
+        release.product_source.bind_archive(archive, raw, row)
+        original = raw / 'flutter-control-runtime'
+        checkpoint = check301_files(original)
+        for name in ('control.apk','runner.apk','CONTROL-APP-BUILD.json'): shutil.copyfile(original/name,output/name)
+        for name in checkpoint['sourceFiles']:
+            if name in UNAVAILABLE301: continue
+            dest=output/'sources'/name;dest.parent.mkdir(parents=True,exist_ok=True)
+            shutil.copyfile(original/'sources'/name,dest)
+        sdk=Path(os.environ.get('ANDROID_SDK_ROOT') or os.environ['ANDROID_HOME'])
+        tools={name:sdk/'build-tools/37.0.0'/name for name in ('aapt','apksigner')}
+        require(all(t.is_file() for t in tools.values()), 'Existing verification-only SDK37 tools missing')
+        app_report=owner.command('adopt-app-signature',[tools['apksigner'],'verify','--verbose','--print-certs',output/'control.apk'])
+        require(signing_certificate(app_report)==CERT301_SHA,'Original301 App strict V2 certificate differs')
+        runner_report=owner.command('adopt-runner-signature',[tools['apksigner'],'verify','--verbose','--print-certs',
+            '--min-sdk-version','33','--max-sdk-version','33',output/'runner.apk'])
+        fixed301_runner_certificate(runner_report,output/'runner.apk',PRODUCER301)
+        for name,package,activity in (('control.apk',PACKAGE,ACTIVITY),('runner.apk',RUNNER,None)):
+            check_badging(owner.command('adopt-'+name+'-badging',[tools['aapt'],'dump','badging',output/name]),package,activity)
+        manifest=owner.command('adopt-runner-manifest',[tools['aapt'],'dump','xmltree',output/'runner.apk','AndroidManifest.xml'])
+        require('android.test.InstrumentationTestRunner' in manifest and re.search(r'android:targetPackage[^=]*="'+re.escape(PACKAGE)+'"',manifest)
+            and re.search(r'android:testOnly[^=]*=\(type 0x12\)0xffffffff',manifest),'Original301 runner manifest differs')
+        owner.close()
+        identity=ci_artifacts.identity()
+        info=dict(schema=1,status='prepared',kind='official-flutter-hello-control',diagnosticOnly=True,accepted=False,
+            visualApproved=False,performanceAccepted=False,releaseAccepted=False,sourceArchiveComplete=False,
+            sourceVerification=source_verification301(output,checkpoint),
+            productAppCompiled=False,controlCompiled=False,appReused=True,runnerCompiled=False,runnerReused=True,signed301Reuse=True,
+            identity=identity,executorIdentity=identity,appProducerIdentity=PRODUCER301,runnerIdentity=PRODUCER301,
+            appCheckpointSha256=CP301_SHA,originalArtifact=ARTIFACT301,packages=dict(control=PACKAGE,runner=RUNNER,activity=ACTIVITY),
+            signerSha256=CERT301_SHA,officialSource=checkpoint['officialSource'],flutterLibrary=checkpoint['flutterLibrary'],
+            moduleSha256=sha(Path(__file__)),runnerSourceSha256=JAVA301_SHA,runnerManifestSha256=MANIFEST301_SHA,
+            actualVerificationTargetApi=33,runnerSignatureScheme='fixed-original301-v3.0',appResigned=False,runnerResigned=False)
+        info['files']={q.relative_to(output).as_posix():dict(bytes=q.stat().st_size,sha256=sha(q)) for q in output.rglob('*') if q.is_file()}
+        save(output/'BUILD.json',info)
+    except BaseException as failure:
+        cleanup_error=None
+        try:owner.close()
+        except BaseException as cleanup:cleanup_error=type(cleanup).__name__
+        save(output/'ADOPT-FAILED.json',dict(status='control-invalid',accepted=False,failureClass=type(failure).__name__,
+            appRebuilt=False,runnerRebuilt=False,appResigned=False,runnerResigned=False,cleanupErrorClass=cleanup_error))
+        raise
+
+
+def signed301_runtime(root, info):
+    require(signed301_requested(), 'Signed301 runtime only under fixed adoption opt-in')
+    identity=ci_artifacts.identity()
+    require(info.get('identity')==identity and info.get('executorIdentity')==identity and info.get('moduleSha256')==sha(Path(__file__))
+        and info.get('sourceArchiveComplete') is False and info.get('visualApproved') is False
+        and info.get('performanceAccepted') is False and info.get('releaseAccepted') is False
+        and info.get('kind')=='official-flutter-hello-control' and info.get('status')=='prepared' and info.get('accepted') is False
+        and info.get('controlCompiled') is False and info.get('runnerCompiled') is False and info.get('runnerReused') is True
+        and info.get('appReused') is True and info.get('productAppCompiled') is False and info.get('appProducerIdentity')==PRODUCER301
+        and info.get('runnerIdentity')==PRODUCER301 and info.get('originalArtifact')==ARTIFACT301
+        and info.get('appResigned') is False and info.get('runnerResigned') is False
+        and info.get('actualVerificationTargetApi')==33 and info.get('runnerSignatureScheme')=='fixed-original301-v3.0'
+        and info.get('packages')==dict(control=PACKAGE,runner=RUNNER,activity=ACTIVITY), 'Fixed301 producer/executor seal differs')
+    files=info['files']
+    require(isinstance(files,dict) and files and {q.relative_to(root).as_posix() for q in root.rglob('*') if q.is_file()}==set(files)|{'BUILD.json'},'Adopted301 inventory differs')
+    for name,row in files.items():
+        path=root/name
+        require(not Path(name).is_absolute() and '..' not in Path(name).parts and ':' not in name and '\\' not in name
+            and path.is_file() and not path.is_symlink() and path.stat().st_size==row['bytes'] and sha(path)==row['sha256'],'Adopted301 payload changed')
+    checkpoint=check301_files(root)
+    source_verification=source_verification301(root,checkpoint)
+    require(info.get('sourceVerification')==source_verification, 'Fixed301 partial-source verification record differs')
+    require(info.get('appCheckpointSha256')==CP301_SHA and info.get('officialSource')==checkpoint['officialSource']
+        and info.get('flutterLibrary')==checkpoint['flutterLibrary'] and info.get('signerSha256')==CERT301_SHA
+        and info.get('runnerSourceSha256')==JAVA301_SHA and info.get('runnerManifestSha256')==MANIFEST301_SHA,'Fixed301 identity fields changed')
+    require(signing_certificate((root/'adoption-evidence/adopt-app-signature.out').read_text())==CERT301_SHA,'Adopted App V2 report changed')
+    fixed301_runner_certificate((root/'adoption-evidence/adopt-runner-signature.out').read_text(),root/'runner.apk',PRODUCER301)
+    return dict(identity=identity,apks={'control.apk':APP301_SHA,'runner.apk':RUNNER301_SHA},controlRuntime=True,controlDiagnostic=True,
+        appProducerIdentity=PRODUCER301,runnerIdentity=PRODUCER301,executorIdentity=identity,controlCompiled=False,appReused=True,
+        runnerCompiled=False,runnerReused=True,signed301Reuse=True,controlBuildSha256=sha(root/'BUILD.json'),officialSource=checkpoint['officialSource'],
+        diagnosticOnly=True,accepted=False,visualApproved=False,performanceAccepted=False,releaseAccepted=False,
+        sourceArchiveComplete=False,sourceVerification=source_verification,
+        productAppCompiled=False,requestedGraphicsRoute='guest-angle-vulkan-lavapipe')
+
+
 def runtime(directory):
     require(enabled(), 'Fixed control runtime opt-in required')
     root = Path(directory)
     require(root.is_dir() and not root.is_symlink() and not any(p.is_symlink() for p in root.rglob('*')), 'Missing or symlinked fixed control directory')
     info = json.loads((root / 'BUILD.json').read_text())
+    if info.get('signed301Reuse') is True: return signed301_runtime(root, info)
+    require(not signed301_requested(), 'Signed301 opt-in cannot admit a newly built or different runtime')
     require(info.get('schema') == 1 and info.get('status') == 'prepared' and info.get('kind') == 'official-flutter-hello-control'
         and info.get('identity') == ci_artifacts.identity() and info.get('accepted') is False
         and info.get('productAppCompiled') is False and info.get('runnerCompiled') is True
@@ -663,6 +885,8 @@ class Control(Producer):
         remote = None; result = 1
         self.receipt.update(producer='flutter_hello_control.py', diagnosticOnly=True, accepted=False,
             productAppCompiled=False, controlRuntime=bound, visualApproved=False, performanceAccepted=False, releaseAccepted=False)
+        if info.get('signed301Reuse') is True:
+            self.receipt.update(sourceArchiveComplete=False, sourceVerification=info['sourceVerification'])
         for sig in (signal.SIGINT, signal.SIGTERM): self.previous_signals[sig] = signal.signal(sig, self.interrupt)
         try:
             from emulator_current import validate_renderer_proof
@@ -675,7 +899,12 @@ class Control(Producer):
             self.owner_verified = True
             for package, name in ((PACKAGE, 'control.apk'), (RUNNER, 'runner.apk')):
                 path = self.args.runtime_directory / name
-                cert = signing_certificate(self.command('signature-' + name, [self.args.apksigner, 'verify', '--verbose', '--print-certs', path]).decode())
+                verification = [self.args.apksigner, 'verify', '--verbose', '--print-certs']
+                if info.get('signed301Reuse') is True and name == 'runner.apk':
+                    verification += ['--min-sdk-version', '33', '--max-sdk-version', '33']
+                report = self.command('signature-' + name, [*verification, path]).decode()
+                cert = (fixed301_runner_certificate(report, path, info['runnerIdentity'])
+                        if info.get('signed301Reuse') is True and name == 'runner.apk' else signing_certificate(report))
                 require(cert == info['signerSha256'], 'Control signer changed')
                 self.installed.append(package)
                 self.adb_command('install-' + package, 'install', *(['-t'] if package == RUNNER else []), '--no-streaming', str(path), timeout=120)
@@ -740,10 +969,12 @@ def main():
     restore.add_argument('--output', type=Path, required=True)
     restore.add_argument('--app-checkpoint-sha256', required=True)
     restore.add_argument('--signing-key', type=Path)
+    adopt = commands.add_parser('adopt-signed301'); adopt.add_argument('--output', type=Path, required=True)
     run = commands.add_parser('run')
     for name in ('runtime-directory', 'adb', 'apksigner', 'output'): run.add_argument('--' + name, type=Path, required=True)
     run.add_argument('--serial', required=True)
     args = parser.parse_args(); idle()
+    if args.phase == 'adopt-signed301': adopt_signed301(args.output); return 0
     if args.phase == 'prepare': prepare(args.output); return 0
     if args.phase == 'runner-only':
         runner_only(args.runtime_directory, args.output, args.app_checkpoint_sha256, args.signing_key); return 0

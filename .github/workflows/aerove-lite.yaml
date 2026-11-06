@@ -2870,6 +2870,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       AEROVE_FLUTTER_HELLO_CONTROL: '1'
+      AEROVE_FLUTTER_HELLO_SIGNED301: '1'
       ANDROID_SERIAL: emulator-5554
       AEROVE_GUEST_ANGLE: '1'
     steps:
@@ -2913,7 +2914,7 @@ jobs:
       working-directory: apps/aerove-lite/tool
       env:
         AEROVE_TEST_CONTROL_BUILD_OWNER: '1'
-      run: python3 -B -m unittest -v test_flutter_hello_control
+      run: env -u AEROVE_FLUTTER_HELLO_SIGNED301 python3 -B -m unittest -v test_flutter_hello_control test_control301_reuse
     - name: Existing API33 emulator environment with unchanged configuration
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
@@ -2976,19 +2977,9 @@ jobs:
         mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
         "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
         grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
-    - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
-      with:
-        gradle-version: 9.6.0
-        cache-read-only: false
-    - uses: ./.github/actions/flutter
-      with:
-        flutter-version: 3.47.6
-        cache: true
-        cache-read-only: true
-    - name: Build one isolated official Flutter control and its system runner
+    - name: Adopt exact signed301 App and runner without any build or key
       run: |
-        sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
-        python3 -B apps/aerove-lite/tool/flutter_hello_control.py prepare --output "$RUNNER_TEMP/lite-diagnostics/flutter-control-runtime"
+        python3 -B apps/aerove-lite/tool/flutter_hello_control.py adopt-signed301 --output "$RUNNER_TEMP/lite-diagnostics/flutter-control-runtime"
     - name: Real API 33 ${{ matrix.phase }} verification
       shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
       run: |
