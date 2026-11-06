@@ -38,7 +38,8 @@ class _ExactCore extends CoreHandlerInterface {
     Object? arguments,
     Duration? timeout,
   }) async {
-    if (method == CoreMethod.getProfileBase ||
+    if (method == CoreMethod.getConfig ||
+        method == CoreMethod.getProfileBase ||
         method == CoreMethod.buildProfile ||
         method == CoreMethod.matchFilters) {
       if (method == CoreMethod.matchFilters) calls++;
@@ -53,7 +54,8 @@ class _ExactCore extends CoreHandlerInterface {
           ? await appPath.homeDirPath
           : p.dirname(
               p.dirname(
-                method == CoreMethod.getProfileBase
+                method == CoreMethod.getConfig ||
+                        method == CoreMethod.getProfileBase
                     ? arguments as String
                     : (arguments as Map)['path'] as String,
               ),
@@ -78,7 +80,7 @@ class _ExactCore extends CoreHandlerInterface {
         );
       return result['result'] as T;
     }
-    throw StateError('unexpected fixture core method');
+    throw StateError('unexpected fixture core method: ${method.name}');
   }
 
   @override

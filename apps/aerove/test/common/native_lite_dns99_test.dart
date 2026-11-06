@@ -4,6 +4,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/core/method.dart';
+import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/core/meow.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,6 +24,7 @@ import 'package:fl_clash/database/database.dart' as db;
 import 'package:fl_clash/providers/database.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart' show Locale;
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:yaml/yaml.dart';
@@ -266,6 +268,7 @@ Future<String> actualProfile(
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() => AppLocalizations.load(const Locale('en')));
   ClientProduct.configure(
     product: ProductSpec(
       id: 'fixture',
@@ -1138,7 +1141,7 @@ void main() {
   );
   if (core == 'meow-rs')
     test(
-      'all thirteen unsupported original and script declarations reject before defaults hide them',
+      'all thirteen unsupported declarations reject while typed IPv6 survives the real producer and script',
       () async {
         final values = <String, dynamic>{
           'listen-routing-mark': 0,
@@ -1218,8 +1221,6 @@ void main() {
             );
           }
           for (final dns in [
-            xclashDefaultDns.copyWith(ipv6: false),
-            xclashDefaultDns.withExplicitDnsKey(DnsOverrideKey.ipv6),
             xclashDefaultDns.copyWith(fakeIpRange6: 'fd00::/64'),
             xclashDefaultDns.withExplicitDnsKey(DnsOverrideKey.fakeIpRange6),
           ]) {
@@ -1237,6 +1238,38 @@ void main() {
               throwsA(isA<FormatException>()),
             );
             expect(evaluations, before);
+          }
+          for (final dns in [
+            xclashDefaultDns.copyWith(enable: true, ipv6: false),
+            xclashDefaultDns
+                .copyWith(enable: true)
+                .withExplicitDnsKey(DnsOverrideKey.ipv6),
+          ]) {
+            final overrides = ProfileOverrides(
+              dns: dns,
+              dnsOverrideKeys: {
+                DnsOverrideKey.enable,
+                DnsOverrideKey.nameserver,
+                DnsOverrideKey.ipv6,
+              },
+            );
+            final before = evaluations;
+            final ordinary =
+                loadYaml(await actualProfile(home, overrides: overrides))
+                    as Map;
+            expect((ordinary['dns'] as Map)['ipv6'], dns.ipv6);
+            expect(evaluations, before);
+            final scripted =
+                loadYaml(
+                      await actualProfile(
+                        home,
+                        overrides: overrides,
+                        script: '(config)=>config',
+                      ),
+                    )
+                    as Map;
+            expect((scripted['dns'] as Map)['ipv6'], dns.ipv6);
+            expect(evaluations, before + 1);
           }
           for (final key in DnsOverrideKey.values.where(
             (key) =>

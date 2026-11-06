@@ -10,7 +10,7 @@ fun main(args: Array<String>) = runBlocking<Unit> {
     val unused = NativeConfigValidator { error("This fixture only builds profiles and matches filters") }
     val config = MeowConfigProtocol(home, validator = unused, verifiedNativeFeatures = { setOf("ss") })
     val offline = MeowOfflineMethods(home, validator = unused, features = { setOf("ss") }, filters = RealGoFilterExecutor())
-    val methods = setOf("getProfileBase", "buildProfile", "matchFilters")
+    val methods = setOf("getConfig", "getProfileBase", "buildProfile", "matchFilters")
     val dispatcher = MeowProtocolDispatcher(home, methods.associateWith { method -> MeowProtocolMethod { arguments ->
         if (method == "matchFilters") offline.invoke(method, arguments) else config.invoke(method, arguments)
     } })
