@@ -435,10 +435,33 @@ def compile_runner(output, work, sdk, android, tools, owner):
             and re.search(r'android:targetPackage[^=]*="' + re.escape(PACKAGE) + r'"', manifest) and
             re.search(r'android:testOnly[^=]*=\(type 0x12\)0xffffffff', manifest), 'Runner instrumentation boundary differs')
     defined = command('runner-dex', [tools['dexdump'], '-f', dex / 'classes.dex'])
-    descriptors = re.findall(r"Class descriptor\s*:\s*'([^']+)'", defined)
-    require(descriptors and all(n.startswith('Ldev/aerove/diagnostic/FlutterHelloWorldControlTest') for n in descriptors),
-            'Runner duplicated framework/runtime classes')
+    check_runner_dex(defined)
     return aligned
+
+
+def check_runner_dex(defined):
+    blocks = re.split(r'(?m)^Class #[0-9]+\s+-\s*$', defined)[1:]
+    root = 'Ldev/aerove/diagnostic/FlutterHelloWorldControlTest'
+    seen = set()
+    for block in blocks:
+        names = re.findall(r"Class descriptor\s*:\s*'([^']+)'", block)
+        require(len(names) == 1 and names[0] not in seen, 'Duplicate or missing runner class definition')
+        name = names[0]; seen.add(name)
+        if name == root + ';' or re.fullmatch(re.escape(root) + r'\$[A-Za-z0-9_$]+;', name):
+            continue
+        # Official D8 generates this global annotation for desugared debug lambdas.
+        require(name == 'Lcom/android/tools/r8/annotations/LambdaMethod;'
+            and re.search(r'Access flags\s*:\s*0x3601 \(PUBLIC INTERFACE ABSTRACT SYNTHETIC ANNOTATION\)', block)
+            and re.search(r"Superclass\s*:\s*'Ljava/lang/Object;'", block)
+            and re.findall(r"#\d+\s*:\s*'(L[^']+;)'", block) == ['Ljava/lang/annotation/Annotation;']
+            and re.search(r'Static fields\s*-\s*Instance fields\s*-\s*Direct methods\s*-\s*Virtual methods', block)
+            and re.findall(r"name\s*:\s*'([^']+)'", block) == ['holder', 'method', 'proto']
+            and re.findall(r"type\s*:\s*'([^']+)'", block) == ['()Ljava/lang/String;'] * 3
+            and len(re.findall(r'access\s*:\s*0x0401 \(PUBLIC ABSTRACT\)', block)) == 3
+            and re.findall(r'code\s*:\s*(\([^\n]+\)|-)', block) == ['(none)'] * 3
+            and re.search(r'source_file_idx\s*:\s*\d+ \(D8\$\$SyntheticClass\)', block),
+            'Runner duplicated framework/runtime classes or unexpected compiler synthetic')
+    require(root + ';' in seen, 'Missing actual runner test class')
 
 
 def verify_runner_key(output, tools, owner, key, expected_signer):

@@ -191,6 +191,30 @@ class RealBuildOwnerHostTests(unittest.TestCase):
             self.assertEqual(original,signal.getsignal(signal.SIGTERM))
 
 class RecoveryKeyAndCheckpointTests(unittest.TestCase):
+    def test_d8_annotation_is_not_a_bundled_framework_implementation(self):
+        # Shape from real300 D8 output and the official LambdaMethod declaration.
+        own = "Class #1 -\nClass descriptor : 'Ldev/aerove/diagnostic/FlutterHelloWorldControlTest;'\n"
+        annotation = """Class #0 -
+Class descriptor : 'Lcom/android/tools/r8/annotations/LambdaMethod;'
+Access flags : 0x3601 (PUBLIC INTERFACE ABSTRACT SYNTHETIC ANNOTATION)
+Superclass : 'Ljava/lang/Object;'
+Interfaces -
+#0 : 'Ljava/lang/annotation/Annotation;'
+Static fields -
+Instance fields -
+Direct methods -
+Virtual methods -
+""" + ''.join("name : '" + name + "'\ntype : '()Ljava/lang/String;'\naccess : 0x0401 (PUBLIC ABSTRACT)\ncode : (none)\n"
+              for name in ('holder', 'method', 'proto')) + 'source_file_idx : 51 (D8$$SyntheticClass)\n'
+        control.check_runner_dex(annotation + own)
+        for changed in (annotation.replace('code : (none)', 'code : -', 1),
+                        annotation.replace('0x3601', '0x0001'),
+                        annotation.replace("name : 'proto'", "name : 'unexpected'"),
+                        "Class #0 -\nClass descriptor : 'Landroid/test/InstrumentationTestRunner;'\n",
+                        "Class #0 -\nClass descriptor : 'Ldev/aerove/diagnostic/FlutterHelloWorldControlTestOther;'\n"):
+            with self.subTest(changed=changed[:90]), self.assertRaises(ValueError):
+                control.check_runner_dex(changed + own)
+
     def test_existing_minor_sdk_needs_no_separate_major_platform(self):
         # The real299 host had37.1 only; this tests admission, not SDK execution.
         with tempfile.TemporaryDirectory() as tmp:

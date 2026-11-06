@@ -1174,6 +1174,8 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 #### [R8 官方仓库](https://r8.googlesource.com/r8/)
 
+独立 Flutter 控制 runner 的 DEX 检查另核官方提交 [`b2da3251f53ecf09cb52709309ebe3c4ca935348`](https://r8.googlesource.com/r8/+/b2da3251f53ecf09cb52709309ebe3c4ca935348) 与 [`db7f0ef637c88095a08843cfd0839557e3bc557f`](https://r8.googlesource.com/r8/+/db7f0ef637c88095a08843cfd0839557e3bc557f)：D8 可为解糖 lambda 生成 `com.android.tools.r8.annotations.LambdaMethod` 全局注解。CI300 的实际 SDK37.0.0 DEX 已出现该类；只接受其精确描述符、synthetic annotation 标志、三个无代码 String 方法与 D8 source 标记，其他系统／运行时定义仍拒绝。上述提交只证明生成机制，不冒称实际 SDK 内 D8 的版本身份；仅参考源码与实际工具输出，不复制编译器实现，保留 R8 authors / BSD-style 署名。
+
 **固定版本 / revision：** TraceReferences 命令源码 `d3a004e326742850d743833562cc2d6ca267d117`，parser blob `06cb8149b17ec95646b185a0ade00cac7dda240f`；生产公共 API 另核 R8 `9.4.24` 固定提交 `61dc59bf271ddb314b5e0953231bd22df0ffb17e`。本地最小用例使用现有 SDK36 R8 `8.10.9-dev`，生产使用本项目 AGP 实际已加载的 R8，不新增另一个版本依赖。
 
 **用途与采用方式：** 核对官方 `--source`、`--target`、`--lib`、`--keep-rules`、`--allowobfuscation`，从预 R8 测试 classfile 推导 app 的精确保留规则并保留混淆。公共 `TraceReferencesCommand` 与类型化诊断 API 保留官方 keep/check consumer，以全部引用上下文区分应用调用边与第三方测试依赖内部引用：项目、目标成员、产品命名空间或未知上下文缺失仍失败；可延后的第三方问题完整记录为未验证，继续接受真实 test R8 / Android 检查。未复制工具实现、未用截断日志判断上下文；最小 classfile / R8 / JVM 用例不代替完整应用验收。
