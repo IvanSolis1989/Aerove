@@ -1146,7 +1146,7 @@ jobs:
           cd .mihomo
           go test -race -json ./tunnel/statistic -run '^TestCounter' -count=1
         ) 2>&1 | tee "$evidence/owner.jsonl"
-        go test -json . -run '^TestNativeUsageSnapshotUsesTheSameRealManagerAsLegacyTraffic$' -count=1 \
+        CGO_ENABLED=0 go test -json . -run '^TestNativeUsageSnapshotUsesTheSameRealManagerAsLegacyTraffic$' -count=1 \
           2>&1 | tee "$evidence/rpc.jsonl"
         python3 - <<'PY'
         import hashlib, json, os
