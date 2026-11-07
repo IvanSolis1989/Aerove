@@ -224,8 +224,11 @@ class LocalUsageLedgerFile(private val directory: File, private val authority: L
     }
 
     private fun syncDirectory(path: File) {
-        val fd = Os.open(path.path, OsConstants.O_RDONLY or OsConstants.O_DIRECTORY, 0)
-        try { Os.fsync(fd) } finally { Os.close(fd) }
+        val fd = Os.open(path.path, OsConstants.O_RDONLY, 0)
+        try {
+            check(OsConstants.S_ISDIR(Os.fstat(fd).st_mode)) { "Local usage sync target is not a directory" }
+            Os.fsync(fd)
+        } finally { Os.close(fd) }
     }
 
     private fun absent(target: File): Boolean = try {

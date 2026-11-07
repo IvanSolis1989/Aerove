@@ -37,6 +37,7 @@ val androidComponents = extensions.getByType<com.android.build.api.variant.Appli
 val productRoot = if (rootProject.name == "AEROVE Lite Flutter") rootProject.projectDir.parentFile else rootProject.projectDir
 val flutterHost = rootProject.projectDir == productRoot.resolve("android")
 val platformAppRoot = productRoot.resolve("app")
+val sharedAndroidSourceRoot = productRoot.resolve("../../packages/aerove_client/android-shared/src/main/kotlin")
 
 // Scoped-artifact wiring adapted from android/gradle-recipes, getScopedArtifacts,
 // Copyright 2023 The Android Open Source Project, licensed under Apache-2.0.
@@ -190,7 +191,7 @@ val legacySourceTasks = if (flutterHost) {
 } else {
     mapOf(
         "main" to tasks.register<Sync>("prepareLegacyMainSources") {
-            from(listOf(platformAppRoot.resolve("src/main/java"), platformAppRoot.resolve("src/main/kotlin"))) {
+            from(listOf(platformAppRoot.resolve("src/main/java"), platformAppRoot.resolve("src/main/kotlin"), sharedAndroidSourceRoot)) {
                 include("**/*.java", "**/*.kt")
                 exclude("**/FlutterMainActivity.kt", "**/MeowFlutterHost.kt", "**/MeowAppPlugin.kt")
             }
@@ -255,7 +256,7 @@ android.apply {
         sourceSets.getByName("androidTest").kotlin.srcDir(platformAppRoot.resolve("src/androidTest/java"))
     }
     sourceSets.getByName("main").assets.srcDir(platformAppRoot.resolve("src/main/java/dev/aerove/lite/editor/assets"))
-    sourceSets.getByName("main").java.srcDir(productRoot.resolve("../../packages/aerove_client/android-shared/src/main/kotlin"))
+    if (flutterHost) sourceSets.getByName("main").java.srcDir(sharedAndroidSourceRoot)
     sourceSets.getByName("main").assets.srcDir(clientHelperLicenseDirectory.get().asFile)
     testOptions { unitTests.isReturnDefaultValues = true }
     packaging {
