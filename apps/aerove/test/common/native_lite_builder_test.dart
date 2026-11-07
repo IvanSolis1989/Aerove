@@ -1,7 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
+import 'package:crypto/crypto.dart';
 import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/constant.dart';
+import 'package:fl_clash/common/path.dart';
 import 'package:fl_clash/common/native_lite_mapping.dart';
 import 'package:fl_clash/common/native_lite_migration.dart';
 import 'package:fl_clash/common/xclash_defaults.dart';
@@ -15,6 +19,8 @@ import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/product.dart';
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/method.dart';
+import 'package:flutter/foundation.dart' show ValueListenable, listEquals;
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +36,106 @@ import '../helpers/app_paths.dart';
 import 'native_lite_migration_test.dart' show FixtureAuthority;
 
 class _UnusedCore extends Mock implements CoreHandlerInterface {}
+
+class _BuilderSourceInspection implements CoreRequestQuiescence {
+  final _closed = Completer<void>();
+  @override
+  bool get isQuiescent => _closed.isCompleted;
+  @override
+  Future<void> get whenQuiescent => _closed.future;
+  void joined() => _closed.complete();
+}
+
+/// Only the fixed source fixture is recognized; this is not a native parser or Android receipt.
+class _BuilderSourceOnlyCore extends Mock
+    implements CoreHandlerInterface, CancellableCoreRequest {
+  final inspections = <_BuilderSourceInspection>[];
+  final inspectedDigests = <String>[];
+
+  @override
+  Future<T?> invokeCancellableMethod<T>({
+    required CoreMethod method,
+    Object? arguments,
+    Duration? timeout,
+    required ValueListenable<bool> cancellation,
+    void Function(CoreRequestQuiescence state)? observeQuiescence,
+  }) async {
+    if (method != CoreMethod.compileRuleSet || timeout != null) {
+      throw UnsupportedError(
+        'Source fixture only supports local compile inspection',
+      );
+    }
+    final owner = _BuilderSourceInspection();
+    inspections.add(owner);
+    observeQuiescence?.call(owner);
+    RandomAccessFile? input;
+    void current() {
+      if (cancellation.value) {
+        throw const CoreMethodException(
+          code: 'cancelled',
+          message: 'Source fixture inspection cancelled',
+        );
+      }
+    }
+
+    try {
+      current();
+      final row = Map<String, dynamic>.from(arguments as Map);
+      final name = row['name'];
+      if (row.length != 2 ||
+          row['url'] != '' ||
+          name is! String ||
+          !RegExp(r'^[0-9a-f]{32}\.[0-9]+\.new$').hasMatch(name)) {
+        throw StateError(
+          'Source fixture requires the actual owned local rule stage',
+        );
+      }
+      final path = await appPath.getProviderCachePath(name);
+      final file = File(path);
+      await nativeLitePrivateDestination(
+        file,
+        Directory(await appPath.homeDirPath),
+      );
+      if (await FileSystemEntity.type(path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        throw StateError('Source fixture stage is not a regular private file');
+      }
+      input = await file.open(mode: FileMode.read);
+      final bytes = BytesBuilder(copy: false);
+      final expected = utf8.encode('+.example.invalid\r\n');
+      while (true) {
+        current();
+        final chunk = await input.read(8192);
+        if (chunk.isEmpty) break;
+        bytes.add(chunk);
+        if (bytes.length > expected.length) {
+          throw StateError(
+            'Source fixture stage exceeds its fixed declared input',
+          );
+        }
+      }
+      current();
+      final actual = bytes.takeBytes();
+      if (!listEquals(actual, expected)) {
+        throw StateError(
+          'Source fixture inspector does not qualify this rule payload',
+        );
+      }
+      final digest = sha256.convert(actual).toString();
+      inspectedDigests.add(digest);
+      return <String, dynamic>{
+            'behavior': 'domain',
+            'format': 'text',
+            'sourceSha256': digest,
+          }
+          as T;
+    } finally {
+      // A failed file close must not grant quiescence or allow stage deletion.
+      await input?.close();
+      owner.joined();
+    }
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -218,12 +324,13 @@ void main() {
           version: '1.0.0',
           buildNumber: '1',
         );
+        final sourceCore = _BuilderSourceOnlyCore();
         container = ProviderContainer(
           overrides: [
             ...buildConfigOverrides(config),
             profilesProvider.overrideWith(() => TestProfiles(profiles)),
             coreHandlerProvider.overrideWithValue(
-              CoreController.scoped(_UnusedCore()),
+              CoreController.scoped(sourceCore),
             ),
           ],
         );
@@ -248,6 +355,16 @@ void main() {
             );
         expect(built.yaml, isNotEmpty);
         final yaml = jsonDecode(jsonEncode(loadYaml(built.yaml))) as Map;
+        expect(sourceCore.inspections, isNotEmpty);
+        expect(
+          sourceCore.inspections.every((owner) => owner.isQuiescent),
+          isTrue,
+        );
+        expect(sourceCore.inspectedDigests.toSet(), {
+          sha256.convert(utf8.encode('+.example.invalid\r\n')).toString(),
+        });
+        verifyNever(() => sourceCore.getProfileBase(any()));
+        verifyNever(() => sourceCore.getConfig(any()));
         expect(yaml['custom-fact'], {'preserve': true});
         expect((yaml['proxies'] as List).single['server'], '127.0.0.2');
         expect((yaml['proxy-groups'] as List).single['proxies'], [
