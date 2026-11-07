@@ -1,0 +1,210 @@
+name: AEROVE Lite schema22 fixture producer
+run-name: Old schema22 fixture - ${{ github.ref_name }} - attempt ${{ github.run_attempt }}
+'on':
+  workflow_dispatch:
+  push:
+    branches: [codex/schema22-fixture-20261107]
+    paths:
+      - .github/workflows/aerove-lite-schema22-fixture.yaml
+      - apps/aerove/test/common/native_lite_schema22_fixture_test.dart
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aerove-schema22-fixture-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+
+env:
+  NDK_VERSION: 28.2.13676358
+
+jobs:
+  produce-schema22-pending-fixture:
+    name: Produce old schema22 pending fixture (no APK)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Allocate a new evidence directory and record source identity
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/aerove-schema22-fixture-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$evidence"
+          mkdir -p "$evidence/logs"
+          printf 'SCHEMA22_EVIDENCE_ROOT=%s\n' "$evidence" >> "$GITHUB_ENV"
+          printf 'SCHEMA22_NATIVE_FIXTURE=%s/native-migration\n' "$evidence" >> "$GITHUB_ENV"
+          printf 'SCHEMA22_PENDING_OUTPUT=%s/pending-fixture\n' "$evidence" >> "$GITHUB_ENV"
+          printf 'SCHEMA22_HELPER_ROOT=%s/host-helper\n' "$evidence" >> "$GITHUB_ENV"
+          {
+            printf 'repository=%s\n' "$GITHUB_REPOSITORY"
+            printf 'ref=%s\n' "$GITHUB_REF"
+            printf 'source_sha=%s\n' "$GITHUB_SHA"
+            printf 'source_tree='
+            git rev-parse 'HEAD^{tree}'
+            printf 'workflow=%s\n' "$GITHUB_WORKFLOW"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_number=%s\n' "$GITHUB_RUN_NUMBER"
+            printf 'run_attempt=%s\n' "$GITHUB_RUN_ATTEMPT"
+            printf 'event=%s\n' "$GITHUB_EVENT_NAME"
+          } > "$evidence/source-run.txt"
+          cat > "$evidence/commands.txt" <<'COMMANDS'
+          python3 apps/aerove-lite/tool/ci_artifacts.py host-helper --go "$(go env GOROOT)/bin/go" --directory "$SCHEMA22_HELPER_ROOT/staging" --destination "$SCHEMA22_HELPER_ROOT/bin" --receipt "$SCHEMA22_HELPER_ROOT/client-host-helper.json"
+          gradle --no-daemon -p apps/aerove-lite/android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" -DnativeMigration.fixture="$SCHEMA22_NATIVE_FIXTURE" :app:prepareNativeMigrationFixture
+          (cd apps/aerove && flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true --dart-define="NATIVE_LITE_FIXTURE=$SCHEMA22_NATIVE_FIXTURE/fixture.json" --dart-define="NATIVE_LITE_SCHEMA22_OUTPUT=$SCHEMA22_PENDING_OUTPUT" test/common/native_lite_schema22_fixture_test.dart)
+          COMMANDS
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: 1.27.1
+          cache-dependency-path: |
+            apps/aerove-lite/regexp2/go.sum
+            apps/aerove/core/go.sum
+
+      - uses: ./.github/actions/flutter
+        with:
+          flutter-version: 3.47.6
+          cache: true
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+
+      - name: Select the fixed Android SDK and NDK packages
+        run: |
+          set -euo pipefail
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' "ndk;$NDK_VERSION" 2>&1 \
+            | tee "$SCHEMA22_EVIDENCE_ROOT/logs/android-sdk-install.log"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          test -f "$ANDROID_SDK_ROOT/platforms/android-37.1/android.jar"
+          test -f "$ANDROID_SDK_ROOT/build-tools/37.0.0/source.properties"
+          test -f "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION/source.properties"
+          cat "$ANDROID_SDK_ROOT/platforms/android-37.1/source.properties" \
+            "$ANDROID_SDK_ROOT/build-tools/37.0.0/source.properties" \
+            "$ANDROID_SDK_ROOT/ndk/$NDK_VERSION/source.properties" \
+            > "$SCHEMA22_EVIDENCE_ROOT/android-sdk-source-properties.txt"
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.98.1
+          targets: x86_64-linux-android
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: 9.6.0
+          cache-read-only: false
+
+      - name: Record installed toolchain versions
+        run: |
+          set -euo pipefail
+          {
+            flutter --version
+            rustc --version
+            cargo --version
+            go version
+            java -version
+            gradle --version
+          } > "$SCHEMA22_EVIDENCE_ROOT/toolchain-versions.txt" 2>&1
+
+      - name: Build production host helpers from the repository root
+        timeout-minutes: 10
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python3 apps/aerove-lite/tool/ci_artifacts.py host-helper \
+            --go "$(go env GOROOT)/bin/go" \
+            --directory "$SCHEMA22_HELPER_ROOT/staging" \
+            --destination "$SCHEMA22_HELPER_ROOT/bin" \
+            --receipt "$SCHEMA22_HELPER_ROOT/client-host-helper.json" \
+            2>&1 | tee "$SCHEMA22_EVIDENCE_ROOT/logs/host-helper.log"
+          test -x "$SCHEMA22_HELPER_ROOT/bin/hostverify"
+          test -x "$SCHEMA22_HELPER_ROOT/bin/ageverify"
+
+      - name: Resolve the three Flutter package graphs with production hooks
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          (cd apps/aerove-lite && flutter pub get --enforce-lockfile) \
+            2>&1 | tee "$SCHEMA22_EVIDENCE_ROOT/logs/lite-pub-get.log"
+          (cd packages/aerove_client && flutter pub get --enforce-lockfile) \
+            2>&1 | tee "$SCHEMA22_EVIDENCE_ROOT/logs/shared-client-pub-get.log"
+          (cd apps/aerove && flutter pub get --enforce-lockfile) \
+            2>&1 | tee "$SCHEMA22_EVIDENCE_ROOT/logs/standard-pub-get.log"
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          for filename, hooks in (
+              ('apps/aerove-lite/pubspec.yaml', ('rust_api',)),
+              ('packages/aerove_client/pubspec.yaml', ('rust_api',)),
+              ('apps/aerove/pubspec.yaml', ('setup', 'rust_api')),
+          ):
+              text = Path(filename).read_text()
+              for hook in hooks:
+                  assert re.search(r'^    ' + hook + r':\s*\n      build_assets: true\s*$', text, re.M), (filename, hook)
+          PY
+
+      - name: Prepare the pinned Standard source required by its production hooks
+        working-directory: apps/aerove
+        run: |
+          set -euo pipefail
+          python3 tool/mihomo_source.py prepare \
+            2>&1 | tee "$SCHEMA22_EVIDENCE_ROOT/logs/mihomo-source-prepare.log"
+
+      - name: Export the real Kotlin Native migration fixture
+        timeout-minutes: 20
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          test ! -e "$SCHEMA22_NATIVE_FIXTURE"
+          gradle --no-daemon -p apps/aerove-lite/android \
+            -Ptarget-platform=android-x64 \
+            -PliteAbi=x86_64 \
+            -PsourceSha="$GITHUB_SHA" \
+            -DnativeMigration.fixture="$SCHEMA22_NATIVE_FIXTURE" \
+            :app:prepareNativeMigrationFixture \
+            2>&1 | tee "$SCHEMA22_EVIDENCE_ROOT/logs/native-migration-fixture-jvm.log"
+          test -s "$SCHEMA22_NATIVE_FIXTURE/fixture.json"
+          test -s "$SCHEMA22_NATIVE_FIXTURE/retained-export/manifest.json"
+
+      - name: Produce actual schema22 pending cases from the fixed old implementation
+        timeout-minutes: 20
+        working-directory: apps/aerove
+        env:
+          AEROVE_FILTER_HELPER: ${{ runner.temp }}/aerove-schema22-fixture-${{ github.run_id }}-${{ github.run_attempt }}/host-helper/bin/hostverify
+        run: |
+          set -euo pipefail
+          test ! -e "$SCHEMA22_PENDING_OUTPUT"
+          flutter test --no-pub --concurrency 1 \
+            --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+            --dart-define="NATIVE_LITE_FIXTURE=$SCHEMA22_NATIVE_FIXTURE/fixture.json" \
+            --dart-define="NATIVE_LITE_SCHEMA22_OUTPUT=$SCHEMA22_PENDING_OUTPUT" \
+            test/common/native_lite_schema22_fixture_test.dart \
+            2>&1 | tee "$SCHEMA22_EVIDENCE_ROOT/logs/schema22-pending-producer.log"
+          test -s "$SCHEMA22_PENDING_OUTPUT/producer.json"
+          test -s "$SCHEMA22_PENDING_OUTPUT/sha256-manifest.json"
+          test -s "$SCHEMA22_PENDING_OUTPUT/native-export/manifest.json"
+          test -s "$SCHEMA22_PENDING_OUTPUT/cases/beforeDatabaseCommit/home/database.sqlite"
+          test -s "$SCHEMA22_PENDING_OUTPUT/cases/databaseCommittedBeforeComplete/home/database.sqlite"
+
+      - name: Always preserve original producer evidence and fixture bytes
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: AEROVE-Lite-schema22-pending-fixture-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/aerove-schema22-fixture-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: warn
+          compression-level: 6
