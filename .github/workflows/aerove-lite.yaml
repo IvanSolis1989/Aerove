@@ -1074,6 +1074,9 @@ jobs:
     if: ${{ needs.promotion_request.result == 'success' && (inputs.client_preflight || (!inputs.meow_host_only && !inputs.native_preflight && !inputs.qa84_only && !inputs.qa79_only)) && inputs.accepted_build_run == '' && !inputs.publish_release && !inputs.meow_host_only && !inputs.native_preflight && !inputs.qa84_only && !inputs.qa79_only && (inputs.diagnostic_target == 'none' || inputs.diagnostic_target == '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
@@ -1132,6 +1135,102 @@ jobs:
     - name: Prepare the pinned Standard source required by the existing test hooks and assets
       working-directory: apps/aerove
       run: python3 tool/mihomo_source.py prepare
+    - name: Verify the fixed actual schema22 producer artifact identity
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/schema22-source-api"
+        mkdir -p "$evidence"
+        gh api repos/IvanSolis1989/Aerove/actions/artifacts/13563530260 > "$evidence/artifact.json"
+        gh api repos/IvanSolis1989/Aerove/actions/runs/42343839120 > "$evidence/producer-run.json"
+        python3 - <<'PY'
+        import json, os
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/schema22-source-api'
+        artifact = json.loads((output / 'artifact.json').read_text())
+        run = json.loads((output / 'producer-run.json').read_text())
+        source = 'b19d32b3c1ac7bc7b84da16d3a157c224b67182f'
+        assert artifact['id'] == 13563530260 and not artifact['expired']
+        assert artifact['name'] == 'AEROVE-Lite-schema22-pending-fixture-attempt-1'
+        assert artifact['size_in_bytes'] == 5952158
+        assert artifact['digest'] == 'sha256:035efecf5bae3ef9eaf6a962717e0dce6b7d2f5886c9e8857679dd547e2300ec'
+        assert artifact['workflow_run']['id'] == run['id'] == 42343839120
+        assert artifact['workflow_run']['head_sha'] == run['head_sha'] == source
+        assert run['run_attempt'] == 1 and run['conclusion'] == 'success'
+        PY
+    - name: Download the immutable old schema22 pending cases
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        github-token: ${{ github.token }}
+        repository: IvanSolis1989/Aerove
+        run-id: 42343839120
+        artifact-ids: 13563530260
+        merge-multiple: true
+        path: ${{ runner.temp }}/lite-flutter-host/schema22-frozen
+    - name: Resume actual old schema22 pending cases through the current schema
+      timeout-minutes: 10
+      working-directory: apps/aerove
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/schema22-consumer"
+        mkdir -p "$evidence"
+        python3 - <<'PY'
+        import hashlib, json, os
+        from pathlib import Path
+        parent = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
+        root = parent / 'schema22-frozen'
+        assert root.is_dir() and not root.is_symlink()
+        assert (root / 'pending-fixture/producer.json').is_file()
+        files = {}
+        for path in sorted(root.rglob('*')):
+            assert not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
+            if path.is_file():
+                files[path.relative_to(root).as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
+            else:
+                assert path.is_dir()
+        assert files
+        (parent / 'schema22-consumer/frozen-before.json').write_text(json.dumps(files, indent=2) + '\n')
+        PY
+        set +e
+        flutter test --no-pub --concurrency 1 --machine --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+          --dart-define="NATIVE_LITE_SCHEMA22_PENDING_FIXTURE=$RUNNER_TEMP/lite-flutter-host/schema22-frozen/pending-fixture/producer.json" \
+          test/common/native_lite_schema22_pending_fixture.dart 2>&1 | tee "$evidence/consumer.jsonl"
+        statuses=("${PIPESTATUS[@]}")
+        set -e
+        printf '%s %s\n' "${statuses[0]}" "${statuses[1]}" > "$evidence/consumer.status.txt"
+        python3 - <<'PY'
+        import hashlib, json, os
+        from pathlib import Path
+        parent = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host'
+        root, output = parent / 'schema22-frozen', parent / 'schema22-consumer'
+        before = json.loads((output / 'frozen-before.json').read_text())
+        after = {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                 for path in sorted(root.rglob('*')) if path.is_file()}
+        assert not any(path.is_symlink() for path in root.rglob('*')) and before == after
+        log = output / 'consumer.jsonl'
+        events = []
+        for line in log.read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        terminals = [event for event in events if event.get('type') == 'testDone']
+        visible = [event for event in terminals if event.get('hidden') is False]
+        done = [event for event in events if event.get('type') == 'done']
+        codes = list(map(int, (output / 'consumer.status.txt').read_text().split()))
+        passed = codes == [0, 0] and len(visible) == 1 and len(done) == 1 and done[0].get('success') is True
+        passed = passed and bool(terminals) and all(event.get('result') == 'success' and event.get('skipped') is False for event in terminals)
+        passed = passed and not any(event.get('type') == 'error' for event in events)
+        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+            attempt=os.environ['GITHUB_RUN_ATTEMPT'], producerRun=42343839120, producerArtifact=13563530260,
+            frozenFilesUnchanged=True, oldPendingCasesConsumed=passed, visibleCases=len(visible),
+            status=codes, logSha256=hashlib.sha256(log.read_bytes()).hexdigest(), appApkBuilt=False, acceptance=False)
+        (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        assert passed, receipt
+        PY
     - name: Execute the real Standard usage owner and Core RPC regressions
       timeout-minutes: 15
       working-directory: apps/aerove/core

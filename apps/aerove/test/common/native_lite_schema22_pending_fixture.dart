@@ -17,16 +17,67 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 import 'native_lite_migration_test.dart' show FixtureAuthority;
 
+// Resolve only producer-owned relative members; the frozen JSON is never rewritten.
+Future<String> frozenFixturePath(
+  Directory root,
+  Object? value, {
+  bool directory = false,
+}) async {
+  if (value is! String ||
+      value.isEmpty ||
+      p.isAbsolute(value) ||
+      p.windows.isAbsolute(value) ||
+      value.contains('\\') ||
+      value.contains(':') ||
+      value
+          .split('/')
+          .any((part) => part.isEmpty || part == '.' || part == '..')) {
+    throw StateError(
+      'Old22 fixture requires a confined producer relative path; legacy absolute-only descriptors are unsupported',
+    );
+  }
+  final base = p.normalize(root.absolute.path);
+  if (!p.equals(await root.resolveSymbolicLinks(), base)) {
+    throw StateError('Indirect old22 artifact root');
+  }
+  var target = base;
+  final parts = value.split('/');
+  for (final (index, part) in parts.indexed) {
+    target = p.join(target, part);
+    final actual = await FileSystemEntity.type(target, followLinks: false);
+    final expected = index == parts.length - 1 && !directory
+        ? FileSystemEntityType.file
+        : FileSystemEntityType.directory;
+    if (actual != expected)
+      throw StateError('Missing or symbolic old22 artifact member: $value');
+  }
+  final canonical = directory
+      ? await Directory(target).resolveSymbolicLinks()
+      : await File(target).resolveSymbolicLinks();
+  if (!p.isWithin(base, target) || !p.equals(canonical, target)) {
+    throw StateError('Old22 artifact member escapes its descriptor root');
+  }
+  return target;
+}
+
 Future<void> copyFixture(Directory source, Directory target) async {
   await for (final entry in source.list(recursive: true, followLinks: false)) {
     if (entry is Link)
       throw StateError('Symbolic schema22 fixture is not accepted');
-    final path = p.join(target.path, p.relative(entry.path, from: source.path));
+    final relative = p
+        .relative(entry.path, from: source.path)
+        .replaceAll('\\', '/');
+    final checked = await frozenFixturePath(
+      source,
+      relative,
+      directory: entry is Directory,
+    );
+    final path = p.join(target.path, p.relative(checked, from: source.path));
     if (entry is Directory) {
       await Directory(path).create(recursive: true);
     } else {
       await File(path).parent.create(recursive: true);
-      await File(entry.path).copy(path);
+      await File(checked).copy(path);
     }
   }
 }
@@ -51,8 +102,22 @@ void main() {
     () async {
       if (descriptorPath.isEmpty)
         throw StateError('Root old22 producer artifact has not been supplied');
-      final descriptor =
-          jsonDecode(await File(descriptorPath).readAsString()) as Map;
+      final descriptorFile = File(
+        p.normalize(File(descriptorPath).absolute.path),
+      );
+      final artifactRoot = descriptorFile.parent;
+      await frozenFixturePath(artifactRoot, p.basename(descriptorFile.path));
+      final descriptorBytes = await descriptorFile.readAsBytes();
+      final inventoryFile = File(
+        await frozenFixturePath(artifactRoot, 'sha256-manifest.json'),
+      );
+      final inventory = jsonDecode(await inventoryFile.readAsString()) as Map;
+      expect(inventory['algorithm'], 'SHA-256');
+      expect(
+        sha256.convert(descriptorBytes).toString(),
+        (inventory['files'] as Map)[p.basename(descriptorFile.path)],
+      );
+      final descriptor = jsonDecode(utf8.decode(descriptorBytes)) as Map;
       expect(descriptor['schema'], 1);
       expect((descriptor['producer'] as Map)['databaseSchema'], 22);
       final provenance =
@@ -83,10 +148,27 @@ void main() {
           );
           Database? db;
           try {
-            final original = Directory(entry['home'] as String);
-            final originalDb = File(p.join(original.path, 'database.sqlite'));
+            if (entry['homeRelative'] != 'cases/${entry['phase']}/home' ||
+                entry['manifestRelative'] != 'native-export/manifest.json') {
+              throw StateError(
+                'Old22 producer requires homeRelative/manifestRelative in the supported layout; absolute-only descriptors are unsupported',
+              );
+            }
+            final original = Directory(
+              await frozenFixturePath(
+                artifactRoot,
+                entry['homeRelative'],
+                directory: true,
+              ),
+            );
+            final originalDb = File(
+              await frozenFixturePath(original, 'database.sqlite'),
+            );
             final originalJournal = File(
-              p.join(original.path, 'native-lite-migration/journal.json'),
+              await frozenFixturePath(
+                original,
+                'native-lite-migration/journal.json',
+              ),
             );
             expect(
               sha256.convert(await originalDb.readAsBytes()).toString(),
@@ -131,7 +213,12 @@ void main() {
             );
             final prefs = await SharedPreferences.getInstance();
             final source = await NativeLiteExport.open(
-              File(entry['manifest'] as String),
+              File(
+                await frozenFixturePath(
+                  artifactRoot,
+                  entry['manifestRelative'],
+                ),
+              ),
               entry['sourceDigest'] as String,
             );
             db = Database(
