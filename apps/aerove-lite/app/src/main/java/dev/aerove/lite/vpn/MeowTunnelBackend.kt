@@ -342,7 +342,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                 val observer = startupObserver.get()
                 val safeBefore = runCatching { commands.startupDiagnostic(handle) }
                 val before = observer?.let { runCatching { commands.status(handle) } }
-                try { stop() } catch (cleanup: Throwable) { failure.addSuppressed(cleanup) }
+                try { stop() } catch (cleanup: Throwable) { suppressMeowStartupCleanup(failure, cleanup) }
                 val safeAfter = runCatching { commands.startupDiagnostic(handle) }
                 runCatching { android.util.Log.w("MeowStartup", meowStartupFailureDiagnostic(handle, safeBefore, safeAfter)) }
                 if (observer != null && startupObserver.get() === observer) {
@@ -471,4 +471,25 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             }
         }
     }
+}
+
+// Recovery-copy recognition: kotlinx.coroutines 1.10.2 unwrapImpl (Apache-2.0), https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/jvm/src/internal/StackTraceRecovery.kt
+// Copyright 2000-2020 JetBrains s.r.o. and Kotlin Programming Language contributors.
+private fun unrecoveredMeowStartupFailure(error: Throwable): Throwable {
+    val seen = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Throwable, Boolean>())
+    var current = error
+    while (seen.add(current)) {
+        val cause = current.cause ?: return current
+        if (cause.javaClass != current.javaClass || cause in seen ||
+            current.stackTrace.none { it.className.startsWith("_COROUTINE.") }) return current
+        current = cause
+    }
+    return current
+}
+
+internal fun suppressMeowStartupCleanup(failure: Throwable, cleanup: Throwable) {
+    val primary = unrecoveredMeowStartupFailure(failure)
+    val secondary = unrecoveredMeowStartupFailure(cleanup)
+    if (primary === secondary || primary.suppressed.any { unrecoveredMeowStartupFailure(it) === secondary }) return
+    primary.addSuppressed(secondary)
 }

@@ -428,7 +428,8 @@ class MeowTunnelBackendTest {
             val actual = checkNotNull(observed)
             assertEquals(1L, actual.nativeGeneration); assertEquals(17L, actual.intentGeneration)
             assertTrue(generateSequence(actual.failure) { it.cause }.any { it === original })
-            assertTrue(generateSequence(actual.failure.suppressed.single()) { it.cause }.any { it === cleanup })
+            assertSame(original, generateSequence(actual.failure) { it.cause }.filter { it === original }.single())
+            assertSame(cleanup, original.suppressed.single())
             assertEquals(MeowState.Running, actual.nativeBeforeStop.getOrThrow().state)
             assertEquals(MeowState.Running, actual.nativeAfterStop.getOrThrow().state)
             assertEquals(1, f.native.stops); assertEquals(0, f.released); assertEquals(2, f.native.statusReads)
@@ -444,11 +445,77 @@ class MeowTunnelBackendTest {
         try { session.awaitReady(); fail("must preserve startup failure") }
         catch (failure: java.io.IOException) {
             assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it === original })
-            assertTrue(generateSequence(failure.suppressed.single()) { it.cause }.any { it === cleanup })
+            assertSame(original, generateSequence<Throwable>(failure) { it.cause }.filter { it === original }.single())
+            assertSame(cleanup, original.suppressed.single())
         }
         assertEquals(2, f.native.startupReads); assertEquals(0, f.native.statusReads)
         f.native.onStop = {}; f.backend.stopAndJoinRetained()
     }
+    @Test fun realAsyncRecoveredCopiesKeepCleanupOnTheUniqueOriginal() = runBlocking<Unit> {
+        val original = java.io.IOException("readiness source")
+        val cleanup = java.io.IOException("cleanup source")
+        suspend fun recovered(source: java.io.IOException): Throwable = supervisorScope {
+            val task = async(Dispatchers.IO) { throw source }
+            try { task.await(); error("must fail") } catch (failure: java.io.IOException) { failure }
+        }
+        val observedCopy = recovered(original)
+        val cleanupCopy = recovered(cleanup)
+        assertNotSame(original, observedCopy)
+        assertSame(original, observedCopy.cause)
+        assertTrue(observedCopy.stackTrace.any { it.className.startsWith("_COROUTINE.") })
+        assertNotSame(cleanup, cleanupCopy)
+        suppressMeowStartupCleanup(observedCopy, cleanupCopy)
+        suppressMeowStartupCleanup(observedCopy, cleanupCopy)
+        assertSame(cleanup, original.suppressed.single())
+        assertTrue(observedCopy.suppressed.isEmpty())
+        assertSame(original, generateSequence(observedCopy) { it.cause }.filter { it === original }.single())
+    }
+
+    @Test fun aNormalSameClassCauseIsNotTreatedAsARecoveryCopy() {
+        val cause = java.io.IOException("real nested cause")
+        val original = java.io.IOException("real outer failure", cause)
+        val cleanup = java.io.IOException("cleanup source")
+        suppressMeowStartupCleanup(original, cleanup)
+        suppressMeowStartupCleanup(original, cleanup)
+        suppressMeowStartupCleanup(original, original)
+        assertSame(cause, original.cause)
+        assertTrue(cause.suppressed.isEmpty())
+        assertSame(cleanup, original.suppressed.single())
+    }
+
+    @Test fun aWithContextStartupReadFailureAlsoRetainsItsExactCleanup() = runBlocking<Unit> {
+        val f = Fixture()
+        val original = java.io.IOException("status source")
+        val cleanup = java.io.IOException("cleanup source")
+        f.native.statusFailure = original; f.native.onStop = { throw cleanup }
+        val session = f.backend.open(f.plan)
+        try { session.awaitReady(); fail("must preserve status failure") }
+        catch (failure: java.io.IOException) {
+            assertSame(original, generateSequence<Throwable>(failure) { it.cause }.filter { it === original }.single())
+            assertSame(cleanup, original.suppressed.single())
+        }
+        assertEquals(1, f.native.stops); assertEquals(0, f.released)
+        f.native.onStop = {}; f.backend.stopAndJoinRetained()
+    }
+
+    @Test fun externalCancellationStillStopsAndJoinsTheBlockingReadinessOwner() = runBlocking<Unit> {
+        val f = Fixture(); val entered = CountDownLatch(1); val exit = CountDownLatch(1)
+        f.native.onReady = { entered.countDown(); check(exit.await(5, TimeUnit.SECONDS)) }
+        f.native.onStop = { exit.countDown() }
+        val session = f.backend.open(f.plan)
+        val observed = CompletableDeferred<Throwable>()
+        val pending = launch {
+            try { session.awaitReady(); fail("must remain cancelled") }
+            catch (failure: CancellationException) { observed.complete(failure); throw failure }
+        }
+        entered.entered()
+        pending.cancel(CancellationException("caller cancellation"))
+        withTimeout(4_000) { pending.join() }
+        assertTrue(observed.await() is CancellationException)
+        assertTrue(pending.isCancelled)
+        assertEquals(1, f.native.stops); assertEquals(1, f.released)
+    }
+
     @Test fun absentStartupObserverDoesNotReadAdditionalNativeStatus() = runBlocking<Unit> {
         val f = Fixture(); val original = java.io.IOException("fixture EOF"); f.native.onReady = { throw original }
         val session = f.backend.open(f.plan)

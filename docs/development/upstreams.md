@@ -254,7 +254,7 @@ Lite Flutter Android 黑盒 API 候选 QA93 另只读核对 AndroidX 固定 `c86
 
 **用途与采用方式：** 读取 `CoroutineScope.kt`、`Job.kt`、`Builders.common.kt`，复用结构化并发取消语义，并确认 `withContext` 的prompt cancellation可能在IO提交后丢失返回值；导入/文件写入沿用项目既有 `onCommitted` 回执处理；未复制实现代码、未新增依赖
 
-取消诊断另只读核对同版 [`StackTraceRecovery.kt`](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/jvm/src/internal/StackTraceRecovery.kt) 的异常副本与原始 cause 关系，生产只使用公开 `ensureActive()` 取得当前 Job 的权威取消原因，测试在严格识别恢复边界后保留原对象及附加诊断断言；未调用内部恢复 API或新增依赖。debug 开／关的 JVM 复现与真实 Gradle、Android 验收分别记录。
+取消诊断核对同版 [`StackTraceRecovery.kt`](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/jvm/src/internal/StackTraceRecovery.kt)、`ExceptionsConstructor.kt` 与 `JobSupport.kt` 的异常副本、原始 cause 及子协程失败聚合关系。生产使用公开 `ensureActive()` 取得当前 Job 的权威取消原因；启动收尾参考 `unwrapImpl` 的同实际类 cause 与人工恢复栈标记识别规则，将 cleanup suppressed 附到原始失败对象，避免 scope 选回原异常时丢失附加诊断。该小范围适配保留源文件版权与 Apache-2.0 说明，不调用内部恢复 API、不新增依赖。真实 async/await、withContext、普通同类 cause 与外部取消测试保留原对象身份断言；源码复核、JVM 执行及 Android 验收分别记录。
 
 **许可证、署名与证据：** Apache-2.0；`apps/aerove-lite/app/build.gradle.kts`、[CoroutineScope.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/CoroutineScope.kt)、[Job.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/Job.kt)、[Builders.common.kt](https://github.com/Kotlin/kotlinx.coroutines/blob/1.10.2/kotlinx-coroutines-core/common/src/Builders.common.kt)
 
