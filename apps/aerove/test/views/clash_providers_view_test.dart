@@ -65,7 +65,8 @@ class _RecordingClashProvidersAction extends ClashProvidersAction {
   }
 
   @override
-  void delProvider(ClashProvider provider) => deleted.add(provider);
+  Future<void> delProvider(ClashProvider provider) async =>
+      deleted.add(provider);
 
   @override
   Future<List<Profile>> profilesUsing(ClashProvider provider) async => usedBy;

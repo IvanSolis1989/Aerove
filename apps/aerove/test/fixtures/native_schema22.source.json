@@ -1,0 +1,10 @@
+{
+  "commit": "caf40edfdd957af5324bb5ee524c3bbaa0c42065",
+  "sourceHashes": {
+    "packages/aerove_client/lib/database/database.dart": "7b0c146a37489092caeabea75d0097dee3ade7d28f1b04d1d76f448b66409a45",
+    "packages/aerove_client/lib/common/native_lite_migration.dart": "ab36eaa04b3f668f5cc38f6163ab753c2bfef915b6c0309fdff2c98b947b6408",
+    "packages/aerove_client/lib/database/generated/database.g.dart": "3fe538f94560867dd50dfb97901def59bed281c0edab141ab4680e97c508d05c"
+  },
+  "normalization": "UTF-8 LF",
+  "sqlFixtureStatus": "source declaration transcription; not old binary execution"
+}

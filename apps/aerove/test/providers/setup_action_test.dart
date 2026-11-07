@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:drift/native.dart';
+import 'package:fl_clash/database/database.dart' as sql;
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/core/method.dart';
@@ -1308,6 +1310,9 @@ void main() {
     setUpAll(() async {
       tempDir = Directory.systemTemp.createTempSync('setup_action_test');
       await useAppPaths(tempDir);
+      sql.database = sql.Database(
+        NativeDatabase(File(join(tempDir.path, 'database.sqlite'))),
+      );
       await AppLocalizations.load(const Locale('en'));
       originalLastConfigMd5 = globalState.lastConfigMd5;
       globalState.packageInfo = PackageInfo(
@@ -1318,7 +1323,8 @@ void main() {
       );
     });
 
-    tearDownAll(() {
+    tearDownAll(() async {
+      await sql.database.close();
       try {
         tempDir.deleteSync(recursive: true);
       } catch (_) {}
@@ -1884,6 +1890,112 @@ void main() {
       },
     );
 
+    for (final scripted in [false, true]) {
+      test(
+        'real custom SQL HTTP cold setup binds SQL identity with identity script=$scripted',
+        () async {
+          final profile = Profile.custom(label: 'SQL HTTP cold');
+          final script = Script.create(label: 'identity');
+          await script.save('function main(config) { return config; }');
+          final previousEvaluator = scriptEvaluator;
+          var evaluations = 0;
+          scriptEvaluator =
+              ({required String script, required String config}) async {
+                expect(script, 'function main(config) { return config; }');
+                evaluations++;
+                return config;
+              };
+          final core = _MockCoreHandlerInterface();
+          final scoped = ProviderContainer(
+            overrides: [
+              coreHandlerProvider.overrideWithValue(
+                CoreController.scoped(core),
+              ),
+              setupActionProvider.overrideWith(SetupAction.new),
+            ],
+          );
+          final setup = scoped.read(setupActionProvider.notifier);
+          const url = 'https://example.invalid/sql-http.txt';
+          const definition = {
+            'type': 'http',
+            'url': url,
+            'format': 'text',
+            'behavior': 'domain',
+            'interval': 3600,
+            'header': {
+              'Authorization': ['sql-fixture'],
+            },
+          };
+          Future<({String path, File raw})> cold(
+            int sourceId,
+            String body,
+          ) async {
+            final provider = ClashProvider(
+              id: sourceId,
+              label: 'SqlHttp',
+              url: url,
+              behavior: RuleProviderBehavior.domain,
+              format: RuleProviderFormat.text,
+              sourceDefinition: definition,
+            );
+            await setup.withProviderSourceWrite(() async {
+              await sql.database.clashProviders.put(provider.toCompanion());
+              final raw = File(await provider.path);
+              await raw.parent.create(recursive: true);
+              await raw.writeAsString(body);
+              // Existing validated compiled output is a fixture for prepare's
+              // no-recompile branch; this regression consumes the HTTP text raw.
+              await File(
+                await provider.compiledPath,
+              ).writeAsString('existing Core MRS fixture');
+            });
+            final state = nullProfileSetupState.copyWith(
+              profileId: profile.id,
+              profileType: ProfileType.custom,
+              extendType: scripted ? ExtendType.script : ExtendType.standard,
+              script: scripted ? script : null,
+              overrides: ProfileOverrides(applyExtensionToCustom: scripted),
+              rules: [Rule.parse('RULE-SET,SqlHttp,DIRECT', id: 9191)],
+              clashProviders: [provider],
+            );
+            final result = await setup.getProfile(
+              setupState: state,
+              patchConfig: const PatchClashConfig(),
+            );
+            final actual =
+                (loadYaml(result.yaml) as YamlMap)['rule-providers']['SqlHttp'];
+            expect(actual['url'], url);
+            expect(actual['format'], 'text');
+            expect(actual['behavior'], 'domain');
+            expect(actual['interval'], 3600);
+            expect(actual['header']['Authorization'], ['sql-fixture']);
+            final path = actual['path'] as String;
+            expect(path, isNot(await provider.path));
+            expect(await File(path).readAsString(), body);
+            return (path: path, raw: File(await provider.path));
+          }
+
+          try {
+            final first = await cold(9111, 'first.example\n');
+            await File(first.path).writeAsString('active Core cache\n');
+            final revised = await cold(9111, 'revised.example\n');
+            final replaced = await cold(9112, 'replacement.example\n');
+            expect(revised.path, isNot(first.path));
+            expect(replaced.path, isNot(revised.path));
+            expect(
+              await File(first.path).readAsString(),
+              'active Core cache\n',
+            );
+            expect(await revised.raw.readAsString(), 'revised.example\n');
+            expect(evaluations, scripted ? 3 : 0);
+          } finally {
+            scriptEvaluator = previousEvaluator;
+            scoped.dispose();
+          }
+        },
+      );
+    }
+
     test('a custom profile declares only the proxies and providers it names, '
         'without a profile file', () async {
       final profile = Profile.custom(label: 'p');
@@ -1923,6 +2035,12 @@ void main() {
         behavior: RuleProviderBehavior.classical,
         format: RuleProviderFormat.yaml,
       );
+      for (final item in [appRule, localRule, nestedRule]) {
+        await sql.database.clashProviders.put(item.toCompanion());
+        final raw = File(await item.path);
+        await raw.parent.create(recursive: true);
+        await raw.writeAsString('payload:\n  - example.invalid\n');
+      }
       final setupState = nullProfileSetupState.copyWith(
         profileId: profile.id,
         profileType: ProfileType.custom,
@@ -2026,9 +2144,16 @@ void main() {
           expect(provider.isCompiled('mihomo'), isTrue);
           expect(await provider.corePath('mihomo'), '$sourcePath.mrs');
           final core = _MockCoreHandlerInterface();
-          when(
-            () => core.compileRuleSet(provider.fileName, url: ''),
-          ).thenAnswer((_) async => (behavior: behavior, format: format));
+          await sql.database.clashProviders.put(provider.toCompanion());
+          when(() => core.compileRuleSet(any(), url: '')).thenAnswer((
+            call,
+          ) async {
+            final name = call.positionalArguments.single as String;
+            final stage = await appPath.getProviderCachePath(name);
+            expect(await File(stage).readAsString(), body);
+            await File('${stage}.mrs').writeAsString('Core output fixture');
+            return (behavior: behavior, format: format);
+          });
           final scoped = ProviderContainer(
             overrides: [
               coreHandlerProvider.overrideWithValue(
@@ -2059,9 +2184,7 @@ void main() {
           expect(definition['behavior'], behavior.name);
           expect(definition.containsKey('url'), isFalse);
           expect(File(definition['path'] as String).readAsStringSync(), body);
-          verify(
-            () => core.compileRuleSet(provider.fileName, url: ''),
-          ).called(1);
+          verify(() => core.compileRuleSet(any(), url: '')).called(1);
         });
       }
     }
@@ -2334,6 +2457,9 @@ void main() {
     setUpAll(() async {
       tempDir = Directory.systemTemp.createTempSync('reattach_test');
       await useAppPaths(tempDir);
+      sql.database = sql.Database(
+        NativeDatabase(File(join(tempDir.path, 'database.sqlite'))),
+      );
       await AppLocalizations.load(const Locale('en'));
       globalState.packageInfo = PackageInfo(
         appName: 'FlClash',
@@ -2343,7 +2469,8 @@ void main() {
       );
     });
 
-    tearDownAll(() {
+    tearDownAll(() async {
+      await sql.database.close();
       try {
         tempDir.deleteSync(recursive: true);
       } catch (_) {}

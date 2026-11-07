@@ -281,7 +281,12 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
     var selectedMap: Map<String, String>? = null
     var definitionSha256: String? = null
     var providerBindings: Map<String, SealedFlutterResource> = emptyMap()
-    require(proof.keys().asSequence().toSet() == setOf("schema", "databaseSchema", "configSha256", "setupSha256", "liveSha256", "tables", "files") && proof.getInt("schema") == 2) { "shared_source_proof_invalid" }
+    val proofSchema = proof.getInt("schema")
+    val databaseSchema = proof.getInt("databaseSchema")
+    val proofKeys = setOf("schema", "databaseSchema", "configSha256", "setupSha256", "liveSha256", "tables", "files") +
+        if (proofSchema == 3) setOf("ruleSql") else emptySet()
+    require(proof.keys().asSequence().toSet() == proofKeys &&
+        (databaseSchema == 22 && proofSchema == 2 || databaseSchema == 23 && proofSchema == 3)) { "shared_source_proof_invalid" }
     val phase = NativeLiteDataAuthority.phase(context.filesDir)
     check(phase == "shared" || phase == null && listOf("profiles/index.json", "settings/settings.json", "settings/overrides.json", "settings/builder-resources.yaml", "backups/webdav.json").none { File(context.filesDir, it).exists() }) { "native_data_migration_required" }
     val config = nativeLiteCurrentConfig(context)
@@ -289,7 +294,9 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
     val database = File(root, "database.sqlite")
     check(database.isFile && database.canonicalFile == database.absoluteFile && !Files.isSymbolicLink(database.toPath())) { "shared_source_database_missing" }
     withNativeLiteReadOnlyDatabase(database, "shared_source_database_changed") { db ->
-        check(db.version == 22 && db.version == proof.getInt("databaseSchema")) { "shared_source_schema_changed" }
+        check(db.version == databaseSchema) { "shared_source_schema_changed" }
+        val ruleSql = verifyRuleSqlSchema(root, db)
+        if (databaseSchema == 23) check(ruleSql != null && nativeLiteJsonHash(ruleSql) == nativeLiteJsonHash(proof.getJSONObject("ruleSql"))) { "shared_rule_infrastructure_changed" }
         val all = nativeLiteBusinessTables.associateWith { table ->
             db.rawQuery("SELECT * FROM \"$table\" ORDER BY rowid", null).use { cursor ->
                 buildList { while (cursor.moveToNext()) add(cursor.columnNames.mapIndexed { i, name -> name to when (cursor.getType(i)) {
@@ -344,7 +351,8 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
             values.map { row -> if(table == "profiles") row.filterKeys { it != "selected_map" } else row }
         }
         definitionSha256=nativeLiteJsonHash(mapOf("schema" to proof.getInt("schema"),
-            "setupSha256" to proof.getString("setupSha256"),"tables" to definitions,"files" to nativeLiteList(files)))
+            "setupSha256" to proof.getString("setupSha256"),"tables" to definitions,"files" to nativeLiteList(files)) +
+            if(proofSchema == 3) mapOf("ruleSql" to nativeLiteMap(proof.getJSONObject("ruleSql"))) else emptyMap()))
     }
     return NativeLiteVerifiedSource(config,checkNotNull(selectedMap),checkNotNull(definitionSha256),providerBindings)
 }
@@ -383,9 +391,12 @@ private fun verifyNativeLiteTables(root: File, tables: JSONObject, schema: Int, 
     val database = File(root, "database.sqlite")
     require(database.isFile && database.canonicalFile == database.absoluteFile && !Files.isSymbolicLink(database.toPath())) { "migration_target_database_missing" }
     withNativeLiteReadOnlyDatabase(database, "migration_target_database_changed") { db ->
-        check(db.version == 22 && schema == db.version) { "migration_target_database_version" }
-        check(tables.keys().asSequence().toSet() == allowed) { "migration_target_table_set" }
-        for (table in allowed) {
+        check(schema == 22 || schema == 23) { "migration_target_database_version" }
+        check(db.version == schema || schema == 22 && db.version == 23) { "migration_target_database_version" }
+        verifyRuleSqlSchema(root, db)
+        val expected = allowed + if (schema == 23) ruleSqlInfrastructureTables else emptySet()
+        check(tables.keys().asSequence().toSet() == expected) { "migration_target_table_set" }
+        for (table in expected) {
             val columns = mutableListOf<String>()
             db.rawQuery("PRAGMA table_info(\"$table\")", null).use { cursor -> while (cursor.moveToNext()) columns += cursor.getString(cursor.getColumnIndexOrThrow("name")) }
             val hash = MessageDigest.getInstance("SHA-256")

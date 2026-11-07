@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/file_provider_source.dart';
+import 'package:fl_clash/common/rule_sql_journal.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
@@ -420,6 +421,64 @@ void main() {
             'runs, not only in the batch body',
       );
     });
+  });
+
+  group('restore durable incarnation decision', () {
+    for (final third in [false, true]) {
+      test(
+        'post-commit completion error keeps committed files; third incarnation=${third}',
+        () async {
+          final container = buildContainer();
+          final action = actionOf(container);
+          final old = await testDatabase.ruleSqlIncarnation();
+          final file = File(await appPath.getProfilePath('41'));
+          await file.parent.create(recursive: true);
+          await file.writeAsString('before');
+          final stage = Directory(join(home.path, 'restore-ack-${third}'));
+          final replacement = File(join(stage.path, 'profiles/41.yaml'));
+          await replacement.parent.create(recursive: true);
+          await replacement.writeAsString('after');
+          final lost = StateError('ack lost after real commit');
+          action.restoreAfterSql = () async {
+            throw lost;
+          };
+          if (third)
+            action.restoreBeforeDecisionRead = () =>
+                testDatabase.transaction(testDatabase.resetRuleSqlIncarnation);
+          final restoring = action.applyRestore(
+            MigrationData(profiles: [_profile(41, 'after')]),
+            RestoreOption.onlyProfiles,
+            stagingDirPath: stage.path,
+          );
+          if (third)
+            await expectLater(
+              restoring,
+              throwsA(
+                isA<RuleSqlPublicationFailure>().having(
+                  (e) => e.primary,
+                  'primary',
+                  same(lost),
+                ),
+              ),
+            );
+          else {
+            await restoring;
+            expect(action.restoreCompletionError, same(lost));
+            expect(action.restoreCompletionStack, isNotNull);
+          }
+          expect(await file.readAsString(), 'after');
+          expect((await testDatabase.profilesDao.get(41))!.label, 'after');
+          expect(await testDatabase.ruleSqlIncarnation(), isNot(old));
+          if (third)
+            expect(
+              await File(
+                join(stage.path, 'replaced/profiles/41.yaml'),
+              ).readAsString(),
+              'before',
+            );
+        },
+      );
+    }
   });
 
   group('applyRestore writes the settings providers', () {

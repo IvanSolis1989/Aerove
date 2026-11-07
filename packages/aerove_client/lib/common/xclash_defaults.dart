@@ -158,7 +158,8 @@ class XClashDefaults {
   }
 
   Future<bool> _hasRows({int? ignoringScriptId}) async {
-    for (final table in _database.allTables) {
+    await _database.ruleSqlInfrastructureProof(resolved: true);
+    for (final table in _database.businessTables) {
       final ignore =
           table.actualTableName == 'scripts' && ignoringScriptId != null;
       final rows = await _database

@@ -4866,6 +4866,654 @@ class IpQualitiesCompanion extends UpdateCompanion<IpQualityRecord> {
   }
 }
 
+class $RuleSqlIdentitiesTable extends RuleSqlIdentities
+    with TableInfo<$RuleSqlIdentitiesTable, RuleSqlIdentity> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RuleSqlIdentitiesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _slotMeta = const VerificationMeta('slot');
+  @override
+  late final GeneratedColumn<int> slot = GeneratedColumn<int>(
+    'slot',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _incarnationMeta = const VerificationMeta(
+    'incarnation',
+  );
+  @override
+  late final GeneratedColumn<String> incarnation = GeneratedColumn<String>(
+    'incarnation',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [slot, incarnation];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'rule_sql_identity';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RuleSqlIdentity> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('slot')) {
+      context.handle(
+        _slotMeta,
+        slot.isAcceptableOrUnknown(data['slot']!, _slotMeta),
+      );
+    }
+    if (data.containsKey('incarnation')) {
+      context.handle(
+        _incarnationMeta,
+        incarnation.isAcceptableOrUnknown(
+          data['incarnation']!,
+          _incarnationMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_incarnationMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {slot};
+  @override
+  RuleSqlIdentity map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RuleSqlIdentity(
+      slot: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}slot'],
+      )!,
+      incarnation: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}incarnation'],
+      )!,
+    );
+  }
+
+  @override
+  $RuleSqlIdentitiesTable createAlias(String alias) {
+    return $RuleSqlIdentitiesTable(attachedDatabase, alias);
+  }
+}
+
+class RuleSqlIdentity extends DataClass implements Insertable<RuleSqlIdentity> {
+  final int slot;
+  final String incarnation;
+  const RuleSqlIdentity({required this.slot, required this.incarnation});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['slot'] = Variable<int>(slot);
+    map['incarnation'] = Variable<String>(incarnation);
+    return map;
+  }
+
+  RuleSqlIdentitiesCompanion toCompanion(bool nullToAbsent) {
+    return RuleSqlIdentitiesCompanion(
+      slot: Value(slot),
+      incarnation: Value(incarnation),
+    );
+  }
+
+  factory RuleSqlIdentity.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RuleSqlIdentity(
+      slot: serializer.fromJson<int>(json['slot']),
+      incarnation: serializer.fromJson<String>(json['incarnation']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'slot': serializer.toJson<int>(slot),
+      'incarnation': serializer.toJson<String>(incarnation),
+    };
+  }
+
+  RuleSqlIdentity copyWith({int? slot, String? incarnation}) => RuleSqlIdentity(
+    slot: slot ?? this.slot,
+    incarnation: incarnation ?? this.incarnation,
+  );
+  RuleSqlIdentity copyWithCompanion(RuleSqlIdentitiesCompanion data) {
+    return RuleSqlIdentity(
+      slot: data.slot.present ? data.slot.value : this.slot,
+      incarnation: data.incarnation.present
+          ? data.incarnation.value
+          : this.incarnation,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RuleSqlIdentity(')
+          ..write('slot: $slot, ')
+          ..write('incarnation: $incarnation')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(slot, incarnation);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RuleSqlIdentity &&
+          other.slot == this.slot &&
+          other.incarnation == this.incarnation);
+}
+
+class RuleSqlIdentitiesCompanion extends UpdateCompanion<RuleSqlIdentity> {
+  final Value<int> slot;
+  final Value<String> incarnation;
+  const RuleSqlIdentitiesCompanion({
+    this.slot = const Value.absent(),
+    this.incarnation = const Value.absent(),
+  });
+  RuleSqlIdentitiesCompanion.insert({
+    this.slot = const Value.absent(),
+    required String incarnation,
+  }) : incarnation = Value(incarnation);
+  static Insertable<RuleSqlIdentity> custom({
+    Expression<int>? slot,
+    Expression<String>? incarnation,
+  }) {
+    return RawValuesInsertable({
+      if (slot != null) 'slot': slot,
+      if (incarnation != null) 'incarnation': incarnation,
+    });
+  }
+
+  RuleSqlIdentitiesCompanion copyWith({
+    Value<int>? slot,
+    Value<String>? incarnation,
+  }) {
+    return RuleSqlIdentitiesCompanion(
+      slot: slot ?? this.slot,
+      incarnation: incarnation ?? this.incarnation,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (slot.present) {
+      map['slot'] = Variable<int>(slot.value);
+    }
+    if (incarnation.present) {
+      map['incarnation'] = Variable<String>(incarnation.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RuleSqlIdentitiesCompanion(')
+          ..write('slot: $slot, ')
+          ..write('incarnation: $incarnation')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $RuleSourcePublicationsTable extends RuleSourcePublications
+    with TableInfo<$RuleSourcePublicationsTable, RuleSourcePublication> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $RuleSourcePublicationsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _transactionIdMeta = const VerificationMeta(
+    'transactionId',
+  );
+  @override
+  late final GeneratedColumn<String> transactionId = GeneratedColumn<String>(
+    'transaction_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _incarnationMeta = const VerificationMeta(
+    'incarnation',
+  );
+  @override
+  late final GeneratedColumn<String> incarnation = GeneratedColumn<String>(
+    'incarnation',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _providerIdMeta = const VerificationMeta(
+    'providerId',
+  );
+  @override
+  late final GeneratedColumn<int> providerId = GeneratedColumn<int>(
+    'provider_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _planSha256Meta = const VerificationMeta(
+    'planSha256',
+  );
+  @override
+  late final GeneratedColumn<String> planSha256 = GeneratedColumn<String>(
+    'plan_sha256',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _decisionMeta = const VerificationMeta(
+    'decision',
+  );
+  @override
+  late final GeneratedColumn<String> decision = GeneratedColumn<String>(
+    'decision',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _schemaVersionMeta = const VerificationMeta(
+    'schemaVersion',
+  );
+  @override
+  late final GeneratedColumn<int> schemaVersion = GeneratedColumn<int>(
+    'schema_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    transactionId,
+    incarnation,
+    providerId,
+    planSha256,
+    decision,
+    schemaVersion,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'rule_source_publications';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<RuleSourcePublication> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('transaction_id')) {
+      context.handle(
+        _transactionIdMeta,
+        transactionId.isAcceptableOrUnknown(
+          data['transaction_id']!,
+          _transactionIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_transactionIdMeta);
+    }
+    if (data.containsKey('incarnation')) {
+      context.handle(
+        _incarnationMeta,
+        incarnation.isAcceptableOrUnknown(
+          data['incarnation']!,
+          _incarnationMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_incarnationMeta);
+    }
+    if (data.containsKey('provider_id')) {
+      context.handle(
+        _providerIdMeta,
+        providerId.isAcceptableOrUnknown(data['provider_id']!, _providerIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_providerIdMeta);
+    }
+    if (data.containsKey('plan_sha256')) {
+      context.handle(
+        _planSha256Meta,
+        planSha256.isAcceptableOrUnknown(data['plan_sha256']!, _planSha256Meta),
+      );
+    } else if (isInserting) {
+      context.missing(_planSha256Meta);
+    }
+    if (data.containsKey('decision')) {
+      context.handle(
+        _decisionMeta,
+        decision.isAcceptableOrUnknown(data['decision']!, _decisionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_decisionMeta);
+    }
+    if (data.containsKey('schema_version')) {
+      context.handle(
+        _schemaVersionMeta,
+        schemaVersion.isAcceptableOrUnknown(
+          data['schema_version']!,
+          _schemaVersionMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {transactionId};
+  @override
+  RuleSourcePublication map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return RuleSourcePublication(
+      transactionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}transaction_id'],
+      )!,
+      incarnation: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}incarnation'],
+      )!,
+      providerId: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}provider_id'],
+      )!,
+      planSha256: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}plan_sha256'],
+      )!,
+      decision: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}decision'],
+      )!,
+      schemaVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}schema_version'],
+      )!,
+    );
+  }
+
+  @override
+  $RuleSourcePublicationsTable createAlias(String alias) {
+    return $RuleSourcePublicationsTable(attachedDatabase, alias);
+  }
+}
+
+class RuleSourcePublication extends DataClass
+    implements Insertable<RuleSourcePublication> {
+  final String transactionId;
+  final String incarnation;
+  final int providerId;
+  final String planSha256;
+  final String decision;
+  final int schemaVersion;
+  const RuleSourcePublication({
+    required this.transactionId,
+    required this.incarnation,
+    required this.providerId,
+    required this.planSha256,
+    required this.decision,
+    required this.schemaVersion,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['transaction_id'] = Variable<String>(transactionId);
+    map['incarnation'] = Variable<String>(incarnation);
+    map['provider_id'] = Variable<int>(providerId);
+    map['plan_sha256'] = Variable<String>(planSha256);
+    map['decision'] = Variable<String>(decision);
+    map['schema_version'] = Variable<int>(schemaVersion);
+    return map;
+  }
+
+  RuleSourcePublicationsCompanion toCompanion(bool nullToAbsent) {
+    return RuleSourcePublicationsCompanion(
+      transactionId: Value(transactionId),
+      incarnation: Value(incarnation),
+      providerId: Value(providerId),
+      planSha256: Value(planSha256),
+      decision: Value(decision),
+      schemaVersion: Value(schemaVersion),
+    );
+  }
+
+  factory RuleSourcePublication.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return RuleSourcePublication(
+      transactionId: serializer.fromJson<String>(json['transactionId']),
+      incarnation: serializer.fromJson<String>(json['incarnation']),
+      providerId: serializer.fromJson<int>(json['providerId']),
+      planSha256: serializer.fromJson<String>(json['planSha256']),
+      decision: serializer.fromJson<String>(json['decision']),
+      schemaVersion: serializer.fromJson<int>(json['schemaVersion']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'transactionId': serializer.toJson<String>(transactionId),
+      'incarnation': serializer.toJson<String>(incarnation),
+      'providerId': serializer.toJson<int>(providerId),
+      'planSha256': serializer.toJson<String>(planSha256),
+      'decision': serializer.toJson<String>(decision),
+      'schemaVersion': serializer.toJson<int>(schemaVersion),
+    };
+  }
+
+  RuleSourcePublication copyWith({
+    String? transactionId,
+    String? incarnation,
+    int? providerId,
+    String? planSha256,
+    String? decision,
+    int? schemaVersion,
+  }) => RuleSourcePublication(
+    transactionId: transactionId ?? this.transactionId,
+    incarnation: incarnation ?? this.incarnation,
+    providerId: providerId ?? this.providerId,
+    planSha256: planSha256 ?? this.planSha256,
+    decision: decision ?? this.decision,
+    schemaVersion: schemaVersion ?? this.schemaVersion,
+  );
+  RuleSourcePublication copyWithCompanion(
+    RuleSourcePublicationsCompanion data,
+  ) {
+    return RuleSourcePublication(
+      transactionId: data.transactionId.present
+          ? data.transactionId.value
+          : this.transactionId,
+      incarnation: data.incarnation.present
+          ? data.incarnation.value
+          : this.incarnation,
+      providerId: data.providerId.present
+          ? data.providerId.value
+          : this.providerId,
+      planSha256: data.planSha256.present
+          ? data.planSha256.value
+          : this.planSha256,
+      decision: data.decision.present ? data.decision.value : this.decision,
+      schemaVersion: data.schemaVersion.present
+          ? data.schemaVersion.value
+          : this.schemaVersion,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RuleSourcePublication(')
+          ..write('transactionId: $transactionId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('providerId: $providerId, ')
+          ..write('planSha256: $planSha256, ')
+          ..write('decision: $decision, ')
+          ..write('schemaVersion: $schemaVersion')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    transactionId,
+    incarnation,
+    providerId,
+    planSha256,
+    decision,
+    schemaVersion,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is RuleSourcePublication &&
+          other.transactionId == this.transactionId &&
+          other.incarnation == this.incarnation &&
+          other.providerId == this.providerId &&
+          other.planSha256 == this.planSha256 &&
+          other.decision == this.decision &&
+          other.schemaVersion == this.schemaVersion);
+}
+
+class RuleSourcePublicationsCompanion
+    extends UpdateCompanion<RuleSourcePublication> {
+  final Value<String> transactionId;
+  final Value<String> incarnation;
+  final Value<int> providerId;
+  final Value<String> planSha256;
+  final Value<String> decision;
+  final Value<int> schemaVersion;
+  final Value<int> rowid;
+  const RuleSourcePublicationsCompanion({
+    this.transactionId = const Value.absent(),
+    this.incarnation = const Value.absent(),
+    this.providerId = const Value.absent(),
+    this.planSha256 = const Value.absent(),
+    this.decision = const Value.absent(),
+    this.schemaVersion = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  RuleSourcePublicationsCompanion.insert({
+    required String transactionId,
+    required String incarnation,
+    required int providerId,
+    required String planSha256,
+    required String decision,
+    this.schemaVersion = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : transactionId = Value(transactionId),
+       incarnation = Value(incarnation),
+       providerId = Value(providerId),
+       planSha256 = Value(planSha256),
+       decision = Value(decision);
+  static Insertable<RuleSourcePublication> custom({
+    Expression<String>? transactionId,
+    Expression<String>? incarnation,
+    Expression<int>? providerId,
+    Expression<String>? planSha256,
+    Expression<String>? decision,
+    Expression<int>? schemaVersion,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (transactionId != null) 'transaction_id': transactionId,
+      if (incarnation != null) 'incarnation': incarnation,
+      if (providerId != null) 'provider_id': providerId,
+      if (planSha256 != null) 'plan_sha256': planSha256,
+      if (decision != null) 'decision': decision,
+      if (schemaVersion != null) 'schema_version': schemaVersion,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  RuleSourcePublicationsCompanion copyWith({
+    Value<String>? transactionId,
+    Value<String>? incarnation,
+    Value<int>? providerId,
+    Value<String>? planSha256,
+    Value<String>? decision,
+    Value<int>? schemaVersion,
+    Value<int>? rowid,
+  }) {
+    return RuleSourcePublicationsCompanion(
+      transactionId: transactionId ?? this.transactionId,
+      incarnation: incarnation ?? this.incarnation,
+      providerId: providerId ?? this.providerId,
+      planSha256: planSha256 ?? this.planSha256,
+      decision: decision ?? this.decision,
+      schemaVersion: schemaVersion ?? this.schemaVersion,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (transactionId.present) {
+      map['transaction_id'] = Variable<String>(transactionId.value);
+    }
+    if (incarnation.present) {
+      map['incarnation'] = Variable<String>(incarnation.value);
+    }
+    if (providerId.present) {
+      map['provider_id'] = Variable<int>(providerId.value);
+    }
+    if (planSha256.present) {
+      map['plan_sha256'] = Variable<String>(planSha256.value);
+    }
+    if (decision.present) {
+      map['decision'] = Variable<String>(decision.value);
+    }
+    if (schemaVersion.present) {
+      map['schema_version'] = Variable<int>(schemaVersion.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('RuleSourcePublicationsCompanion(')
+          ..write('transactionId: $transactionId, ')
+          ..write('incarnation: $incarnation, ')
+          ..write('providerId: $providerId, ')
+          ..write('planSha256: $planSha256, ')
+          ..write('decision: $decision, ')
+          ..write('schemaVersion: $schemaVersion, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$Database extends GeneratedDatabase {
   _$Database(QueryExecutor e) : super(e);
   $DatabaseManager get managers => $DatabaseManager(this);
@@ -4880,6 +5528,10 @@ abstract class _$Database extends GeneratedDatabase {
   late final $CustomProxiesTable customProxies = $CustomProxiesTable(this);
   late final $ProxyDialersTable proxyDialers = $ProxyDialersTable(this);
   late final $IpQualitiesTable ipQualities = $IpQualitiesTable(this);
+  late final $RuleSqlIdentitiesTable ruleSqlIdentities =
+      $RuleSqlIdentitiesTable(this);
+  late final $RuleSourcePublicationsTable ruleSourcePublications =
+      $RuleSourcePublicationsTable(this);
   late final Index idxRuleTarget = Index(
     'idx_rule_target',
     'CREATE INDEX idx_rule_target ON rules (rule_target)',
@@ -4928,6 +5580,8 @@ abstract class _$Database extends GeneratedDatabase {
     customProxies,
     proxyDialers,
     ipQualities,
+    ruleSqlIdentities,
+    ruleSourcePublications,
     idxRuleTarget,
     idxRulesProfileOrder,
     idxProxyGroupsProfileOrder,
@@ -8795,6 +9449,423 @@ typedef $$IpQualitiesTableProcessedTableManager =
       IpQualityRecord,
       PrefetchHooks Function()
     >;
+typedef $$RuleSqlIdentitiesTableCreateCompanionBuilder =
+    RuleSqlIdentitiesCompanion Function({
+      Value<int> slot,
+      required String incarnation,
+    });
+typedef $$RuleSqlIdentitiesTableUpdateCompanionBuilder =
+    RuleSqlIdentitiesCompanion Function({
+      Value<int> slot,
+      Value<String> incarnation,
+    });
+
+class $$RuleSqlIdentitiesTableFilterComposer
+    extends Composer<_$Database, $RuleSqlIdentitiesTable> {
+  $$RuleSqlIdentitiesTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get slot => $composableBuilder(
+    column: $table.slot,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get incarnation => $composableBuilder(
+    column: $table.incarnation,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$RuleSqlIdentitiesTableOrderingComposer
+    extends Composer<_$Database, $RuleSqlIdentitiesTable> {
+  $$RuleSqlIdentitiesTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get slot => $composableBuilder(
+    column: $table.slot,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get incarnation => $composableBuilder(
+    column: $table.incarnation,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$RuleSqlIdentitiesTableAnnotationComposer
+    extends Composer<_$Database, $RuleSqlIdentitiesTable> {
+  $$RuleSqlIdentitiesTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get slot =>
+      $composableBuilder(column: $table.slot, builder: (column) => column);
+
+  GeneratedColumn<String> get incarnation => $composableBuilder(
+    column: $table.incarnation,
+    builder: (column) => column,
+  );
+}
+
+class $$RuleSqlIdentitiesTableTableManager
+    extends
+        RootTableManager<
+          _$Database,
+          $RuleSqlIdentitiesTable,
+          RuleSqlIdentity,
+          $$RuleSqlIdentitiesTableFilterComposer,
+          $$RuleSqlIdentitiesTableOrderingComposer,
+          $$RuleSqlIdentitiesTableAnnotationComposer,
+          $$RuleSqlIdentitiesTableCreateCompanionBuilder,
+          $$RuleSqlIdentitiesTableUpdateCompanionBuilder,
+          (
+            RuleSqlIdentity,
+            BaseReferences<
+              _$Database,
+              $RuleSqlIdentitiesTable,
+              RuleSqlIdentity
+            >,
+          ),
+          RuleSqlIdentity,
+          PrefetchHooks Function()
+        > {
+  $$RuleSqlIdentitiesTableTableManager(
+    _$Database db,
+    $RuleSqlIdentitiesTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$RuleSqlIdentitiesTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$RuleSqlIdentitiesTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$RuleSqlIdentitiesTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> slot = const Value.absent(),
+                Value<String> incarnation = const Value.absent(),
+              }) => RuleSqlIdentitiesCompanion(
+                slot: slot,
+                incarnation: incarnation,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> slot = const Value.absent(),
+                required String incarnation,
+              }) => RuleSqlIdentitiesCompanion.insert(
+                slot: slot,
+                incarnation: incarnation,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$RuleSqlIdentitiesTable, RuleSqlIdentity>(table),
+                  BaseReferences<
+                    _$Database,
+                    $RuleSqlIdentitiesTable,
+                    RuleSqlIdentity
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$RuleSqlIdentitiesTableProcessedTableManager =
+    ProcessedTableManager<
+      _$Database,
+      $RuleSqlIdentitiesTable,
+      RuleSqlIdentity,
+      $$RuleSqlIdentitiesTableFilterComposer,
+      $$RuleSqlIdentitiesTableOrderingComposer,
+      $$RuleSqlIdentitiesTableAnnotationComposer,
+      $$RuleSqlIdentitiesTableCreateCompanionBuilder,
+      $$RuleSqlIdentitiesTableUpdateCompanionBuilder,
+      (
+        RuleSqlIdentity,
+        BaseReferences<_$Database, $RuleSqlIdentitiesTable, RuleSqlIdentity>,
+      ),
+      RuleSqlIdentity,
+      PrefetchHooks Function()
+    >;
+typedef $$RuleSourcePublicationsTableCreateCompanionBuilder =
+    RuleSourcePublicationsCompanion Function({
+      required String transactionId,
+      required String incarnation,
+      required int providerId,
+      required String planSha256,
+      required String decision,
+      Value<int> schemaVersion,
+      Value<int> rowid,
+    });
+typedef $$RuleSourcePublicationsTableUpdateCompanionBuilder =
+    RuleSourcePublicationsCompanion Function({
+      Value<String> transactionId,
+      Value<String> incarnation,
+      Value<int> providerId,
+      Value<String> planSha256,
+      Value<String> decision,
+      Value<int> schemaVersion,
+      Value<int> rowid,
+    });
+
+class $$RuleSourcePublicationsTableFilterComposer
+    extends Composer<_$Database, $RuleSourcePublicationsTable> {
+  $$RuleSourcePublicationsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get transactionId => $composableBuilder(
+    column: $table.transactionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get incarnation => $composableBuilder(
+    column: $table.incarnation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get providerId => $composableBuilder(
+    column: $table.providerId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get planSha256 => $composableBuilder(
+    column: $table.planSha256,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get decision => $composableBuilder(
+    column: $table.decision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get schemaVersion => $composableBuilder(
+    column: $table.schemaVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$RuleSourcePublicationsTableOrderingComposer
+    extends Composer<_$Database, $RuleSourcePublicationsTable> {
+  $$RuleSourcePublicationsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get transactionId => $composableBuilder(
+    column: $table.transactionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get incarnation => $composableBuilder(
+    column: $table.incarnation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get providerId => $composableBuilder(
+    column: $table.providerId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get planSha256 => $composableBuilder(
+    column: $table.planSha256,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get decision => $composableBuilder(
+    column: $table.decision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get schemaVersion => $composableBuilder(
+    column: $table.schemaVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$RuleSourcePublicationsTableAnnotationComposer
+    extends Composer<_$Database, $RuleSourcePublicationsTable> {
+  $$RuleSourcePublicationsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get transactionId => $composableBuilder(
+    column: $table.transactionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get incarnation => $composableBuilder(
+    column: $table.incarnation,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get providerId => $composableBuilder(
+    column: $table.providerId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get planSha256 => $composableBuilder(
+    column: $table.planSha256,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get decision =>
+      $composableBuilder(column: $table.decision, builder: (column) => column);
+
+  GeneratedColumn<int> get schemaVersion => $composableBuilder(
+    column: $table.schemaVersion,
+    builder: (column) => column,
+  );
+}
+
+class $$RuleSourcePublicationsTableTableManager
+    extends
+        RootTableManager<
+          _$Database,
+          $RuleSourcePublicationsTable,
+          RuleSourcePublication,
+          $$RuleSourcePublicationsTableFilterComposer,
+          $$RuleSourcePublicationsTableOrderingComposer,
+          $$RuleSourcePublicationsTableAnnotationComposer,
+          $$RuleSourcePublicationsTableCreateCompanionBuilder,
+          $$RuleSourcePublicationsTableUpdateCompanionBuilder,
+          (
+            RuleSourcePublication,
+            BaseReferences<
+              _$Database,
+              $RuleSourcePublicationsTable,
+              RuleSourcePublication
+            >,
+          ),
+          RuleSourcePublication,
+          PrefetchHooks Function()
+        > {
+  $$RuleSourcePublicationsTableTableManager(
+    _$Database db,
+    $RuleSourcePublicationsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$RuleSourcePublicationsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$RuleSourcePublicationsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$RuleSourcePublicationsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> transactionId = const Value.absent(),
+                Value<String> incarnation = const Value.absent(),
+                Value<int> providerId = const Value.absent(),
+                Value<String> planSha256 = const Value.absent(),
+                Value<String> decision = const Value.absent(),
+                Value<int> schemaVersion = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => RuleSourcePublicationsCompanion(
+                transactionId: transactionId,
+                incarnation: incarnation,
+                providerId: providerId,
+                planSha256: planSha256,
+                decision: decision,
+                schemaVersion: schemaVersion,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String transactionId,
+                required String incarnation,
+                required int providerId,
+                required String planSha256,
+                required String decision,
+                Value<int> schemaVersion = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => RuleSourcePublicationsCompanion.insert(
+                transactionId: transactionId,
+                incarnation: incarnation,
+                providerId: providerId,
+                planSha256: planSha256,
+                decision: decision,
+                schemaVersion: schemaVersion,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<
+                    $RuleSourcePublicationsTable,
+                    RuleSourcePublication
+                  >(table),
+                  BaseReferences<
+                    _$Database,
+                    $RuleSourcePublicationsTable,
+                    RuleSourcePublication
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$RuleSourcePublicationsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$Database,
+      $RuleSourcePublicationsTable,
+      RuleSourcePublication,
+      $$RuleSourcePublicationsTableFilterComposer,
+      $$RuleSourcePublicationsTableOrderingComposer,
+      $$RuleSourcePublicationsTableAnnotationComposer,
+      $$RuleSourcePublicationsTableCreateCompanionBuilder,
+      $$RuleSourcePublicationsTableUpdateCompanionBuilder,
+      (
+        RuleSourcePublication,
+        BaseReferences<
+          _$Database,
+          $RuleSourcePublicationsTable,
+          RuleSourcePublication
+        >,
+      ),
+      RuleSourcePublication,
+      PrefetchHooks Function()
+    >;
 
 class $DatabaseManager {
   final _$Database _db;
@@ -8821,6 +9892,13 @@ class $DatabaseManager {
       $$ProxyDialersTableTableManager(_db, _db.proxyDialers);
   $$IpQualitiesTableTableManager get ipQualities =>
       $$IpQualitiesTableTableManager(_db, _db.ipQualities);
+  $$RuleSqlIdentitiesTableTableManager get ruleSqlIdentities =>
+      $$RuleSqlIdentitiesTableTableManager(_db, _db.ruleSqlIdentities);
+  $$RuleSourcePublicationsTableTableManager get ruleSourcePublications =>
+      $$RuleSourcePublicationsTableTableManager(
+        _db,
+        _db.ruleSourcePublications,
+      );
 }
 
 mixin _$ProfilesDaoMixin on DatabaseAccessor<Database> {

@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:fl_clash/common/rule_sql_journal.dart';
 
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart' show Value;
@@ -9,6 +11,12 @@ import 'package:fl_clash/models/models.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 part 'generated/database.g.dart';
+
+class _RuleProfileSerialLease {
+  _RuleProfileSerialLease(this.owner);
+  final Profiles owner;
+  bool active = true;
+}
 
 Future<void> withRollback<T>({
   required T snapshot,
@@ -188,10 +196,32 @@ class Profiles extends _$Profiles {
   }
 
   var _queue = Future<void>.value();
+  final _ruleSerialKey = Object();
+  bool get _ownsRuleSerial {
+    final lease = Zone.current[_ruleSerialKey];
+    return lease is _RuleProfileSerialLease &&
+        lease.active &&
+        identical(lease.owner, this);
+  }
+
+  Future<T> withRulePublicationSerial<T>(Future<T> Function() operation) {
+    if (_ownsRuleSerial) return operation();
+    final run = _queue.then((_) async {
+      final lease = _RuleProfileSerialLease(this);
+      try {
+        return await runZoned(operation, zoneValues: {_ruleSerialKey: lease});
+      } finally {
+        lease.active = false;
+      }
+    });
+    _queue = run.then<void>((_) {}, onError: (Object _) {});
+    return run;
+  }
 
   /// Writes run in turn and each writes the rows as the state holds them then,
   /// so a put issued before a rewrite landed writes it along, not over it.
   Future<void> _serial(Future<void> Function() write) {
+    if (_ownsRuleSerial) return write();
     final run = _queue.then((_) => write());
     _queue = run.then<void>((_) {}, onError: (Object _) {});
     return run;
@@ -548,6 +578,7 @@ class Profiles extends _$Profiles {
   Future<void> rewriteCustom(
     Future<Map<int, Profile Function(Profile profile)>> Function() body, {
     void Function()? beforeCommit,
+    Future<void> Function()? finishSql,
   }) {
     return _writes.track(() async {
       (List<Profile>, List<Profile>)? applied;
@@ -576,6 +607,7 @@ class Profiles extends _$Profiles {
                 }
               }
             }
+            await finishSql?.call();
             beforeCommit?.call();
           }),
         );
@@ -701,11 +733,23 @@ class ClashProviders extends _$ClashProviders
   @override
   List<ClashProvider> get value => state.value ?? [];
 
+  Future<void> _ruleWrite(Future<void> Function() write) async {
+    final owner = RuleSqlJournalOwner(
+      database,
+      Directory(await appPath.homeDirPath),
+    );
+    await owner.exclusive(() async {
+      await owner.recover();
+      await write();
+    });
+  }
+
   Future<void> put(
     ClashProvider provider, {
     ClashProvider? previous,
     Future<void> Function()? beforePersist,
     void Function()? beforeCommit,
+    Future<void> Function()? finishSql,
   }) {
     final next = List<ClashProvider>.from(value);
     final index = next.indexWhere((item) => item.id == provider.id);
@@ -721,37 +765,50 @@ class ClashProviders extends _$ClashProviders
     }
     if (renamedFrom == null) {
       return optimisticAsync(next, () async {
-        if (beforePersist == null && beforeCommit == null) {
-          await database.clashProviders.put(provider.toCompanion());
+        if (beforePersist == null &&
+            beforeCommit == null &&
+            finishSql == null) {
+          await _ruleWrite(
+            () => database.clashProviders.put(provider.toCompanion()),
+          );
         } else {
           await database.transaction(() async {
             await beforePersist?.call();
             await database.clashProviders.put(provider.toCompanion());
+            await finishSql?.call();
             beforeCommit?.call();
           });
         }
       });
     }
     final names = {renamedFrom: provider.label};
-    return optimisticAsync(
-      next,
-      () => ref.read(profilesProvider.notifier).rewriteCustom(() async {
-        await beforePersist?.call();
-        final profileIds = await database.profilesDao.customIds().get();
-        await database.rulesDao.renameRuleProvider(
-          profileIds,
-          oldName: renamedFrom,
-          newName: provider.label,
-        );
-        await database.clashProviders.put(provider.toCompanion());
-        return {
-          for (final id in profileIds)
-            id: (profile) => profile.copyWith(
-              overrides: profile.overrides.renamedRuleSets(names),
-            ),
-        };
-      }, beforeCommit: beforeCommit),
-    );
+    return optimisticAsync(next, () {
+      Future<void> persist() => ref
+          .read(profilesProvider.notifier)
+          .rewriteCustom(
+            () async {
+              await beforePersist?.call();
+              final profileIds = await database.profilesDao.customIds().get();
+              await database.rulesDao.renameRuleProvider(
+                profileIds,
+                oldName: renamedFrom,
+                newName: provider.label,
+              );
+              await database.clashProviders.put(provider.toCompanion());
+              return {
+                for (final id in profileIds)
+                  id: (profile) => profile.copyWith(
+                    overrides: profile.overrides.renamedRuleSets(names),
+                  ),
+              };
+            },
+            beforeCommit: beforeCommit,
+            finishSql: finishSql,
+          );
+      return finishSql == null && beforePersist == null
+          ? _ruleWrite(persist)
+          : persist();
+    });
   }
 
   Future<void> del(int id) {
@@ -761,7 +818,9 @@ class ClashProviders extends _$ClashProviders
     next.removeAt(index);
     return optimisticAsync(
       next,
-      () => database.clashProviders.remove((t) => t.id.equals(id)),
+      () => _ruleWrite(
+        () => database.clashProviders.remove((t) => t.id.equals(id)),
+      ),
     );
   }
 
@@ -774,7 +833,10 @@ class ClashProviders extends _$ClashProviders
         changed.add(item.toCompanion(index));
       }
     });
-    optimistic(next, () => database.clashProvidersDao.putAll(changed));
+    optimistic(
+      next,
+      () => _ruleWrite(() => database.clashProvidersDao.putAll(changed)),
+    );
   }
 
   @override

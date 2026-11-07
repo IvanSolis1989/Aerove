@@ -1,7 +1,9 @@
+import 'package:collection/collection.dart' show DeepCollectionEquality;
 import 'package:fl_clash/common/core_capabilities.dart';
 import 'package:fl_clash/common/subscription_compatibility.dart';
 import 'package:fl_clash/common/file_provider_source.dart';
 import 'package:fl_clash/common/source_plan.dart';
+import 'package:fl_clash/common/rule_runtime_cache.dart';
 import 'package:fl_clash/common/tun_policy.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -388,7 +390,10 @@ class ProfileSelectionPolicy {
     if (actual == null ||
         actual.profileId != profileId ||
         proof == null ||
-        proof['schema'] != 2 ||
+        !(proof['schema'] == 2 && proof['databaseSchema'] == 22 ||
+            proof['schema'] == 3 &&
+                proof['databaseSchema'] == 23 &&
+                proof['ruleSql'] is Map) ||
         proof['tables'] is! Map ||
         (proof['tables'] as Map)['profiles'] is! Map) {
       throw StateError(
@@ -522,6 +527,8 @@ Future<RealProfile> makeRealProfileTask(
   MakeRealProfileState data, {
   String coreId = 'mihomo',
   ProfileSelectionBinding? selectionBinding,
+  Map<String, ({int providerId, String sha256})> ruleSourceRevisions = const {},
+  Map<String, dynamic> ruleSourceDefinitions = const {},
   ({Map<String, String> proxies, Map<String, String> rules})
   providerFileReferences = const (
     proxies: {},
@@ -532,6 +539,13 @@ Future<RealProfile> makeRealProfileTask(
   coreId: coreId,
   selectionBinding: selectionBinding,
   providerFileReferences: providerFileReferences,
+  ruleSourceRevisions: ruleSourceRevisions,
+  ruleSourceDefinitions: Map<String, dynamic>.from(
+    jsonDecode(
+          jsonEncode({...data.injectedRuleProviders, ...ruleSourceDefinitions}),
+        )
+        as Map,
+  ),
 ));
 
 Future<RealProfile> _makeRealProfileTask(
@@ -541,6 +555,8 @@ Future<RealProfile> _makeRealProfileTask(
     ProfileSelectionBinding? selectionBinding,
     ({Map<String, String> proxies, Map<String, String> rules})
     providerFileReferences,
+    Map<String, ({int providerId, String sha256})> ruleSourceRevisions,
+    Map<String, dynamic> ruleSourceDefinitions,
   })
   payload,
 ) async {
@@ -663,11 +679,13 @@ Future<RealProfile> _makeRealProfileTask(
     );
   }
 
-  void confineProviders(
+  final runtimeGeneration = uuidV4;
+
+  Future<void> confineProviders(
     String section,
     String type,
     Map<String, String> fileReferences,
-  ) {
+  ) async {
     final providers = rawConfig[section];
     if (providers is! Map) {
       return;
@@ -696,10 +714,43 @@ Future<RealProfile> _makeRealProfileTask(
       final url = provider['url'];
       final hasUrl = url is String && url.isNotEmpty;
       final isFile = provider['type'] == 'file';
-      final path = getProvidersFilePathInner(
-        type,
-        !isFile && hasUrl ? '$name@$url' : '$section/$name',
-      );
+      var cacheKey = !isFile && hasUrl ? '$name@$url' : '$section/$name';
+      final sqlDefinition = payload.ruleSourceDefinitions[name];
+      final sqlLibrary =
+          section == 'rule-providers' &&
+          provider['type'] == 'http' &&
+          payload.ruleSourceRevisions.containsKey(name) &&
+          sqlDefinition is Map &&
+          const DeepCollectionEquality().equals(provider, sqlDefinition);
+      String? sqlSource;
+      String? sourceDigest;
+      if (sqlLibrary) {
+        final witness = payload.ruleSourceRevisions[name];
+        sqlSource = fileReferences[name];
+        if (witness == null ||
+            sqlSource == null ||
+            basename(sqlSource) != '${witness.providerId}@$url'.toMd5() ||
+            !RegExp(r'^providers/rules/[0-9a-f]{32}$').hasMatch(
+              relative(
+                sqlSource,
+                from: dirname(profilesPath),
+              ).replaceAll('\\', '/'),
+            ))
+          throw StateError(
+            'Cold HTTP rule cache lacks its SQL source identity',
+          );
+        sourceDigest = witness.sha256;
+        cacheKey =
+            'sql-rule/${witness.providerId}/$sourceDigest/$runtimeGeneration/$name@$url';
+      }
+      final path = getProvidersFilePathInner(type, cacheKey);
+      if (sqlLibrary)
+        await seedSqlRuleRuntimeCache(
+          home: Directory(dirname(profilesPath)),
+          source: sqlSource!,
+          target: path,
+          digest: sourceDigest!,
+        );
       if (isFile && hasUrl) {
         final legacy = getProvidersFilePathInner(type, '$name@$url');
         if (File(legacy).existsSync() || File(path).existsSync()) {
@@ -956,18 +1007,32 @@ Future<RealProfile> _makeRealProfileTask(
     rawConfig[field] = resourcePath(item);
   }
 
-  confineProviders(
+  final lateRuleProviders = <String, dynamic>{...data.injectedRuleProviders};
+  if (!capabilities.androidHostTun) {
+    final existing = rawConfig['rule-providers'];
+    final early = <String, dynamic>{};
+    for (final entry in data.injectedRuleProviders.entries) {
+      if (entry.value is Map &&
+          entry.value['type'] == 'http' &&
+          (existing is! Map || !existing.containsKey(entry.key))) {
+        early[entry.key] = entry.value;
+        lateRuleProviders.remove(entry.key);
+      }
+    }
+    rawConfig['rule-providers'] = {...early, if (existing is Map) ...existing};
+  }
+  await confineProviders(
     'proxy-providers',
     proxiesProviderDirectoryName,
     payload.providerFileReferences.proxies,
   );
-  confineProviders(
+  await confineProviders(
     'rule-providers',
     rulesProviderDirectoryName,
     payload.providerFileReferences.rules,
   );
   injectUnconfinedProviders('proxy-providers', data.injectedProxyProviders);
-  injectUnconfinedProviders('rule-providers', data.injectedRuleProviders);
+  injectUnconfinedProviders('rule-providers', lateRuleProviders);
   if (!capabilities.androidHostTun)
     rawConfig['profile']['store-selected'] = false;
   if (!capabilities.androidHostTun)
@@ -1152,6 +1217,9 @@ List<String> shakeOrphanFiles({
       if (!selected) {
         continue;
       }
+      final name = basename(entity.path);
+      if (RegExp(r'^[0-9a-f]{32}(\.[0-9]+)?\.new(\.mrs)?$').hasMatch(name))
+        continue;
       if (!isLive(basenameWithoutExtension(entity.path))) {
         targets.add(entity.path);
       }
@@ -1162,11 +1230,7 @@ List<String> shakeOrphanFiles({
       (baseName) => ids.contains(int.tryParse(baseName));
 
   scanDirectory(Directory(profilesDirPath), isLiveId(profileIds));
-  scanDirectory(
-    Directory(providersDirPath),
-    isLiveId(profileIds),
-    includeDirectories: true,
-  );
+  // Core-owned profile cache generations are retired by their Core owner.
   scanDirectory(
     Directory(join(providerCacheDirPath, rulesProviderDirectoryName)),
     providerFileNames.toSet().contains,

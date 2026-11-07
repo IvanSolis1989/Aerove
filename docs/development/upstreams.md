@@ -396,6 +396,8 @@ Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.reso
 
 规则发布的连接门另核对同提交 `runtime/executor/helpers/engines.dart`、`runtime/executor/delegates.dart`、`runtime/api/db_base.dart` 的真实事务终止、rollback finally 释放与 beforeOpen 接线；使用公开 QueryExecutor/TransactionExecutor 包装，完整排空事务及 exclusive 单元，在终态未确认时拒绝后续 SQL。不将逻辑释放标志视为物理连接终止，未复制 Drift 内部实现或新增依赖。该基础不等于 durable journal 或进程崩溃恢复已经实现。
 
+规则发布日志继续复用同版公共 transaction、custom SQL 与 schema migration API：持久数据库身份与条件 INSERT 仲裁、业务写入和终态 token 同事务提交、旧22/新23严格接纳及文件 CAS 恢复。仅参考已固定源码的事务与迁移行为，没有复制内部实现或新增数据库依赖；真实旧版本中断迁移、进程退休及各平台运行资格另行验证。
+
 **许可证、署名与证据：** MIT，Copyright © 2021 Simon Binder；保留安装包原 `LICENSE` 与 Pub 锁。固定映射源码副本 SHA256 `25f2fdcf64585e763f32a07f6c1b6b67be69a902202ed3a9b78ef7db02f174eb`。
 
 #### [rust-lang/cargo](https://github.com/rust-lang/cargo)

@@ -8,6 +8,13 @@ typedef BackupFetch = Future<String?> Function(String downloadPath);
 
 @Riverpod(keepAlive: true)
 class BackupAction extends _$BackupAction {
+  final _retainedRestoreWork = <String>{};
+  Object? restoreCompletionError;
+  StackTrace? restoreCompletionStack;
+  @visibleForTesting
+  Future<void> Function()? restoreAfterSql;
+  @visibleForTesting
+  Future<void> Function()? restoreBeforeDecisionRead;
   @override
   void build() {}
 
@@ -48,8 +55,11 @@ class BackupAction extends _$BackupAction {
     try {
       return await run(workDir.path);
     } finally {
-      await workDir.safeDelete(recursive: true);
-      await _discardLegacyStaging();
+      if (!database.ruleSqlFence.isUncertain &&
+          !_retainedRestoreWork.contains(workDir.path)) {
+        await workDir.safeDelete(recursive: true);
+        await _discardLegacyStaging();
+      }
     }
   }
 
@@ -100,7 +110,17 @@ class BackupAction extends _$BackupAction {
   }) => ref
       .read(setupActionProvider.notifier)
       .withProviderSourceWrite(
-        () => _applyRestoreSource(data, option, stagingDirPath: stagingDirPath),
+        () async =>
+            RuleSqlJournalOwner(
+              database,
+              Directory(await appPath.homeDirPath),
+            ).externalJournal(
+              () => _applyRestoreSource(
+                data,
+                option,
+                stagingDirPath: stagingDirPath,
+              ),
+            ),
       );
 
   Future<void> _applyRestoreSource(
@@ -108,6 +128,8 @@ class BackupAction extends _$BackupAction {
     RestoreOption option, {
     String? stagingDirPath,
   }) async {
+    restoreCompletionError = null;
+    restoreCompletionStack = null;
     final configMap = data.configMap;
     final config = option == RestoreOption.onlyProfiles || configMap == null
         ? null
@@ -116,6 +138,8 @@ class BackupAction extends _$BackupAction {
         ref.read(appSettingProvider).restoreStrategy ==
         RestoreStrategy.override;
     final previousProviders = await database.clashProvidersDao.query().get();
+    final oldIncarnation = await database.ruleSqlIncarnation();
+    final nextIncarnation = uuidV4;
     final putBack = stagingDirPath == null
         ? null
         : await _copyStagedFiles(data, stagingDirPath);
@@ -130,10 +154,48 @@ class BackupAction extends _$BackupAction {
         customProxies: data.customProxies,
         proxyDialers: data.proxyDialers,
         isOverride: isOverride,
+        restoreIncarnation: nextIncarnation,
       );
-    } catch (_) {
-      await putBack?.call();
-      rethrow;
+      await restoreAfterSql?.call();
+    } catch (primary, stack) {
+      if (database.ruleSqlFence.isUncertain) {
+        if (stagingDirPath != null)
+          _retainedRestoreWork.add(Directory(stagingDirPath).parent.path);
+        Error.throwWithStackTrace(primary, stack);
+      }
+      try {
+        await restoreBeforeDecisionRead?.call();
+        final decision = await database.ruleSqlIncarnation();
+        if (decision == oldIncarnation) {
+          await putBack?.call();
+          Error.throwWithStackTrace(primary, stack);
+        }
+        if (decision != nextIncarnation)
+          throw StateError(
+            'Restore incarnation acquired a third durable value',
+          );
+        restoreCompletionError = primary;
+        restoreCompletionStack = stack;
+        // Actual commit won. Keep its files and preserve the completion error.
+        commonPrint.log(
+          'Restore committed with completion error: ${compactError(primary)}',
+          logLevel: LogLevel.warning,
+        );
+      } catch (resolution, resolutionStack) {
+        if (identical(resolution, primary))
+          Error.throwWithStackTrace(primary, stack);
+        if (stagingDirPath != null)
+          _retainedRestoreWork.add(Directory(stagingDirPath).parent.path);
+        Error.throwWithStackTrace(
+          RuleSqlPublicationFailure(
+            primary,
+            resolution,
+            stagingDirPath ?? '',
+            null,
+          ),
+          resolutionStack,
+        );
+      }
     }
     await _clearReplacedProviderCaches(previousProviders);
     await _clearOutdatedCompiledRuleSets(data.clashProviders);
@@ -163,52 +225,78 @@ class BackupAction extends _$BackupAction {
   ) async {
     final homeDirPath = await appPath.homeDirPath;
     final replacedDirPath = join(stagingDirPath, 'replaced');
-    final copied = <String, bool>{};
+    final copied = <String, ({String? before, String? after})>{};
+    final home = Directory(homeDirPath);
+    Future<String?> digest(File file, {Directory? boundary}) async {
+      await nativeLitePrivateDestination(file, boundary ?? home);
+      if (!await file.exists()) return null;
+      if (await FileSystemEntity.type(file.path, followLinks: false) !=
+          FileSystemEntityType.file)
+        throw StateError('Invalid restore CAS file');
+      return (await sha256.bind(file.openRead()).first).toString();
+    }
+
     final fileSources = await fileProviderSourceBackupEntriesTask(
       stagingDirPath,
       data.profiles.map((profile) => profile.id),
     );
     await checkFileProviderSourceRestorePathsTask(homeDirPath, fileSources);
     Future<void> putBack() async {
-      for (final MapEntry(key: entry, value: replaced) in copied.entries) {
-        final target = BackupEntries.resolve(homeDirPath, entry);
-        if (replaced) {
+      // Validate the entire rollback set before changing its first file.
+      for (final entry in copied.entries) {
+        if (await digest(File(BackupEntries.resolve(homeDirPath, entry.key))) !=
+            entry.value.after)
+          throw StateError('Restore rollback encountered a third file value');
+        if (entry.value.before != null &&
+            await digest(
+                  File(BackupEntries.resolve(replacedDirPath, entry.key)),
+                  boundary: Directory(stagingDirPath),
+                ) !=
+                entry.value.before)
+          throw StateError('Restore before image changed');
+      }
+      for (final entry in copied.entries) {
+        final target = File(BackupEntries.resolve(homeDirPath, entry.key));
+        if (await digest(target) != entry.value.after)
+          throw StateError('Restore rollback file CAS failed');
+        if (entry.value.before == null)
+          await target.safeDelete();
+        else
           await File(
-            BackupEntries.resolve(replacedDirPath, entry),
-          ).safeCopy(target);
-        } else {
-          await File(target).safeDelete();
-        }
+            BackupEntries.resolve(replacedDirPath, entry.key),
+          ).safeCopy(target.path);
       }
     }
 
     try {
       for (final entry in {...BackupEntries.ofData(data), ...fileSources}) {
         final staged = File(BackupEntries.resolve(stagingDirPath, entry));
-        if (!await staged.exists()) {
-          if (entry.endsWith('.input')) {
-            final target = File(BackupEntries.resolve(homeDirPath, entry));
-            if (await target.exists()) {
-              await target.safeCopy(
-                BackupEntries.resolve(replacedDirPath, entry),
-              );
-              copied[entry] = true;
-              await target.safeDelete();
-            }
-          }
-          continue;
-        }
         final target = File(BackupEntries.resolve(homeDirPath, entry));
-        final replaced = await target.exists();
-        if (replaced) {
+        final exists = await staged.exists();
+        if (!exists && !entry.endsWith('.input')) continue;
+        final before = await digest(target);
+        final after = exists
+            ? await digest(staged, boundary: Directory(stagingDirPath))
+            : null;
+        if (before != null)
           await target.safeCopy(BackupEntries.resolve(replacedDirPath, entry));
-        }
-        copied[entry] = replaced;
-        await staged.safeCopy(target.path);
+        copied[entry] = (before: before, after: after);
+        if (exists)
+          await staged.safeCopy(target.path);
+        else
+          await target.safeDelete();
       }
-    } catch (_) {
-      await putBack();
-      rethrow;
+    } catch (primary, stack) {
+      try {
+        await putBack();
+      } catch (recovery, recoveryStack) {
+        _retainedRestoreWork.add(Directory(stagingDirPath).parent.path);
+        Error.throwWithStackTrace(
+          RuleSqlPublicationFailure(primary, recovery, stagingDirPath, null),
+          recoveryStack,
+        );
+      }
+      Error.throwWithStackTrace(primary, stack);
     }
     return putBack;
   }

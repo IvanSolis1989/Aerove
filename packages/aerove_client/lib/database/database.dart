@@ -22,6 +22,7 @@ part 'icons.dart';
 part 'ip_qualities.dart';
 part 'profiles.dart';
 part 'rules.dart';
+part 'rule_publications.dart';
 part 'scripts.dart';
 
 @DriftDatabase(
@@ -37,6 +38,8 @@ part 'scripts.dart';
     CustomProxies,
     ProxyDialers,
     IpQualities,
+    RuleSqlIdentities,
+    RuleSourcePublications,
   ],
   daos: [
     ProfilesDao,
@@ -56,15 +59,34 @@ class Database extends _$Database {
     final inner = executor ?? _openConnection();
     final fence =
         RuleSqlConnectionFence.attachedTo(inner) ?? RuleSqlConnectionFence();
-    return Database._(fence, fence.wrap(inner));
+    return Database._(
+      fence,
+      fence.wrap(inner),
+      executor == null || executor is NativeDatabase ? pid : null,
+    );
   }
 
-  Database._(this.ruleSqlFence, QueryExecutor executor) : super(executor);
+  @visibleForTesting
+  factory Database.interceptNative(
+    NativeDatabase executor,
+    QueryInterceptor interceptor,
+  ) {
+    final fence = RuleSqlConnectionFence();
+    return Database._(
+      fence,
+      fence.wrap(executor.interceptWith(interceptor)),
+      pid,
+    );
+  }
+
+  Database._(this.ruleSqlFence, QueryExecutor executor, this.ruleSqlOwnerPid)
+    : super(executor);
 
   final RuleSqlConnectionFence ruleSqlFence;
+  final int? ruleSqlOwnerPid;
 
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 
   static LazyDatabase _openConnection() {
     return LazyDatabase(() async {
@@ -76,68 +98,102 @@ class Database extends _$Database {
   @override
   MigrationStrategy get migration {
     return MigrationStrategy(
-      onUpgrade: (m, from, to) => transaction(() async {
-        if (from < 2) {
-          await m.createTable(iconRecords);
-          await _migrateV1Rules();
-        }
-        if (from < 3) {
-          await _addColumnIfMissing(m, profiles, profiles.matchTarget);
-        }
-        if (from < 4) {
-          await _addColumnIfMissing(m, scripts, scripts.url);
-        }
-        if (from < 5) {
-          await _addColumnIfMissing(m, scripts, scripts.order);
-        }
-        if (from < 6) {
-          await _createTableIfMissing(m, clashProviders);
-        }
-        if (from < 8) {
-          await m.alterTable(TableMigration(clashProviders));
-        }
-        if (from < 10) {
-          await _createTableIfMissing(m, customProxies);
-        }
-        if (from < 17) {
-          await _renameColumnIfPresent(
-            m,
-            profiles,
-            'overwrite_type',
-            profiles.extendType,
-          );
-          await _dropProfileCustomProxies(m);
-          await _migrateToCustomProfiles(m);
-          await _createTableIfMissing(m, iconSets);
-          await _addColumnIfMissing(m, iconSets, iconSets.lastUpdateTime);
-          await _addColumnIfMissing(m, profiles, profiles.overrides);
-        }
-        if (from < 18) {
-          await _moveGroupOptionsToDefinition(m);
-        }
-        if (from < 19) {
-          await _addColumnIfMissing(m, profiles, profiles.ageSecretKey);
-        }
-        if (from < 20) {
-          await _addColumnIfMissing(
-            m,
-            customProxies,
-            customProxies.emptyOptions,
-          );
-        }
-        if (from < 22) {
-          await _createTableIfMissing(m, ipQualities);
-          await _addColumnIfMissing(m, profiles, profiles.lastUpdateDateMillis);
-          await _addColumnIfMissing(m, scripts, scripts.lastUpdateTimeMillis);
-          await _addColumnIfMissing(m, iconSets, iconSets.lastUpdateTimeMillis);
-          await _addColumnIfMissing(
-            m,
-            clashProviders,
-            clashProviders.sourceDefinition,
-          );
-        }
+      onCreate: (m) => transaction(() async {
+        await m.createAll();
+        await customStatement(
+          'INSERT INTO rule_sql_identity (slot, incarnation) VALUES (1, ?)',
+          [uuidV4],
+        );
       }),
-      beforeOpen: (_) => customStatement('PRAGMA foreign_keys = ON'),
+      onUpgrade: (m, from, to) {
+        if (from > schemaVersion || to != schemaVersion)
+          throw StateError(
+            'Unsupported future database schema: ${from} -> ${to}',
+          );
+        return transaction(() async {
+          if (from < 2) {
+            await m.createTable(iconRecords);
+            await _migrateV1Rules();
+          }
+          if (from < 3) {
+            await _addColumnIfMissing(m, profiles, profiles.matchTarget);
+          }
+          if (from < 4) {
+            await _addColumnIfMissing(m, scripts, scripts.url);
+          }
+          if (from < 5) {
+            await _addColumnIfMissing(m, scripts, scripts.order);
+          }
+          if (from < 6) {
+            await _createTableIfMissing(m, clashProviders);
+          }
+          if (from < 8) {
+            await m.alterTable(TableMigration(clashProviders));
+          }
+          if (from < 10) {
+            await _createTableIfMissing(m, customProxies);
+          }
+          if (from < 17) {
+            await _renameColumnIfPresent(
+              m,
+              profiles,
+              'overwrite_type',
+              profiles.extendType,
+            );
+            await _dropProfileCustomProxies(m);
+            await _migrateToCustomProfiles(m);
+            await _createTableIfMissing(m, iconSets);
+            await _addColumnIfMissing(m, iconSets, iconSets.lastUpdateTime);
+            await _addColumnIfMissing(m, profiles, profiles.overrides);
+          }
+          if (from < 18) {
+            await _moveGroupOptionsToDefinition(m);
+          }
+          if (from < 19) {
+            await _addColumnIfMissing(m, profiles, profiles.ageSecretKey);
+          }
+          if (from < 20) {
+            await _addColumnIfMissing(
+              m,
+              customProxies,
+              customProxies.emptyOptions,
+            );
+          }
+          if (from < 23) {
+            await _createTableIfMissing(m, ruleSqlIdentities);
+            await _createTableIfMissing(m, ruleSourcePublications);
+            await customStatement(
+              'INSERT OR IGNORE INTO rule_sql_identity (slot, incarnation) VALUES (1, ?)',
+              [uuidV4],
+            );
+          }
+          if (from < 22) {
+            await _createTableIfMissing(m, ipQualities);
+            await _addColumnIfMissing(
+              m,
+              profiles,
+              profiles.lastUpdateDateMillis,
+            );
+            await _addColumnIfMissing(m, scripts, scripts.lastUpdateTimeMillis);
+            await _addColumnIfMissing(
+              m,
+              iconSets,
+              iconSets.lastUpdateTimeMillis,
+            );
+            await _addColumnIfMissing(
+              m,
+              clashProviders,
+              clashProviders.sourceDefinition,
+            );
+          }
+        });
+      },
+      beforeOpen: (details) async {
+        if ((details.versionBefore ?? 0) > schemaVersion)
+          throw StateError('Unsupported future database schema');
+        await customStatement('PRAGMA foreign_keys = ON');
+        await ruleSqlInfrastructureProof(initializing: true);
+      },
     );
   }
 
@@ -433,6 +489,7 @@ class Database extends _$Database {
     List<CustomProxy> customProxies = const [],
     List<ProxyDialer> proxyDialers = const [],
     bool isOverride = false,
+    String? restoreIncarnation,
   }) async {
     if (profiles.isEmpty &&
         scripts.isEmpty &&
@@ -472,6 +529,7 @@ class Database extends _$Database {
       });
       await _purgeOrphans();
       await scriptsDao.migrateLegacyDefaultUrls();
+      await resetRuleSqlIncarnation(replacement: restoreIncarnation);
     });
   }
 

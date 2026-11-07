@@ -70,17 +70,12 @@ void main() {
   late List<String> reloads;
   late Exception? reloadError;
 
-  setUpAll(() async {
+  setUp(() async {
     home = Directory.systemTemp.createTempSync('flclash-providers-action-');
     await useAppPaths(home);
-  });
-
-  tearDownAll(() {
-    if (home.existsSync()) home.deleteSync(recursive: true);
-  });
-
-  setUp(() async {
-    testDatabase = db.Database(NativeDatabase.memory());
+    testDatabase = db.Database(
+      NativeDatabase(File('${home.path}/database.sqlite')),
+    );
     db.database = testDatabase;
     setup = _RecordingSetupAction();
     const profile = Profile(
@@ -162,6 +157,7 @@ void main() {
   tearDown(() async {
     container.dispose();
     await testDatabase.close();
+    await home.delete(recursive: true);
   });
 
   ClashProvidersAction action() =>
@@ -418,13 +414,17 @@ void main() {
     await action().putProvider(local, content: 'IP-CIDR,10.0.0.0/8'.codeUnits);
     await pumpEventQueue();
 
-    expect(compiles.single, (name: '${local.fileName}.new', url: ''));
+    expect(compiles.single.url, '');
+    expect(
+      compiles.single.name,
+      matches(RegExp('^' + RegExp.escape(local.fileName) + r'\.[0-9]+\.new$')),
+    );
     final saved = await stored(local.id);
     expect(saved.behavior, RuleProviderBehavior.ipcidr);
     expect(saved.format, RuleProviderFormat.yaml);
     expect(await read(saved.path), 'IP-CIDR,10.0.0.0/8');
     expect(await read(saved.compiledPath), 'mrs of IP-CIDR,10.0.0.0/8');
-    final staged = await appPath.getProviderCachePath('${local.fileName}.new');
+    final staged = await appPath.getProviderCachePath(compiles.single.name);
     expect(File(staged).existsSync(), isFalse);
     expect(File('$staged.mrs').existsSync(), isFalse);
   });
@@ -448,7 +448,7 @@ void main() {
     expect(await read(rules.path), 'example.com');
     expect(await testDatabase.clashProvidersDao.query().get(), isEmpty);
     expect(setup.applies, 0);
-    final staged = await appPath.getProviderCachePath('${rules.fileName}.new');
+    final staged = await appPath.getProviderCachePath(compiles.single.name);
     expect(File(staged).existsSync(), isFalse);
   });
 
@@ -482,7 +482,11 @@ void main() {
     await action().putProvider(remote);
     await pumpEventQueue();
 
-    expect(compiles.single, (name: remote.fileName, url: remote.url));
+    expect(compiles.single.url, remote.url);
+    expect(
+      compiles.single.name,
+      matches(RegExp('^' + RegExp.escape(remote.fileName) + r'\.[0-9]+\.new$')),
+    );
     expect(setup.forced, [true]);
     final saved = await stored(remote.id);
     expect(saved.behavior, RuleProviderBehavior.domain);
@@ -756,7 +760,11 @@ void main() {
 
     final prepared = await action().prepare(rules);
 
-    expect(compiles.single, (name: rules.fileName, url: ''));
+    expect(compiles.single.url, '');
+    expect(
+      compiles.single.name,
+      matches(RegExp('^' + RegExp.escape(rules.fileName) + r'\.[0-9]+\.new$')),
+    );
     expect(prepared.behavior, RuleProviderBehavior.ipcidr);
     expect((await stored(rules.id)).behavior, RuleProviderBehavior.ipcidr);
     expect(await read(prepared.compiledPath), 'mrs of 10.0.0.0/8');
@@ -774,9 +782,14 @@ void main() {
       format: RuleProviderFormat.text,
     );
 
+    await testDatabase.clashProviders.put(remote.toCompanion());
     final prepared = await action().prepare(remote);
 
-    expect(compiles.single, (name: remote.fileName, url: remote.url));
+    expect(compiles.single.url, remote.url);
+    expect(
+      compiles.single.name,
+      matches(RegExp('^' + RegExp.escape(remote.fileName) + r'\.[0-9]+\.new$')),
+    );
     expect(prepared, remote);
     expect(await read(remote.corePath('mihomo')), 'mrs of downloaded');
   });
@@ -784,6 +797,7 @@ void main() {
   test('prepare leaves a set the Core cannot build to the Core', () async {
     compileError = const CoreMethodException(code: 'core_error', message: '');
 
+    await testDatabase.clashProviders.put(rules.toCompanion());
     expect(await action().prepare(rules), rules);
   });
 

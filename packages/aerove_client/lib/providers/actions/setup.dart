@@ -1,5 +1,11 @@
 part of '../action.dart';
 
+class _ProviderSourceLease {
+  _ProviderSourceLease(this.owner);
+  final SetupAction owner;
+  bool active = true;
+}
+
 enum _SetupTaskResult { completed, handoffToCoreRestart, failed }
 
 // getRunTime waits out a service transition in flight, which can outlast the
@@ -82,6 +88,13 @@ class SetupAction extends _$SetupAction {
   final _providerSourceScheduler = SerialTaskScheduler();
   final _providerSourceLease = Object();
 
+  bool get _ownsProviderSourceLease {
+    final lease = Zone.current[_providerSourceLease];
+    return lease is _ProviderSourceLease &&
+        lease.active &&
+        identical(lease.owner, this);
+  }
+
   Future<T> withProviderSourceWrite<T>(Future<T> Function() write) async {
     return _withProviderSourceWrite(write);
   }
@@ -90,20 +103,35 @@ class SetupAction extends _$SetupAction {
     Future<T> Function() write, {
     ValueNotifier<bool>? operation,
   }) async {
-    if (ClientProduct.current.expectedCoreId != 'meow-rs') return write();
-    if (identical(Zone.current[_providerSourceLease], this)) return write();
+    if (_ownsProviderSourceLease) return write();
     _providerSourceWriters++;
     try {
       return await _providerSourceScheduler.run(() async {
-        final pending = Map.of(_providerCompletions)..remove(operation);
+        final pending = ClientProduct.current.expectedCoreId == 'meow-rs'
+            ? (Map.of(_providerCompletions)..remove(operation))
+            : <ValueNotifier<bool>, Completer<void>>{};
         for (final signal in pending.keys) {
           signal.value = true;
         }
         await Future.wait(pending.values.map((done) => done.future));
-        return runZoned(() async {
-          await _recoverProviderSources();
-          return write();
-        }, zoneValues: {_providerSourceLease: this});
+        final lease = _ProviderSourceLease(this);
+        final rules = RuleSqlJournalOwner(
+          database,
+          Directory(await appPath.homeDirPath),
+        );
+        try {
+          return await runZoned(
+            () => rules.exclusive(() async {
+              await rules.recover();
+              if (ClientProduct.current.expectedCoreId == 'meow-rs')
+                await _recoverProviderSources();
+              return write();
+            }),
+            zoneValues: {_providerSourceLease: lease},
+          );
+        } finally {
+          lease.active = false;
+        }
       });
     } finally {
       _providerSourceWriters--;
@@ -130,10 +158,16 @@ class SetupAction extends _$SetupAction {
       Directory(await appPath.homeDirPath),
     );
     for (final journal in journals) {
-      await journal.recover(
-        invoke: _core.invokeMeowProviderSource,
-        readProof: _providerBusinessProof,
-        database: database,
+      final rules = RuleSqlJournalOwner(
+        database,
+        Directory(await appPath.homeDirPath),
+      );
+      await rules.externalJournal(
+        () => journal.recover(
+          invoke: _core.invokeMeowProviderSource,
+          readProof: _providerBusinessProof,
+          database: database,
+        ),
       );
     }
   }
@@ -1079,7 +1113,7 @@ class SetupAction extends _$SetupAction {
       );
     }
     if ((replacementData != null || replacementBytes != null) &&
-        !identical(Zone.current[_providerSourceLease], this)) {
+        !_ownsProviderSourceLease) {
       return withProviderSourceWrite(
         () => updateMeowProvider(
           namespace: namespace,
@@ -1091,8 +1125,7 @@ class SetupAction extends _$SetupAction {
         ),
       );
     }
-    if (_providerSourceWriters != 0 &&
-        !identical(Zone.current[_providerSourceLease], this))
+    if (_providerSourceWriters != 0 && !_ownsProviderSourceLease)
       throw const UpdateCancelledException();
     final owner = _core;
     final revision = _runtimeRevision;
@@ -1144,20 +1177,26 @@ class SetupAction extends _$SetupAction {
       checkUpdateCurrent(current);
       if (replacementData != null || replacementBytes != null) {
         await _withProviderSourceWrite(
-          () => _publishManagedProviderSource(
-            namespace: namespace,
-            name: name,
-            profileId: profileId,
-            before: before,
-            owner: owner,
-            cancellation: cancellation,
-            current: current,
-            bytes:
-                replacementBytes ??
-                Uint8List.fromList(utf8.encode(replacementData!)),
-            observeQuiescence: (state) => nativeRequest = state,
-            allowOwnedSource: ownedSourceStates.add,
-          ),
+          () async =>
+              RuleSqlJournalOwner(
+                database,
+                Directory(await appPath.homeDirPath),
+              ).externalJournal(
+                () => _publishManagedProviderSource(
+                  namespace: namespace,
+                  name: name,
+                  profileId: profileId,
+                  before: before,
+                  owner: owner,
+                  cancellation: cancellation,
+                  current: current,
+                  bytes:
+                      replacementBytes ??
+                      Uint8List.fromList(utf8.encode(replacementData!)),
+                  observeQuiescence: (state) => nativeRequest = state,
+                  allowOwnedSource: ownedSourceStates.add,
+                ),
+              ),
           operation: cancellation,
         );
         return;
@@ -1608,6 +1647,13 @@ class SetupAction extends _$SetupAction {
   Future<BuiltProfile> getProfile({
     required SetupState setupState,
     required PatchClashConfig patchConfig,
+  }) => withProviderSourceWrite(
+    () => _getProfileSource(setupState: setupState, patchConfig: patchConfig),
+  );
+
+  Future<BuiltProfile> _getProfileSource({
+    required SetupState setupState,
+    required PatchClashConfig patchConfig,
   }) async {
     final profileId = setupState.profileId;
     if (profileId == null &&
@@ -1760,6 +1806,8 @@ class SetupAction extends _$SetupAction {
       ),
       coreId: ClientProduct.current.expectedCoreId,
       providerFileReferences: injected.files,
+      ruleSourceRevisions: injected.revisions,
+      ruleSourceDefinitions: injected.rules,
       selectionBinding:
           profileId != null &&
               ClientProduct.current.expectedCoreId == 'meow-rs' &&
@@ -1802,6 +1850,7 @@ class SetupAction extends _$SetupAction {
       Map<String, dynamic> proxies,
       Map<String, dynamic> rules,
       ({Map<String, String> proxies, Map<String, String> rules}) files,
+      Map<String, ({int providerId, String sha256})> revisions,
     })
   >
   _resolveInjectedProviders(
@@ -1826,12 +1875,14 @@ class SetupAction extends _$SetupAction {
           proxies: const <String, String>{},
           rules: const <String, String>{},
         ),
+        revisions: <String, ({int providerId, String sha256})>{},
       );
     }
     final options = setupState.overrides.proxyProviders;
     final proxies = <String, dynamic>{};
     final proxyFiles = <String, String>{};
     final ruleFiles = <String, String>{};
+    final revisions = <String, ({int providerId, String sha256})>{};
     for (final entry in setupState.profileProviders.entries) {
       if (!usedProxyProviders.contains(entry.key) ||
           setupState.overrides.localProviderSources.containsKey(
@@ -1884,12 +1935,21 @@ class SetupAction extends _$SetupAction {
           coreId: ClientProduct.current.expectedCoreId,
         );
         ruleFiles[label] = filePath;
+        if (prepared.sourceDefinition != null && prepared.isRemote) {
+          final digest = await clashProvidersAction._meowRuleDigest(
+            await prepared.path,
+          );
+          if (digest == null)
+            throw StateError('SQL rule source is missing during cold setup');
+          revisions[label] = (providerId: prepared.id, sha256: digest);
+        }
       }
     }
     return (
       proxies: proxies,
       rules: ruleProviders,
       files: (proxies: proxyFiles, rules: ruleFiles),
+      revisions: revisions,
     );
   }
 

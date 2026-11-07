@@ -176,6 +176,7 @@ Future<MigrationData> readBackupArchive({
     if (schemaVersion > database.schemaVersion) {
       throw const BackupException(BackupFailure.newerVersion);
     }
+    await database.ruleSqlInfrastructureProof(resolved: true);
     final results = await Future.wait([
       database.profilesDao.query().get(),
       database.scriptsDao.query().get(),

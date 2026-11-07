@@ -213,7 +213,10 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
           title: provider?.label ?? '',
           load: () async => provider == null
               ? CodeForgeDocument.fromText('')
-              : openEditorFile(await provider.path),
+              : _providersAction.withPreparedSource(
+                  provider,
+                  (actual) async => openEditorFile(await actual.path),
+                ),
           schema: EditorSchema.provider,
           onSave: (_, title, content) =>
               _handleEditorSave(title, content, provider: provider),
@@ -231,11 +234,14 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
         context,
         EditorPage(
           title: provider.label,
-          load: () async => provider.isTextContent
-              ? openEditorFile(await provider.path)
-              : CodeForgeDocument.fromText(
-                  await core.dumpRuleSet(await provider.path),
-                ),
+          load: () => _providersAction.withPreparedSource(
+            provider,
+            (actual) async => actual.isTextContent
+                ? openEditorFile(await actual.path)
+                : CodeForgeDocument.fromText(
+                    await core.dumpRuleSet(await actual.path),
+                  ),
+          ),
           schema: EditorSchema.provider,
         ),
       ),
@@ -264,7 +270,11 @@ class _ClashProvidersViewState extends ConsumerState<ClashProvidersView> {
     if (res != true) {
       return;
     }
-    _providersAction.delProvider(provider);
+    await globalState.loadingRun(
+      () => _providersAction.delProvider(provider),
+      title: provider.label,
+      tag: LoadingTag.ruleProviders,
+    );
   }
 
   bool _isEditable(ClashProvider provider) =>
@@ -437,13 +447,17 @@ class _RuleSetUpdateTime extends ConsumerStatefulWidget {
 }
 
 class _RuleSetUpdateTimeState extends ConsumerState<_RuleSetUpdateTime> {
-  late Future<FileInfo?> _fileInfo = widget.provider.fileInfo;
+  late Future<FileInfo?> _fileInfo = ref
+      .read(clashProvidersActionProvider.notifier)
+      .sourceFileInfo(widget.provider);
 
   @override
   void didUpdateWidget(covariant _RuleSetUpdateTime oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.provider != widget.provider) {
-      _fileInfo = widget.provider.fileInfo;
+      _fileInfo = ref
+          .read(clashProvidersActionProvider.notifier)
+          .sourceFileInfo(widget.provider);
     }
   }
 
@@ -452,7 +466,9 @@ class _RuleSetUpdateTimeState extends ConsumerState<_RuleSetUpdateTime> {
     ref.listen(loadingProvider(LoadingTag.ruleProviders), (previous, next) {
       if (previous == true && !next) {
         setState(() {
-          _fileInfo = widget.provider.fileInfo;
+          _fileInfo = ref
+              .read(clashProvidersActionProvider.notifier)
+              .sourceFileInfo(widget.provider);
         });
       }
     });

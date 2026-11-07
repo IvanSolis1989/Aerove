@@ -6,6 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/rule_sql_journal.dart';
+import 'package:sqlite3/sqlite3.dart' as sqlite;
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/database/database.dart' as db;
@@ -153,14 +155,14 @@ void main() {
     ),
   );
 
-  setUpAll(() async {
+  setUp(() async {
     home = await Directory.systemTemp.createTemp('meow-rule-commit-');
     await useAppPaths(home);
-  });
-  tearDownAll(() => home.delete(recursive: true));
-  setUp(() async {
     barrier = _SqlBarrier();
-    database = db.Database(NativeDatabase.memory().interceptWith(barrier));
+    database = db.Database.interceptNative(
+      NativeDatabase(File('${home.path}/database.sqlite')),
+      barrier,
+    );
     db.database = database;
     await database.clashProviders.put(original.toCompanion());
     await database.profiles.put(profile.toCompanion());
@@ -184,6 +186,7 @@ void main() {
   tearDown(() async {
     container.dispose();
     await database.close();
+    await home.delete(recursive: true);
   });
 
   test(
@@ -257,7 +260,18 @@ void main() {
       content: utf8.encode('new.example\n'),
       isCurrent: () => current,
     );
-    final failure = expectLater(saving, throwsA(isA<StateError>()));
+    final failure = expectLater(
+      saving,
+      throwsA(
+        isA<RuleSqlPublicationFailure>()
+            .having(
+              (e) => e.primary,
+              'primary',
+              isA<UpdateCancelledException>(),
+            )
+            .having((e) => e.recovery, 'recovery', isA<StateError>()),
+      ),
+    );
     await barrier.entered.future;
     await File(await original.path).writeAsString('third.example\n');
     current = false;
@@ -265,11 +279,13 @@ void main() {
     await failure;
     expect(await File(await original.path).readAsString(), 'third.example\n');
     expect((await database.clashProvidersDao.query().get()).single, original);
+    final journals = await Directory(
+      '${home.path}/rule-sql-publications',
+    ).list().where((entry) => entry is Directory).toList();
+    expect(journals, hasLength(1));
     expect(
-      await File(
-        await original.path,
-      ).parent.list().any((file) => file.path.endsWith('.rollback')),
-      isTrue,
+      await File('${journals.single.path}/0.before').readAsString(),
+      'old.example\n',
     );
   });
 
@@ -328,10 +344,21 @@ void main() {
       expect(firstReturned, isFalse);
       expect(laterReturned, isFalse);
       expect(await File(await original.path).readAsString(), 'first.example\n');
-      expect(
-        (await database.clashProvidersDao.query().get()).single.label,
-        'first',
+      // Independent physical read proves commit without entering the held fence.
+      final observer = sqlite.sqlite3.open(
+        '${home.path}/database.sqlite',
+        mode: sqlite.OpenMode.readOnly,
       );
+      try {
+        expect(
+          observer
+              .select('SELECT label FROM clash_providers WHERE id = 71')
+              .single['label'],
+          'first',
+        );
+      } finally {
+        observer.dispose();
+      }
       expect(
         container.read(clashProvidersProvider).requireValue.single.label,
         'first',

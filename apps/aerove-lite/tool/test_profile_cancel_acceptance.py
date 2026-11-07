@@ -174,7 +174,7 @@ class PrerequisiteParserTest(unittest.TestCase):
             self.assertEqual(v.prerequisite(staged)["greenEvidenceSha256"],prerequisite.sha(green))
             proof["scopes"][0]["expectedTests"]=1;save()
             with self.assertRaisesRegex(ValueError,"suite/count"):prerequisite.validate(repo,evidence,implementation,green)
-            proof["scopes"][0]["expectedTests"]=11;save()
+            proof["scopes"][0]["expectedTests"]=13;save()
             source=repo/files[0]["path"];source.write_bytes(b"changed actual App")
             with self.assertRaisesRegex(ValueError,"Actual App"):prerequisite.validate(repo,evidence,implementation,green)
 

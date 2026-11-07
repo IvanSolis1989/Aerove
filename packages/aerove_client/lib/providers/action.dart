@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
+import 'package:drift/drift.dart' show Variable;
 import 'package:crypto/crypto.dart';
 
 import 'package:fl_clash/common/app_data.dart';
@@ -14,6 +15,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/subscription_compatibility.dart';
 import 'package:fl_clash/common/file_provider_source.dart';
 import 'package:fl_clash/common/source_plan.dart';
+import 'package:fl_clash/common/rule_sql_journal.dart';
 import 'package:fl_clash/common/profile_update.dart';
 import 'package:fl_clash/common/system_dns.dart';
 import 'package:fl_clash/common/update_download.dart';

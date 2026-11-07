@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:collection/collection.dart';
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/common/migration.dart';
 import 'package:fl_clash/common/xclash_defaults.dart';
@@ -13,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'native_lite_mapping.dart';
 import 'file_provider_source.dart';
+import 'rule_sql_journal.dart';
 import 'task.dart' show meowGlobalGeoDownloadUrls;
 
 abstract interface class NativeLiteAuthority {
@@ -95,6 +97,14 @@ class NativeLiteMigration {
   );
 
   Future<void> run(NativeLiteExport incoming) async {
+    final owner = RuleSqlJournalOwner(database, home);
+    return owner.exclusive(() async {
+      await owner.recover();
+      await owner.externalJournal(() => _runSource(incoming));
+    });
+  }
+
+  Future<void> _runSource(NativeLiteExport incoming) async {
     await nativeLitePrivateDestination(_journal, home);
     Map<String, dynamic> state;
     NativeLiteExport source;
@@ -122,7 +132,7 @@ class NativeLiteMigration {
         return;
       }
     } else {
-      for (final table in database.allTables) {
+      for (final table in database.businessTables) {
         final rows = await database
             .customSelect('SELECT 1 FROM "${table.actualTableName}" LIMIT 1')
             .get();
@@ -185,6 +195,7 @@ class NativeLiteMigration {
         'sourceDigest': incoming.digest,
         'phase': 'prepared',
         'ids': <String, int>{},
+        'databaseSchema': database.schemaVersion,
         'beforeDatabase': await nativeLiteDatabaseProof(database),
         'beforePreferences': {
           for (final key in [configKey, 'version', 'upgradeVersion'])
@@ -260,15 +271,33 @@ class NativeLiteMigration {
     state['phase'] = 'filesInstalled';
     await _save(state);
     await authority.validateSource(source.digest);
-    final currentProof = jsonEncode(await nativeLiteDatabaseProof(database));
-    if (currentProof != jsonEncode(state['beforeDatabase']) &&
-        currentProof != jsonEncode(state['expectedDatabase'])) {
+    final currentProof = await nativeLiteDatabaseProof(database);
+    final legacy22Allowed =
+        !state.containsKey('databaseSchema') || state['databaseSchema'] == 22;
+    if (state.containsKey('databaseSchema') &&
+        state['databaseSchema'] != 22 &&
+        state['databaseSchema'] != 23)
+      legacyFailure(
+        'migration.databaseSchema',
+        'unsupported persistent database proof version',
+      );
+    final matchesBefore = _nativeMigrationDatabaseProofMatches(
+      currentProof,
+      state['beforeDatabase'],
+      legacy22Allowed: legacy22Allowed,
+    );
+    final matchesExpected = _nativeMigrationDatabaseProofMatches(
+      currentProof,
+      state['expectedDatabase'],
+      legacy22Allowed: legacy22Allowed,
+    );
+    if (!matchesBefore && !matchesExpected) {
       legacyFailure(
         'target.database',
         'shared data changed during an incomplete transfer',
       );
     }
-    if (currentProof != jsonEncode(state['expectedDatabase'])) {
+    if (!matchesExpected) {
       await database.transaction(() async {
         await database.restore(
           plan.data.profiles,
@@ -453,8 +482,7 @@ class NativeLiteMigration {
                 .convert(utf8.encode(preferences.getString(configKey) ?? ''))
                 .toString() !=
             receipt['configSha256'] ||
-        jsonEncode(await nativeLiteDatabaseProof(database)) !=
-            jsonEncode(receipt['tables'])) {
+        !await _nativeReceiptTablesMatch(database, receipt)) {
       legacyFailure(
         'migration.receipt',
         'target no longer matches the prepared transfer',
@@ -464,6 +492,7 @@ class NativeLiteMigration {
 }
 
 Future<Map<String, dynamic>> nativeLiteDatabaseProof(Database database) async {
+  await database.ruleSqlInfrastructureProof(resolved: true);
   final result = <String, dynamic>{};
   final names =
       database.allTables.map((table) => table.actualTableName).toList()..sort();
@@ -745,7 +774,7 @@ Map<String, List<Map<String, dynamic>>> nativeLiteSelectedRows(
   };
 }
 
-Future<Map<String, dynamic>> nativeLiteBusinessSource(
+Future<Map<String, dynamic>> _nativeLiteBusinessSource(
   Database db,
   Directory home,
   SharedPreferences storage,
@@ -896,7 +925,8 @@ Future<Map<String, dynamic>> nativeLiteBusinessSource(
       .copyWith(geoXUrl: meowGlobalGeoDownloadUrls(model.patchClashConfig))
       .toJson();
   return {
-    'schema': 2,
+    'schema': 3,
+    'ruleSql': await db.ruleSqlInfrastructureProof(resolved: true),
     'setupSha256': nativeLiteJsonHash(nativeLiteSetupConfig(runtime)),
     'liveSha256': nativeLiteJsonHash(live),
     'databaseSchema': db.schemaVersion,
@@ -980,4 +1010,74 @@ Future<MeowGeoSource> nativeLiteWriteGeoSource(
     await file.delete();
     rethrow;
   }
+}
+
+Future<bool> _nativeReceiptTablesMatch(
+  Database database,
+  Map<String, dynamic> receipt,
+) async {
+  final actual = await nativeLiteDatabaseProof(database);
+  final expected = Map<String, dynamic>.from(receipt['tables'] as Map);
+  if (receipt['databaseSchema'] == 22 && database.schemaVersion == 23) {
+    if (!const SetEquality<String>().equals(
+      expected.keys.toSet(),
+      ruleSqlBusinessTables,
+    ))
+      return false;
+    return nativeLiteJsonHash({
+          for (final name in ruleSqlBusinessTables) name: actual[name],
+        }) ==
+        nativeLiteJsonHash(expected);
+  }
+  return receipt['databaseSchema'] == 23 &&
+      nativeLiteJsonHash(actual) == nativeLiteJsonHash(expected);
+}
+
+Future<Map<String, dynamic>> nativeLiteBusinessSource(
+  Database db,
+  Directory home,
+  SharedPreferences storage,
+  Config? expected,
+) async {
+  final owner = RuleSqlJournalOwner(db, home);
+  return owner.exclusive(() async {
+    if (!owner.inExternalJournal)
+      await owner.recover();
+    else
+      await db.ruleSqlInfrastructureProof(resolved: true);
+    return _nativeLiteBusinessSource(db, home, storage, expected);
+  });
+}
+
+// Old schema1 migration journals predate databaseSchema. Their exact eleven-table
+// proof identifies schema22; schema23 infrastructure is independently checked by
+// nativeLiteDatabaseProof before this bounded projection is permitted.
+bool _nativeMigrationDatabaseProofMatches(
+  Map<String, dynamic> actual,
+  Object? value, {
+  required bool legacy22Allowed,
+}) {
+  if (value is! Map) return false;
+  final expected = Map<String, dynamic>.from(value);
+  final keys = expected.keys.toSet();
+  final old = const SetEquality<String>().equals(keys, ruleSqlBusinessTables);
+  final current = const SetEquality<String>().equals(keys, {
+    ...ruleSqlBusinessTables,
+    ...ruleSqlInfrastructureTables,
+  });
+  if (!current && !(legacy22Allowed && old)) return false;
+  for (final proof in expected.values) {
+    if (proof is! Map ||
+        !const SetEquality<String>().equals(proof.keys.cast<String>().toSet(), {
+          'rows',
+          'sha256',
+        }) ||
+        proof['rows'] is! int ||
+        (proof['rows'] as int) < 0 ||
+        proof['sha256'] is! String ||
+        !RegExp(r'^[0-9a-f]{64}$').hasMatch(proof['sha256'] as String))
+      return false;
+  }
+  return nativeLiteJsonHash(expected) ==
+      nativeLiteJsonHash({for (final name in keys) name: actual[name]});
 }

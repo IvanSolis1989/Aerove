@@ -126,7 +126,10 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                 bad("$.data-source-proof", "Live parameters do not match current business settings")
             if (active != null) {
                 val prior = nextSetup?.optJSONObject("data-source-proof") ?: bad("$.data-source-proof", "Applied source is missing")
-                if (listOf("setupSha256", "tables", "files").any { nativeLiteJsonHash(prior.get(it)) != nativeLiteJsonHash(source.get(it)) })
+                if (prior.getInt("schema") != source.getInt("schema") ||
+                    prior.getInt("databaseSchema") != source.getInt("databaseSchema") ||
+                    (listOf("setupSha256", "tables", "files") + if(source.getInt("schema") == 3) listOf("ruleSql") else emptyList()).any {
+                        nativeLiteJsonHash(prior.get(it)) != nativeLiteJsonHash(source.get(it)) })
                     throw MeowConfigProtocolException("superseded", "Selected setup dependencies changed; setupConfig is required")
                 nextSetup.put("data-source-proof", source)
             }
