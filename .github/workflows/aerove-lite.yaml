@@ -1392,11 +1392,14 @@ jobs:
         set -euo pipefail
         evidence="$RUNNER_TEMP/lite-flutter-host/native-builder"
         test ! -e "$evidence"
-        python3 tool/ci_artifacts.py host-helper \
-          --go "$(go env GOROOT)/bin/go" \
-          --directory "$RUNNER_TEMP/lite-client-helper/staging" \
-          --destination "$RUNNER_TEMP/lite-client-helper/bin" \
-          --receipt "$RUNNER_TEMP/lite-flutter-host/native-builder-helper.json"
+        (
+          cd "$GITHUB_WORKSPACE"
+          python3 apps/aerove-lite/tool/ci_artifacts.py host-helper \
+            --go "$(go env GOROOT)/bin/go" \
+            --directory "$RUNNER_TEMP/lite-client-helper/staging" \
+            --destination "$RUNNER_TEMP/lite-client-helper/bin" \
+            --receipt "$RUNNER_TEMP/lite-flutter-host/native-builder-helper.json"
+        )
         test -x "$AEROVE_FILTER_HELPER"
         gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
           -DnativeBuilder.fixture="$evidence" :app:prepareNativeBuilderFixture \
