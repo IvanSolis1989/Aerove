@@ -197,6 +197,20 @@ class MeowAndroidHost(private val service: LiteVpnService?, private val applicat
         var markedUsable = false
         lateinit var preparedValue: PreparedProfile
         lateinit var configValue: MeowRuntimeConfig
+        override fun finalPlanQaSources(): MeowFinalPlanQaSources {
+            check(graphOnly && transferred && isCurrent()) { "QA capture requires a current shared parked graph" }
+            val snapshot = checkNotNull(runtimeSnapshot) { "QA shared snapshot is missing" }
+            val relocated = checkNotNull(flutterResources) { "QA relocated lease is missing" }
+            check(relocated.verifyReadLease(prepared) == configuration.resourceReadRoot)
+            val settings = snapshot.handoff.runtimeSettingsJson
+            val proof = JSONObject(settings).getJSONObject("flutterSetup").getJSONObject("data-source-proof")
+            val config = dev.aerove.lite.flutter.verifyNativeLiteBusinessSource(application, proof)
+            check(config.has("currentProfileId") && config.isNull("currentProfileId")) { "QA fresh input has no verified null selection" }
+            return MeowFinalPlanQaSources(snapshot.revision, snapshot.intentEpoch, snapshot.profileId,
+                snapshot.handoff.json().toString(), settings, snapshot.resourceDirectory,
+                relocated.readRoot, relocated.geoReadRootAuthority, MeowNativeCore.capabilities(), checkNotNull(file), snapshot.userRequested,
+                snapshot.handoff.setupRecordJson, snapshot.handoff.vpnOptionsJson, snapshot.handoff.notificationJson, snapshot.handoff.compiledYaml)
+        }
         override val prepared get() = ruleResources?.prepared ?: preparedValue
         override val configuration get() = ruleResources?.configuration ?: configValue
         override val appliedConfiguration get() = AppliedConfigSnapshot(prepared.profileId, checkNotNull(file))

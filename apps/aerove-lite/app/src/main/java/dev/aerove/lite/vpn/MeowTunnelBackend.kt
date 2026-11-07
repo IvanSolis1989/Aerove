@@ -15,6 +15,11 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
     internal data class StartupFailure(val nativeGeneration: Long, val intentGeneration: Long?, val coreEpoch: String?,
         val failure: Throwable, val nativeBeforeStop: Result<MeowStatus>, val nativeAfterStop: Result<MeowStatus>)
     companion object {
+        private val qaFinalPlanSink = java.util.concurrent.atomic.AtomicReference<MeowFinalPlanQaSink?>(null)
+        internal fun captureFinalPlansForOwnedQa(sink: MeowFinalPlanQaSink): AutoCloseable {
+            check(qaFinalPlanSink.compareAndSet(null, sink)) { "QA final plan capture already registered" }
+            return AutoCloseable { qaFinalPlanSink.compareAndSet(sink, null) }
+        }
         private class StartupObserver(val receive: (StartupFailure) -> Unit)
         private val startupObserver = java.util.concurrent.atomic.AtomicReference<StartupObserver?>(null)
         internal fun observeStartupFailures(observer: (StartupFailure) -> Unit): AutoCloseable {
@@ -37,6 +42,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
     interface TunReceipt { val descriptor: Int }
     interface NetworkReceipt { val physical: MeowPhysicalNetwork }
     interface Lease {
+        fun finalPlanQaSources(): MeowFinalPlanQaSources = error("This lease has no shared QA source closure")
         val prepared: PreparedProfile
         val configuration: MeowRuntimeConfig
         val appliedConfiguration: AppliedConfigSnapshot
@@ -135,7 +141,9 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                 val fd = config.tun?.descriptor ?: -1
                 check(config.runtimeMode == if (plan.builderSettings().network.vpnEnabled) NativeCore.RuntimeMode.Tun else NativeCore.RuntimeMode.Proxy) { "Meow runtime mode differs from Builder" }
                 check(if (config.runtimeMode == NativeCore.RuntimeMode.Tun && !config.initiallyParked) fd >= 0 && owned.protector != null else fd == -1) { "Invalid Meow FD/protect plan" }
-                val handle = commands.start(config.planJson(), fd, owned.protector, owned.connectionOwner)
+                val finalPlan = config.planJson()
+                qaFinalPlanSink.get()?.capture(finalPlan, fd, owned)
+                val handle = commands.start(finalPlan, fd, owned.protector, owned.connectionOwner)
                 check(handle > 0) { "Meow returned an invalid handle" }
                 Session(handle, owned, plan.ownerIntentToken).also { session = it; synchronized(gate) { retained += it } }
             }

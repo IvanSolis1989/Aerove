@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "onlyWorkflowProjection": true,
+  "syntheticRun": true,
+  "workflow": "https://github.com/IvanSolis1989/Aerove/actions/runs/123",
+  "producerTemplate": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID",
+  "validatorPattern": "https://github\\.com/IvanSolis1989/Aerove/actions/runs/[0-9]+",
+  "contractBase": "c302bbbf035e71fa1b4e1eb18d7393607aef2c68",
+  "producer": {
+    "path": ".github/workflows/aerove-lite-build.yaml",
+    "line": 216,
+    "blob": "448753f3f8e9c3b7b6722f2c08a825618c4c6955",
+    "sha256": "cb346aa69ccc83e7a2d110bc25ef35c8e9dcb5e0a89adad3f31e2217eea9501e"
+  },
+  "validator": {
+    "path": "apps/aerove-lite/tool/verify_apk.py",
+    "line": 1021,
+    "blob": "4b3d8b6331db555ca608114da94e20c7b4fa1a30",
+    "sha256": "d39041e927f6ea6de4e74668bccc1b8c0ced5677d43a6f69b26d297ebac1d40a"
+  }
+}

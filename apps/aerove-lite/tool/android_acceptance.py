@@ -268,6 +268,46 @@ class Acceptance(Producer):
                 require(time.monotonic() < deadline, "Fixture never became ready")
                 time.sleep(0.1)
 
+    def final_plan_capture(self, info):
+        require(self.args.phase == "flutter-ui" and self.owner_verified and self.args.serial.startswith("emulator-"), "Final-plan capture requires fresh owned UI emulator")
+        require(os.environ.get("CI") == "true" and os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" and
+                os.environ.get("GITHUB_REPOSITORY") == "IvanSolis1989/Aerove" and os.environ.get("GITHUB_ACTOR") == "IvanSolis1989" and
+                os.environ.get("AEROVE_QA_FINAL_PLAN_SOURCE") == info["source"] == os.environ.get("GITHUB_SHA") and
+                os.environ.get("AEROVE_QA_FINAL_PLAN_REF") == os.environ.get("GITHUB_REF"), "Explicit current synthetic QA identity required")
+        scope = dict(syntheticQA=True, original312Input=False, source=info["source"], tree=info["tree"],
+            apkSha256=info["apk_sha256"], deviceSerial=self.args.serial, ownerProofSha256=self.receipt["ownerProofSha256"],
+            packagesInstalledByTask=list(self.installed), workflow=os.environ["GITHUB_RUN_ID"], attempt=os.environ["GITHUB_RUN_ATTEMPT"])
+        require(set(self.installed) == {PACKAGE, TEST_PACKAGE}, "Only fresh task-owned installations may capture")
+        save(self.args.output / "final-plan-owner.json", scope)
+        token = "final-plan-" + uuid4().hex
+        values = dict(qaToken=token, apkSha256=info["apk_sha256"], source=info["source"], tree=info["tree"],
+            meowOverlaySha256=info["meow_overlay_sha256"], meowFileManifestSha256=info["meow_file_manifest_sha256"],
+            workflow=info["workflow"], runAttempt=str(info["run_attempt"]),
+            qaExecutorRun=os.environ["GITHUB_RUN_ID"], qaExecutorAttempt=os.environ["GITHUB_RUN_ATTEMPT"],
+            qaFinalPlanSynthetic="fresh-default-v1", qaFinalPlanOwnerSha256=sha(self.args.output / "final-plan-owner.json"),
+            qaFinalPlanSignerSha256=info["signer_sha256"])
+        command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", CLASS + "#freshDefaultFinalPlanCapture"]
+        for key, value in values.items(): command += ["-e", key, str(value)]
+        failure = None
+        try:
+            self.adb_command("final-plan-instrument", *command, RUNNER, timeout=180)
+        except BaseException as error:
+            failure = error
+        try:
+            self.adb_command("final-plan-pull", "pull", self.remote(token), str(self.args.output / "final-plan-capture"), timeout=90, cancelling=True)
+        except BaseException as error:
+            if failure is None: raise
+            self.receipt["finalPlanPullFailureClass"] = type(error).__name__
+        if failure is not None: raise failure
+        records = parse_log(self.args.output / "final-plan-instrument.out")
+        capture = self.args.output / "final-plan-capture/final-plan"
+        from qa_final_plan_verify import verify
+        packet = verify(capture, values)
+        require(len(records) == 1 and records[0]["status"] == "passed" and
+                records[0]["className"] + "#" + records[0]["testName"] == CLASS + "#freshDefaultFinalPlanCapture", "Input capture test failed")
+        self.receipt.update(inputCaptureOnly=True, original312Input=False, finalPlanCapture=packet, matrixImages=0,
+            fullAcceptance=False, nativeMeowAccepted=False)
+
     def consent_restart(self, info):
         rows = []
         first, receipt, _ = self.ui("consentNavigationTheme12", info); rows.append(first)
@@ -320,10 +360,14 @@ class Acceptance(Producer):
                                  "--no-streaming", str(path), timeout=120)
                 self.installed_hash(package, package, sha(path))
             self.adb_command("locale-en", "shell", "cmd", "locale", "set-app-locales", PACKAGE, "--user", "0", "--locales", "en-US")
+            capture_mode = os.environ.get("AEROVE_QA_FINAL_PLAN_CAPTURE")
+            require(capture_mode in (None, "fresh-default-v1") and (not capture_mode or self.args.phase == "flutter-ui"), "Synthetic capture requires its independent UI phase")
             if self.args.phase != "flutter-ui":
                 self.fixture_start()
             contract = load(CONTRACT)
-            if self.args.phase == "flutter-platform":
+            if capture_mode:
+                self.final_plan_capture(info)
+            elif self.args.phase == "flutter-platform":
                 require(bool(os.environ.get("SMART_CONFIG_MEOW_FIXTURE_DIR")), "Pinned Smart fixture must be prepared before platform suite")
                 self.adb_command("platform-tests", "shell", "am", "instrument", "-w", "-r", "-e", "class",
                                  ",".join(contract["platformSelectors"]), "-e", "isolatedBackgroundPolicy", "true",
@@ -381,7 +425,7 @@ class Acceptance(Producer):
                     unresolvedCoverage=["physical Wi-Fi exclusion park/resume",
                                         "shared client cancellation/recovery coverage mapping requires execution-bound canonical proof"])
             self.installed_hash("final-app", PACKAGE, info["apk_sha256"])
-            self.receipt.update(status="executed-pending-complete-acceptance", executionPassed=True)
+            self.receipt.update(status="input-captured-not-acceptance" if capture_mode else "executed-pending-complete-acceptance", executionPassed=True)
             result = 0
         except BaseException as error:
             self.receipt.update(status="cancelled" if self.cancelled else "failed", executionPassed=False, error=repr(error))

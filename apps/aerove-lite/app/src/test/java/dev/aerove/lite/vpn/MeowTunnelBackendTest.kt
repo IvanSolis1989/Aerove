@@ -418,6 +418,25 @@ class MeowTunnelBackendTest {
         assertTrue(loading.await().isFailure); assertNull(owner.queryGraph()); assertNull(store.readAppliedIdentity())
         assertEquals(1, f.released); assertEquals(1, f.native.starts)
     }
+    @Test fun qaFinalPlanCaptureUsesTheSameObjectAsActualStartAndDoesNotChangeNormalOwnership() = runBlocking<Unit> {
+        val f = Fixture(); var captured: String? = null
+        MeowTunnelBackend.captureFinalPlansForOwnedQa(MeowFinalPlanQaSink { value, fd, lease ->
+            assertEquals(-1, fd); assertSame(f.lease, lease); captured = value
+        }).use {
+            val session = f.backend.open(f.plan)
+            assertSame(captured, f.native.payload)
+            assertEquals(f.config.engineYaml, JSONObject(checkNotNull(captured)).getString("engineYaml"))
+            assertEquals(1, f.native.starts); session.stop(); assertEquals(1, f.released)
+        }
+    }
+    @Test fun qaCaptureFailureStillReleasesAcquiredLeaseWithoutStartingNative() = runBlocking<Unit> {
+        val f = Fixture(); val original = java.io.IOException("controlled capture failure")
+        MeowTunnelBackend.captureFinalPlansForOwnedQa(MeowFinalPlanQaSink { _, _, _ -> throw original }).use {
+            try { f.backend.open(f.plan); fail("capture must fail explicitly") }
+            catch (failure: java.io.IOException) { assertSame(original, generateSequence<Throwable>(failure) { it.cause }.filter { it === original }.single()) }
+            assertEquals(0, f.native.starts); assertEquals(1, f.released); assertEquals(0, f.native.stops)
+        }
+    }
     @Test fun startupFailureCaptureKeepsOriginalAndSuppressedWithoutAnotherStop() = runBlocking<Unit> {
         val f = Fixture(); val original = java.io.IOException("fixture EOF"); val cleanup = java.io.IOException("fixture cleanup failed")
         f.native.onReady = { throw original }; f.native.onStop = { throw cleanup }
