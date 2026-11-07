@@ -1362,10 +1362,26 @@ jobs:
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert all(value['testExit'] == 0 and value['logExit'] == 0 for value in results.values()), results
         PY
+    - name: Produce the independent Native Builder interop fixture
+      timeout-minutes: 10
+      working-directory: apps/aerove-lite
+      env:
+        AEROVE_FILTER_HELPER: ${{ runner.temp }}/lite-client-helper/bin/hostverify
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/native-builder"
+        test ! -e "$evidence"
+        gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 -PsourceSha="$GITHUB_SHA" \
+          -DnativeBuilder.fixture="$evidence" :app:prepareNativeBuilderFixture \
+          2>&1 | tee "$RUNNER_TEMP/lite-flutter-host/native-builder-fixture-jvm.log"
+        test -s "$evidence/fixture.json"
+        test -s "$evidence/producer-receipt.json"
     - name: Verify fresh Lite defaults and unchanged Standard startup paths
       working-directory: apps/aerove
       run: |-
+        test -s "$RUNNER_TEMP/lite-flutter-host/native-builder/fixture.json"
         flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+          --dart-define="NATIVE_LITE_BUILDER_FIXTURE=$RUNNER_TEMP/lite-flutter-host/native-builder/fixture.json" \
           test/common/native_lite_builder_test.dart
         flutter test --no-pub --concurrency 1 \
           test/common/path_test.dart test/providers/setup_action_test.dart

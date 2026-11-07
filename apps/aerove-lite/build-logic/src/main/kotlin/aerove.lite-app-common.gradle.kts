@@ -420,6 +420,19 @@ tasks.register<JavaExec>("prepareNativeMigrationFixture") {
     }
 }
 
+tasks.register<JavaExec>("prepareNativeBuilderFixture") {
+    dependsOn("compileReleaseUnitTestKotlin")
+    mainClass.set("dev.aerove.lite.fixtures.NativeBuilderInteropFixtureKt")
+    classpath(providers.provider { tasks.named<Test>("testReleaseUnitTest").get().classpath })
+    doFirst {
+        val output = providers.systemProperty("nativeBuilder.fixture").orNull
+            ?: error("prepareNativeBuilderFixture requires -DnativeBuilder.fixture")
+        check(output.isNotBlank()) { "nativeBuilder.fixture must not be blank" }
+        check(!System.getenv("AEROVE_FILTER_HELPER").isNullOrBlank()) { "The real host filter helper is required" }
+        systemProperty("nativeBuilder.fixture", output)
+    }
+}
+
 tasks.register<JavaExec>("prepareResource89NativeFixture") {
     dependsOn("compileReleaseUnitTestKotlin")
     mainClass.set("dev.aerove.lite.fixtures.NativeResourceFixture89Kt")
