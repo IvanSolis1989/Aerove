@@ -352,7 +352,7 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
         }
         definitionSha256=nativeLiteJsonHash(mapOf("schema" to proof.getInt("schema"),
             "setupSha256" to proof.getString("setupSha256"),"tables" to definitions,"files" to nativeLiteList(files)) +
-            if(proofSchema == 3) mapOf("ruleSql" to nativeLiteMap(proof.getJSONObject("ruleSql"))) else emptyMap()))
+            if(proofSchema == 3) mapOf("ruleSql" to nativeLiteMap(proof.getJSONObject("ruleSql"))) else emptyMap())
     }
     return NativeLiteVerifiedSource(config,checkNotNull(selectedMap),checkNotNull(definitionSha256),providerBindings)
 }

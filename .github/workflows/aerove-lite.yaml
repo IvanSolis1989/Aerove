@@ -1301,15 +1301,20 @@ jobs:
         evidence="$RUNNER_TEMP/lite-flutter-host/rule-process-recovery"
         mkdir -p "$evidence"
         python3 tooling/test_rule_sql_process.py --flutter "$(command -v flutter)" --app "$GITHUB_WORKSPACE/apps/aerove" \
+          --evidence "$evidence/cases" \
           2>&1 | tee "$evidence/process-recovery.log"
         python3 - <<'PY'
         import hashlib, json, os
         from pathlib import Path
         output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/rule-process-recovery'
         log = output / 'process-recovery.log'
+        summary = json.loads((output / 'cases/summary.json').read_text())
+        assert summary['status'] == 'PASSED' and len(summary['cases']) == 10, summary
+        assert all(case['status'] == 'PASSED' for case in summary['cases']), summary
         (output / 'results.json').write_text(json.dumps(dict(source=os.environ['GITHUB_SHA'],
             run=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'],
             commandCompleted=True, logSha256=hashlib.sha256(log.read_bytes()).hexdigest(),
+            summarySha256=hashlib.sha256((output / 'cases/summary.json').read_bytes()).hexdigest(),
             platform='Linux owned descendant process termination/reopen',
             androidExecuted=False, powerLossTested=False, appApkBuilt=False, acceptance=False), indent=2) + '\n')
         PY
