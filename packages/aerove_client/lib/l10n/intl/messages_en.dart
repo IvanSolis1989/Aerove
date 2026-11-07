@@ -210,45 +210,49 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m76(count, label) =>
       "${Intl.plural(count, one: '1 proxy group', other: '${label} proxy groups')}";
 
-  static String m77(count, label) =>
+  static String m77(time) => "Response checked: ${time}";
+
+  static String m78(time) => "Previous report: ${time}";
+
+  static String m79(count, label) =>
       "${Intl.plural(count, one: '1 rule', other: '${label} rules')}";
 
-  static String m78(appName) => "${appName} (Safe mode)";
-
-  static String m79(count) =>
-      "${Intl.plural(count, one: '1 second', other: '${count} seconds')}";
-
-  static String m80(count) => "${count} in effect";
+  static String m80(appName) => "${appName} (Safe mode)";
 
   static String m81(count) =>
-      "${Intl.plural(count, one: '1 issue', other: '${count} issues')}";
+      "${Intl.plural(count, one: '1 second', other: '${count} seconds')}";
 
-  static String m82(time) => "Checked at ${time}";
+  static String m82(count) => "${count} in effect";
 
   static String m83(count) =>
+      "${Intl.plural(count, one: '1 issue', other: '${count} issues')}";
+
+  static String m84(time) => "Checked at ${time}";
+
+  static String m85(count) =>
       "${Intl.plural(count, one: '1 setting', other: '${count} settings')}";
 
-  static String m84(link) => "No proxy could be read from ${link}";
+  static String m86(link) => "No proxy could be read from ${link}";
 
-  static String m85(label) => "${label} must be a single item";
+  static String m87(label) => "${label} must be a single item";
 
-  static String m86(protocols, removed, adjustments) =>
+  static String m88(protocols, removed, adjustments) =>
       "Skipped ${removed} nodes not supported by this core (${protocols}). ${adjustments}";
 
-  static String m87(speed) => "Download speed: ${speed}";
+  static String m89(speed) => "Download speed: ${speed}";
 
-  static String m88(value) => "Total ${value}";
+  static String m90(value) => "Total ${value}";
 
-  static String m89(speed) => "Upload speed: ${speed}";
+  static String m91(speed) => "Upload speed: ${speed}";
 
-  static String m90(transport) => "${transport} Headers";
+  static String m92(transport) => "${transport} Headers";
 
-  static String m91(label) => "${label} must be a URL";
+  static String m93(label) => "${label} must be a URL";
 
-  static String m92(count) =>
+  static String m94(count) =>
       "${Intl.plural(count, one: '1 year ago', other: '${count} years ago')}";
 
-  static String m93(count) => "${Intl.plural(count, other: '${count}y ago')}";
+  static String m95(count) => "${Intl.plural(count, other: '${count}y ago')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1483,6 +1487,11 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "quickActions": MessageLookupByLibrary.simpleMessage("Quick actions"),
     "quickEdit": MessageLookupByLibrary.simpleMessage("Quick edit"),
+    "quotaCheckedAt": m77,
+    "quotaLastReported": m78,
+    "quotaLegacyUnverified": MessageLookupByLibrary.simpleMessage(
+      "Legacy figures; source unverified",
+    ),
     "recentRequests": MessageLookupByLibrary.simpleMessage("Recent requests"),
     "recommendedIcons": MessageLookupByLibrary.simpleMessage("Suggested"),
     "recordType": MessageLookupByLibrary.simpleMessage("Record type"),
@@ -1700,12 +1709,12 @@ class MessageLookup extends MessageLookupByLibrary {
       "The rule must start with a supported type, such as DOMAIN,example.com,DIRECT",
     ),
     "rules": MessageLookupByLibrary.simpleMessage("Rules"),
-    "rulesCount": m77,
+    "rulesCount": m79,
     "runTime": MessageLookupByLibrary.simpleMessage("Run time"),
     "running": MessageLookupByLibrary.simpleMessage("Running"),
     "runtimeConfig": MessageLookupByLibrary.simpleMessage("Runtime config"),
     "safeMode": MessageLookupByLibrary.simpleMessage("Safe mode"),
-    "safeModeAppTitle": m78,
+    "safeModeAppTitle": m80,
     "saturation": MessageLookupByLibrary.simpleMessage("Saturation"),
     "save": MessageLookupByLibrary.simpleMessage("Save"),
     "saveChanges": MessageLookupByLibrary.simpleMessage("Save the changes?"),
@@ -1718,9 +1727,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "search": MessageLookupByLibrary.simpleMessage("Search"),
     "seconds": MessageLookupByLibrary.simpleMessage("seconds"),
-    "secondsCount": m79,
+    "secondsCount": m81,
     "secretKey": MessageLookupByLibrary.simpleMessage("Key"),
-    "sectionsInEffect": m80,
+    "sectionsInEffect": m82,
     "select": MessageLookupByLibrary.simpleMessage("Select"),
     "selectAll": MessageLookupByLibrary.simpleMessage("Select all"),
     "selectRuleSet": MessageLookupByLibrary.simpleMessage(
@@ -1756,7 +1765,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Scan the code with your phone\'s camera and paste the link on the page that opens. Both devices need to be on the same network.",
     ),
     "server": MessageLookupByLibrary.simpleMessage("Server"),
-    "serviceAbnormalCount": m81,
+    "serviceAbnormalCount": m83,
     "serviceAllAvailable": MessageLookupByLibrary.simpleMessage(
       "All available",
     ),
@@ -1764,7 +1773,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "serviceBlocked": MessageLookupByLibrary.simpleMessage("Blocked"),
     "serviceCheck": MessageLookupByLibrary.simpleMessage("Check"),
     "serviceCheckAll": MessageLookupByLibrary.simpleMessage("Check all"),
-    "serviceCheckedAt": m82,
+    "serviceCheckedAt": m84,
     "serviceComingSoon": MessageLookupByLibrary.simpleMessage("Coming soon"),
     "serviceDisallowedIsp": MessageLookupByLibrary.simpleMessage(
       "Disallowed ISP",
@@ -1788,8 +1797,8 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "settingEntries": MessageLookupByLibrary.simpleMessage("settings"),
     "settings": MessageLookupByLibrary.simpleMessage("Settings"),
-    "settingsCount": m83,
-    "shareLinkUnreadable": m84,
+    "settingsCount": m85,
+    "shareLinkUnreadable": m86,
     "shareLinksInvalid": MessageLookupByLibrary.simpleMessage(
       "No proxy could be read from the links",
     ),
@@ -1816,7 +1825,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "singleShareLinkOnly": MessageLookupByLibrary.simpleMessage(
       "Enter one link here; edit several from the quick edit of the list",
     ),
-    "singleValueTip": m85,
+    "singleValueTip": m87,
     "size": MessageLookupByLibrary.simpleMessage("Size"),
     "skipCertVerify": MessageLookupByLibrary.simpleMessage(
       "Skip certificate verification",
@@ -1882,7 +1891,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("Style"),
     "submit": MessageLookupByLibrary.simpleMessage("Submit"),
-    "subscriptionCompatibilitySummary": m86,
+    "subscriptionCompatibilitySummary": m88,
     "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
       "Applied the current core\'s supported lwIP TUN stack.",
     ),
@@ -1931,12 +1940,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("Uploaded"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("TProxy port"),
     "traffic": MessageLookupByLibrary.simpleMessage("Traffic"),
-    "trafficDownloadSpeed": m87,
-    "trafficTotal": m88,
-    "trafficUploadSpeed": m89,
+    "trafficDownloadSpeed": m89,
+    "trafficTotal": m90,
+    "trafficUploadSpeed": m91,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Traffic usage"),
     "transport": MessageLookupByLibrary.simpleMessage("Transport"),
-    "transportHeaders": m90,
+    "transportHeaders": m92,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "TUN could not be authorized, so it was turned off.",
@@ -1979,7 +1988,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Upload"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("Upload bandwidth"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m91,
+    "urlTip": m93,
     "useHosts": MessageLookupByLibrary.simpleMessage("Use hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("Use system hosts"),
     "usedShort": MessageLookupByLibrary.simpleMessage("used"),
@@ -2004,8 +2013,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "Write to system also sets the system clock; Android ignores it.",
     ),
-    "yearsAgo": m92,
-    "yearsAgoShort": m93,
+    "yearsAgo": m94,
+    "yearsAgoShort": m95,
     "yes": MessageLookupByLibrary.simpleMessage("Yes"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Simplified Chinese"),
   };

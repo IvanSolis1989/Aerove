@@ -392,6 +392,8 @@ Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.reso
 
 **用途与采用方式：** 标准版已有数据库依赖。内置脚本旧 URL 迁移只读核对 [`connection_user.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/api/connection_user.dart) 事务、[`insert.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/query_builder/statements/insert.dart) 显式冲突目标的 `DoNothing`，以及 [`mapping.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/types/mapping.dart) 的 INTEGER 时间映射；未复制实现或新增依赖。测试保留严格模型、并发编辑、正文与事务回滚断言。 I5 并发持久化回归只读核对 [`runtime/executor/interceptor.dart`](https://github.com/simolus3/drift/blob/f7e4c72bd10d92b9e1a8bfb768730ca1096b1341/drift/lib/src/runtime/executor/interceptor.dart) 的 `QueryInterceptor` 接口，用于真实内存 SQLite 写入的暂停、计数与拒绝测试；未复制实现或引入新依赖。
 
+规则发布的连接门另核对同提交 `runtime/executor/helpers/engines.dart`、`runtime/executor/delegates.dart`、`runtime/api/db_base.dart` 的真实事务终止、rollback finally 释放与 beforeOpen 接线；使用公开 QueryExecutor/TransactionExecutor 包装，完整排空事务及 exclusive 单元，在终态未确认时拒绝后续 SQL。不将逻辑释放标志视为物理连接终止，未复制 Drift 内部实现或新增依赖。该基础不等于 durable journal 或进程崩溃恢复已经实现。
+
 **许可证、署名与证据：** MIT，Copyright © 2021 Simon Binder；保留安装包原 `LICENSE` 与 Pub 锁。固定映射源码副本 SHA256 `25f2fdcf64585e763f32a07f6c1b6b67be69a902202ed3a9b78ef7db02f174eb`。
 
 #### [rust-lang/cargo](https://github.com/rust-lang/cargo)

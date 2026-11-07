@@ -18,9 +18,9 @@ import '../helpers/test_app.dart';
 
 const _scene = ValueKey('usageScene');
 const _label = ValueKey('usageLabel');
-const _info = SubscriptionInfo(download: 84, total: 100);
-const _usedUp = SubscriptionInfo(download: 100, total: 100);
-const _unused = SubscriptionInfo(total: 100);
+const _info = SubscriptionInfo(upload: 0, download: 84, total: 100);
+const _usedUp = SubscriptionInfo(upload: 0, download: 100, total: 100);
+const _unused = SubscriptionInfo(upload: 0, download: 0, total: 100);
 
 Color _pixel(Uint8List bytes, int x, int y, {int scale = 1}) {
   final offset = (y * scale * 400 * scale + x * scale) * 4;
@@ -569,7 +569,7 @@ void main() {
             tester,
             brightness: brightness,
             mode: mode,
-            info: const SubscriptionInfo(download: 50, total: 100),
+            info: const SubscriptionInfo(upload: 0, download: 50, total: 100),
           );
           final half = await _snapshot(tester, '$name-50');
           var halfChanged = 0;
@@ -587,7 +587,7 @@ void main() {
           }
           for (final (info, label, color, glassAlpha) in [
             (
-              const SubscriptionInfo(download: 92, total: 100),
+              const SubscriptionInfo(upload: 0, download: 92, total: 100),
               'warning',
               colors.warning,
               brightness == Brightness.dark ? 0.18 : 0.16,
@@ -625,7 +625,7 @@ void main() {
             tester,
             brightness: brightness,
             mode: mode,
-            info: const SubscriptionInfo(download: 125, total: 100),
+            info: const SubscriptionInfo(upload: 0, download: 125, total: 100),
           );
           expect(
             await _snapshot(tester, '$name-overrun'),
@@ -776,8 +776,8 @@ void main() {
     try {
       for (final info in <SubscriptionInfo?>[
         null,
-        const SubscriptionInfo(download: 16),
-        const SubscriptionInfo(download: 16, total: -1),
+        const SubscriptionInfo(upload: 0, download: 16),
+        const SubscriptionInfo(upload: 0, download: 16, total: -1),
         const SubscriptionInfo(upload: -1, total: 100),
       ]) {
         await _pump(
@@ -836,12 +836,12 @@ void main() {
         tester,
         brightness: Brightness.light,
         mode: LiquidGlassMode.none,
-        info: const SubscriptionInfo(download: 125, total: 100),
+        info: const SubscriptionInfo(upload: 0, download: 125, total: 100),
       );
       expect(
         SubscriptionUsageFill.percentageOf(
           tester.element(find.byType(SubscriptionUsageFill)),
-          const SubscriptionInfo(download: 125, total: 100),
+          const SubscriptionInfo(upload: 0, download: 125, total: 100),
         ),
         '125%',
       );

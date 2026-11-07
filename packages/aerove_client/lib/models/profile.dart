@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:crypto/crypto.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
@@ -19,48 +21,181 @@ typedef ValidateConfig =
 @freezed
 abstract class SubscriptionInfo with _$SubscriptionInfo {
   const factory SubscriptionInfo({
-    @Default(0) int upload,
-    @Default(0) int download,
-    @Default(0) int total,
-    @Default(0) int expire,
+    int? upload,
+    int? download,
+    int? total,
+    int? expire,
+    @Default(1) int observationVersion,
+    DateTime? observedAt,
+    String? sourceKey,
+    SubscriptionInfo? lastReported,
+    @Default({}) Map<String, Object?> unqualifiedCounts,
   }) = _SubscriptionInfo;
 
   factory SubscriptionInfo.fromJson(Map<String, Object?> json) =>
-      _$SubscriptionInfoFromJson(json);
+      _$SubscriptionInfoFromJson(_qualifiedJson(json));
+
+  static Map<String, Object?> _qualifiedJson(Map<String, Object?> json) {
+    const fields = ['upload', 'download', 'total', 'expire'];
+    final result = <String, Object?>{
+      ...json,
+      'observationVersion':
+          json['observationVersion'] is int && json['observationVersion'] == 1
+          ? 1
+          : 0,
+      if (json['lastReported'] case final Map previous)
+        'lastReported': {...previous, 'lastReported': null},
+    };
+    final rejected = <String, Object?>{};
+    if (json['unqualifiedCounts'] case final Map values) {
+      for (final key in fields) {
+        final value = values[key];
+        if (value is num || value is String || value is bool) {
+          rejected[key] = value is double && !value.isFinite
+              ? value.toString()
+              : value;
+        }
+      }
+    }
+    for (final key in fields) {
+      final value = json[key];
+      final count = _jsonCount(value);
+      result[key] = count;
+      if (value != null &&
+          count == null &&
+          (value is num || value is String || value is bool)) {
+        rejected[key] = value is double && !value.isFinite
+            ? value.toString()
+            : value;
+      }
+    }
+    result['unqualifiedCounts'] = rejected;
+    return result;
+  }
+
+  static int? _jsonCount(Object? value) {
+    if (value is int) return value >= 0 ? value : null;
+    // Beyond this bound a JSON double may already have lost source digits.
+    if (value is double &&
+        value.isFinite &&
+        value >= 0 &&
+        value <= 9007199254740991 &&
+        value == value.truncateToDouble()) {
+      return value.toInt();
+    }
+    return null;
+  }
 
   factory SubscriptionInfo.formHString(String? info) {
     if (info == null) return const SubscriptionInfo();
-    final Map<String, int> map = {};
+    final Map<String, int?> map = {};
     for (final field in info.split(';')) {
       final separator = field.indexOf('=');
       if (separator == -1) continue;
       final value = _parseCount(field.substring(separator + 1).trim());
-      if (value != null) {
-        map[field.substring(0, separator).trim().toLowerCase()] = value;
-      }
+      map[field.substring(0, separator).trim().toLowerCase()] = value;
     }
     return SubscriptionInfo(
-      upload: map['upload'] ?? 0,
-      download: map['download'] ?? 0,
-      total: map['total'] ?? 0,
-      expire: map['expire'] ?? 0,
+      upload: map['upload'],
+      download: map['download'],
+      total: map['total'],
+      expire: map['expire'],
     );
   }
 
   static int? _parseCount(String value) {
-    final count = int.tryParse(value);
-    if (count != null) return count;
-    final decimal = double.tryParse(value);
-    return decimal != null && decimal.isFinite ? decimal.truncate() : null;
+    if (value.length > 128) return null;
+    final match = RegExp(
+      r'^\+?(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$',
+    ).firstMatch(value);
+    if (match == null) return null;
+    final fraction = match.group(2) ?? '';
+    final exponent = int.tryParse(match.group(3) ?? '0');
+    if (exponent == null || exponent.abs() > 128) return null;
+    var number = BigInt.parse('${match.group(1)}$fraction');
+    final scale = exponent - fraction.length;
+    if (scale >= 0) {
+      number *= BigInt.from(10).pow(scale);
+    } else {
+      final divisor = BigInt.from(10).pow(-scale);
+      if (number.remainder(divisor) != BigInt.zero) return null;
+      number ~/= divisor;
+    }
+    return number <= BigInt.parse('9223372036854775807')
+        ? number.toInt()
+        : null;
+  }
+
+  static String keyForUrl(String url) =>
+      sha256.convert(utf8.encode(url)).toString();
+
+  static SubscriptionInfo observe(
+    String? header, {
+    required String url,
+    required DateTime at,
+    SubscriptionInfo? previous,
+  }) {
+    final key = keyForUrl(url);
+    final sameSource = previous?.sourceKey == key;
+    final retained = sameSource && previous!.hasKnownValues
+        ? previous
+        : sameSource
+        ? previous?.lastReported
+        : previous?.observationVersion == 0
+        ? previous
+        : null;
+    return SubscriptionInfo.formHString(header).copyWith(
+      sourceKey: key,
+      observedAt: at,
+      lastReported: retained?.copyWith(lastReported: null),
+    );
   }
 }
 
 extension SubscriptionInfoExt on SubscriptionInfo {
-  double? get usage =>
-      total > 0 ? ((upload + download) / total).clamp(0.0, 1.0) : null;
+  int? _known(int? value) =>
+      value == null || value < 0 || observationVersion == 0 && value == 0
+      ? null
+      : value;
 
-  DateTime? get expireDate =>
-      expire > 0 ? DateTime.fromMillisecondsSinceEpoch(expire * 1000) : null;
+  int? get knownUpload => _known(upload);
+  int? get knownDownload => _known(download);
+  int? get knownTotal => _known(total);
+  int? get knownExpire => _known(expire);
+  int? get used =>
+      knownUpload != null &&
+          knownDownload != null &&
+          knownUpload! <= 9223372036854775807 - knownDownload!
+      ? knownUpload! + knownDownload!
+      : null;
+  bool get hasKnownValues => [
+    knownUpload,
+    knownDownload,
+    knownTotal,
+    knownExpire,
+  ].any((v) => v != null);
+  SubscriptionInfo? get sameSourceLastReported =>
+      sourceKey != null && lastReported?.sourceKey == sourceKey
+      ? lastReported
+      : null;
+  double? get share =>
+      observationVersion == 1 &&
+          used != null &&
+          knownTotal != null &&
+          knownTotal! > 0
+      ? used! / knownTotal!
+      : null;
+  double? get usage => share?.clamp(0.0, 1.0).toDouble();
+
+  DateTime? get expireDate {
+    final seconds = knownExpire;
+    if (observationVersion != 1 ||
+        seconds == null ||
+        seconds <= 0 ||
+        seconds > 8640000000000)
+      return null;
+    return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
+  }
 }
 
 @freezed
@@ -139,6 +274,15 @@ extension ProfilesExt on List<Profile> {
 }
 
 extension ProfileExtension on Profile {
+  SubscriptionInfo? get sourceSubscriptionInfo {
+    final info = subscriptionInfo;
+    if (info == null) return null;
+    return info.sourceKey == null ||
+            info.sourceKey == SubscriptionInfo.keyForUrl(url)
+        ? info
+        : null;
+  }
+
   bool get realAutoUpdate => type == ProfileType.url && autoUpdate;
 
   String get realLabel => label.takeFirstValid([defaultLabel]);
@@ -209,7 +353,12 @@ extension ProfileExtension on Profile {
         getFileNameForDisposition(disposition),
         defaultLabel,
       ]),
-      subscriptionInfo: SubscriptionInfo.formHString(userinfo),
+      subscriptionInfo: SubscriptionInfo.observe(
+        userinfo,
+        url: url,
+        at: DateTime.now(),
+        previous: subscriptionInfo,
+      ),
     );
     final prepared = await updated.prepareFile(
       decompressUnlabeled(response.data ?? Uint8List(0)),

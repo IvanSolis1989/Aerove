@@ -34,7 +34,7 @@ void main() {
               width: 300,
               height: 64,
               child: SubscriptionUsageFill(
-                info: SubscriptionInfo(download: 50, total: 100),
+                info: SubscriptionInfo(upload: 0, download: 50, total: 100),
                 child: SizedBox.expand(),
               ),
             ),

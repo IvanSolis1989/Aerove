@@ -8,10 +8,22 @@ part of '../profile.dart';
 
 _SubscriptionInfo _$SubscriptionInfoFromJson(Map<String, dynamic> json) =>
     _SubscriptionInfo(
-      upload: (json['upload'] as num?)?.toInt() ?? 0,
-      download: (json['download'] as num?)?.toInt() ?? 0,
-      total: (json['total'] as num?)?.toInt() ?? 0,
-      expire: (json['expire'] as num?)?.toInt() ?? 0,
+      upload: (json['upload'] as num?)?.toInt(),
+      download: (json['download'] as num?)?.toInt(),
+      total: (json['total'] as num?)?.toInt(),
+      expire: (json['expire'] as num?)?.toInt(),
+      observationVersion: (json['observationVersion'] as num?)?.toInt() ?? 1,
+      observedAt: json['observedAt'] == null
+          ? null
+          : DateTime.parse(json['observedAt'] as String),
+      sourceKey: json['sourceKey'] as String?,
+      lastReported: json['lastReported'] == null
+          ? null
+          : SubscriptionInfo.fromJson(
+              json['lastReported'] as Map<String, dynamic>,
+            ),
+      unqualifiedCounts:
+          json['unqualifiedCounts'] as Map<String, dynamic>? ?? const {},
     );
 
 Map<String, dynamic> _$SubscriptionInfoToJson(_SubscriptionInfo instance) =>
@@ -20,6 +32,11 @@ Map<String, dynamic> _$SubscriptionInfoToJson(_SubscriptionInfo instance) =>
       'download': instance.download,
       'total': instance.total,
       'expire': instance.expire,
+      'observationVersion': instance.observationVersion,
+      'observedAt': instance.observedAt?.toIso8601String(),
+      'sourceKey': instance.sourceKey,
+      'lastReported': instance.lastReported,
+      'unqualifiedCounts': instance.unqualifiedCounts,
     };
 
 _Profile _$ProfileFromJson(Map<String, dynamic> json) => _Profile(

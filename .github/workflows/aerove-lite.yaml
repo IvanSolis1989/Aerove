@@ -1147,6 +1147,11 @@ jobs:
           common/source_plan_test.dart
           common/source_plan_detached_test.dart
           common/file_provider_source_test.dart
+          database/rule_sql_fence_test.dart
+          database/rule_sql_fence_units_test.dart
+          database/subscription_observation_storage_test.dart
+          models/profile_test.dart
+          models/subscription_observation_test.dart
           models/profile_input_transaction_test.dart
           widgets/profile_edit_commit_test.dart
           providers/custom_import_test.dart
@@ -1165,6 +1170,10 @@ jobs:
           providers/store_action_test.dart
           common/task_test.dart
           core/meow_test.dart
+          views/dashboard/foreground_test.dart
+          widgets/subscription_info_view_test.dart
+          widgets/subscription_usage_fill_modal_test.dart
+          widgets/subscription_usage_fill_test.dart
           widgets/edit_profile_focus_test.dart
         )
         for suite in "${suites[@]}"; do
@@ -1214,7 +1223,7 @@ jobs:
             composition='Standard and explicitly selected Lite test entries; core arguments and MeowCoreHandler fixtures retain their own identities',
             results=results, appApkBuilt=False, acceptance=False)
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert len(results) == 26 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        assert len(results) == 35 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
         PY
     - name: Compile the Flutter host and actual platform acceptance runner
       working-directory: apps/aerove-lite

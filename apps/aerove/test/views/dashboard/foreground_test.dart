@@ -40,7 +40,11 @@ const _profile = Profile(
   label: _name,
   type: ProfileType.file,
   autoUpdateDuration: Duration.zero,
-  subscriptionInfo: SubscriptionInfo(download: 4 << 30, total: 8 << 30),
+  subscriptionInfo: SubscriptionInfo(
+    upload: 0,
+    download: 4 << 30,
+    total: 8 << 30,
+  ),
 );
 
 Color _pixel(List<int> bytes, int x, int y) {

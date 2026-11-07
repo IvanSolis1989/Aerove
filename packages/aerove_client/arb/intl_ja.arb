@@ -1016,5 +1016,10 @@
       }
     }
   },
-  "subscriptionCompatibilityTunStack": "現在のコアが対応する lwIP TUN スタックを適用しました。"
+  "subscriptionCompatibilityTunStack": "現在のコアが対応する lwIP TUN スタックを適用しました。",
+  "quotaLastReported": "前回の報告：{time}",
+  "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
+  "quotaLegacyUnverified": "以前の値・提供元未確認",
+  "quotaCheckedAt": "応答確認：{time}",
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
 }

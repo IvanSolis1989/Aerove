@@ -16,7 +16,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$SubscriptionInfo {
 
- int get upload; int get download; int get total; int get expire;
+ int? get upload; int? get download; int? get total; int? get expire; int get observationVersion; DateTime? get observedAt; String? get sourceKey; SubscriptionInfo? get lastReported; Map<String, Object?> get unqualifiedCounts;
 /// Create a copy of SubscriptionInfo
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -30,20 +30,20 @@ $SubscriptionInfoCopyWith<SubscriptionInfo> get copyWith => _$SubscriptionInfoCo
 @override
 bool operator ==(Object other) {
   final _this = this as SubscriptionInfo;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SubscriptionInfo&&(identical(other.upload, _this.upload) || other.upload == _this.upload)&&(identical(other.download, _this.download) || other.download == _this.download)&&(identical(other.total, _this.total) || other.total == _this.total)&&(identical(other.expire, _this.expire) || other.expire == _this.expire));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SubscriptionInfo&&(identical(other.upload, _this.upload) || other.upload == _this.upload)&&(identical(other.download, _this.download) || other.download == _this.download)&&(identical(other.total, _this.total) || other.total == _this.total)&&(identical(other.expire, _this.expire) || other.expire == _this.expire)&&(identical(other.observationVersion, _this.observationVersion) || other.observationVersion == _this.observationVersion)&&(identical(other.observedAt, _this.observedAt) || other.observedAt == _this.observedAt)&&(identical(other.sourceKey, _this.sourceKey) || other.sourceKey == _this.sourceKey)&&(identical(other.lastReported, _this.lastReported) || other.lastReported == _this.lastReported)&&const DeepCollectionEquality().equals(other.unqualifiedCounts, _this.unqualifiedCounts));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as SubscriptionInfo;
-  return Object.hash(runtimeType,_this.upload,_this.download,_this.total,_this.expire);
+  return Object.hash(runtimeType,_this.upload,_this.download,_this.total,_this.expire,_this.observationVersion,_this.observedAt,_this.sourceKey,_this.lastReported,const DeepCollectionEquality().hash(_this.unqualifiedCounts));
 }
 
 @override
 String toString() {
   final _this = this as SubscriptionInfo;
-  return 'SubscriptionInfo(upload: ${_this.upload}, download: ${_this.download}, total: ${_this.total}, expire: ${_this.expire})';
+  return 'SubscriptionInfo(upload: ${_this.upload}, download: ${_this.download}, total: ${_this.total}, expire: ${_this.expire}, observationVersion: ${_this.observationVersion}, observedAt: ${_this.observedAt}, sourceKey: ${_this.sourceKey}, lastReported: ${_this.lastReported}, unqualifiedCounts: ${_this.unqualifiedCounts})';
 }
 
 
@@ -54,11 +54,11 @@ abstract mixin class $SubscriptionInfoCopyWith<$Res>  {
   factory $SubscriptionInfoCopyWith(SubscriptionInfo value, $Res Function(SubscriptionInfo) _then) = _$SubscriptionInfoCopyWithImpl;
 @useResult
 $Res call({
- int upload, int download, int total, int expire
+ int? upload, int? download, int? total, int? expire, int observationVersion, DateTime? observedAt, String? sourceKey, SubscriptionInfo? lastReported, Map<String, Object?> unqualifiedCounts
 });
 
 
-
+$SubscriptionInfoCopyWith<$Res>? get lastReported;
 
 }
 /// @nodoc
@@ -71,16 +71,33 @@ class _$SubscriptionInfoCopyWithImpl<$Res>
 
 /// Create a copy of SubscriptionInfo
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? upload = null,Object? download = null,Object? total = null,Object? expire = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? upload = freezed,Object? download = freezed,Object? total = freezed,Object? expire = freezed,Object? observationVersion = null,Object? observedAt = freezed,Object? sourceKey = freezed,Object? lastReported = freezed,Object? unqualifiedCounts = null,}) {
   return _then(SubscriptionInfo(
-upload: null == upload ? _self.upload : upload // ignore: cast_nullable_to_non_nullable
-as int,download: null == download ? _self.download : download // ignore: cast_nullable_to_non_nullable
-as int,total: null == total ? _self.total : total // ignore: cast_nullable_to_non_nullable
-as int,expire: null == expire ? _self.expire : expire // ignore: cast_nullable_to_non_nullable
-as int,
+upload: freezed == upload ? _self.upload : upload // ignore: cast_nullable_to_non_nullable
+as int?,download: freezed == download ? _self.download : download // ignore: cast_nullable_to_non_nullable
+as int?,total: freezed == total ? _self.total : total // ignore: cast_nullable_to_non_nullable
+as int?,expire: freezed == expire ? _self.expire : expire // ignore: cast_nullable_to_non_nullable
+as int?,observationVersion: null == observationVersion ? _self.observationVersion : observationVersion // ignore: cast_nullable_to_non_nullable
+as int,observedAt: freezed == observedAt ? _self.observedAt : observedAt // ignore: cast_nullable_to_non_nullable
+as DateTime?,sourceKey: freezed == sourceKey ? _self.sourceKey : sourceKey // ignore: cast_nullable_to_non_nullable
+as String?,lastReported: freezed == lastReported ? _self.lastReported : lastReported // ignore: cast_nullable_to_non_nullable
+as SubscriptionInfo?,unqualifiedCounts: null == unqualifiedCounts ? _self.unqualifiedCounts : unqualifiedCounts // ignore: cast_nullable_to_non_nullable
+as Map<String, Object?>,
   ));
 }
+/// Create a copy of SubscriptionInfo
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SubscriptionInfoCopyWith<$Res>? get lastReported {
+    if (_self.lastReported == null) {
+    return null;
+  }
 
+  return $SubscriptionInfoCopyWith<$Res>(_self.lastReported!, (value) {
+    return _then(_self.copyWith(lastReported: value));
+  });
+}
 }
 
 
@@ -162,10 +179,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int upload,  int download,  int total,  int expire)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( int? upload,  int? download,  int? total,  int? expire,  int observationVersion,  DateTime? observedAt,  String? sourceKey,  SubscriptionInfo? lastReported,  Map<String, Object?> unqualifiedCounts)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SubscriptionInfo() when $default != null:
-return $default(_that.upload,_that.download,_that.total,_that.expire);case _:
+return $default(_that.upload,_that.download,_that.total,_that.expire,_that.observationVersion,_that.observedAt,_that.sourceKey,_that.lastReported,_that.unqualifiedCounts);case _:
   return orElse();
 
 }
@@ -183,10 +200,10 @@ return $default(_that.upload,_that.download,_that.total,_that.expire);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int upload,  int download,  int total,  int expire)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( int? upload,  int? download,  int? total,  int? expire,  int observationVersion,  DateTime? observedAt,  String? sourceKey,  SubscriptionInfo? lastReported,  Map<String, Object?> unqualifiedCounts)  $default,) {final _that = this;
 switch (_that) {
 case _SubscriptionInfo():
-return $default(_that.upload,_that.download,_that.total,_that.expire);case _:
+return $default(_that.upload,_that.download,_that.total,_that.expire,_that.observationVersion,_that.observedAt,_that.sourceKey,_that.lastReported,_that.unqualifiedCounts);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -203,10 +220,10 @@ return $default(_that.upload,_that.download,_that.total,_that.expire);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int upload,  int download,  int total,  int expire)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( int? upload,  int? download,  int? total,  int? expire,  int observationVersion,  DateTime? observedAt,  String? sourceKey,  SubscriptionInfo? lastReported,  Map<String, Object?> unqualifiedCounts)?  $default,) {final _that = this;
 switch (_that) {
 case _SubscriptionInfo() when $default != null:
-return $default(_that.upload,_that.download,_that.total,_that.expire);case _:
+return $default(_that.upload,_that.download,_that.total,_that.expire,_that.observationVersion,_that.observedAt,_that.sourceKey,_that.lastReported,_that.unqualifiedCounts);case _:
   return null;
 
 }
@@ -218,13 +235,24 @@ return $default(_that.upload,_that.download,_that.total,_that.expire);case _:
 @JsonSerializable()
 
 class _SubscriptionInfo implements SubscriptionInfo {
-  const _SubscriptionInfo({this.upload = 0, this.download = 0, this.total = 0, this.expire = 0});
+  const _SubscriptionInfo({this.upload, this.download, this.total, this.expire, this.observationVersion = 1, this.observedAt, this.sourceKey, this.lastReported,  Map<String, Object?> unqualifiedCounts = const {}}): _unqualifiedCounts = unqualifiedCounts;
   factory _SubscriptionInfo.fromJson(Map<String, dynamic> json) => _$SubscriptionInfoFromJson(json);
 
-@override@JsonKey() final  int upload;
-@override@JsonKey() final  int download;
-@override@JsonKey() final  int total;
-@override@JsonKey() final  int expire;
+@override final  int? upload;
+@override final  int? download;
+@override final  int? total;
+@override final  int? expire;
+@override@JsonKey() final  int observationVersion;
+@override final  DateTime? observedAt;
+@override final  String? sourceKey;
+@override final  SubscriptionInfo? lastReported;
+ final  Map<String, Object?> _unqualifiedCounts;
+@override@JsonKey() Map<String, Object?> get unqualifiedCounts {
+  if (_unqualifiedCounts is EqualUnmodifiableMapView) return _unqualifiedCounts;
+  // ignore: implicit_dynamic_type
+  return EqualUnmodifiableMapView(_unqualifiedCounts);
+}
+
 
 /// Create a copy of SubscriptionInfo
 /// with the given fields replaced by the non-null parameter values.
@@ -239,18 +267,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SubscriptionInfo&&(identical(other.upload, upload) || other.upload == upload)&&(identical(other.download, download) || other.download == download)&&(identical(other.total, total) || other.total == total)&&(identical(other.expire, expire) || other.expire == expire));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SubscriptionInfo&&(identical(other.upload, upload) || other.upload == upload)&&(identical(other.download, download) || other.download == download)&&(identical(other.total, total) || other.total == total)&&(identical(other.expire, expire) || other.expire == expire)&&(identical(other.observationVersion, observationVersion) || other.observationVersion == observationVersion)&&(identical(other.observedAt, observedAt) || other.observedAt == observedAt)&&(identical(other.sourceKey, sourceKey) || other.sourceKey == sourceKey)&&(identical(other.lastReported, lastReported) || other.lastReported == lastReported)&&const DeepCollectionEquality().equals(other.unqualifiedCounts, _unqualifiedCounts));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,upload,download,total,expire);
+    return Object.hash(runtimeType,upload,download,total,expire,observationVersion,observedAt,sourceKey,lastReported,const DeepCollectionEquality().hash(_unqualifiedCounts));
 }
 
 @override
 String toString() {
-    return 'SubscriptionInfo(upload: $upload, download: $download, total: $total, expire: $expire)';
+    return 'SubscriptionInfo(upload: $upload, download: $download, total: $total, expire: $expire, observationVersion: $observationVersion, observedAt: $observedAt, sourceKey: $sourceKey, lastReported: $lastReported, unqualifiedCounts: $unqualifiedCounts)';
 }
 
 
@@ -261,11 +289,11 @@ abstract mixin class _$SubscriptionInfoCopyWith<$Res> implements $SubscriptionIn
   factory _$SubscriptionInfoCopyWith(_SubscriptionInfo value, $Res Function(_SubscriptionInfo) _then) = __$SubscriptionInfoCopyWithImpl;
 @override @useResult
 $Res call({
- int upload, int download, int total, int expire
+ int? upload, int? download, int? total, int? expire, int observationVersion, DateTime? observedAt, String? sourceKey, SubscriptionInfo? lastReported, Map<String, Object?> unqualifiedCounts
 });
 
 
-
+@override $SubscriptionInfoCopyWith<$Res>? get lastReported;
 
 }
 /// @nodoc
@@ -278,17 +306,34 @@ class __$SubscriptionInfoCopyWithImpl<$Res>
 
 /// Create a copy of SubscriptionInfo
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? upload = null,Object? download = null,Object? total = null,Object? expire = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? upload = freezed,Object? download = freezed,Object? total = freezed,Object? expire = freezed,Object? observationVersion = null,Object? observedAt = freezed,Object? sourceKey = freezed,Object? lastReported = freezed,Object? unqualifiedCounts = null,}) {
   return _then(_SubscriptionInfo(
-upload: null == upload ? _self.upload : upload // ignore: cast_nullable_to_non_nullable
-as int,download: null == download ? _self.download : download // ignore: cast_nullable_to_non_nullable
-as int,total: null == total ? _self.total : total // ignore: cast_nullable_to_non_nullable
-as int,expire: null == expire ? _self.expire : expire // ignore: cast_nullable_to_non_nullable
-as int,
+upload: freezed == upload ? _self.upload : upload // ignore: cast_nullable_to_non_nullable
+as int?,download: freezed == download ? _self.download : download // ignore: cast_nullable_to_non_nullable
+as int?,total: freezed == total ? _self.total : total // ignore: cast_nullable_to_non_nullable
+as int?,expire: freezed == expire ? _self.expire : expire // ignore: cast_nullable_to_non_nullable
+as int?,observationVersion: null == observationVersion ? _self.observationVersion : observationVersion // ignore: cast_nullable_to_non_nullable
+as int,observedAt: freezed == observedAt ? _self.observedAt : observedAt // ignore: cast_nullable_to_non_nullable
+as DateTime?,sourceKey: freezed == sourceKey ? _self.sourceKey : sourceKey // ignore: cast_nullable_to_non_nullable
+as String?,lastReported: freezed == lastReported ? _self.lastReported : lastReported // ignore: cast_nullable_to_non_nullable
+as SubscriptionInfo?,unqualifiedCounts: null == unqualifiedCounts ? _self._unqualifiedCounts : unqualifiedCounts // ignore: cast_nullable_to_non_nullable
+as Map<String, Object?>,
   ));
 }
 
+/// Create a copy of SubscriptionInfo
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$SubscriptionInfoCopyWith<$Res>? get lastReported {
+    if (_self.lastReported == null) {
+    return null;
+  }
 
+  return $SubscriptionInfoCopyWith<$Res>(_self.lastReported!, (value) {
+    return _then(_self.copyWith(lastReported: value));
+  });
+}
 }
 
 

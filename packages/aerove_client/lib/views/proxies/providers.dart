@@ -270,7 +270,7 @@ class _ProviderItemState extends ConsumerState<ProviderItem> {
             _handleUpdateProvider();
           },
         ),
-      if (subscriptionInfo != null && subscriptionInfo.total > 0)
+      if (subscriptionInfo != null)
         CommonPopupMenuItem(
           glyph: AppGlyphs.dataUsage,
           label: appLocalizations.subscriptionInfo,
@@ -314,6 +314,10 @@ class _ExternalProviderItem extends StatelessWidget {
     final updateAt = provider.updateAt;
     final subscriptionInfo = provider.subscriptionInfo;
     final usage = subscriptionInfo?.usage;
+    final countDescription = switch (provider.type) {
+      'Proxy' => appLocalizations.proxiesCount(count, count.compact),
+      _ => appLocalizations.rulesCount(count, count.compact),
+    };
     return DecorationListItem(
       onPressed: onPressed,
       title: ChipTitle(
@@ -323,10 +327,14 @@ class _ExternalProviderItem extends StatelessWidget {
       ),
       subtitle: switch ((subscriptionInfo, usage)) {
         (final info?, final usage?) => _TrafficMeter(info: info, usage: usage),
-        _ => GlassText(switch (provider.type) {
-          'Proxy' => appLocalizations.proxiesCount(count, count.compact),
-          _ => appLocalizations.rulesCount(count, count.compact),
-        }),
+        (final info?, _) => Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            GlassText(countDescription),
+            SubscriptionInfoView(subscriptionInfo: info),
+          ],
+        ),
+        _ => GlassText(countDescription),
       },
       trailing: AnimatedSwitcher(
         duration: context.motionDuration(commonDuration),
@@ -357,12 +365,14 @@ class _TrafficMeter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final used = info.upload + info.download;
+    final used = info.used!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       spacing: 6,
       children: [
-        GlassText('${trafficAmount(used)} / ${trafficAmount(info.total)}'),
+        GlassText(
+          '${trafficAmount(used)} / ${trafficAmount(info.knownTotal!)}',
+        ),
         LinearProgressIndicator(
           minHeight: 4,
           value: usage,

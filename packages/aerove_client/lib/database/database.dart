@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:collection/collection.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
+import 'rule_sql_executor.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/xclash_script_url.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -51,7 +52,16 @@ part 'scripts.dart';
   ],
 )
 class Database extends _$Database {
-  Database([QueryExecutor? executor]) : super(executor ?? _openConnection());
+  factory Database([QueryExecutor? executor]) {
+    final inner = executor ?? _openConnection();
+    final fence =
+        RuleSqlConnectionFence.attachedTo(inner) ?? RuleSqlConnectionFence();
+    return Database._(fence, fence.wrap(inner));
+  }
+
+  Database._(this.ruleSqlFence, QueryExecutor executor) : super(executor);
+
+  final RuleSqlConnectionFence ruleSqlFence;
 
   @override
   int get schemaVersion => 22;

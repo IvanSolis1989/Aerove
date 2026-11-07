@@ -570,7 +570,7 @@ Future<NativeLitePlan> mapNativeLite(
             ? null
             : SubscriptionInfo.formHString(
                 row['subscriptionUserInfo'] as String,
-              ),
+              ).copyWith(observationVersion: 0),
         extendType: mode == 'Script' ? ExtendType.script : ExtendType.standard,
         scriptId: scriptKey == null ? null : scriptIds[scriptKey],
         matchTarget: override?['matchTarget'] as String?,

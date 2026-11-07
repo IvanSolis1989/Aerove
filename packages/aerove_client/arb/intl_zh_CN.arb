@@ -1016,5 +1016,10 @@
       }
     }
   },
-  "subscriptionCompatibilityTunStack": "已使用当前内核支持的 lwIP 网络栈。"
+  "subscriptionCompatibilityTunStack": "已使用当前内核支持的 lwIP 网络栈。",
+  "quotaLastReported": "上次报告：{time}",
+  "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
+  "quotaLegacyUnverified": "旧额度记录，来源未确认",
+  "quotaCheckedAt": "本次响应检查于：{time}",
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
 }

@@ -8452,6 +8452,36 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Previous report: {time}`
+  String quotaLastReported(String time) {
+    return Intl.message(
+      'Previous report: $time',
+      name: 'quotaLastReported',
+      desc: '',
+      args: [time],
+    );
+  }
+
+  /// `Legacy figures; source unverified`
+  String get quotaLegacyUnverified {
+    return Intl.message(
+      'Legacy figures; source unverified',
+      name: 'quotaLegacyUnverified',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Response checked: {time}`
+  String quotaCheckedAt(String time) {
+    return Intl.message(
+      'Response checked: $time',
+      name: 'quotaCheckedAt',
+      desc: '',
+      args: [time],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

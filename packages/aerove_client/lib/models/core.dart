@@ -380,12 +380,18 @@ extension CoreMemoryStatsExt on CoreMemoryStats {
 
 SubscriptionInfo? subscriptionInfoFormCore(Map<String, Object?>? json) {
   if (json == null) return null;
-  return SubscriptionInfo(
-    upload: (json['Upload'] as num?)?.toInt() ?? 0,
-    download: (json['Download'] as num?)?.toInt() ?? 0,
-    total: (json['Total'] as num?)?.toInt() ?? 0,
-    expire: (json['Expire'] as num?)?.toInt() ?? 0,
-  );
+  // Core adapters may already have replaced absent header fields with zero.
+  return SubscriptionInfo.formHString(
+    [
+      for (final entry in const {
+        'Upload': 'upload',
+        'Download': 'download',
+        'Total': 'total',
+        'Expire': 'expire',
+      }.entries)
+        if (json[entry.key] case final num value) '${entry.value}=$value',
+    ].join(';'),
+  ).copyWith(observationVersion: 0);
 }
 
 @freezed

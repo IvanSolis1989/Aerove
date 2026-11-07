@@ -171,7 +171,7 @@ class _ProfileDetailSheetState extends ConsumerState<ProfileDetailSheet>
                 id: profile.id,
                 type: profile.type,
                 realLabel: profile.realLabel,
-                subscriptionInfo: profile.subscriptionInfo,
+                subscriptionInfo: profile.sourceSubscriptionInfo,
                 lastUpdateDate: profile.lastUpdateDate,
                 extendType: profile.extendType,
                 updatingKey: profile.updatingKey,
@@ -225,7 +225,7 @@ class _ProfileDetailSheetState extends ConsumerState<ProfileDetailSheet>
                       },
                       failed: configCountsFailed,
                     ),
-                    if (subscriptionInfo != null && subscriptionInfo.total > 0)
+                    if (subscriptionInfo != null)
                       generateSection(
                         title: appLocalizations.subscriptionInfo,
                         items: [

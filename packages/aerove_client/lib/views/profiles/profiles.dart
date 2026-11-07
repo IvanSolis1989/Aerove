@@ -338,13 +338,12 @@ class ProfileItem extends ConsumerWidget {
   }
 
   SubscriptionInfo? get _subscriptionInfo =>
-      profile.type == ProfileType.url ? profile.subscriptionInfo : null;
+      profile.type == ProfileType.url ? profile.sourceSubscriptionInfo : null;
 
   String _subtitle(BuildContext context) {
     final info = _subscriptionInfo;
-    if (info != null && info.usage != null) {
-      final used = info.upload + info.download;
-      final traffic = '${trafficAmount(used)} / ${trafficAmount(info.total)}';
+    if (info != null) {
+      final traffic = subscriptionQuotaSummary(context, info);
       final percent = SubscriptionUsageFill.percentageOf(context, info);
       return percent == null
           ? traffic

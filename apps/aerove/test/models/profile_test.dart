@@ -16,17 +16,17 @@ void main() {
       expect(info.expire, 200);
     });
 
-    test('falls back to zero for null and invalid values', () {
+    test('preserves unknown for null and invalid values', () {
       expect(SubscriptionInfo.formHString(null), const SubscriptionInfo());
 
       final info = SubscriptionInfo.formHString(
         'upload=bad; download=20; total=; expire=abc',
       );
 
-      expect(info.upload, 0);
+      expect(info.upload, isNull);
       expect(info.download, 20);
-      expect(info.total, 0);
-      expect(info.expire, 0);
+      expect(info.total, isNull);
+      expect(info.expire, isNull);
     });
 
     test('skips empty and malformed fields instead of throwing', () {
@@ -35,19 +35,19 @@ void main() {
       );
 
       expect(info.upload, 10);
-      expect(info.download, 0);
+      expect(info.download, isNull);
       expect(info.total, 100);
     });
 
-    test('truncates decimal and exponent counts', () {
+    test('accepts integral exponent counts and rejects fractional counts', () {
       final info = SubscriptionInfo.formHString(
         'Upload=1.5; download=2.4e3; total=1.073741824E10; expire=Infinity',
       );
 
-      expect(info.upload, 1);
+      expect(info.upload, isNull);
       expect(info.download, 2400);
       expect(info.total, 10737418240);
-      expect(info.expire, 0);
+      expect(info.expire, isNull);
     });
   });
 

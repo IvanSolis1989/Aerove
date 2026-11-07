@@ -5,6 +5,23 @@ import 'package:material_ui/material_ui.dart';
 
 const _expireGap = 12.0;
 
+String subscriptionQuotaSummary(BuildContext context, SubscriptionInfo info) {
+  final previous = info.hasKnownValues ? null : info.sameSourceLastReported;
+  final display = previous ?? info;
+  final unknown = context.appLocalizations.unknown;
+  final used = display.used;
+  final total = display.knownTotal;
+  final values =
+      '${used == null ? unknown : trafficAmount(used)} / '
+      '${total == null ? unknown : trafficAmount(total)}';
+  if (previous != null) {
+    return '${context.appLocalizations.quotaLastReported(previous.observedAt?.show ?? unknown)} · $values';
+  }
+  return info.observationVersion == 0
+      ? '${context.appLocalizations.quotaLegacyUnverified} · $values'
+      : values;
+}
+
 class SubscriptionInfoView extends StatelessWidget {
   final SubscriptionInfo? subscriptionInfo;
 
@@ -26,23 +43,18 @@ class SubscriptionInfoView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final info = subscriptionInfo;
-    if (info == null || info.total == 0) {
+    if (info == null) {
       return const SizedBox.shrink();
     }
-    final use = info.upload + info.download;
-    final total = info.total;
-    final progress = (use / total).clamp(0.0, 1.0).toDouble();
-
-    final useShow = trafficAmount(use);
-    final totalShow = trafficAmount(total);
-    final expireShow = info.expire != 0
-        ? DateTime.fromMillisecondsSinceEpoch(info.expire * 1000).show
-        : context.appLocalizations.infiniteTime;
+    final progress = info.usage;
+    final expireShow =
+        info.expireDate?.show ??
+        (info.knownExpire?.toString() ?? context.appLocalizations.unknown);
     final valueStyle = AppTextStyle.subheadline
         .of(context, emphasized: true)
         .copyWith(color: context.colorScheme.onSurfaceVariant);
     final metaStyle = AppTextStyle.footnote.of(context).toLight;
-    final trafficLabel = '$useShow / $totalShow';
+    final trafficLabel = subscriptionQuotaSummary(context, info);
     final trafficText = GlassText(trafficLabel, style: valueStyle);
     final expireText = GlassText(
       expireShow,
@@ -71,8 +83,10 @@ class SubscriptionInfoView extends StatelessWidget {
             );
           },
         ),
-        const SizedBox(height: 4),
-        SizedBox(height: 4, child: CommonLinearLoading(value: progress)),
+        if (progress != null) ...[
+          const SizedBox(height: 4),
+          SizedBox(height: 4, child: CommonLinearLoading(value: progress)),
+        ],
       ],
     );
   }
@@ -93,12 +107,20 @@ class SubscriptionInfoDetailView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appLocalizations = context.appLocalizations;
-    final used = subscriptionInfo.upload + subscriptionInfo.download;
-    final expire = subscriptionInfo.expire != 0
-        ? DateTime.fromMillisecondsSinceEpoch(
-            subscriptionInfo.expire * 1000,
-          ).show
-        : appLocalizations.infiniteTime;
+    final info = subscriptionInfo;
+    final unknown = appLocalizations.unknown;
+    final used = info.used;
+    String amount(int? value) => value == null ? unknown : trafficAmount(value);
+    final expire =
+        info.expireDate?.show ?? (info.knownExpire?.toString() ?? unknown);
+    final previous =
+        info.sameSourceLastReported ??
+        switch (info.lastReported) {
+          final legacy?
+              when legacy.observationVersion == 0 && legacy.sourceKey == null =>
+            legacy,
+          _ => null,
+        };
     return SelectionArea(
       contextMenuBuilder: glassSelectableRegionContextMenu,
       magnifierConfiguration: glassTextMagnifierConfiguration,
@@ -110,11 +132,21 @@ class SubscriptionInfoDetailView extends StatelessWidget {
             items: [
               _buildItem(
                 label: appLocalizations.usedTraffic,
-                value: trafficAmount(used),
+                value: amount(used),
               ),
+              if (used == null) ...[
+                _buildItem(
+                  label: appLocalizations.upload,
+                  value: amount(info.knownUpload),
+                ),
+                _buildItem(
+                  label: appLocalizations.download,
+                  value: amount(info.knownDownload),
+                ),
+              ],
               _buildItem(
                 label: appLocalizations.totalTraffic,
-                value: trafficAmount(subscriptionInfo.total),
+                value: amount(info.knownTotal),
               ),
             ],
           ),
@@ -122,6 +154,41 @@ class SubscriptionInfoDetailView extends StatelessWidget {
             title: appLocalizations.expireTime,
             items: [_buildItem(value: expire)],
           ),
+          if (info.observationVersion == 0)
+            _buildItem(value: appLocalizations.quotaLegacyUnverified)
+          else if (info.observedAt != null)
+            _buildItem(
+              value: appLocalizations.quotaCheckedAt(info.observedAt!.show),
+            ),
+          if (previous != null)
+            generateSection(
+              title: previous.observationVersion == 0
+                  ? appLocalizations.quotaLegacyUnverified
+                  : appLocalizations.quotaLastReported(
+                      previous.observedAt?.show ?? unknown,
+                    ),
+              items: [
+                _buildItem(
+                  label: appLocalizations.upload,
+                  value: amount(previous.knownUpload),
+                ),
+                _buildItem(
+                  label: appLocalizations.download,
+                  value: amount(previous.knownDownload),
+                ),
+                _buildItem(
+                  label: appLocalizations.totalTraffic,
+                  value: amount(previous.knownTotal),
+                ),
+                _buildItem(
+                  label: appLocalizations.expireTime,
+                  value:
+                      previous.expireDate?.show ??
+                      previous.knownExpire?.toString() ??
+                      unknown,
+                ),
+              ],
+            ),
         ],
       ),
     );

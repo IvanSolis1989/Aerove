@@ -9,10 +9,7 @@ import 'package:intl/intl.dart' show NumberFormat;
 import 'package:material_ui/material_ui.dart';
 
 double? _shareOf(SubscriptionInfo? info) {
-  if (info == null || info.total <= 0 || info.upload < 0 || info.download < 0) {
-    return null;
-  }
-  return (info.upload + info.download) / info.total;
+  return info?.share;
 }
 
 ({Path path, double width, double depth}) subscriptionUsageMeniscus({

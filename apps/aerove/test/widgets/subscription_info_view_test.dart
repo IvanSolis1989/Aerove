@@ -9,6 +9,88 @@ import 'package:material_ui/material_ui.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  Future<void> quotaWidget(WidgetTester tester, SubscriptionInfo info) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: const [
+          AppLocalizations.delegate,
+          AppUiLocalizations.delegate,
+          ...GlobalMaterialLocalizations.delegates,
+        ],
+        supportedLocales: AppLocalizations.delegate.supportedLocales,
+        builder: (context, child) => wrapAppScopes(context, child!),
+        home: Scaffold(
+          body: SizedBox(
+            width: 600,
+            child: SubscriptionInfoView(subscriptionInfo: info),
+          ),
+        ),
+      ),
+    );
+  }
+
+  testWidgets(
+    'partial and zero allowances show values without a guessed percentage',
+    (tester) async {
+      await quotaWidget(
+        tester,
+        const SubscriptionInfo(download: 20, total: 100),
+      );
+      expect(
+        find.textContaining(AppLocalizations.current.unknown),
+        findsWidgets,
+      );
+      expect(find.byType(CommonLinearLoading), findsNothing);
+      await quotaWidget(
+        tester,
+        const SubscriptionInfo(upload: 0, download: 0, total: 0, expire: 0),
+      );
+      expect(find.text('0 B / 0 B'), findsOneWidget);
+      expect(find.byType(CommonLinearLoading), findsNothing);
+      expect(find.text(AppLocalizations.current.infiniteTime), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'missing refresh labels retained quota as an old report and never fills a meter',
+    (tester) async {
+      final previous = SubscriptionInfo.observe(
+        'upload=0;download=20;total=100',
+        url: 'https://example.test/sub',
+        at: DateTime.utc(2026, 1, 1),
+      );
+      final missing = SubscriptionInfo.observe(
+        null,
+        url: 'https://example.test/sub',
+        at: DateTime.utc(2026, 2, 1),
+        previous: previous,
+      );
+      await quotaWidget(tester, missing);
+      expect(
+        find.textContaining(
+          AppLocalizations.current.quotaLastReported(previous.observedAt!.show),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byType(CommonLinearLoading), findsNothing);
+      await quotaWidget(
+        tester,
+        SubscriptionInfo.fromJson({
+          'upload': 0,
+          'download': 0,
+          'total': 100,
+          'expire': 0,
+        }),
+      );
+      expect(
+        find.textContaining(AppLocalizations.current.quotaLegacyUnverified),
+        findsOneWidget,
+      );
+      expect(find.byType(CommonLinearLoading), findsNothing);
+    },
+  );
+
   for (final aurora in [false, true]) {
     for (final mode in LiquidGlassMode.values) {
       testWidgets('subscription progress follows $mode aurora=$aurora', (

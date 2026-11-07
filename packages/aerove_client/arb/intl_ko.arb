@@ -1016,5 +1016,10 @@
       }
     }
   },
-  "subscriptionCompatibilityTunStack": "현재 코어가 지원하는 lwIP TUN 스택을 적용했습니다."
+  "subscriptionCompatibilityTunStack": "현재 코어가 지원하는 lwIP TUN 스택을 적용했습니다.",
+  "quotaLastReported": "이전 보고: {time}",
+  "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
+  "quotaLegacyUnverified": "이전 수치 · 출처 미확인",
+  "quotaCheckedAt": "응답 확인: {time}",
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
 }

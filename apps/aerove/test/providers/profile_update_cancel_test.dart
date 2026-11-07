@@ -169,6 +169,81 @@ void main() {
   }
 
   test(
+    'real refresh persists missing and partial observations separately from the last report',
+    () async {
+      final profile = await seed('quota-observation');
+      respond = (request) async {
+        request.response.headers.set(
+          'subscription-userinfo',
+          'upload=0;download=20;total=100',
+        );
+        request.response.write('proxies: []\n');
+        await request.response.close();
+      };
+      await action().updateProfile(profile);
+      final accepted = (await sql.profilesDao.get(profile.id))!;
+      expect(accepted.subscriptionInfo?.used, 20);
+      expect(accepted.subscriptionInfo?.usage, .2);
+      expect(
+        accepted.subscriptionInfo?.sourceKey,
+        SubscriptionInfo.keyForUrl(profile.url),
+      );
+      respond = (request) async {
+        request.response.write('proxies: []\n');
+        await request.response.close();
+      };
+      await action().updateProfile(accepted);
+      final missing = (await sql.profilesDao.get(profile.id))!;
+      expect(missing.subscriptionInfo?.upload, isNull);
+      expect(missing.subscriptionInfo?.total, isNull);
+      expect(missing.subscriptionInfo?.usage, isNull);
+      expect(missing.subscriptionInfo?.sameSourceLastReported?.used, 20);
+      expect(
+        missing.subscriptionInfo?.sameSourceLastReported?.observedAt,
+        accepted.subscriptionInfo?.observedAt,
+      );
+      respond = (request) async {
+        request.response.headers.set(
+          'subscription-userinfo',
+          'download=0;total=200',
+        );
+        request.response.write('proxies: []\n');
+        await request.response.close();
+      };
+      await action().updateProfile(missing);
+      final partial = (await sql.profilesDao.get(profile.id))!;
+      expect(partial.subscriptionInfo?.knownDownload, 0);
+      expect(partial.subscriptionInfo?.knownUpload, isNull);
+      expect(partial.subscriptionInfo?.total, 200);
+      expect(partial.subscriptionInfo?.usage, isNull);
+      expect(partial.subscriptionInfo?.sameSourceLastReported?.used, 20);
+    },
+  );
+
+  test(
+    'refresh of an edited URL does not carry the previous account report',
+    () async {
+      final profile = await seed('quota-old-account');
+      await action().updateProfile(profile);
+      final previous = (await sql.profilesDao.get(profile.id))!;
+      respond = (request) async {
+        request.response.write('proxies: []\n');
+        await request.response.close();
+      };
+      await action().updateProfile(
+        previous.copyWith(url: '${profile.url}-new'),
+      );
+      final next = (await sql.profilesDao.get(profile.id))!;
+      expect(next.subscriptionInfo?.total, isNull);
+      expect(next.subscriptionInfo?.lastReported, isNull);
+      expect(
+        next.subscriptionInfo?.sourceKey,
+        SubscriptionInfo.keyForUrl(next.url),
+      );
+    },
+  );
+
+  test(
     'user cancellation aborts real HTTP, joins, and a fresh update succeeds',
     () async {
       final profile = await seed('single');

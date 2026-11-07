@@ -20,20 +20,15 @@ import 'profile_detail.dart';
 typedef _Usage = ({int used, int total, double share});
 
 _Usage? _usageOf(SubscriptionInfo? info) {
-  if (info == null || info.total <= 0) {
+  if (info == null || info.usage == null) {
     return null;
   }
-  final used = info.upload + info.download;
-  return (
-    used: used,
-    total: info.total,
-    share: (used / info.total).clamp(0.0, 1.0).toDouble(),
-  );
+  final used = info.used!;
+  return (used: used, total: info.knownTotal!, share: info.usage!);
 }
 
 DateTime? _expiryOf(SubscriptionInfo? info) {
-  final expire = info?.expire ?? 0;
-  return expire > 0 ? DateTime.fromMillisecondsSinceEpoch(expire * 1000) : null;
+  return info?.expireDate;
 }
 
 int _daysLeft(DateTime expiry) =>
@@ -82,7 +77,7 @@ class ProfilesCard extends ConsumerWidget {
                 id: profile.id,
                 type: profile.type,
                 realLabel: profile.realLabel,
-                subscriptionInfo: profile.subscriptionInfo,
+                subscriptionInfo: profile.sourceSubscriptionInfo,
                 lastUpdateDate: profile.lastUpdateDate,
                 updatingKey: profile.updatingKey,
               ),
@@ -228,6 +223,13 @@ class ProfilesCard extends ConsumerWidget {
                 figure: figure,
                 gap: mobile ? 8 : 6,
                 grows: mobile,
+              )
+            else if (profile.subscriptionInfo case final info?)
+              GlassText(
+                subscriptionQuotaSummary(context, info),
+                style: label,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               )
             else
               _ConfigStats(figure: figure),

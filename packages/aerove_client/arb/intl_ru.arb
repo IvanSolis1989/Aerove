@@ -1016,5 +1016,10 @@
       }
     }
   },
-  "subscriptionCompatibilityTunStack": "Применён поддерживаемый текущим ядром стек TUN lwIP."
+  "subscriptionCompatibilityTunStack": "Применён поддерживаемый текущим ядром стек TUN lwIP.",
+  "quotaLastReported": "Предыдущий отчёт: {time}",
+  "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
+  "quotaLegacyUnverified": "Старые данные; источник не подтверждён",
+  "quotaCheckedAt": "Ответ проверен: {time}",
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
 }

@@ -1016,5 +1016,10 @@
       }
     }
   },
-  "subscriptionCompatibilityTunStack": "La pile TUN lwIP prise en charge par ce noyau a été appliquée."
+  "subscriptionCompatibilityTunStack": "La pile TUN lwIP prise en charge par ce noyau a été appliquée.",
+  "quotaLastReported": "Dernier rapport : {time}",
+  "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
+  "quotaLegacyUnverified": "Anciennes valeurs ; source non vérifiée",
+  "quotaCheckedAt": "Réponse vérifiée : {time}",
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
 }

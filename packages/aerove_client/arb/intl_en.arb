@@ -1016,5 +1016,10 @@
       }
     }
   },
-  "subscriptionCompatibilityTunStack": "Applied the current core's supported lwIP TUN stack."
+  "subscriptionCompatibilityTunStack": "Applied the current core's supported lwIP TUN stack.",
+  "quotaLastReported": "Previous report: {time}",
+  "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
+  "quotaLegacyUnverified": "Legacy figures; source unverified",
+  "quotaCheckedAt": "Response checked: {time}",
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
 }
