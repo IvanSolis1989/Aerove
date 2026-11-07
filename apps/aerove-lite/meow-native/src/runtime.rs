@@ -77,9 +77,19 @@ pub(crate) fn failure_with_source(
     let kind = source.chain().take(32).find_map(|error| {
         error.downcast_ref::<std::io::Error>().map(std::io::Error::kind)
     }).unwrap_or(std::io::ErrorKind::Other);
-    // Only fixed public field names survive; arbitrary paths and reasons remain native-private.
-    let field = match context.field.as_deref() { Some("engineYaml" | "proxies.dialer-proxy") => context.field.clone(), _ => None };
-    let public = Failure { code: context.code, field, reason: None };
+    // Safe startup logs separately serialize only stage/code/ioKind/cleanup.
+    let public = match (context.code, context.field.as_deref()) {
+        ("providerConfigRejected", Some("engineYaml"))
+        | ("managedConfigRejected", Some("engineYaml"))
+        | ("managedDialerProxyGraphRejected", Some("proxies.dialer-proxy")) => context.clone(),
+        _ => {
+            let field = match context.field.as_deref() {
+                Some("engineYaml" | "proxies.dialer-proxy") => context.field.clone(),
+                _ => None,
+            };
+            Failure { code: context.code, field, reason: None }
+        }
+    };
     std::io::Error::new(kind, FailureSource { public, context, source })
 }
 
@@ -739,5 +749,40 @@ mod retained_config_load_failure_tests {
         assert_eq!(error.to_string(), failure_detail(&error).unwrap().to_string());
         assert_eq!(error.to_string(), "configLoadFailed: engineYaml");
         assert!(!format!("{error:?}").contains("private"));
+    }
+
+
+    #[test]
+    fn managed_user_reason_remains_exact_while_safe_startup_never_serializes_it() {
+        for (code, field) in [
+            ("providerConfigRejected", "engineYaml"),
+            ("managedConfigRejected", "engineYaml"),
+            ("managedDialerProxyGraphRejected", "proxies.dialer-proxy"),
+        ] {
+            let context = Failure { code, field: Some(field.into()),
+                reason: Some("fixture managed rejection: MISSING".into()) };
+            let source = anyhow::Error::new(std::io::Error::new(std::io::ErrorKind::InvalidInput,
+                "private source password=secret https://private.invalid"));
+            let error = failure_with_source(context.clone(), source);
+            let public = failure_detail(&error).unwrap();
+            assert_eq!(public, &context);
+            let json = serde_json::to_value(public).unwrap();
+            assert_eq!(json["field"], field);
+            assert_eq!(json["reason"], context.reason.as_deref().unwrap());
+            assert_eq!(error.to_string(), public.to_string());
+            let mut safe = crate::startup_diagnostic::Diagnostic::default();
+            safe.advance(crate::startup_diagnostic::Stage::ConfigLoad);
+            safe.record_io(&error); safe.cleaned(true, true);
+            let log = serde_json::to_string(&safe).unwrap();
+            assert!(log.contains(code));
+            for private in ["MISSING", "secret", "https", field] { assert!(!log.contains(private)); }
+        }
+        for (code, field) in [("configLoadFailed", "engineYaml"), ("providerConfigRejected", "/private/provider")] {
+            let error = failure_with_source(Failure { code, field: Some(field.into()), reason: Some("password=secret".into()) },
+                anyhow::Error::msg("private loader context"));
+            assert!(failure_detail(&error).unwrap().reason.is_none());
+            assert!(!error.to_string().contains("secret"));
+            assert!(retained_failure_context(&error).unwrap().reason.as_ref().unwrap().contains("secret"));
+        }
     }
 }

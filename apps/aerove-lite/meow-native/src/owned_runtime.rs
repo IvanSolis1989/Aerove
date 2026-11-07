@@ -1390,12 +1390,13 @@ mod cleanup_ack_tests {
             assert_eq!(safe["primary"]["code"], "managedDialerProxyGraphRejected");
             assert!(!safe.to_string().contains("MISSING"));
             assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
-            assert!(detail.reason.is_none());
+            assert!(detail.reason.as_deref().unwrap().contains("MISSING"));
             let original = owner.original_failure().expect("original loader cause retained by owner");
             assert!(original.get_ref().unwrap().source().expect("original Core source retained").to_string().contains("MISSING"));
             let private = crate::runtime::retained_failure_context(&original).unwrap();
             assert_eq!(private.field.as_deref(),Some("proxies.dialer-proxy"));
             assert!(private.reason.as_deref().unwrap().contains("MISSING"));
+            assert_eq!(detail.reason, private.reason);
             let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
             assert_eq!(status.state,"Failed"); assert_eq!(status.error,Some(failure.to_string()));
             // Factory validation rejects MISSING before a CoreApi/control exists.
