@@ -31,7 +31,8 @@ class MeowProtocolDispatcherTest {
         val enum = File(root, "packages/aerove_client/lib/core/method.dart").readText()
             .substringAfter("enum CoreMethod {").substringBefore("}")
         val names = Regex("(?m)^\\s*([A-Za-z][A-Za-z0-9]*)\\s*,").findAll(enum).map { it.groupValues[1] }.toSet()
-        assertEquals(57, names.size)
+        assertEquals(58, names.size)
+        assertTrue("Native usage snapshot must retain its shared wire name", "getNativeUsageSnapshot" in names)
         assertTrue("Shared route APIs must retain their existing wire names", names.containsAll(setOf("watchRoute", "checkRoutes")))
         assertEquals(names, MeowProtocolDispatcher.METHODS)
     }
