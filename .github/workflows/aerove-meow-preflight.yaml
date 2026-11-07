@@ -73,6 +73,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
+          submodules: recursive
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
         with:
@@ -95,6 +96,128 @@ jobs:
           cmake --version
           ninja --version
           pkg-config --version
+      - id: fresh
+        name: Detect the explicit fresh producer replay entry
+        run: |
+          if [ -f apps/aerove/test/common/fresh_native_runtime_producer_fixture.dart ]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        if: steps.fresh.outputs.enabled == 'true'
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - uses: ./.github/actions/flutter
+        if: steps.fresh.outputs.enabled == 'true'
+        with:
+          flutter-version: 3.47.6
+          cache: true
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        if: steps.fresh.outputs.enabled == 'true'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        if: steps.fresh.outputs.enabled == 'true'
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - name: Select the existing SDK for the JVM composer
+        if: steps.fresh.outputs.enabled == 'true'
+        run: |
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        if: steps.fresh.outputs.enabled == 'true'
+        with:
+          gradle-version: 9.6.0
+      - name: Prepare the existing production helpers and Flutter hooks
+        if: steps.fresh.outputs.enabled == 'true'
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/meow-fresh-runtime"
+          test ! -e "$root"
+          mkdir -p "$root/prerequisites"
+          python3 apps/aerove-lite/tool/ci_artifacts.py host-helper \
+            --go "$(go env GOROOT)/bin/go" \
+            --directory "$root/helper-staging" --destination "$root/helper" \
+            --receipt "$root/prerequisites/helper.json"
+          (cd packages/aerove_client && flutter pub get --enforce-lockfile)
+          (cd apps/aerove && flutter pub get --enforce-lockfile)
+          (cd apps/aerove-lite && flutter pub get --enforce-lockfile)
+          (cd apps/aerove && python3 tool/mihomo_source.py prepare)
+      - name: Export actual fresh producer input and compose its runtime plan
+        if: steps.fresh.outputs.enabled == 'true'
+        timeout-minutes: 15
+        env:
+          AEROVE_FILTER_HELPER: ${{ runner.temp }}/meow-fresh-runtime/helper/hostverify
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/meow-fresh-runtime"
+          fixture="$root/fixture"
+          mkdir -p "$fixture"
+          (
+            cd apps/aerove
+            flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true \
+              --dart-define="FRESH_RUNTIME_SOURCE=$GITHUB_SHA" --dart-define="FRESH_RUNTIME_OUTPUT=$fixture" \
+              test/common/fresh_native_runtime_producer_fixture.dart \
+              --plain-name 'fresh default no-selection runtime export'
+          ) 2>&1 | tee "$root/producer.log"
+          test -s "$fixture/producer-manifest.json"
+          (
+            cd apps/aerove-lite
+            gradle --no-daemon -p android -Ptarget-platform=android-x64 -PliteAbi=x86_64 \
+              -PsourceSha="$GITHUB_SHA" -DfreshRuntime.fixture="$fixture" :app:prepareFreshRuntimeReplayFixture
+          ) 2>&1 | tee "$root/composer.log"
+          test -s "$fixture/native/final-plan-manifest.json"
+      - name: Load the actual fresh plan through the locked Native owner
+        if: steps.fresh.outputs.enabled == 'true'
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess, sys
+          from pathlib import Path
+          root = Path('apps/aerove-lite/meow-native').resolve()
+          sys.path.insert(0, str(root))
+          from prepare import prepare
+          from build_policy import load_policy
+          from clang_probe import probe
+          from core_tests import run_logged
+          output = Path(os.environ['RUNNER_TEMP']) / 'meow-fresh-runtime'
+          policy = load_policy(root)
+          upstream = prepare()
+          lock = root / 'Cargo.lock'
+          before = hashlib.sha256(lock.read_bytes()).hexdigest()
+          assert before == policy['expectedLockBeforeSha256'] and not policy['resolveLock']
+          environment = dict(os.environ, CARGO_TARGET_DIR=str(root / 'target'), RUSTUP_TOOLCHAIN='1.98.1',
+              AEROVE_FRESH_FIXTURE_SOURCE=os.environ['GITHUB_SHA'],
+              AEROVE_FRESH_PLAN_FIXTURE=str(output / 'fixture/native/final-plan-manifest.json'))
+          clang = probe(root / 'build/libclang-probe.json', environment)
+          environment['LIBCLANG_PATH'] = clang['library']['path']
+          version = subprocess.check_output(['rustc', '--version'], env=environment, text=True).strip()
+          assert version.startswith('rustc 1.98.1 '), version
+          command = ['cargo', 'test', '--locked', '--features', 'fresh-producer-replay', '--lib',
+              'owned_runtime::fresh_shared_producer_replay::fresh_shared_producer_owned_loader',
+              '--', '--exact', '--test-threads=1', '--nocapture']
+          result = run_logged(command, root, environment, output / 'native.stdout.log', output / 'native.stderr.log', timeout=900)
+          after = hashlib.sha256(lock.read_bytes()).hexdigest()
+          receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+              attempt=os.environ['GITHUB_RUN_ATTEMPT'], command=command, commandExit=result.returncode,
+              lockBefore=before, lockAfter=after, lockUnchanged=before == after,
+              toolchain=version, sourceProvenance=json.loads((upstream / 'AEROVE_SOURCE_PROVENANCE.json').read_text()),
+              appApkBuilt=False, androidExecuted=False, original312Input=False, acceptance=False)
+          (output / 'native-command.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          assert result.returncode == 0 and before == after, receipt
+          native = json.loads((output / 'fixture/native/native-result.json').read_text())
+          assert native['nativeReady'] and native['nativeJoined'] and native['controlPortReleased'], 'Native replay lacks its ready/join/port receipt'
+          assert native['accepted'] is False and native['original312Input'] is False
+          PY
       - name: Real locked host proxy lifecycle chain
         env:
           INITIALIZE_LOCK: ${{ needs.plan.outputs.bootstrap }}
@@ -132,6 +255,7 @@ jobs:
             if [ -f "$root/$file" ]; then cp "$root/$file" "$evidence/"; fi
           done
           if [ -f "$RUNNER_TEMP/meow-host-command.log" ]; then cp "$RUNNER_TEMP/meow-host-command.log" "$evidence/"; fi
+          if [ -d "$RUNNER_TEMP/meow-fresh-runtime" ]; then cp -a "$RUNNER_TEMP/meow-fresh-runtime" "$evidence/fresh-runtime"; fi
           python3 - "$root" "$evidence" <<'PY'
           import hashlib,json,shutil,sys
           from pathlib import Path

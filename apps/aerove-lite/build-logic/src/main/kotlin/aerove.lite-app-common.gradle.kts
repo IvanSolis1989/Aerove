@@ -422,6 +422,19 @@ tasks.register<JavaExec>("prepareNativeMigrationFixture") {
     }
 }
 
+
+tasks.register<JavaExec>("prepareFreshRuntimeReplayFixture") {
+    dependsOn("compileReleaseUnitTestKotlin")
+    mainClass.set("dev.aerove.lite.flutter.FreshRuntimeReplayFixtureKt")
+    classpath(providers.provider { tasks.named<Test>("testReleaseUnitTest").get().classpath })
+    doFirst {
+        val input = providers.systemProperty("freshRuntime.fixture").orNull
+            ?: error("prepareFreshRuntimeReplayFixture requires -DfreshRuntime.fixture")
+        check(input.isNotBlank()) { "freshRuntime.fixture must not be blank" }
+        systemProperty("freshRuntime.fixture", input)
+    }
+}
+
 tasks.register<JavaExec>("prepareNativeBuilderFixture") {
     dependsOn("compileReleaseUnitTestKotlin")
     mainClass.set("dev.aerove.lite.fixtures.NativeBuilderInteropFixtureKt")

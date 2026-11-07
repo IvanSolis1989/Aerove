@@ -10,6 +10,8 @@ name = "aerove_meow_core"
 crate-type = ["cdylib", "rlib"]
 
 [features]
+# Explicit file-driven host diagnostic; never a production default.
+fresh-producer-replay = []
 default = ["ss", "trojan", "vless", "vless-vision", "vless-encryption", "ech-tls-tunnel", "vmess", "snell", "hysteria2", "mux", "kcptun", "anytls", "trusttunnel", "trusttunnel-h3"]
 ss = ["meow-config/ss"]
 trojan = ["meow-config/trojan"]

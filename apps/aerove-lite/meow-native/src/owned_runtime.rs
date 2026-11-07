@@ -1575,3 +1575,7 @@ mod cleanup_ack_tests {
     }
 
 }
+
+#[cfg(all(test, feature = "fresh-producer-replay"))]
+#[path = "fresh_shared_producer_replay.rs"]
+mod fresh_shared_producer_replay;
