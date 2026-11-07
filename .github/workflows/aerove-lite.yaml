@@ -1132,6 +1132,56 @@ jobs:
     - name: Prepare the pinned Standard source required by the existing test hooks and assets
       working-directory: apps/aerove
       run: python3 tool/mihomo_source.py prepare
+    - name: Execute the real Standard usage owner and Core RPC regressions
+      timeout-minutes: 15
+      working-directory: apps/aerove/core
+      env:
+        GOTOOLCHAIN: local
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/native-usage-go"
+        mkdir -p "$evidence"
+        go version | tee "$evidence/go-version.txt"
+        (
+          cd .mihomo
+          go test -race -json ./tunnel/statistic -run '^TestCounter' -count=1
+        ) 2>&1 | tee "$evidence/owner.jsonl"
+        go test -json . -run '^TestNativeUsageSnapshotUsesTheSameRealManagerAsLegacyTraffic$' -count=1 \
+          2>&1 | tee "$evidence/rpc.jsonl"
+        python3 - <<'PY'
+        import hashlib, json, os
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/native-usage-go'
+        go_version = (output / 'go-version.txt').read_text().strip()
+        assert go_version.startswith('go version go1.27.1 '), go_version
+        expected = {
+            'owner': ['TestCounterSnapshotTracksRealManagerAndReset', 'TestCounterSnapshotCannotMixResetStores',
+                      'TestCounterSnapshotUnavailableDoesNotReturnZero', 'TestCounterProcessInstance'],
+            'rpc': ['TestNativeUsageSnapshotUsesTheSameRealManagerAsLegacyTraffic'],
+        }
+        results = {}
+        for label, required in expected.items():
+            log = output / (label + '.jsonl')
+            events = []
+            for line in log.read_text().splitlines():
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    events.append(event)
+            passes = [event.get('Test') for event in events if event.get('Action') == 'pass' and event.get('Test')]
+            complete = all(passes.count(name) == 1 for name in required)
+            complete = complete and not any(event.get('Action') in ('fail', 'skip') for event in events)
+            results[label] = dict(required=required, passed=passes, complete=complete,
+                logSha256=hashlib.sha256(log.read_bytes()).hexdigest())
+        receipt = dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+            attempt=os.environ['GITHUB_RUN_ATTEMPT'], results=results,
+            goVersion=go_version, raceEnabledForOwner=True,
+            standardGoOwnerExecuted=True, androidExecuted=False, appApkBuilt=False, acceptance=False)
+        (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        assert all(result['complete'] for result in results.values()), results
+        PY
     - name: Execute subscription source transactions and affected shared client regressions
       timeout-minutes: 30
       working-directory: apps/aerove
