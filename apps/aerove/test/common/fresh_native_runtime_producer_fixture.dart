@@ -20,7 +20,6 @@ import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -138,17 +137,19 @@ void main() {
       );
       final storage = await SharedPreferences.getInstance();
       await storage.clear();
+      final scriptAsset = File(
+        p.join('..', 'aerove-lite', xclashDefaultScriptAsset),
+      );
+      expect(
+        await File(p.join('..', 'aerove-lite', 'pubspec.yaml')).readAsString(),
+        contains('    - $xclashDefaultScriptAsset'),
+      );
+      final scriptBytes = await scriptAsset.readAsBytes();
       final defaults = XClashDefaults(
         storage: storage,
         database: database,
         directory: home,
-        loadScript: () async {
-          final data = await rootBundle.load(xclashDefaultScriptAsset);
-          return data.buffer.asUint8List(
-            data.offsetInBytes,
-            data.lengthInBytes,
-          );
-        },
+        loadScript: () async => scriptBytes,
         createId: () => 1,
       );
       await defaults.prepare(isAndroid: true);
@@ -241,6 +242,11 @@ void main() {
         'androidDefaultsPrepared': true,
         'hostAuthorizationOnly': true,
         'producer': 'SetupAction.applyProfile/CoreHandlerInterface.setupConfig',
+        'bundledScript': {
+          'declaredIn': 'apps/aerove-lite/pubspec.yaml',
+          'asset': xclashDefaultScriptAsset,
+          'sha256': sha256.convert(scriptBytes).toString(),
+        },
         'packageInfo': {
           'packageName': globalState.packageInfo.packageName,
           'version': globalState.packageInfo.version,
