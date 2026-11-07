@@ -19,6 +19,7 @@ class _User implements QueryExecutorUser {
     QueryExecutor executor,
     OpeningDetails details,
   ) async {
+    await executor.ensureOpen(this);
     await executor.runCustom(
       'CREATE TABLE IF NOT EXISTS decisions (id TEXT PRIMARY KEY, decision TEXT NOT NULL)',
     );

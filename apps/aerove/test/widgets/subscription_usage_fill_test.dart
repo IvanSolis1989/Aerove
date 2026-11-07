@@ -318,6 +318,9 @@ void main() {
   setUpAll(() async {
     final font = FontLoader('UsagePreview')..addFont(loadSdkTestFont());
     await font.load();
+    if (Platform.environment['XCLASH_REQUIRE_IMPELLER'] == 'true') {
+      expect(ui.ImageFilter.isShaderFilterSupported, isTrue);
+    }
     if (ui.ImageFilter.isShaderFilterSupported) await GlassInk.prepare();
   });
 

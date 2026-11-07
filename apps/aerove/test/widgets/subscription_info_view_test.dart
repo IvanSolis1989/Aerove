@@ -173,6 +173,7 @@ void main() {
             child: SubscriptionInfoView(
               subscriptionInfo: SubscriptionInfo(
                 upload: 1024,
+                download: 0,
                 total: 1073741824,
                 expire: 4102444800,
               ),

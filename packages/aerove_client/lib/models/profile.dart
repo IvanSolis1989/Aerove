@@ -44,7 +44,10 @@ abstract class SubscriptionInfo with _$SubscriptionInfo {
           ? 1
           : 0,
       if (json['lastReported'] case final Map previous)
-        'lastReported': {...previous, 'lastReported': null},
+        'lastReported': <String, Object?>{
+          ...Map<String, Object?>.from(previous),
+          'lastReported': null,
+        },
     };
     final rejected = <String, Object?>{};
     if (json['unqualifiedCounts'] case final Map values) {

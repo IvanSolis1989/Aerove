@@ -1179,13 +1179,18 @@ jobs:
         for suite in "${suites[@]}"; do
           label="${suite//\//_}"
           suite_args=()
+          suite_env=()
           if [[ "$suite" == 'providers/meow_rule_publication_commit_test.dart' ]]; then
             suite_args+=(--dart-define=AEROVE_TEST_SUITE_PRODUCT=true)
           fi
-          printf '%q ' flutter test --no-pub --concurrency 1 --machine "${suite_args[@]}" "test/$suite" > "$evidence/$label.command.txt"
+          if [[ "$suite" == 'views/dashboard/foreground_test.dart' || "$suite" == 'widgets/subscription_usage_fill_test.dart' ]]; then
+            suite_args+=(--enable-impeller)
+            suite_env+=(XCLASH_REQUIRE_IMPELLER=true "XCLASH_SCREENSHOT_DIR=$evidence/$label-pixels")
+          fi
+          printf '%q ' env "${suite_env[@]}" flutter test --no-pub --concurrency 1 --machine "${suite_args[@]}" "test/$suite" > "$evidence/$label.command.txt"
           printf '\n' >> "$evidence/$label.command.txt"
           set +e
-          flutter test --no-pub --concurrency 1 --machine "${suite_args[@]}" "test/$suite" 2>&1 | tee "$evidence/$label.jsonl"
+          env "${suite_env[@]}" flutter test --no-pub --concurrency 1 --machine "${suite_args[@]}" "test/$suite" 2>&1 | tee "$evidence/$label.jsonl"
           statuses=("${PIPESTATUS[@]}")
           set -e
           printf '%s %s\n' "${statuses[0]}" "${statuses[1]}" > "$evidence/$label.status.txt"
@@ -1218,12 +1223,19 @@ jobs:
             results[label] = dict(command=command.read_text().strip(), testExit=code, logExit=tee,
                 visibleCases=len(visible), allCasesPassed=passed, logSha256=hashlib.sha256(log.read_bytes()).hexdigest(),
                 cases=[dict(name=tests[e['testID']]['name'], result=e.get('result'), skipped=e.get('skipped')) for e in visible if e['testID'] in tests])
+            if label in ('views_dashboard_foreground_test.dart', 'widgets_subscription_usage_fill_test.dart'):
+                captures = sorted(path for path in (output / (label + '-pixels')).glob('*') if path.is_file())
+                results[label]['hostPixelArtifacts'] = [dict(file=str(path.relative_to(output)), bytes=path.stat().st_size,
+                    sha256=hashlib.sha256(path.read_bytes()).hexdigest()) for path in captures]
+                results[label]['pixelReadback'] = any(path.suffix == '.png' and path.stat().st_size > 0 for path in captures)
+                results[label]['androidVisualAccepted'] = False
         receipt = dict(schema=1, source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
             attempt=os.environ['GITHUB_RUN_ATTEMPT'], independentProcesses=True, productionHooksEnabled=True,
             composition='Standard and explicitly selected Lite test entries; core arguments and MeowCoreHandler fixtures retain their own identities',
             results=results, appApkBuilt=False, acceptance=False)
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert len(results) == 35 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        assert all(r.get('pixelReadback', True) for r in results.values()), 'Host shader pixels were not retained'
         PY
     - name: Compile the Flutter host and actual platform acceptance runner
       working-directory: apps/aerove-lite
