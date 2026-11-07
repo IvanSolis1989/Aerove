@@ -49,6 +49,14 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 
+// Session keeps its legacy error contract; the owner retains precise loader provenance.
+fn owned_failure_for_session(failure: Option<Failure>) -> Failure {
+    match failure {
+        Some(failure) if failure.code != "configLoadFailed" => failure,
+        _ => Failure::new("ownedRuntimeFailed"),
+    }
+}
+
 /// Native-only provenance. Neither the source nor its reason is serialized or logged.
 struct FailureSource {
     public: Failure,
@@ -248,7 +256,7 @@ impl Session {
         self.state.send_modify(|state| {
             state.phase = if result.is_err() || status.state == "Failed" { Phase::Failed } else { Phase::Stopped };
             state.failure = if state.phase == Phase::Failed {
-                Some(owner.failure().unwrap_or_else(|| Failure::new("ownedRuntimeFailed")))
+                Some(owned_failure_for_session(owner.failure()))
             } else { None };
             state.api_ready = false; state.tun_ready = false; state.user_listeners_ready = false;
             state.api_address = None; state.mixed_address = None;
@@ -784,5 +792,37 @@ mod retained_config_load_failure_tests {
             assert!(!error.to_string().contains("secret"));
             assert!(retained_failure_context(&error).unwrap().reason.as_ref().unwrap().contains("secret"));
         }
+    }
+
+
+    #[test]
+    fn session_facade_keeps_ordinary_legacy_code_and_managed_payload_without_mutating_owner() {
+        let error = failure_with_source(Failure { code: "configLoadFailed", field: Some("engineYaml".into()),
+            reason: Some("private ordinary loader cause".into()) }, anyhow::Error::msg("private source"));
+        let owner = failure_detail(&error).unwrap().clone();
+        let session = owned_failure_for_session(Some(owner.clone()));
+        assert_eq!(session.code, "ownedRuntimeFailed");
+        assert!(session.field.is_none() && session.reason.is_none());
+        assert!(serde_json::to_value(&session).unwrap().get("reason").is_none());
+        assert_eq!(owner.code, "configLoadFailed");
+        assert_eq!(retained_failure_context(&error).unwrap().reason.as_deref(), Some("private ordinary loader cause"));
+        let mut diagnostic = crate::startup_diagnostic::Diagnostic::default();
+        diagnostic.advance(crate::startup_diagnostic::Stage::ConfigLoad); diagnostic.record_io(&error);
+        assert_eq!(diagnostic.primary.as_ref().unwrap().code, "configLoadFailed");
+        assert_eq!(diagnostic.primary.as_ref().unwrap().stage, crate::startup_diagnostic::Stage::ConfigLoad);
+        for (code, field) in [
+            ("providerConfigRejected", "engineYaml"),
+            ("managedConfigRejected", "engineYaml"),
+            ("managedDialerProxyGraphRejected", "proxies.dialer-proxy"),
+        ] {
+            let context = Failure { code, field: Some(field.into()), reason: Some("actual managed target MISSING".into()) };
+            let error = failure_with_source(context.clone(), anyhow::Error::msg("private source"));
+            let session = owned_failure_for_session(Some(failure_detail(&error).unwrap().clone()));
+            assert_eq!(session, context);
+            assert_eq!(serde_json::to_value(&session).unwrap()["reason"], "actual managed target MISSING");
+        }
+        let cleanup = Failure { code: "ownedRuntimeCleanupFailed", field: None, reason: Some("cleanup receipt".into()) };
+        assert_eq!(owned_failure_for_session(Some(cleanup.clone())), cleanup);
+        assert_eq!(owned_failure_for_session(None), Failure::new("ownedRuntimeFailed"));
     }
 }
