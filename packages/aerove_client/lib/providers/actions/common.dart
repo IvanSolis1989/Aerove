@@ -6,11 +6,40 @@ class CommonAction extends _$CommonAction {
   bool _isUpdatingTraffic = false;
   bool _isHandlingUpdate = false;
   int _trafficRevision = 0;
+  bool? _nativeUsageSupported;
+  bool _ledgerWarning = false;
+  @visibleForTesting
+  LocalUsageLedger? localUsageLedgerOverride;
+  LocalUsageLedger get _usageLedger =>
+      localUsageLedgerOverride ?? localUsageLedger;
 
   @override
   void build() {
-    ref.listen(appVisibleProvider, (_, _) => _trafficRevision++);
-    ref.listen(trafficDemandProvider, (_, _) => _trafficRevision++);
+    ref.listen(appVisibleProvider, (_, next) {
+      _trafficRevision++;
+      if (!next) unawaited(_flushLocalUsage());
+    });
+    ref.listen(trafficDemandProvider, (_, next) {
+      _trafficRevision++;
+      if (!next.contains(TrafficNeed.traffic)) unawaited(_flushLocalUsage());
+    });
+    ref.listen(coreHandlerProvider, (_, _) {
+      _trafficRevision++;
+      _nativeUsageSupported = null;
+    });
+    ref.listen(coreStatusProvider, (_, _) {
+      _trafficRevision++;
+      _nativeUsageSupported = null;
+      unawaited(_flushLocalUsage());
+    });
+    ref.listen(isStartProvider, (_, next) {
+      _trafficRevision++;
+      if (!next) unawaited(_flushLocalUsage());
+    });
+    ref.onDispose(() {
+      _trafficRevision++;
+      unawaited(_flushLocalUsage());
+    });
     ref.listen(appSettingProvider, (previous, next) {
       if (previous?.showTrayTitle != next.showTrayTitle ||
           previous?.onlyStatisticsProxy != next.onlyStatisticsProxy) {
@@ -64,15 +93,21 @@ class CommonAction extends _$CommonAction {
     }
     _isUpdatingTraffic = true;
     final revision = _trafficRevision;
+    final core = _core;
+    bool current() =>
+        ref.mounted &&
+        _trafficVisible &&
+        revision == _trafficRevision &&
+        identical(core, _core);
     try {
       final onlyStatisticsProxy = ref
           .read(appSettingProvider)
           .onlyStatisticsProxy;
-      final [traffic, totalTraffic] = await Future.wait([
-        _readTraffic(() => _core.getTraffic(onlyStatisticsProxy)),
-        _readTraffic(() => _core.getTotalTraffic(onlyStatisticsProxy)),
-      ]);
-      if (!ref.mounted || !_trafficVisible || revision != _trafficRevision) {
+      final (traffic, usage) = await (
+        _readTraffic(() => core.getTraffic(onlyStatisticsProxy)),
+        _readUsage(core, onlyStatisticsProxy, current),
+      ).wait;
+      if (!current()) {
         return;
       }
       FramePacer.publish(this, () {
@@ -82,12 +117,80 @@ class CommonAction extends _$CommonAction {
         if (traffic != null) {
           ref.read(trafficsProvider.notifier).addTraffic(traffic);
         }
-        if (totalTraffic != null) {
-          ref.read(totalTrafficProvider.notifier).value = totalTraffic;
+        if (usage.total != null) {
+          ref.read(totalTrafficProvider.notifier).value = usage.total!;
         }
       });
+      if (usage.snapshot case final snapshot?) {
+        try {
+          await _usageLedger.observe(snapshot, isCurrent: current);
+          _ledgerWarning = false;
+        } catch (error) {
+          _reportLedgerFailure(error);
+        }
+      }
     } finally {
       _isUpdatingTraffic = false;
+    }
+  }
+
+  Future<({Traffic? total, NativeUsageSnapshot? snapshot})> _readUsage(
+    CoreController core,
+    bool onlyProxy,
+    bool Function() current,
+  ) async {
+    if (_nativeUsageSupported != false) {
+      try {
+        final snapshot = await core.getNativeUsageSnapshot();
+        if (current()) _nativeUsageSupported = true;
+        final value = onlyProxy ? snapshot.proxy : snapshot.all;
+        return (
+          total: Traffic(up: value.up, down: value.down),
+          snapshot: snapshot,
+        );
+      } on CoreMethodException catch (error) {
+        if (!{
+          'not_implemented',
+          'implementation_missing',
+          'bad_method',
+        }.contains(error.code)) {
+          commonPrint.log(
+            'Native usage snapshot unavailable: $error',
+            logLevel: coreFailureLogLevel(error),
+          );
+          return (total: null, snapshot: null);
+        }
+        if (!current()) return (total: null, snapshot: null);
+        _nativeUsageSupported = false;
+      } catch (error) {
+        commonPrint.log(
+          'Native usage snapshot invalid: $error',
+          logLevel: coreFailureLogLevel(error),
+        );
+        return (total: null, snapshot: null);
+      }
+    }
+    // Compatibility only. Unqualified legacy totals never enter the persistent ledger.
+    return (
+      total: await _readTraffic(() => core.getTotalTraffic(onlyProxy)),
+      snapshot: null,
+    );
+  }
+
+  void _reportLedgerFailure(Object error) {
+    if (_ledgerWarning) return;
+    _ledgerWarning = true;
+    commonPrint.log(
+      'Local usage checkpoint not confirmed: $error',
+      logLevel: LogLevel.warning,
+    );
+  }
+
+  Future<void> _flushLocalUsage() async {
+    try {
+      await _usageLedger.flush();
+    } catch (error) {
+      _reportLedgerFailure(error);
     }
   }
 

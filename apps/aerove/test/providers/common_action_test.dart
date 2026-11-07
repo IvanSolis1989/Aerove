@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
+import 'package:fl_clash/core/method.dart';
+import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -14,6 +16,21 @@ import 'package:riverpod/riverpod.dart';
 import '../helpers/test_profiles.dart';
 
 class MockCoreHandlerInterface extends Mock implements CoreHandlerInterface {}
+
+class _UnavailableUsageStorage implements LocalUsageStorage {
+  @override
+  Future<UsageStorageView> claim() async =>
+      throw StateError('controlled unavailable store');
+  @override
+  Future<UsageStorageView> read(String lease) async =>
+      throw StateError('unexpected read');
+  @override
+  Future<UsageWriteAck> write(
+    String lease,
+    String? revision,
+    String payload,
+  ) async => throw StateError('unexpected write');
+}
 
 const runningVersion = '0.8.96';
 
@@ -32,7 +49,15 @@ void main() {
     );
   });
 
-  setUp(() => reset(core));
+  setUp(() {
+    reset(core);
+    when(() => core.getNativeUsageSnapshot()).thenThrow(
+      const CoreMethodException(
+        code: 'not_implemented',
+        message: 'explicit legacy fixture',
+      ),
+    );
+  });
 
   /// A container where a visible dashboard card shows traffic, unless
   /// [shown] is false.
@@ -95,6 +120,63 @@ void main() {
   });
 
   group('CommonAction.updateTraffic', () {
+    test(
+      'one native snapshot replaces the old total request without a new poller',
+      () async {
+        final container = buildContainer();
+        container
+            .read(appSettingProvider.notifier)
+            .update((state) => state.copyWith(onlyStatisticsProxy: false));
+        when(
+          () => core.getTraffic(false),
+        ).thenAnswer((_) async => const Traffic(up: 1, down: 2));
+        when(() => core.getNativeUsageSnapshot()).thenAnswer(
+          (_) async => const NativeUsageSnapshot(
+            processInstance: '11111111111111111111111111111111',
+            counterEpoch: '22222222222222222222222222222222',
+            startedNanos: 1,
+            completedNanos: 2,
+            all: NativeUsageCounters(up: 100, down: 200),
+            proxy: NativeUsageCounters(up: 30, down: 40),
+          ),
+        );
+        final action = container.read(commonActionProvider.notifier);
+        action.localUsageLedgerOverride = LocalUsageLedger(
+          _UnavailableUsageStorage(),
+        );
+        await action.updateTraffic();
+        expect(
+          container.read(totalTrafficProvider),
+          const Traffic(up: 100, down: 200),
+        );
+        expect(action.localUsageLedgerOverride!.confirmed, isNull);
+        verify(() => core.getTraffic(false)).called(1);
+        verify(() => core.getNativeUsageSnapshot()).called(1);
+        verifyNever(() => core.getTotalTraffic(any()));
+      },
+    );
+
+    test(
+      'unsupported native snapshot is probed once per current source, never recorded as zero',
+      () async {
+        final container = buildContainer();
+        when(
+          () => core.getTraffic(any()),
+        ).thenAnswer((_) async => const Traffic());
+        when(
+          () => core.getTotalTraffic(any()),
+        ).thenAnswer((_) async => const Traffic(up: 8, down: 9));
+        final action = container.read(commonActionProvider.notifier);
+        await action.updateTraffic();
+        await action.updateTraffic();
+        verify(() => core.getNativeUsageSnapshot()).called(1);
+        verify(() => core.getTotalTraffic(any())).called(2);
+        expect(
+          container.read(totalTrafficProvider),
+          const Traffic(up: 8, down: 9),
+        );
+      },
+    );
     test('asks the Core nothing while no visible card shows traffic', () async {
       final container = buildContainer(shown: false);
       when(

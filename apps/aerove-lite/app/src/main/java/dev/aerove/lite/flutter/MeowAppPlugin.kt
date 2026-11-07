@@ -56,6 +56,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 
 /** Client platform operations only; engine/activity detachment does not stop the owned VPN. */
 class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandler {
+    private var ledgerBinding: dev.aerove.usage.LocalUsageLedgerBinding? = null
     private lateinit var context: Context
     private lateinit var channel: MethodChannel
     private lateinit var scope: CoroutineScope
@@ -84,6 +85,9 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
     }
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        ledgerBinding?.close()
+        val attachment = dev.aerove.usage.LocalUsageLedgerStore.bind(binding.applicationContext)
+        ledgerBinding = attachment
         check(!attached) { "App platform plugin is already attached" }
         context = binding.applicationContext
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -92,7 +96,14 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
         packageGeneration++
         channel = MethodChannel(binding.binaryMessenger, "com.follow.clash/app")
         attached = true
-        channel.setMethodCallHandler(this)
+        channel.setMethodCallHandler { call, result ->
+            if (call.method == "localUsageLedger") {
+                val reply = Reply(result).also(replies::add)
+                val activation = attachment.capture()
+                val arguments = call.arguments
+                background(reply) { attachment.handle(arguments, activation) }
+            } else onMethodCall(call, result)
+        }
         packageChanges = applications.observeChanges {
             packageGeneration++
             onMain { if (attached) channel.invokeMethod("packagesChanged", null) }
@@ -104,6 +115,9 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
         if (!attached) return reply.error("detached", "App platform engine is detached")
         try {
             when (call.method) {
+                "localUsageLedger" -> {
+                    reply.error("activation_required", "Ledger calls require the bound engine channel")
+                }
                 "moveTaskToBack" -> reply.success(activityBinding?.activity?.moveTaskToBack(true) ?: false)
                 "getSupportedAbis" -> reply.success(Build.SUPPORTED_ABIS.toList())
                 "getPackages" -> background(reply) { meowPackagesJson(installed().applications) }
@@ -307,6 +321,7 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         detachActivity()
         activityBinding = binding
+        ledgerBinding?.attachActivity(binding.activity)
         binding.addRequestPermissionsResultListener(permissionListener)
         if (isTelevision()) ViewCompat.setOnApplyWindowInsetsListener(binding.activity.window.decorView, imeListener)
     }
@@ -319,6 +334,7 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
     }
 
     private fun detachActivity() {
+        ledgerBinding?.detachActivity()
         activityBinding?.let { binding ->
             binding.removeRequestPermissionsResultListener(permissionListener)
             if (isTelevision()) ViewCompat.setOnApplyWindowInsetsListener(binding.activity.window.decorView, null)
@@ -345,6 +361,8 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        ledgerBinding?.close()
+        ledgerBinding = null
         if (!attached) return
         attached = false
         channel.setMethodCallHandler(null)

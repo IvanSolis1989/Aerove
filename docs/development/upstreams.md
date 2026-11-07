@@ -1133,6 +1133,8 @@ Lite Flutter test-only packaging 候选 94 另只读核对 AOSP [`ActivityManage
 
 **许可证、署名与证据：** BSD-style text and Flutter Authors copyright in both fixed-tag package/root `LICENSE` files: [`url_launcher` LICENSE](https://github.com/flutter/packages/blob/url_launcher-v6.3.3/packages/url_launcher/url_launcher/LICENSE) blob `29b709dac6c7a8ce696d35c375f603afd808d205`; [`url_launcher_platform_interface` LICENSE](https://github.com/flutter/packages/blob/url_launcher_platform_interface-v2.3.2/packages/url_launcher/url_launcher_platform_interface/LICENSE) blob `c6823b81eb845db89cee59cbbc7ee0b0b63d86ec`. GitHub repo metadata response did not expose a repository-level license field; these fixed-file texts are the evidence.
 
+本机用量账本另只读核对实际锁定包 `shared_preferences 2.5.6`、Android `2.4.28`、Windows/Linux `2.4.1`、Foundation `2.5.7` 的已安装源码及 pubspec.lock hosted SHA：legacy Android 的 commit Boolean不能抹去先更新缓存的边界，Windows/Linux `_writePreferences` 直接 writeAsStringSync、Foundation UserDefaults.set 也不提供本任务所需的跨 engine CAS/独立 fsync receipt。因此账本不复制这些写包装或借其 cache读回伪证落盘；Android走上面的专用 no_backup 原生 owner，桌面持久支持保持明确未资格，未复制代码/新增依赖。包来源与原 Flutter Authors BSD-style 许可不变。
+
 #### [dart-lang/native](https://github.com/dart-lang/native)
 
 **固定版本 / revision：** `0aa672fed0b26aff83440d939da14ee3bab13969`；native_toolchain_c `0.17.6`
@@ -1494,6 +1496,8 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 同一 API33 固定来源的 [`ContextImpl.getFilesDir`](https://github.com/aosp-mirror/platform_frameworks_base/blob/android-13.0.0_r1/core/java/android/app/ContextImpl.java#L731-L737) 另用于核对平台私有路径由 dataDir 构造、没有 canonical 保证。Lite 仅规范化可信 Context 根，复用现有私域门；不复制 AOSP 实现或将参考版本冒充手机系统来源。
 
 原生只读 Flutter 偏好入口同样复用项目已验证的可信根规范化规则：先解析系统 dataDir，再对 shared_prefs 和 XML 保持普通目录／文件、无链接、规范路径与归属检查，并以 NOFOLLOW_LINKS 打开。系统用户零别名另只读参照固定 [`Zygote.cpp`（efa0fa985d6ee60ef00b3e14bca8c2a95ef8dc57）](https://android.googlesource.com/platform/frameworks/base/+/efa0fa985d6ee60ef00b3e14bca8c2a95ef8dc57/core/jni/com_android_internal_os_Zygote.cpp) 的数据目录链接建立逻辑；仅作平台行为参考，不复制实现、不放宽子路径边界，也不把参考提交当作实际设备源码。实际首次启动仍须由 Android 读回验证。
+
+同一 Android 13 tag 的实际 peeled commit `0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6`（tag object `a4cd7977df1c42b7c215acc47a34227fff06a7a2`，只读 ls-remote 核对）另用于本机已记录用量存储边界：核对 [AtomicFile.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/core/java/android/util/AtomicFile.java) 的显式调用者互斥及 finishWrite 部分失败仅日志行为，和 [BackupAgent.java](https://github.com/aosp-mirror/platform_frameworks_base/blob/0d3ff311e6e80dee7fe88a2a2cfa272ce231c3c6/core/java/android/app/backup/BackupAgent.java) 对 noBackupFilesDir 的强制排除。两版通过同一共享 Android 实现调用公开 AtomicFile/Os.fsync，在 app-private no_backup 内写专用账本，补显式 fd sync、目录 fsync、checksum/readback 和单 writer lease/CAS；未复制 AOSP 类、未改其它配置备份规则、未引入新库。此 tag 是设计来源，不冒充实际手机系统版本或已测物理落盘。保留 AOSP 2009 版权与 Apache-2.0 许可。
 
 #### [AOSP libcore](https://android.googlesource.com/platform/libcore/)
 

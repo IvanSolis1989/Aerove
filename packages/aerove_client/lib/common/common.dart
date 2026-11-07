@@ -21,6 +21,8 @@ export 'input_limits.dart';
 export 'iterable.dart';
 export 'javascript.dart';
 export 'keyboard.dart';
+export 'local_usage_ledger.dart';
+export 'native_local_usage_store.dart';
 export 'l10n_labels.dart';
 export 'layout.dart';
 export 'link.dart';

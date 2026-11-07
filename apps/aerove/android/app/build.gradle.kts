@@ -85,6 +85,7 @@ android {
     }
 
     sourceSets {
+        getByName("main").java.srcDir(rootProject.projectDir.resolve("../../../packages/aerove_client/android-shared/src/main/kotlin"))
         // Unit tests live under android/tests/ instead of each module's src/test.
         getByName("test").java.setSrcDirs(listOf("../tests/app"))
     }

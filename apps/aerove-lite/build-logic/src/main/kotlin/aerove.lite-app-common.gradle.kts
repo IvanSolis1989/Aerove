@@ -255,6 +255,7 @@ android.apply {
         sourceSets.getByName("androidTest").kotlin.srcDir(platformAppRoot.resolve("src/androidTest/java"))
     }
     sourceSets.getByName("main").assets.srcDir(platformAppRoot.resolve("src/main/java/dev/aerove/lite/editor/assets"))
+    sourceSets.getByName("main").java.srcDir(productRoot.resolve("../../packages/aerove_client/android-shared/src/main/kotlin"))
     sourceSets.getByName("main").assets.srcDir(clientHelperLicenseDirectory.get().asFile)
     testOptions { unitTests.isReturnDefaultValues = true }
     packaging {

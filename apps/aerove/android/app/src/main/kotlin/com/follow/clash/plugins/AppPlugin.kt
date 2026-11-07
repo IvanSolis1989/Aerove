@@ -49,6 +49,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
+    private var ledgerBinding: dev.aerove.usage.LocalUsageLedgerBinding? = null
 
     private var activity: Activity? = null
 
@@ -146,6 +147,9 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
 
     override fun onMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
+            "localUsageLedger" -> {
+                result.error("ACTIVATION_REQUIRED", "Ledger calls require the bound engine channel", null)
+            }
             "moveTaskToBack" -> {
                 activity?.moveTaskToBack(true)
                 result.success(true)
@@ -421,10 +425,19 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
     }
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
+        ledgerBinding?.close()
+        val attachment = dev.aerove.usage.LocalUsageLedgerStore.bind(flutterPluginBinding.applicationContext)
+        ledgerBinding = attachment
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         channel =
             MethodChannel(flutterPluginBinding.binaryMessenger, "${Components.PACKAGE_NAME}/app")
-        channel.setMethodCallHandler(this)
+        channel.setMethodCallHandler { call, result ->
+            if (call.method == "localUsageLedger") {
+                val activation = attachment.capture()
+                val arguments = call.arguments
+                reply(result) { attachment.handle(arguments, activation) }
+            } else onMethodCall(call, result)
+        }
         watchPackageChanges(flutterPluginBinding.applicationContext)
     }
 
@@ -440,6 +453,8 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        ledgerBinding?.close()
+        ledgerBinding = null
         packageChangeContext?.unregisterReceiver(packageChangeReceiver)
         packageChangeContext = null
         channel.setMethodCallHandler(null)
@@ -458,6 +473,7 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
         detachFromActivity()
         activityBinding = binding
         activity = binding.activity
+        ledgerBinding?.attachActivity(binding.activity)
         binding.addActivityResultListener(activityResultListener)
         binding.addRequestPermissionsResultListener(permissionsResultListener)
         if (isTelevision) {
@@ -469,6 +485,7 @@ class AppPlugin : FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware 
     }
 
     private fun detachFromActivity() {
+        ledgerBinding?.detachActivity()
         if (isTelevision) {
             activity?.window?.decorView?.let {
                 ViewCompat.setOnApplyWindowInsetsListener(it, null)
