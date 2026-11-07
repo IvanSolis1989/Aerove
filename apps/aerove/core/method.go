@@ -217,6 +217,7 @@ var methodHandlers = map[CoreMethod]methodHandler{
 	serviceCheckMethod:             withArguments(handleServiceCheck),
 	getTrafficMethod:               withArguments(handleGetTraffic),
 	getTotalTrafficMethod:          withArguments(handleGetTotalTraffic),
+	getNativeUsageSnapshotMethod:   nativeUsageSnapshotHandler,
 	resetTrafficMethod:             acknowledged(handleResetTraffic),
 	getConnectionsMethod:           withoutArguments(handleGetConnections),
 	getConnectionCountMethod:       withoutArguments(handleGetConnectionCount),

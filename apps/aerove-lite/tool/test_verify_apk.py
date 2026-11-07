@@ -861,8 +861,8 @@ class ApkInspectionTests(unittest.TestCase):
     def _selection_owner_proof(self):
         root=module.MEOW_ROOT
         policy=json.loads((root/'build-policy.json').read_text())
-        self.assertIn(policy['coreTests'],('policy-runtime-selection-owner-v1','policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1','policy-runtime-selection-stale-v1'))
-        cases=module.CORE_POLICY_TEST_CASES_SELECTION_STALE if policy["coreTests"]==module.SELECTION_STALE_MODE else module.CORE_POLICY_TEST_CASES_SELECTION_OWNER
+        self.assertIn(policy['coreTests'],('policy-runtime-selection-owner-v1','policy-runtime-geo-owned-v1','policy-runtime-geo-empty-v1','policy-runtime-selection-stale-v1','policy-runtime-counter-epoch-v1'))
+        cases=module.CORE_POLICY_TEST_CASES_SELECTION_STALE if policy["coreTests"] in (module.SELECTION_STALE_MODE,module.COUNTER_EPOCH_MODE) else module.CORE_POLICY_TEST_CASES_SELECTION_OWNER
         packages=tuple(sorted(set(module.CORE_PROVIDER_GENERAL_PACKAGES)|{'meow-rules'}))
         features={p:sorted({f for package,_,_,_,required,_ in cases if package==p for f in required}) for p in packages}
         commands=[]
@@ -896,21 +896,21 @@ class ApkInspectionTests(unittest.TestCase):
             buildPolicySha256=identity['meow_policy_sha256'],lockSha256Before=identity['meow_lock_sha256'],resolvedLockSha256=identity['meow_lock_sha256'],lockSha256After=identity['meow_lock_sha256'],
             source=dict(commit=module.MEOW_SOURCE,tag='v0.26.1',archiveHashBootstrapped=False,archiveSha256=identity['meow_archive_sha256'],
                 fileManifestSha256=identity['meow_file_manifest_sha256'],overlaySha256=identity['meow_overlay_sha256'],patchSha256=identity['meow_patch_sha256']),
-            coreTests=state,addedNativeTests=module.SELECTION_STALE_CASES if policy["coreTests"]==module.SELECTION_STALE_MODE else module.GEO_EMPTY_CASES if policy["coreTests"]=="policy-runtime-geo-empty-v1" else module.GEO_OWNER_CASES if policy["coreTests"]==module.GEO_OWNER_MODE else module.SELECTION_OWNER_CASES,
+            coreTests=state,addedNativeTests=module.COUNTER_EPOCH_CASES if policy["coreTests"]==module.COUNTER_EPOCH_MODE else module.SELECTION_STALE_CASES if policy["coreTests"]==module.SELECTION_STALE_MODE else module.GEO_EMPTY_CASES if policy["coreTests"]=="policy-runtime-geo-empty-v1" else module.GEO_OWNER_CASES if policy["coreTests"]==module.GEO_OWNER_MODE else module.SELECTION_OWNER_CASES,
             featureBoundaryCommand=['cargo','test','--locked','--no-default-features','--lib','capabilities::tests::','--','--test-threads=1','--nocapture'],featureBoundaryExit=0)
         return policy,state,receipt
 
     def test_selection_owner_requires_35_core_commands_and_all55_native_passes(self):
         import copy
         policy,state,receipt=self._selection_owner_proof();root=module.MEOW_ROOT
-        if policy['coreTests']==module.SELECTION_STALE_MODE:
+        if policy['coreTests'] in (module.SELECTION_STALE_MODE,module.COUNTER_EPOCH_MODE):
             self.assertEqual((36,183),(len(state['commands']),sum(c['passed'] for c in state['commands'])))
             self.assertEqual((35,182),(len(state['commands'][:35]),sum(c['passed'] for c in state['commands'][:35])))
         else:
             self.assertEqual((35,182),(len(state['commands']),sum(c['passed'] for c in state['commands'])))
         self.assertEqual(module.CORE_POLICY_TEST_CASES_PROVIDER_READER,module.CORE_POLICY_TEST_CASES_SELECTION_OWNER[:32])
         self.assertEqual(55,sum(map(len,module.SELECTION_OWNER_CASES.values())))
-        self.assertEqual({'policy-runtime-selection-owner-v1':55,'policy-runtime-geo-owned-v1':74,'policy-runtime-geo-empty-v1':77,'policy-runtime-selection-stale-v1':78}[policy['coreTests']],sum(map(len,receipt['addedNativeTests'].values())))
+        self.assertEqual({'policy-runtime-selection-owner-v1':55,'policy-runtime-geo-owned-v1':74,'policy-runtime-geo-empty-v1':77,'policy-runtime-selection-stale-v1':78,'policy-runtime-counter-epoch-v1':81}[policy['coreTests']],sum(map(len,receipt['addedNativeTests'].values())))
         # Historical selection still parses the full unchanged 35/182 table independently of current source admission.
         historical_state=copy.deepcopy(state);historical_state['mode']='policy-runtime-selection-owner-v1';historical_state['commands']=historical_state['commands'][:35]
         module.validate_core_test_receipt(historical_state,dict(policy,coreTests='policy-runtime-selection-owner-v1'),root)
@@ -976,13 +976,13 @@ class ApkInspectionTests(unittest.TestCase):
     def test_geo_rejects_old55_receipt_and_historical_modes_on_new_source(self):
         import copy
         policy,state,receipt=self._selection_owner_proof()
-        if policy['coreTests'] not in (module.GEO_OWNER_MODE,'policy-runtime-geo-empty-v1',module.SELECTION_STALE_MODE):self.skipTest('historical source identity')
+        if policy['coreTests'] not in (module.GEO_OWNER_MODE,'policy-runtime-geo-empty-v1',module.SELECTION_STALE_MODE,module.COUNTER_EPOCH_MODE):self.skipTest('historical source identity')
         root=module.MEOW_ROOT;module.validate_native_receipt(receipt,root=root)
         fifo='fifo_replacement_fails_prepare_and_commit_without_blocking_cancel_or_join'
         missing_fifo=copy.deepcopy(receipt);missing_fifo['addedNativeTests']['lib'].remove(fifo)
         self.assertEqual(sum(map(len,receipt['addedNativeTests'].values()))-1,sum(map(len,missing_fifo['addedNativeTests'].values())))
         with self.assertRaisesRegex(ValueError,'Native test proof'):module.validate_native_receipt(missing_fifo,root=root)
-        self.assertEqual(module.SELECTION_STALE_OVERLAY_SHA256 if policy['coreTests']==module.SELECTION_STALE_MODE else module.GEO_EMPTY_OVERLAY_SHA256 if policy['coreTests']=='policy-runtime-geo-empty-v1' else module.GEO_OWNER_OVERLAY_SHA256,module.native_identity(root)['meow_overlay_sha256'])
+        self.assertEqual(module.COUNTER_EPOCH_OVERLAY_SHA256 if policy['coreTests']==module.COUNTER_EPOCH_MODE else module.SELECTION_STALE_OVERLAY_SHA256 if policy['coreTests']==module.SELECTION_STALE_MODE else module.GEO_EMPTY_OVERLAY_SHA256 if policy['coreTests']=='policy-runtime-geo-empty-v1' else module.GEO_OWNER_OVERLAY_SHA256,module.native_identity(root)['meow_overlay_sha256'])
         for proof in [module.SELECTION_OWNER_CASES,module.RESOURCE_HEALTH_CASES,{},None]:
             bad=copy.deepcopy(receipt);bad['addedNativeTests']=proof
             with self.subTest(proof_count=sum(map(len,proof.values())) if proof else 0),self.assertRaises(ValueError):module.validate_native_receipt(bad,root=root)
@@ -1326,11 +1326,11 @@ class ApkInspectionTests(unittest.TestCase):
     def test_selection_stale_source_requires_78_native_36_core_and_its_own_metadata(self):
         import copy, sys
         policy,state,receipt=self._selection_owner_proof();root=module.MEOW_ROOT
-        self.assertEqual(module.SELECTION_STALE_MODE,policy['coreTests'])
-        self.assertEqual(module.SELECTION_STALE_OVERLAY_SHA256,module.native_identity(root)['meow_overlay_sha256'])
+        self.assertIn(policy['coreTests'],(module.SELECTION_STALE_MODE,module.COUNTER_EPOCH_MODE))
+        self.assertEqual(module.COUNTER_EPOCH_OVERLAY_SHA256 if policy['coreTests']==module.COUNTER_EPOCH_MODE else module.SELECTION_STALE_OVERLAY_SHA256,module.native_identity(root)['meow_overlay_sha256'])
         self.assertEqual(module.GEO_EMPTY_CASES,{target:cases[:len(module.GEO_EMPTY_CASES[target])] for target,cases in module.SELECTION_STALE_CASES.items()})
         self.assertEqual(module.CORE_POLICY_TEST_CASES_SELECTION_OWNER,module.CORE_POLICY_TEST_CASES_SELECTION_STALE[:35])
-        self.assertEqual((78,42,36,183),(sum(map(len,receipt['addedNativeTests'].values())),len(policy['targets']),len(state['commands']),sum(row['passed'] for row in state['commands'])))
+        self.assertEqual((81 if policy['coreTests']==module.COUNTER_EPOCH_MODE else 78,42,36,183),(sum(map(len,receipt['addedNativeTests'].values())),len(policy['targets']),len(state['commands']),sum(row['passed'] for row in state['commands'])))
         module.validate_native_receipt(receipt,root=root)
         for proof in [module.GEO_EMPTY_CASES,module.GEO_OWNER_CASES,module.SELECTION_OWNER_CASES]:
             bad=copy.deepcopy(receipt);bad['addedNativeTests']=proof
@@ -1450,3 +1450,22 @@ if __name__ == "__main__":
     unittest.main()
 
 
+
+class CounterEpochArtifactTests(unittest.TestCase):
+    def test_counter_source_retains_old_proofs_and_rejects_missing_new_owner_evidence(self):
+        import copy
+        policy,state,receipt=ApkInspectionTests()._selection_owner_proof()
+        self.assertEqual(module.COUNTER_EPOCH_MODE,policy['coreTests'])
+        self.assertEqual(module.COUNTER_EPOCH_OVERLAY_SHA256,module.native_identity(module.MEOW_ROOT)['meow_overlay_sha256'])
+        module.validate_native_receipt(receipt,root=module.MEOW_ROOT)
+        for target,cases in module.SELECTION_STALE_CASES.items():
+            self.assertEqual(cases,module.COUNTER_EPOCH_CASES[target][:len(cases)])
+        for name in module.COUNTER_EPOCH_CASES['lib'][len(module.SELECTION_STALE_CASES['lib']):]:
+            bad=copy.deepcopy(receipt);bad['addedNativeTests']['lib'].remove(name)
+            with self.subTest(missing=name),self.assertRaisesRegex(ValueError,'Native test proof'):
+                module.validate_native_receipt(bad,root=module.MEOW_ROOT)
+        bad=copy.deepcopy(receipt);bad['addedNativeTests']=module.SELECTION_STALE_CASES
+        with self.assertRaisesRegex(ValueError,'Native test proof'):
+            module.validate_native_receipt(bad,root=module.MEOW_ROOT)
+        with self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+            module.validate_selection_owner_source(dict(policy,overlaySha256=module.SELECTION_STALE_OVERLAY_SHA256))

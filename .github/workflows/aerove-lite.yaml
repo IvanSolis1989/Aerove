@@ -1152,6 +1152,7 @@ jobs:
           database/subscription_observation_storage_test.dart
           models/profile_test.dart
           models/subscription_observation_test.dart
+          models/native_usage_snapshot_test.dart
           models/profile_input_transaction_test.dart
           widgets/profile_edit_commit_test.dart
           providers/custom_import_test.dart
@@ -1234,7 +1235,7 @@ jobs:
             composition='Standard and explicitly selected Lite test entries; core arguments and MeowCoreHandler fixtures retain their own identities',
             results=results, appApkBuilt=False, acceptance=False)
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert len(results) == 35 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        assert len(results) == 36 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
         assert all(r.get('pixelReadback', True) for r in results.values()), 'Host shader pixels were not retained'
         PY
     - name: Compile the Flutter host and actual platform acceptance runner

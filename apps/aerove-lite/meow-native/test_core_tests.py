@@ -155,7 +155,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
             original=b'actual-upstream-lock';bridge=b'accepted-bridge-lock';resolved=b'actual-cargo-core-lock'
             (up/'Cargo.lock').write_bytes(original);(root/'Cargo.lock').write_bytes(bridge)
             policy=dict(resolveLock=True,coreTests=contract)
-            provider=contract in (core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE)
+            provider=contract in (core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE,core_tests.MODE_COUNTER_EPOCH)
             if provider:policy['targets']=list(build_policy.RESOURCE_HEALTH_TARGETS)
             if mode in ['locked','bad-seed']:
                 (root/'core-tests.lock').write_bytes(resolved if mode=='locked' else b'wrong seed')
@@ -427,7 +427,7 @@ class CoreTestAdmissionTests(unittest.TestCase):
         self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_MRS_READER),core_tests.packages_for_mode(core_tests.MODE_PROVIDER_READER))
         self.assertEqual(['rustfmt','--check','--edition','2021','.upstream/meow-rs/crates/meow-rules/src/mrs_parser.rs','.upstream/meow-rs/crates/meow-rules/src/rule_set.rs'],core_tests.MRS_FORMAT_COMMAND)
         self.assertEqual(['rustfmt','--check','--edition','2021']+['.upstream/meow-rs/crates/meow-config/src/'+name for name in ['rule_provider.rs','rule_pages.rs','rule_provider_reader.rs','rule_provider_reader_tests.rs']],core_tests.PROVIDER_READER_FORMAT_COMMAND)
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE,core_tests.MODE_COUNTER_EPOCH),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in ['success','locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail','format-fail-provider','format-mutate','format-undeclared','raise','empty-host-admission','extra-host-admission','duplicate-host-admission']:
             with self.subTest(mode=mode):self.run_fixture(mode,core_tests.MODE_PROVIDER_READER)
 
@@ -493,7 +493,7 @@ class BuildContractTests(unittest.TestCase):
             return build,root,full,calls,json.loads((root/'build/host-receipt.json').read_text())
 
     def test_each_full_suite_mode_runs_the_jni_source_gate_native_proof_and_all42_targets_before_core_tests(self):
-        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE),core_tests.FULL_NATIVE_SUITE_MODES)
+        self.assertEqual((core_tests.MODE_RESOURCE_HEALTH,core_tests.MODE_MRS_READER,core_tests.MODE_PROVIDER_READER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_GEO_OWNER,core_tests.MODE_GEO_EMPTY,core_tests.MODE_SELECTION_STALE,core_tests.MODE_COUNTER_EPOCH),core_tests.FULL_NATIVE_SUITE_MODES)
         for mode in core_tests.FULL_NATIVE_SUITE_MODES+(core_tests.MODE_PROVIDER_GENERAL,):
             with self.subTest(mode=mode):
                 build,root,full,calls,receipt=self.drive(mode)
@@ -533,6 +533,9 @@ class BuildContractTests(unittest.TestCase):
                 elif mode == core_tests.MODE_GEO_EMPTY:
                     with patch.object(build_policy,'GEO_EMPTY_OVERLAY_SHA256',core_tests.digest(metadata)):
                         self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
+                elif mode == core_tests.MODE_COUNTER_EPOCH:
+                    with patch.object(build_policy,'COUNTER_EPOCH_OVERLAY_SHA256',core_tests.digest(metadata)):
+                        self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
                 elif mode == core_tests.MODE_SELECTION_STALE:
                     with patch.object(build_policy,'SELECTION_STALE_OVERLAY_SHA256',core_tests.digest(metadata)):
                         self.assertTrue(build_policy.full_native_suite(build_policy.load_policy(root)))
@@ -562,7 +565,6 @@ class BuildContractTests(unittest.TestCase):
                 self.assertTrue(receipt['coreTests']['upstreamLockRestored']);self.assertEqual(b'actual-upstream-lock',(up/'Cargo.lock').read_bytes())
                 self.assertEqual(json.loads((root/'build/core-tests/receipt.json').read_bytes()),receipt['coreTests'])
 
-if __name__=='__main__':unittest.main()
 
 
 class GeoOwnerProofTests(unittest.TestCase):
@@ -608,8 +610,9 @@ class GeoEmptyProofTests(unittest.TestCase):
         self.assertEqual((35,182),(len(specs),sum(row['expectedPass'] for row in specs)))
         self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_GEO_OWNER),core_tests.packages_for_mode(core_tests.MODE_GEO_EMPTY))
         policy=build_policy.load_policy(build.ROOT)
-        if policy['coreTests']==core_tests.MODE_SELECTION_STALE:
-            self.assertEqual(build_policy.SELECTION_STALE_OVERLAY_SHA256,policy['overlaySha256'])
+        if policy['coreTests'] in (core_tests.MODE_SELECTION_STALE, core_tests.MODE_COUNTER_EPOCH):
+            expected=build_policy.COUNTER_EPOCH_OVERLAY_SHA256 if policy['coreTests']==core_tests.MODE_COUNTER_EPOCH else build_policy.SELECTION_STALE_OVERLAY_SHA256
+            self.assertEqual(expected,policy['overlaySha256'])
             policy=dict(policy,coreTests=core_tests.MODE_GEO_EMPTY,overlaySha256=build_policy.GEO_EMPTY_OVERLAY_SHA256)
         self.assertEqual(core_tests.MODE_GEO_EMPTY,policy['coreTests'])
         self.assertEqual('9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f',policy['overlaySha256'])
@@ -671,8 +674,9 @@ class SelectionStaleProofTests(unittest.TestCase):
         self.assertEqual((36,183),(len(new),sum(row['expectedPass'] for row in new)))
         self.assertTrue(new[-1]['exact']);self.assertEqual(1,new[-1]['expectedPass'])
         policy=build_policy.load_policy(build.ROOT)
-        self.assertEqual(core_tests.MODE_SELECTION_STALE,policy['coreTests'])
-        self.assertEqual(build_policy.SELECTION_STALE_OVERLAY_SHA256,policy['overlaySha256'])
+        self.assertIn(policy['coreTests'],(core_tests.MODE_SELECTION_STALE,core_tests.MODE_COUNTER_EPOCH))
+        expected=build_policy.COUNTER_EPOCH_OVERLAY_SHA256 if policy['coreTests']==core_tests.MODE_COUNTER_EPOCH else build_policy.SELECTION_STALE_OVERLAY_SHA256
+        self.assertEqual(expected,policy['overlaySha256'])
         for mode in [core_tests.MODE_GEO_EMPTY,core_tests.MODE_GEO_OWNER,core_tests.MODE_SELECTION_OWNER,core_tests.MODE_PROVIDER_READER]:
             with self.subTest(mode=mode),self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
                 build_policy.validate_selection_owner_source(dict(policy,coreTests=mode))
@@ -706,3 +710,41 @@ class SelectionStaleProofTests(unittest.TestCase):
                 'format-fail-provider','format-mutate','format-undeclared','empty-host-admission',
                 'extra-host-admission','duplicate-host-admission']:
             with self.subTest(outcome=outcome):fixture.run_fixture(outcome,core_tests.MODE_SELECTION_STALE)
+
+
+class CounterEpochProofTests(unittest.TestCase):
+    def test_counter_mode_preserves_stale_commands_and_requires_three_new_real_owner_tests(self):
+        import build
+        mode=core_tests.MODE_COUNTER_EPOCH
+        self.assertEqual(core_tests.entries(core_tests.MODE_SELECTION_STALE),core_tests.entries(mode))
+        self.assertEqual(core_tests.packages_for_mode(core_tests.MODE_SELECTION_STALE),core_tests.packages_for_mode(mode))
+        old=build.native_test_cases(core_tests.MODE_SELECTION_STALE);new=build.native_test_cases(mode)
+        for target,cases in old.items():self.assertEqual(cases,new[target][:len(cases)])
+        added=['real_scopes_keep_counter_epoch_across_policy_and_observer_rebind',
+            'retired_or_invalid_counter_owner_is_unavailable_not_zero',
+            'native_process_nonce_does_not_restart_at_generation_one']
+        self.assertEqual(added,new['lib'][len(old['lib']):])
+        lines=['test fixture::'+name+' ... ok' for cases in new.values() for name in cases]
+        self.assertEqual(new,build.added_native_test_proof('\n'.join(lines),mode))
+        for name in added:
+            for output in ['\n'.join(row for row in lines if row!='test fixture::'+name+' ... ok'),
+                    '\n'.join(lines+['test duplicate::'+name+' ... ok']),
+                    '\n'.join(lines).replace(name+' ... ok',name+' ... ignored')]:
+                with self.subTest(name=name),self.assertRaisesRegex(ValueError,'Native test pass'):
+                    build.added_native_test_proof(output,mode)
+        policy=build_policy.load_policy(build.ROOT)
+        self.assertEqual(mode,policy['coreTests'])
+        self.assertEqual(build_policy.COUNTER_EPOCH_OVERLAY_SHA256,policy['overlaySha256'])
+        for other in [core_tests.MODE_SELECTION_STALE,core_tests.MODE_GEO_EMPTY]:
+            with self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
+                build_policy.validate_selection_owner_source(dict(policy,coreTests=other))
+
+    def test_counter_mode_reuses_all_failure_and_lock_format_fixtures(self):
+        fixture=CoreTestAdmissionTests()
+        for outcome in ['locked','empty','nonzero','mutate','compile-fail','compile-mutate','format-fail',
+                'format-fail-provider','format-mutate','format-undeclared','empty-host-admission',
+                'extra-host-admission','duplicate-host-admission']:
+            with self.subTest(outcome=outcome):fixture.run_fixture(outcome,core_tests.MODE_COUNTER_EPOCH)
+
+
+if __name__=='__main__':unittest.main()

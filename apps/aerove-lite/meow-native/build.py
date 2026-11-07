@@ -59,7 +59,15 @@ GEO_EMPTY_CASES['lib'].extend(['empty_geo_assets_commit_host_auto_off_metadata_w
 SELECTION_STALE_CASES = {target:list(cases) for target,cases in GEO_EMPTY_CASES.items()}
 SELECTION_STALE_CASES['general_groups'].append('startup_stale_urltest_raw_fixed_survives_auto_and_unknown_user_put_is_rejected')
 
+COUNTER_EPOCH_CASES = {target:list(cases) for target,cases in SELECTION_STALE_CASES.items()}
+COUNTER_EPOCH_CASES.setdefault('lib', []).extend([
+    'real_scopes_keep_counter_epoch_across_policy_and_observer_rebind',
+    'retired_or_invalid_counter_owner_is_unavailable_not_zero',
+    'native_process_nonce_does_not_restart_at_generation_one'])
+
+
 def native_test_cases(mode):
+    if mode == 'policy-runtime-counter-epoch-v1':return COUNTER_EPOCH_CASES
     if mode == 'policy-runtime-selection-stale-v1':return SELECTION_STALE_CASES
     if mode == 'policy-runtime-geo-empty-v1':return GEO_EMPTY_CASES
     if mode == "policy-runtime-geo-owned-v1":return GEO_OWNER_CASES

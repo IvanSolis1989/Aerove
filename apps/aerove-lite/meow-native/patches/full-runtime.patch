@@ -13696,46 +13696,101 @@
 +
 --- a/crates/meow-tunnel/src/statistics.rs
 +++ b/crates/meow-tunnel/src/statistics.rs
-@@ -21,0 +22 @@
+@@ -19,10 +19,11 @@
+ use dashmap::DashMap;
+ use meow_common::atomic::{AtomicI, Int};
+ use meow_common::conn_notes::ConnNotes;
 +use meow_common::observations::serde_json;
-@@ -25 +26 @@
+ pub use meow_common::traffic::ProxyTraffic;
+ use meow_common::traffic::ProxyTrafficSource;
+ use meow_common::Metadata;
 -use parking_lot::Mutex;
 +use parking_lot::{Mutex, RwLock};
-@@ -71,0 +73,3 @@
+ use serde::Serialize;
+ use smallvec::SmallVec;
+ use smol_str::SmolStr;
+@@ -69,10 +70,16 @@
+ /// (ADR-0008 §3 scopes the zero-alloc rule to per-iteration counts).
+ #[derive(Debug, Default)]
+ pub struct ConnCounters {
 +    observation_id: Option<Arc<str>>,
 +    observation_joined: AtomicBool,
 +    udp: AtomicBool,
-@@ -75,0 +80,3 @@
+     pub upload: AtomicI,
+     pub download: AtomicI,
+     // Stored in the existing Arc so cancellation adds no setup allocation.
+     closed: AtomicBool,
 +    direct: AtomicBool,
 +    unclassified: AtomicBool,
 +    dial_complete: AtomicBool,
-@@ -83 +90 @@
+     close_notify: tokio::sync::Notify,
+     /// The connection's notes when the tunnel records them (see
+     /// `Tunnel::set_connection_notes`). Kept here, not on `ConnectionInfo`,
+@@ -80,10 +87,14 @@
+     /// `GET /connections/{id}` serializes them.
+     notes: Option<ConnNotes>,
+     /// The leaf proxy's totals (`chains[0]`), bumped alongside these.
 -    proxy: Option<Arc<ProxyTraffic>>,
 +    proxy: RwLock<Option<Arc<ProxyTraffic>>>,
-@@ -86,0 +94,4 @@
+ }
+ 
+ impl ConnCounters {
 +    pub(crate) fn mark_udp(&self) { self.udp.store(true, Ordering::Relaxed); }
 +    /// Capture the flow classification before the first relayed byte. Never a view toggle.
 +    pub fn set_direct(&self, direct: bool) { self.direct.store(direct, Ordering::Relaxed); self.unclassified.store(false, Ordering::Release); }
 +    pub fn is_direct(&self) -> bool { self.direct.load(Ordering::Relaxed) }
-@@ -167,0 +179,4 @@
+     fn close(&self) {
+         self.closed.store(true, Ordering::Release);
+         self.close_notify.notify_waiters();
+@@ -165,6 +176,10 @@
+     download_rate: Int,
+     upload_total: Int,
+     download_total: Int,
 +    proxy_upload_rate: Int,
 +    proxy_download_rate: Int,
 +    proxy_upload_total: Int,
 +    proxy_download_total: Int,
-@@ -175,0 +191 @@
+ }
+ 
+ pub struct Statistics {
+@@ -173,9 +188,14 @@
+     /// sampler derives per-interval rates as deltas of consecutive
+     /// observations and never writes these counters, so no relay increment
+     /// can land on the wrong side of a `swap(0)`-style reset (issue #357).
 +    observations: Arc<meow_common::observations::ObservationFeed>,
-@@ -178,0 +195,3 @@
++    counter_epoch: Uuid,
+     upload_total: AtomicI,
+     download_total: AtomicI,
+     traffic: Mutex<TrafficSnapshot>,
 +    proxy_upload_total: AtomicI,
 +    proxy_download_total: AtomicI,
 +    selected_proxy_view: AtomicBool,
-@@ -244,0 +264 @@
+     /// Keyed by `Uuid` (16 B Copy) — formerly `String`, which heap-allocated a
+     /// 36-byte hyphenated representation per insert.  REST handlers parse the
+     /// query path back into a `Uuid` at lookup time.
+@@ -242,9 +262,14 @@
+ impl Statistics {
+     pub fn new() -> Self {
+         Self {
 +            observations: meow_common::observations::ObservationFeed::new(Uuid::new_v4().to_string()),
-@@ -247,0 +268,3 @@
++            counter_epoch: Uuid::new_v4(),
+             upload_total: AtomicI::new(0),
+             download_total: AtomicI::new(0),
+             traffic: Mutex::new(TrafficSnapshot::default()),
 +            proxy_upload_total: AtomicI::new(0),
 +            proxy_download_total: AtomicI::new(0),
 +            selected_proxy_view: AtomicBool::new(false),
-@@ -255,0 +279,20 @@
+             connections: DashMap::new(),
+             headless_connections: OnceLock::new(),
+             recently_closed: Mutex::new(VecDeque::new()),
+@@ -253,6 +278,29 @@
+         }
+     }
+ 
 +    pub fn observation_feed(&self) -> &Arc<meow_common::observations::ObservationFeed> { &self.observations }
++
++    /// Identity of this cumulative-counter owner, independent of observers and policy epochs.
++    pub fn counter_epoch(&self) -> Uuid { self.counter_epoch }
 +
 +    fn observe_join(&self, info: &ConnectionInfo) {
 +        if info.counters.observation_joined.swap(true, Ordering::AcqRel) { return; }
@@ -13755,37 +13810,74 @@
 +            });
 +        }
 +    }
-@@ -270 +313,2 @@
+     pub fn add_upload(&self, n: Int) {
+         self.upload_total.fetch_add(n, Ordering::Relaxed);
+     }
+@@ -267,18 +315,25 @@
+     /// [`Self::connection_counters`] (or `ConnectionGuard::counters`).
+     pub fn record_upload(&self, counters: &ConnCounters, n: Int) {
+         counters.upload.fetch_add(n, Ordering::Relaxed);
 -        self.record_packet_upload(counters.proxy.as_deref(), n);
 +        self.observe_traffic(counters);
 +        if !counters.unclassified.load(Ordering::Acquire) { self.record_packet_upload_classified(counters.proxy.read().as_deref(), n, counters.is_direct()); }
-@@ -276 +320,2 @@
+     }
+ 
+     /// See [`Self::record_upload`].
+     pub fn record_download(&self, counters: &ConnCounters, n: Int) {
+         counters.download.fetch_add(n, Ordering::Relaxed);
 -        self.record_packet_download(counters.proxy.as_deref(), n);
 +        self.observe_traffic(counters);
 +        if !counters.unclassified.load(Ordering::Acquire) { self.record_packet_download_classified(counters.proxy.read().as_deref(), n, counters.is_direct()); }
-@@ -281,0 +327,5 @@
+     }
+ 
+     /// Count `n` bytes sent through `proxy` by a flow without connection
+     /// counters (UDP): the totals and the proxy's, when it has them.
+     pub fn record_packet_upload(&self, proxy: Option<&ProxyTraffic>, n: Int) {
 +        self.record_packet_upload_classified(proxy, n, false);
 +    }
 +
 +    pub fn record_packet_upload_classified(&self, proxy: Option<&ProxyTraffic>, n: Int, direct: bool) {
 +        if !direct { self.proxy_upload_total.fetch_add(n, Ordering::Relaxed); }
-@@ -289,0 +340,5 @@
+         if let Some(proxy) = proxy {
+             proxy.add_upload(n);
+         }
+@@ -287,6 +342,11 @@
+ 
+     /// See [`Self::record_packet_upload`].
+     pub fn record_packet_download(&self, proxy: Option<&ProxyTraffic>, n: Int) {
 +        self.record_packet_download_classified(proxy, n, false);
 +    }
 +
 +    pub fn record_packet_download_classified(&self, proxy: Option<&ProxyTraffic>, n: Int, direct: bool) {
 +        if !direct { self.proxy_download_total.fetch_add(n, Ordering::Relaxed); }
-@@ -350,0 +406,6 @@
+         if let Some(proxy) = proxy {
+             proxy.add_download(n);
+         }
+@@ -348,19 +408,38 @@
+         snap.download_rate = download - snap.download_total;
+         snap.upload_total = upload;
+         snap.download_total = download;
 +        let proxy_upload = self.proxy_upload_total.load(Ordering::Relaxed);
 +        let proxy_download = self.proxy_download_total.load(Ordering::Relaxed);
 +        snap.proxy_upload_rate = proxy_upload - snap.proxy_upload_total;
 +        snap.proxy_download_rate = proxy_download - snap.proxy_download_total;
 +        snap.proxy_upload_total = proxy_upload;
 +        snap.proxy_download_total = proxy_download;
-@@ -355,0 +417,19 @@
+     }
+ 
+     /// `(upload_rate, download_rate, upload_total, download_total)` as of the
+     /// last `sample_traffic` tick. Totals lag the live counters by up to one
+     /// tick, in exchange for being consistent with the rates.
+-    pub fn traffic_snapshot(&self) -> (Int, Int, Int, Int) {
 +    /// The same sampler tick, selecting a continuously collected channel. No counter reset.
 +    pub fn traffic_snapshot_for(&self, only_proxy: bool) -> (Int, Int, Int, Int) {
-+        let snap = *self.traffic.lock();
+         let snap = *self.traffic.lock();
+-        (
+-            snap.upload_rate,
+-            snap.download_rate,
+-            snap.upload_total,
+-            snap.download_total,
+-        )
 +        if only_proxy { (snap.proxy_upload_rate, snap.proxy_download_rate, snap.proxy_upload_total, snap.proxy_download_total) }
 +        else { (snap.upload_rate, snap.download_rate, snap.upload_total, snap.download_total) }
 +    }
@@ -13802,29 +13894,40 @@
 +    pub fn only_proxy_view(&self) -> bool {
 +        self.selected_proxy_view.load(Ordering::Acquire)
 +    }
-@@ -357,7 +437 @@
--        let snap = *self.traffic.lock();
--        (
--            snap.upload_rate,
--            snap.download_rate,
--            snap.upload_total,
--            snap.download_total,
--        )
++    pub fn traffic_snapshot(&self) -> (Int, Int, Int, Int) {
 +        self.traffic_snapshot_for(self.only_proxy_view())
-@@ -373,2 +447,3 @@
+     }
+ 
+     pub fn track_connection(
+@@ -370,8 +449,9 @@
+         rule_payload: SmolStr,
+         chains: SmallVec<[Arc<str>; 1]>,
+     ) -> Uuid {
 -        self.track_connection_with_counters(metadata, rule, rule_payload, chains, None)
 -            .0
 +        let (id, _) = self.track_connection_with_counters(metadata, rule, rule_payload, chains, None);
 +        if let Some(info) = self.connections.get(&id) { self.observe_join(&info); }
 +        id
-@@ -386,0 +462,2 @@
+     }
+ 
+     pub(crate) fn track_connection_with_counters(
+@@ -384,8 +464,11 @@
+     ) -> (Uuid, Arc<ConnCounters>) {
+         let uuid = Uuid::new_v4();
+         let counters = Arc::new(ConnCounters {
 +            observation_id: Some(Arc::from(uuid.to_string())),
 +            udp: AtomicBool::new(metadata.network == meow_common::Network::Udp),
-@@ -388 +465,2 @@
+             notes,
 -            proxy: chains.first().and_then(|leaf| self.proxy_counters(leaf)),
 +            proxy: RwLock::new(chains.first().and_then(|leaf| self.proxy_counters(leaf))),
 +            unclassified: AtomicBool::new(false),
-@@ -403,0 +482,15 @@
+             ..ConnCounters::default()
+         });
+         let info = ConnectionInfo {
+@@ -401,6 +484,21 @@
+         (uuid, counters)
+     }
+ 
 +    /// Commit one actual successful dial before any relay/prefix accounting.
 +    pub fn complete_dial(&self, counters: &ConnCounters, id: Option<Uuid>, outcome: &meow_common::dial_outcome::DialOutcome) -> bool {
 +        if counters.dial_complete.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err() { return false; }
@@ -13840,28 +13943,58 @@
 +    }
 +    pub fn pending_dial(&self, counters: &ConnCounters) { counters.unclassified.store(true,Ordering::Release); }
 +
-@@ -451,0 +545,6 @@
+     /// Select the lighter connection registry before listeners start. The
+     /// default remains full tracking for embedders and API consumers.
+     pub fn set_headless(&self) {
+@@ -449,6 +547,12 @@
+     /// connection task, so a close reason noted after removal (an API
+     /// close, a reload) still shows up.
+     fn remember_closed(&self, info: ConnectionInfo) {
 +        if info.counters.observation_joined.load(Ordering::Acquire) {
 +            if let Some(id)=&info.counters.observation_id {
 +                self.observations.close_request(id, || serde_json::json!({"id":info.id,"end":chrono_now(),
 +                    "upload":info.counters.upload_bytes().max(0).to_string(), "download":info.counters.download_bytes().max(0).to_string()}));
 +            }
 +        }
-@@ -541,2 +640,3 @@
+         if info.counters.notes.is_none() {
+             return;
+         }
+@@ -538,8 +642,9 @@
+         self.close_all_connections_counted();
+     }
+ 
 -    /// Request closure of all tracked TCP connections and remove their entries.
 -    /// Returns the number of closure requests, not completed socket teardowns.
 +    /// Close all registered flows; return TCP requests for the existing reload
 +    /// report. UDP is counted separately by the existing listener flush owner.
 +    /// The count is closure requests, not completed socket teardowns.
-@@ -550,2 +650,2 @@
+     pub fn close_all_connections_counted(&self) -> usize {
+         let mut closed = 0;
+         // Signal and remove under the same shard lock. A separate iteration
+@@ -547,8 +652,8 @@
+         let mut noted = Vec::new();
+         self.connections.retain(|_, info| {
+             info.counters.close();
 -            closed += 1;
 -            if info.counters.notes.is_some() {
 +            closed += usize::from(!info.counters.udp.load(Ordering::Relaxed));
 +            if info.counters.notes.is_some() || info.counters.observation_joined.load(Ordering::Acquire) {
-@@ -562 +662 @@
+                 noted.push(info.clone());
+             }
+             false
+@@ -559,7 +664,7 @@
+         if let Some(connections) = self.headless_connections.get() {
+             connections.retain(|_, counters| {
+                 counters.close();
 -                closed += 1;
 +                closed += usize::from(!counters.udp.load(Ordering::Relaxed));
-@@ -646,0 +747,151 @@
+                 false
+             });
+         }
+@@ -644,3 +749,154 @@
+         Ok(())
+     }
+ }
 +
 +impl Drop for Statistics { fn drop(&mut self) { self.observations.stop(); } }
 +

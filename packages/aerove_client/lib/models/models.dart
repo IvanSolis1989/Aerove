@@ -5,6 +5,7 @@ export 'common.dart';
 export 'config.dart';
 export 'core.dart';
 export 'ip_quality.dart';
+export 'native_usage.dart';
 export 'profile.dart';
 export 'provider_source.dart';
 export 'references.dart';

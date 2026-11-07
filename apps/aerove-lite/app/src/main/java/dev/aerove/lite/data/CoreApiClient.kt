@@ -415,6 +415,9 @@ class CoreApiClient(
         return request(path)
     }
 
+    internal suspend fun protocolUsageSnapshot(): String =
+        request(listOf("aerove", "usage-snapshot"), budgetMillis = 10_000, maxBytes = 8192)
+
     suspend fun protocolDelayHistory(coreEpoch: ULong): String {
         require(coreEpoch > 0uL) { "Invalid expected core epoch" }
         return request(listOf("aerove", "delay-history"), query = mapOf("coreEpoch" to coreEpoch.toString()))

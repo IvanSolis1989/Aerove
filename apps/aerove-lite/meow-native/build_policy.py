@@ -13,6 +13,8 @@ SELECTION_OWNER_MODE = "policy-runtime-selection-owner-v1"
 GEO_OWNER_MODE = "policy-runtime-geo-owned-v1"
 GEO_EMPTY_MODE = "policy-runtime-geo-empty-v1"
 SELECTION_STALE_MODE = "policy-runtime-selection-stale-v1"
+COUNTER_EPOCH_MODE = "policy-runtime-counter-epoch-v1"
+COUNTER_EPOCH_OVERLAY_SHA256 = "cae49527f4f1b55dffb5b57dd92a0a0916772c4f454f5538e19ef0ed62248911"
 SELECTION_STALE_OVERLAY_SHA256 = "e50a4506fe54197b97e14a34b038fed7663697cc1ef72924061377f219082dac"
 GEO_EMPTY_OVERLAY_SHA256 = "9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f"
 GEO_OWNER_OVERLAY_SHA256 = "9c9e799f482814e6b8276ef2749efb483d142f0e537ad418529dcd617c8dd655"
@@ -29,6 +31,9 @@ def validate_selection_owner_source(policy):
 
     if (policy.get("coreTests")==GEO_EMPTY_MODE) != (policy.get("overlaySha256")==GEO_EMPTY_OVERLAY_SHA256):
         raise ValueError("Empty Geo source requires its exact approved proof mode/overlay")
+
+    if (policy.get("coreTests")==COUNTER_EPOCH_MODE) != (policy.get("overlaySha256")==COUNTER_EPOCH_OVERLAY_SHA256):
+        raise ValueError("Counter epoch source requires its exact approved proof mode/overlay")
 
     if (policy.get("coreTests")==SELECTION_STALE_MODE) != (policy.get("overlaySha256")==SELECTION_STALE_OVERLAY_SHA256):
         raise ValueError("Stale selection source requires its exact approved proof mode/overlay")

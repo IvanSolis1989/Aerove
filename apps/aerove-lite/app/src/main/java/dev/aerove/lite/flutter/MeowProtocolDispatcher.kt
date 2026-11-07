@@ -282,7 +282,7 @@ class MeowProtocolDispatcher(
             "validateProxies", "validateFilters", "matchFilters", "cancelFilterMatch", "convertProxies", "encodeShareLinks", "decodeShareLinks",
             "updateConfig", "getConfig", "getProfileBase", "getProfileOutbounds", "getProxyDefinition",
             "buildProfile", "dumpRuleSet", "compileRuleSet", "getProxies", "changeProxy", "getTraffic",
-            "getTotalTraffic", "resetTraffic", "asyncTestDelay", "getLatestDelays", "probe", "outboundIp",
+            "getTotalTraffic", "getNativeUsageSnapshot", "resetTraffic", "asyncTestDelay", "getLatestDelays", "probe", "outboundIp",
             "serviceCheck", "getMemoryStats", "getConnections", "getConnectionCount", "closeConnection",
             "closeConnections", "resetConnections", "clearDnsCache", "startLog", "stopLog", "setUiTelemetryActive",
             "getExternalProviders", "getExternalProvider", "updateGeoData", "sideLoadExternalProvider",

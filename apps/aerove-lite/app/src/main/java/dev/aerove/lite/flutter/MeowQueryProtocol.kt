@@ -78,6 +78,7 @@ internal class MeowQueryProtocol(private val client: CoreApiClient,
         "resetConnections" -> { noArguments(arguments); client.resetConnections(); true }
         "clearDnsCache" -> { noArguments(arguments); client.clearDnsCache(); true }
         "getTraffic", "getTotalTraffic" -> telemetry.traffic(protocolBoolean(arguments, "onlyStatisticsProxy"), method == "getTotalTraffic")
+        "getNativeUsageSnapshot" -> { noArguments(arguments); protocolObject(client.protocolUsageSnapshot()) }
         "getMemoryStats" -> {
             noArguments(arguments)
             missing(method, "Meow RSS has no producers for heapInuse, heapIdle, stackInuse and runtimeOther")

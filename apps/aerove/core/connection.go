@@ -16,6 +16,13 @@ func handleGetTotalTraffic(onlyStatisticsProxy bool) Traffic {
 	return Traffic{Up: up, Down: down}
 }
 
+func nativeUsageSnapshotHandler(call *MethodCall) (any, error) {
+	if len(call.Arguments) != 0 && string(call.Arguments) != "null" {
+		return nil, &MethodError{Code: "invalid_arguments", Message: "getNativeUsageSnapshot takes no arguments"}
+	}
+	return statistic.DefaultManager.CounterSnapshot()
+}
+
 func handleResetTraffic() {
 	statistic.DefaultManager.ResetStatistic()
 }

@@ -587,6 +587,9 @@ class CoreController {
     return _interface.getTotalTraffic(onlyStatisticsProxy);
   }
 
+  Future<NativeUsageSnapshot> getNativeUsageSnapshot() =>
+      _interface.getNativeUsageSnapshot();
+
   Future<CoreMemoryStats?> getMemoryStats() async {
     return _interface.getMemoryStats();
   }

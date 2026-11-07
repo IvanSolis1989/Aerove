@@ -373,7 +373,7 @@ internal class MeowEngineAttachment(homeDir: File, private val store: RuntimeHan
     private fun checkOpen() { if (closed) throw MeowProtocolFailure("closed", "Meow attachment is closed") }
     private companion object {
         val QUERY_METHODS = setOf("getProxies", "getProxyDefinition", "getConnections", "getConnectionCount",
-            "closeConnection", "closeConnections", "resetConnections", "clearDnsCache", "getTraffic", "getTotalTraffic",
+            "closeConnection", "closeConnections", "resetConnections", "clearDnsCache", "getTraffic", "getTotalTraffic", "getNativeUsageSnapshot",
             "getMemoryStats", "getLatestDelays", "asyncTestDelay", "changeProxy", "watchRoute", "checkRoutes",
             "getExternalProviders", "getExternalProvider", "startLog", "stopLog", "resetTraffic", "probe", "outboundIp", "serviceCheck")
     }

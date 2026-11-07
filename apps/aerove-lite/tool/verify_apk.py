@@ -230,10 +230,19 @@ CORE_POLICY_TEST_PACKAGES = tuple(sorted({package for package, _, _ in CORE_POLI
 
 SELECTION_STALE_CASES = {target:list(cases) for target,cases in GEO_EMPTY_CASES.items()}
 SELECTION_STALE_CASES['general_groups'].append('startup_stale_urltest_raw_fixed_survives_auto_and_unknown_user_put_is_rejected')
+
+COUNTER_EPOCH_CASES = {target:list(cases) for target,cases in SELECTION_STALE_CASES.items()}
+COUNTER_EPOCH_CASES.setdefault('lib', []).extend([
+    'real_scopes_keep_counter_epoch_across_policy_and_observer_rebind',
+    'retired_or_invalid_counter_owner_is_unavailable_not_zero',
+    'native_process_nonce_does_not_restart_at_generation_one'])
+
 CORE_POLICY_TEST_CASES_SELECTION_STALE = CORE_POLICY_TEST_CASES_SELECTION_OWNER + (('meow-proxy', 'group::urltest::tests::startup_stale_raw_fixed_uses_auto_without_flush_then_provider_reappearance_restores_pin', 1, 'lib', (), True),)
 
 GEO_EMPTY_MODE = "policy-runtime-geo-empty-v1"
 SELECTION_STALE_MODE = "policy-runtime-selection-stale-v1"
+COUNTER_EPOCH_MODE = "policy-runtime-counter-epoch-v1"
+COUNTER_EPOCH_OVERLAY_SHA256 = "cae49527f4f1b55dffb5b57dd92a0a0916772c4f454f5538e19ef0ed62248911"
 SELECTION_STALE_OVERLAY_SHA256 = "e50a4506fe54197b97e14a34b038fed7663697cc1ef72924061377f219082dac"
 GEO_EMPTY_OVERLAY_SHA256 = "9ccf9c84fa296b7ea837251837d66ebbb327894929931f001cacb6ee9af63a8f"
 GEO_OWNER_MODE = "policy-runtime-geo-owned-v1"
@@ -243,6 +252,8 @@ SELECTION_OWNER_OVERLAY_SHA256 = "ed52066f30c5067b1a95f78e4dfd2a4bd69ac10f4fc882
 
 def validate_selection_owner_source(policy):
     """The fixed selection overlay and its stronger proof mode must travel together."""
+    if (policy.get("coreTests") == COUNTER_EPOCH_MODE) != (policy.get("overlaySha256") == COUNTER_EPOCH_OVERLAY_SHA256):
+        raise ValueError("Counter epoch source requires its exact approved proof mode/overlay")
     if (policy.get("coreTests") == SELECTION_STALE_MODE) != (policy.get("overlaySha256") == SELECTION_STALE_OVERLAY_SHA256):
         raise ValueError("Stale selection source requires its exact approved proof mode/overlay")
     if (policy.get("coreTests") == GEO_EMPTY_MODE) != (policy.get("overlaySha256") == GEO_EMPTY_OVERLAY_SHA256):
@@ -276,7 +287,8 @@ def native_identity(root=MEOW_ROOT):
             "policy-runtime-selection-owner-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
             "policy-runtime-geo-owned-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
             "policy-runtime-geo-empty-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
-            "policy-runtime-selection-stale-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
+            "policy-runtime-selection-stale-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS,
+            "policy-runtime-counter-epoch-v1": HOST_POLICY_RUNTIME_RESOURCE_HEALTH_TARGETS}.get(policy["coreTests"])
         if (not approved_targets
                 or tuple(policy.get("targets", ())) != approved_targets
                 or policy.get("featureBoundary") != "capabilities-no-default"
@@ -339,7 +351,7 @@ def validate_native_receipt(receipt_path, abi=None, image=None, root=MEOW_ROOT, 
         command += ["--", "--test-threads=1", "--nocapture"]
         if receipt.get("command") != command or receipt.get("androidTarget") is not None or receipt.get("representativeTargets") != targets:
             raise ValueError("Meow host receipt did not run the complete approved suite")
-        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1") and receipt.get("addedNativeTests") != (SELECTION_STALE_CASES if policy.get("coreTests") == SELECTION_STALE_MODE else GEO_EMPTY_CASES if policy.get("coreTests") == GEO_EMPTY_MODE else GEO_OWNER_CASES if policy.get("coreTests") == "policy-runtime-geo-owned-v1" else SELECTION_OWNER_CASES if policy.get("coreTests") == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES):
+        if policy.get("coreTests") in ("policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1") and receipt.get("addedNativeTests") != (COUNTER_EPOCH_CASES if policy.get("coreTests") == COUNTER_EPOCH_MODE else SELECTION_STALE_CASES if policy.get("coreTests") == SELECTION_STALE_MODE else GEO_EMPTY_CASES if policy.get("coreTests") == GEO_EMPTY_MODE else GEO_OWNER_CASES if policy.get("coreTests") == "policy-runtime-geo-owned-v1" else SELECTION_OWNER_CASES if policy.get("coreTests") == "policy-runtime-selection-owner-v1" else RESOURCE_HEALTH_CASES):
             raise ValueError("Meow host receipt lacks authored resource/health Native test proof")
         if "featureBoundary" in policy:
             boundary_command = ["cargo", "test", "--locked", "--no-default-features", "--lib",
@@ -383,19 +395,19 @@ def _validate_core_test_proof(state, policy, root):
     overlay = json.loads((root / policy["overlay"]).read_text())
     upstream_lock = overlay.get("files", {}).get("Cargo.lock")
     mode = policy["coreTests"]
-    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1"):
+    if mode not in ("policy-runtime-v1", "policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1"):
         reject()
     cases = (tuple((package, name, count, "lib", ()) for package, name, count in CORE_POLICY_TEST_CASES)
         if mode == "policy-runtime-v1" else CORE_POLICY_TEST_CASES_OBSERVABILITY
         if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_CASES_V2)
-    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
+    if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1"):cases = CORE_POLICY_TEST_CASES_PROVIDER_GENERAL
     if mode == "policy-runtime-mrs-reader-v1":cases = CORE_POLICY_TEST_CASES_MRS_READER
     if mode == "policy-runtime-provider-reader-v1":cases = CORE_POLICY_TEST_CASES_PROVIDER_READER
-    if mode in ("policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1") :cases = CORE_POLICY_TEST_CASES_SELECTION_OWNER
+    if mode in ("policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1") :cases = CORE_POLICY_TEST_CASES_SELECTION_OWNER
     cases = tuple(r if len(r)==6 else r+(False,) for r in cases)
-    if mode == SELECTION_STALE_MODE:cases = CORE_POLICY_TEST_CASES_SELECTION_STALE
-    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
-    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1"):packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
+    if mode in (SELECTION_STALE_MODE, COUNTER_EPOCH_MODE):cases = CORE_POLICY_TEST_CASES_SELECTION_STALE
+    packages = CORE_PROVIDER_GENERAL_PACKAGES if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1") else CORE_OBSERVABILITY_PACKAGES if mode == "policy-runtime-observability-v1" else CORE_POLICY_TEST_PACKAGES
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1"):packages = tuple(sorted(set(CORE_PROVIDER_GENERAL_PACKAGES)|{"meow-rules"}))
     if (state.get("mode") != mode or state.get("accepted") is not True
             or state.get("upstreamLockRestored") is not True or not is_hash(upstream_lock)
             or state.get("upstreamLockBeforeSha256") != upstream_lock
@@ -430,17 +442,17 @@ def _validate_core_test_proof(state, policy, root):
             command += [name]
         command += ["--", "--test-threads=1", "--nocapture"]
         if exact:command += ["--exact"]
-        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
+        if mode in ("policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1") and (not isinstance(entry, dict) or type(entry.get("exact")) is not bool or entry["exact"] != exact):
             reject()
         if (not isinstance(entry, dict) or entry.get("package") != package or entry.get("filter") != name
-                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1") and (entry.get("target") != target or "filter" not in entry))
+                or (mode in ("policy-runtime-v2", "policy-runtime-traffic-v1", "policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1") and (entry.get("target") != target or "filter" not in entry))
                 or entry.get("command") != command or not exited(entry.get("exit"))
                 or type(entry.get("expectedPass")) is not int or entry["expectedPass"] != count
                 or type(entry.get("passed")) is not int or entry["passed"] != count
                 or not is_hash(entry.get("stdoutSha256")) or not is_hash(entry.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1"):
+    if mode in ("policy-runtime-observability-v1", "policy-runtime-provider-general-v1", "policy-runtime-resource-health-v1", "policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1"):
         compile_check = state.get("compileCheck")
         if (not isinstance(compile_check, dict)
                 or compile_check.get("command") != CORE_OBSERVABILITY_COMPILE_COMMAND
@@ -449,7 +461,7 @@ def _validate_core_test_proof(state, policy, root):
                 or not is_hash(compile_check.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1"):
+    if mode in ("policy-runtime-mrs-reader-v1", "policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1"):
         format_check = state.get("formatCheck")
         if (not isinstance(format_check, dict)
                 or format_check.get("command") != CORE_MRS_READER_FORMAT_COMMAND
@@ -458,7 +470,7 @@ def _validate_core_test_proof(state, policy, root):
                 or not is_hash(format_check.get("stderrSha256"))):
             reject()
 
-    if mode in ("policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1"):
+    if mode in ("policy-runtime-provider-reader-v1", "policy-runtime-selection-owner-v1", "policy-runtime-geo-owned-v1", "policy-runtime-geo-empty-v1", "policy-runtime-selection-stale-v1", "policy-runtime-counter-epoch-v1"):
         provider_format = state.get("providerFormatCheck")
         if (not isinstance(provider_format, dict)
                 or provider_format.get("command") != CORE_PROVIDER_READER_FORMAT_COMMAND

@@ -1,0 +1,166 @@
+diff --git a/tunnel/statistic/manager.go b/tunnel/statistic/manager.go
+index eeb3cd4f..678ea80f 100644
+--- a/tunnel/statistic/manager.go
++++ b/tunnel/statistic/manager.go
+@@ -2,6 +2,7 @@ package statistic
+ 
+ import (
+ 	"os"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/metacubex/mihomo/common/atomic"
+@@ -26,6 +27,9 @@ func init() {
+ }
+ 
+ type Manager struct {
++	counterMu          sync.Mutex
++	counterEpoch       string
++	counterError       error
+ 	connections        xsync.Map[string, Tracker]
+ 	uploadTemp         atomic.Int64
+ 	downloadTemp       atomic.Int64
+@@ -121,6 +125,9 @@ func (m *Manager) updateMemory() {
+ }
+ 
+ func (m *Manager) ResetStatistic() {
++	m.counterMu.Lock()
++	defer m.counterMu.Unlock()
++	m.counterEpoch, m.counterError = newUsageIdentity()
+ 	m.uploadTemp.Store(0)
+ 	m.uploadBlip.Store(0)
+ 	m.uploadTotal.Store(0)
+diff --git a/tunnel/statistic/usage_snapshot.go b/tunnel/statistic/usage_snapshot.go
+new file mode 100644
+index 00000000..b26c2d86 100644
+--- /dev/null
++++ b/tunnel/statistic/usage_snapshot.go
+@@ -0,0 +1,63 @@
++package statistic
++
++import (
++	"crypto/rand"
++	"encoding/hex"
++	"errors"
++	"strconv"
++	"time"
++)
++
++var usageProcess = func() struct { id string; err error; started time.Time } {
++	id, err := newUsageIdentity()
++	return struct { id string; err error; started time.Time }{id, err, time.Now()}
++}()
++
++func newUsageIdentity() (string, error) {
++	var bytes [16]byte
++	if _, err := rand.Read(bytes[:]); err != nil { return "", err }
++	return hex.EncodeToString(bytes[:]), nil
++}
++
++type UsageCounters struct {
++	Up string `json:"up"`
++	Down string `json:"down"`
++}
++
++type UsageSnapshot struct {
++	SchemaVersion int `json:"schemaVersion"`
++	ProcessInstance string `json:"processInstance"`
++	CounterEpoch string `json:"counterEpoch"`
++	Kind string `json:"kind"`
++	StartedNanos string `json:"startedNanos"`
++	CompletedNanos string `json:"completedNanos"`
++	Final bool `json:"final"`
++	All UsageCounters `json:"all"`
++	Proxy UsageCounters `json:"proxy"`
++}
++
++// Snapshot and real reset exclude each other; relay atomic adds are unchanged.
++// The four loads span an observation interval, not one simultaneous traffic cut.
++func (m *Manager) CounterSnapshot() (UsageSnapshot, error) {
++	m.counterMu.Lock()
++	defer m.counterMu.Unlock()
++	if usageProcess.err != nil { return UsageSnapshot{}, usageProcess.err }
++	if m.counterEpoch == "" && m.counterError == nil {
++		m.counterEpoch, m.counterError = newUsageIdentity()
++	}
++	if m.counterError != nil { return UsageSnapshot{}, m.counterError }
++	started := time.Since(usageProcess.started).Nanoseconds()
++	au, ad := m.uploadTotal.Load(), m.downloadTotal.Load()
++	pu, pd := m.proxyUploadTotal.Load(), m.proxyDownloadTotal.Load()
++	completed := time.Since(usageProcess.started).Nanoseconds()
++	if au < 0 || ad < 0 || pu < 0 || pd < 0 {
++		return UsageSnapshot{}, errors.New("usage counter overflow or unavailable")
++	}
++	return UsageSnapshot{
++		SchemaVersion: 1, ProcessInstance: usageProcess.id, CounterEpoch: m.counterEpoch,
++		Kind: "sequential-atomic-cumulative", StartedNanos: strconv.FormatInt(started, 10),
++		CompletedNanos: strconv.FormatInt(completed, 10), Final: false,
++		All: UsageCounters{strconv.FormatInt(au, 10), strconv.FormatInt(ad, 10)},
++		Proxy: UsageCounters{strconv.FormatInt(pu, 10), strconv.FormatInt(pd, 10)},
++	}, nil
++}
+diff --git a/tunnel/statistic/usage_snapshot_test.go b/tunnel/statistic/usage_snapshot_test.go
+new file mode 100644
+index 00000000..2e7cb3f4 100644
+--- /dev/null
++++ b/tunnel/statistic/usage_snapshot_test.go
+@@ -0,0 +1,59 @@
++package statistic
++
++import (
++	"fmt"
++	"os"
++	"os/exec"
++	"strings"
++	"sync"
++	"testing"
++)
++
++func TestCounterSnapshotTracksRealManagerAndReset(t *testing.T) {
++	m := &Manager{}
++	m.PushUploaded(true, 10); m.PushDownloaded(true, 20)
++	m.PushUploaded(false, 30); m.PushDownloaded(false, 40)
++	before, err := m.CounterSnapshot(); if err != nil { t.Fatal(err) }
++	if before.All != (UsageCounters{"40", "60"}) || before.Proxy != (UsageCounters{"30", "40"}) { t.Fatal(before) }
++	// Rebinding a consumer to this same manager does not allocate a new epoch.
++	again, err := m.CounterSnapshot(); if err != nil { t.Fatal(err) }
++	if before.ProcessInstance != again.ProcessInstance || before.CounterEpoch != again.CounterEpoch { t.Fatal("observer changed native owner") }
++	m.ResetStatistic()
++	after, err := m.CounterSnapshot(); if err != nil { t.Fatal(err) }
++	if after.CounterEpoch == before.CounterEpoch || after.ProcessInstance != before.ProcessInstance { t.Fatal("real reset did not replace only the counter epoch") }
++	if after.All != (UsageCounters{"0", "0"}) || after.Proxy != (UsageCounters{"0", "0"}) { t.Fatal(after) }
++	m.PushUploaded(false, 7)
++	last, err := m.CounterSnapshot(); if err != nil { t.Fatal(err) }
++	if last.CounterEpoch != after.CounterEpoch || last.All.Up != "7" || last.Proxy.Up != "7" { t.Fatal(last) }
++}
++
++func TestCounterSnapshotCannotMixResetStores(t *testing.T) {
++	m := &Manager{}
++	m.PushUploaded(false, 123); m.PushDownloaded(false, 123)
++	before, err := m.CounterSnapshot(); if err != nil { t.Fatal(err) }
++	var reset sync.WaitGroup
++	reset.Add(1); go func() { defer reset.Done(); m.ResetStatistic() }()
++	for i := 0; i < 2000; i++ {
++		value, err := m.CounterSnapshot(); if err != nil { t.Fatal(err) }
++		want := "0"; if value.CounterEpoch == before.CounterEpoch { want = "123" }
++		if value.All != (UsageCounters{want, want}) || value.Proxy != (UsageCounters{want, want}) { t.Fatal("mixed reset", value) }
++	}
++	reset.Wait()
++}
++
++func TestCounterSnapshotUnavailableDoesNotReturnZero(t *testing.T) {
++	m := &Manager{}
++	m.PushUploaded(false, -1)
++	if _, err := m.CounterSnapshot(); err == nil { t.Fatal("negative/overflowed native counter appeared available") }
++}
++
++func TestCounterProcessInstance(t *testing.T) {
++	if os.Getenv("AEROVE_USAGE_ID_CHILD") == "1" {
++		fmt.Print(usageProcess.id); os.Exit(0)
++	}
++	command := exec.Command(os.Args[0], "-test.run=^TestCounterProcessInstance$")
++	command.Env = append(os.Environ(), "AEROVE_USAGE_ID_CHILD=1")
++	output, err := command.Output(); if err != nil { t.Fatal(err) }
++	other := strings.TrimSpace(string(output))
++	if len(other) != 32 || other == usageProcess.id { t.Fatalf("process identity reused: %q", other) }
++}
