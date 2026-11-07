@@ -66,6 +66,7 @@ pub struct OwnedRuntime {
     cancel: CancellationToken, scope: Mutex<Option<Arc<OwnedLoadScope>>>, network: Mutex<Option<NetworkContext>>,
     status: watch::Sender<OwnedStatus>, listeners: Mutex<ListenerStatus>, commands: mpsc::Sender<Command>,
     failure: Mutex<Option<crate::runtime::Failure>>,
+    original_failure: Mutex<Option<Arc<io::Error>>>,
     startup_diagnostic: AtomicBool,
     safe_startup: crate::startup_diagnostic::Shared,
     task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
@@ -163,7 +164,7 @@ impl OwnedRuntime {
             tun_ready: false, user_listeners_ready: false, listening: false, core_ready: false });
         let (commands, receiver) = mpsc::channel(8);
         let owner = Arc::new(Self { plane, policies, probes, processes, network_slot, network_policy: Mutex::new(None), geo:Mutex::new(None), user_controller: Mutex::new(None), statistics: Mutex::new(None), tunnel_capture, cancel: cancel.clone(), scope: Mutex::new(Some(scope.clone())), network: Mutex::new(Some(network.clone())),
-            status, commands, failure: Mutex::new(None), safe_startup, startup_diagnostic: AtomicBool::new(false), listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
+            status, commands, failure: Mutex::new(None), original_failure: Mutex::new(None), safe_startup, startup_diagnostic: AtomicBool::new(false), listeners: Mutex::new(ListenerStatus { listening: false, tun_ready: false,
                 user_listeners_ready: false, active_ports: Vec::new(), core_epoch: generation.to_string(),
                 only_statistics_proxy: crate::statistics_policies::StatisticsPolicies::from_host(&plan.host_policy_yaml)?, unified_delay: initial_probe.unified_delay, tcp_concurrent: initial_probe.tcp_concurrent, find_process_mode: find_mode }),
             task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0), network_state: Mutex::new(crate::network_api::StateValue::default()), network_fence: Arc::new(Mutex::new(())),
@@ -176,7 +177,12 @@ impl OwnedRuntime {
         let task = runtime.spawn(async move {
             let mut core = None;
             let serving = Box::pin(worker.serve(json, plan, fd, network.clone(), scope.clone(), generation, register, receiver, &mut core));
-            let result = AssertUnwindSafe(serving).catch_unwind().await;
+            let result = AssertUnwindSafe(serving).catch_unwind().await
+                .map(|result| result.map_err(Arc::new));
+            if let Ok(Err(cause)) = &result {
+                let mut original = worker.original_failure.lock();
+                if original.is_none() { *original = Some(cause.clone()); }
+            }
             let stopping = cancel.is_cancelled();
             match &result {
                 Ok(Err(cause)) if !stopping => worker.safe_startup.lock().record_io(cause),
@@ -194,7 +200,7 @@ impl OwnedRuntime {
             });
             cleanup_details.insert("stopping".into(),stopping.into());
             if !stopping && result.as_ref().ok().and_then(|outcome| outcome.as_ref().err())
-                .and_then(|cause| cause.get_ref()).is_some_and(|cause| cause.is::<crate::runtime::Failure>()) {
+                .is_some_and(|cause| crate::runtime::failure_detail(cause).is_some()) {
                 worker.startup_diagnostic.store(true, Ordering::Release);
             }
             worker.plane.cancel(); scope.cancel();
@@ -259,7 +265,7 @@ impl OwnedRuntime {
                 (Err(_), _, _) => Some("ownedRuntimePanicked".to_owned()),
                 (Ok(Err(failure)), _, _) if !stopping => {
                     // Cleanup/owner failures take priority over the selected serve error.
-                    if let Some(detail) = failure.get_ref().and_then(|cause| cause.downcast_ref::<crate::runtime::Failure>()) {
+                    if let Some(detail) = crate::runtime::failure_detail(&failure) {
                         *worker.failure.lock() = Some(detail.clone());
                     }
                     Some(failure.to_string())
@@ -314,6 +320,8 @@ impl OwnedRuntime {
         status
     }
     pub(crate) fn failure(&self) -> Option<crate::runtime::Failure> { self.failure.lock().clone() }
+    /// Native owned diagnostic/replay only. No public log or serialized source error.
+    pub(crate) fn original_failure(&self) -> Option<Arc<io::Error>> { self.original_failure.lock().clone() }
     pub(crate) fn joining_startup_diagnostic(&self) -> bool { self.startup_diagnostic.load(Ordering::Acquire) }
     pub fn subscribe(&self) -> watch::Receiver<OwnedStatus> { self.status.subscribe() }
     pub async fn ready(&self) -> io::Result<OwnedStatus> {
@@ -389,12 +397,16 @@ impl OwnedRuntime {
                 let provider_config = root.as_ref().is_some_and(|root|root.get("proxy-providers").is_some() || root.get("rule-providers").is_some());
                 let general_group = root.as_ref().and_then(|root|root.get("proxy-groups")).and_then(serde_yaml::Value::as_sequence)
                     .is_some_and(|groups|groups.iter().any(|group|matches!(group.get("type").and_then(serde_yaml::Value::as_str),Some("relay"|"load-balance"))));
-                if provider_config { provider_configuration_error(format!("{cause:#}")) }
-                else if root.as_ref().and_then(|root|root.get("proxies")).and_then(serde_yaml::Value::as_sequence).is_some_and(|nodes|nodes.iter().any(|node|node.get("dialer-proxy").is_some())) {
-                    io::Error::other(crate::runtime::Failure { code:"managedDialerProxyGraphRejected",field:Some("proxies.dialer-proxy".into()),reason:Some(format!("{cause:#}")) })
-                }
-                else if general_group { io::Error::other(crate::runtime::Failure { code:"managedConfigRejected",field:Some("engineYaml".into()),reason:Some(format!("{cause:#}")) }) }
-                else { error("invalidConfig") }
+                let context = if provider_config {
+                    crate::runtime::Failure { code:"providerConfigRejected",field:Some("engineYaml".into()),reason:Some(format!("{cause:#}")) }
+                } else if root.as_ref().and_then(|root|root.get("proxies")).and_then(serde_yaml::Value::as_sequence).is_some_and(|nodes|nodes.iter().any(|node|node.get("dialer-proxy").is_some())) {
+                    crate::runtime::Failure { code:"managedDialerProxyGraphRejected",field:Some("proxies.dialer-proxy".into()),reason:Some(format!("{cause:#}")) }
+                } else if general_group {
+                    crate::runtime::Failure { code:"managedConfigRejected",field:Some("engineYaml".into()),reason:Some(format!("{cause:#}")) }
+                } else {
+                    crate::runtime::Failure { code:"configLoadFailed",field:Some("engineYaml".into()),reason:Some(format!("{cause:#}")) }
+                };
+                crate::runtime::failure_with_source(context, cause)
             })?,
         };
         if self.cancel.is_cancelled() { return Ok(()); }
@@ -1371,14 +1383,19 @@ mod cleanup_ack_tests {
                 Err(cause) => cause,
                 Ok(_) => panic!("missing injected dialer unexpectedly became ready"),
             };
-            let detail = failure.get_ref().unwrap().downcast_ref::<crate::runtime::Failure>().unwrap();
+            let detail = crate::runtime::failure_detail(&failure).unwrap();
             assert_eq!(detail.code,"managedDialerProxyGraphRejected");
             let safe = serde_json::to_value(&*owner.safe_startup.lock()).unwrap();
             assert_eq!(safe["primary"]["stage"], "configLoad");
             assert_eq!(safe["primary"]["code"], "managedDialerProxyGraphRejected");
             assert!(!safe.to_string().contains("MISSING"));
             assert_eq!(detail.field.as_deref(),Some("proxies.dialer-proxy"));
-            assert!(detail.reason.as_deref().unwrap().contains("MISSING"));
+            assert!(detail.reason.is_none());
+            let original = owner.original_failure().expect("original loader cause retained by owner");
+            assert!(original.get_ref().unwrap().source().expect("original Core source retained").to_string().contains("MISSING"));
+            let private = crate::runtime::retained_failure_context(&original).unwrap();
+            assert_eq!(private.field.as_deref(),Some("proxies.dialer-proxy"));
+            assert!(private.reason.as_deref().unwrap().contains("MISSING"));
             let status = timeout(Duration::from_secs(5),owner.wait()).await.unwrap().unwrap();
             assert_eq!(status.state,"Failed"); assert_eq!(status.error,Some(failure.to_string()));
             // Factory validation rejects MISSING before a CoreApi/control exists.

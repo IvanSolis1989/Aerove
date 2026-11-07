@@ -27,6 +27,7 @@ trusttunnel = ["meow-config/trusttunnel"]
 trusttunnel-h3 = ["trusttunnel", "meow-config/trusttunnel-h3"]
 
 [dependencies]
+anyhow = "=1.0.104"
 meow-transport = { path = ".upstream/meow-rs/crates/meow-transport", default-features = false, features = ["tls"] }
 regex = "1"
 url = "2"

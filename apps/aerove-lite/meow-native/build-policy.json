@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "manifestSha256": "4f1ef48becafe0f3dfcf76977eb95d78802c7736a4ae401c83215db36500f286",
+  "manifestSha256": "122b00b1755c7d22be387e185632b04c68c8736ec1f20a5fa703a9a232f7650d",
   "resolveLock": false,
-  "expectedLockBeforeSha256": "34d31d301df088d2b0e5beb46410df3c887a27ef491e80f1a927e2efc4fc076d",
+  "expectedLockBeforeSha256": "c86986578ea25e1a591eff6790c7e0c5c2f6c2b2494665e211faad03f2d67dee",
   "targets": [
     "lib",
     "anytls_owned_shutdown",

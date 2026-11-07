@@ -42,7 +42,7 @@ impl Diagnostic {
     pub fn running(&mut self) { self.stage = Stage::Running; self.completed = true; }
     pub fn record_io(&mut self, cause: &io::Error) {
         if self.completed || self.primary.is_some() { return; }
-        let code = cause.get_ref().and_then(|e| e.downcast_ref::<crate::runtime::Failure>())
+        let code = crate::runtime::failure_detail(cause)
             .map(|e| allowed_code(e.code)).unwrap_or_else(|| self.stage.fallback());
         self.primary = Some(Primary { stage: self.stage, code, io_kind: Some(io_kind(cause.kind())) });
     }

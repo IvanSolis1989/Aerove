@@ -1527,6 +1527,11 @@ Lite 独立平台 runner 的 runtime 另与目标 App 对齐现有 Lifecycle 2.1
 
 **许可证、署名与证据：** MIT；固定提交中的小写 [`license`](https://github.com/sindresorhus/github-markdown-css/blob/265b22aa79815418195f453352456d5784bb7580/license) 文件。
 
+#### [dtolnay/anyhow](https://github.com/dtolnay/anyhow)
+
+- 固定版本：[`1.0.104`](https://github.com/dtolnay/anyhow/tree/1.0.104)，许可 `MIT OR Apache-2.0`（[该版本 Cargo 元数据](https://github.com/dtolnay/anyhow/blob/1.0.104/Cargo.toml)）。复用现有锁内版本为桥接层显式依赖，不替换 Core 版本或解析器。
+- 用途与采用方式：CI312 ConfigLoad 私有诊断保留原 `anyhow::Error` 本体，按该版本公开 [`chain` / `as_ref` / `downcast_ref`](https://docs.rs/anyhow/1.0.104/anyhow/struct.Error.html) 借用真实 typed 根和 context/backtrace；不使用 `into_boxed_dyn_error` 冒充无损根 downcast。公共错误继续采用有限安全投影，私有原因不写公共日志。仅参照并调用 API，未复制上游实现；实际 Native 运行验证单独记录。
+
 ### 来源登记边界
 
 版本、commit、许可证分别按表中对应证据记录；缺失信息不从仓库名或最新上游状态推定。`Cargo.lock`/Maven/Pub锁定值标识依赖时，若未核实源码commit，版本列仅陈述已固定的发行版本与锁校验值。`russh`、`shadowquic`、`boring-noise`等peer测试读取上游API但未复制其实现；只读调查也与实际运行依赖分开。Cargo、Dart SDK和网络库的只读研究来源不代表被复制进产品。

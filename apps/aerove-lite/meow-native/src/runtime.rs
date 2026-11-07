@@ -49,6 +49,51 @@ impl std::fmt::Display for Failure {
 }
 impl std::error::Error for Failure {}
 
+/// Native-only provenance. Neither the source nor its reason is serialized or logged.
+struct FailureSource {
+    public: Failure,
+    context: Failure,
+    source: anyhow::Error,
+}
+
+impl std::fmt::Debug for FailureSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FailureSource").field("code", &self.public.code).finish_non_exhaustive()
+    }
+}
+impl std::fmt::Display for FailureSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.public, f)
+    }
+}
+impl std::error::Error for FailureSource {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(self.source.as_ref()) }
+}
+
+pub(crate) fn failure_with_source(
+    context: Failure,
+    source: anyhow::Error,
+) -> std::io::Error {
+    let kind = source.chain().take(32).find_map(|error| {
+        error.downcast_ref::<std::io::Error>().map(std::io::Error::kind)
+    }).unwrap_or(std::io::ErrorKind::Other);
+    // Only fixed public field names survive; arbitrary paths and reasons remain native-private.
+    let field = match context.field.as_deref() { Some("engineYaml" | "proxies.dialer-proxy") => context.field.clone(), _ => None };
+    let public = Failure { code: context.code, field, reason: None };
+    std::io::Error::new(kind, FailureSource { public, context, source })
+}
+
+pub(crate) fn failure_detail(error: &std::io::Error) -> Option<&Failure> {
+    let cause = error.get_ref()?;
+    cause.downcast_ref::<Failure>().or_else(|| cause.downcast_ref::<FailureSource>().map(|e| &e.public))
+}
+
+pub(crate) fn retained_failure_context(error: &std::io::Error) -> Option<&Failure> {
+    let cause = error.get_ref()?;
+    cause.downcast_ref::<FailureSource>().map(|e| &e.context)
+        .or_else(|| cause.downcast_ref::<Failure>())
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -621,5 +666,78 @@ mod tests {
         let successor_control = successor.control.lock().as_ref().unwrap().clone();
         assert_eq!(successor_control.snapshot().await.unwrap().route_version, "0");
         tokio::time::timeout(Duration::from_secs(5), successor.stop()).await.unwrap().unwrap();
+    }
+}
+
+
+#[cfg(test)]
+mod retained_config_load_failure_tests {
+    use super::*;
+    use std::error::Error;
+
+    #[tokio::test]
+    async fn real_core_yaml_error_keeps_its_type_but_never_enters_safe_output() {
+        // An error-preservation regression, NOT a reconstruction of CI312's missing input.
+        let scope = meow_config::owned_load::OwnedLoadScope::new();
+        let input = "strict: true\ndns: password=private-fixture\n";
+        let original = match meow_config::load_config_from_str_owned(input, &scope).await {
+            Err(cause) => cause,
+            Ok(_) => panic!("invalid DNS shape unexpectedly parsed"),
+        };
+        assert!(original.chain().any(|error| error.is::<serde_yaml::Error>()));
+        let reason = format!("{original:#}");
+        let error = failure_with_source(Failure { code: "configLoadFailed",
+            field: Some("engineYaml.dns".into()), reason: Some(reason.clone()) }, original);
+        let mut current: Option<&(dyn Error + 'static)> = Some(&error);
+        let mut found = false;
+        for _ in 0..32 {
+            let Some(cause) = current else { break };
+            found |= cause.is::<serde_yaml::Error>(); current = cause.source();
+        }
+        assert!(found, "actual Core serde error was flattened or discarded");
+        let private = retained_failure_context(&error).unwrap();
+        assert_eq!(private.field.as_deref(), Some("engineYaml.dns"));
+        assert_eq!(private.reason.as_deref(), Some(reason.as_str()));
+        let public = failure_detail(&error).unwrap();
+        assert!(public.field.is_none() && public.reason.is_none());
+        assert_eq!(error.to_string(), "configLoadFailed");
+        let mut safe = crate::startup_diagnostic::Diagnostic::default();
+        safe.advance(crate::startup_diagnostic::Stage::ConfigLoad); safe.record_io(&error);
+        safe.cleaned(true, true);
+        let json = serde_json::to_string(&safe).unwrap();
+        assert!(json.contains("configLoadFailed") && json.contains("complete"));
+        for secret in ["private-fixture", "password", "engineYaml.dns"] { assert!(!json.contains(secret)); }
+        scope.close().await.unwrap();
+    }
+
+    #[test]
+    fn source_io_kind_and_typed_context_survive_without_exposing_path_or_reason() {
+        let original = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "/private/fixture password=secret");
+        let error = failure_with_source(Failure { code: "providerConfigRejected",
+            field: Some("/private/provider".into()), reason: Some("https://private.invalid".into()) }, anyhow::Error::new(original));
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(retained_failure_context(&error).unwrap().field.as_ref().unwrap().contains("/private/"));
+        let retained = &error.get_ref().unwrap().downcast_ref::<FailureSource>().unwrap().source;
+        let original = retained.chain().find_map(|cause| cause.downcast_ref::<std::io::Error>()).unwrap();
+        assert_eq!(original.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "providerConfigRejected");
+        assert!(!format!("{error:?}").contains("secret"));
+    }
+
+    #[test]
+    fn anyhow_context_backtrace_and_root_identity_remain_owned() {
+        let source = anyhow::Error::new(std::io::Error::new(std::io::ErrorKind::NotFound, "private root"))
+            .context("controlled private context https://private.invalid");
+        let root = source.downcast_ref::<std::io::Error>().unwrap() as *const std::io::Error;
+        let backtrace = source.backtrace() as *const std::backtrace::Backtrace;
+        let error = failure_with_source(Failure { code: "configLoadFailed", field: Some("engineYaml".into()), reason: None }, source);
+        let retained = &error.get_ref().unwrap().downcast_ref::<FailureSource>().unwrap().source;
+        assert!(std::ptr::eq(root, retained.downcast_ref::<std::io::Error>().unwrap()));
+        assert!(std::ptr::eq(backtrace, retained.backtrace()));
+        assert!(retained.chain().any(|cause| cause.to_string().contains("controlled private context")));
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert_eq!(error.to_string(), failure_detail(&error).unwrap().to_string());
+        assert_eq!(error.to_string(), "configLoadFailed: engineYaml");
+        assert!(!format!("{error:?}").contains("private"));
     }
 }
