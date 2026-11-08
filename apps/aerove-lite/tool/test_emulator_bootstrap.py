@@ -151,21 +151,51 @@ class GuestLogcatTests(unittest.TestCase):
         report = self.report()
         self.assertFalse(report['ready'])
         self.assertEqual('TimeoutError', report['errorType'])
-        self.assertEqual(['initial', 'before-deadline'], [row['window'] for row in report['guestLogcat']])
+        self.assertEqual(['initial', 'before-deadline'], [row['window'] for row in report['guestLogcat'] if row['window'] != 'periodic'])
         self.assertEqual(0, report['guestLogcat'][0]['elapsedStart'])
-        self.assertGreaterEqual(report['guestLogcat'][1]['elapsedStart'], 590)
+        self.assertGreaterEqual(report['guestLogcat'][-1]['elapsedStart'], 590)
         for row in report['guestLogcat']:
             self.assertEqual(7, row['returnCode'])
             self.assertEqual('raw guest log\n', row['stdout'])
             self.assertEqual('guest read failed\n', row['stderr'])
         captures = [(args, options, at) for args, options, at in self.calls if args[4] == 'logcat']
-        self.assertEqual(2, len(captures))
+        self.assertEqual(60, len(captures))
         for args, options, at in captures:
             self.assertEqual(['adb', '-s', 'emulator-5554', 'shell', 'logcat', '-b', 'main',
-                              '-b', 'system', '-b', 'crash', '-d', '-v', 'threadtime'], args)
+                              '-b', 'system', '-b', 'crash', '-d', '-t', '1000', '-v', 'threadtime'], args)
             self.assertLessEqual(options['timeout'], min(3, 600 - at))
         self.assertEqual([], report['failureDiagnostics'])
         self.assertEqual(600, report['elapsedSeconds'])
+
+    def test_periodic_capture_retains_tail_before_owned_crash(self):
+        def respond(arguments, options):
+            if arguments[4] == 'logcat':
+                return self.result(arguments, 'x' * (bootstrap.LOGCAT_STREAM_BYTES + 10) + 'TAIL')
+            if self.now >= 32:
+                self.emulator.poll.return_value = -11
+            return self.result(arguments, '\n')
+        with self.assertRaisesRegex(RuntimeError, 'Owned emulator exited'):
+            self.exercise(respond)
+        report = self.report()
+        self.assertFalse(report['ready'])
+        self.assertEqual([0, 10, 20, 30], [row['elapsedStart'] for row in report['guestLogcat']])
+        for row in report['guestLogcat']:
+            self.assertTrue(row['stdoutTruncated'])
+            self.assertEqual(bootstrap.LOGCAT_STREAM_BYTES + 14, row['stdoutBytes'])
+            self.assertLessEqual(len(row['stdout'].encode()), bootstrap.LOGCAT_STREAM_BYTES)
+            self.assertTrue(row['stdout'].endswith('TAIL'))
+        self.assertEqual([], report['failureDiagnostics'])
+
+    def test_periodic_capture_cancellation_remains_failure(self):
+        def respond(arguments, options):
+            if arguments[4] == 'logcat' and self.now >= 10:
+                self.receipt['interruptSignals'].append(15)
+            return self.result(arguments, '\n')
+        with self.assertRaises(InterruptedError):
+            self.exercise(respond)
+        self.assertFalse(self.report()['ready'])
+        self.assertEqual([0, 10], [row['elapsedStart'] for row in self.report()['guestLogcat']])
+        self.assertEqual([], self.report()['failureDiagnostics'])
 
     def test_success_has_only_initial_capture_and_preserves_ready_checks(self):
         def respond(arguments, options):
@@ -264,7 +294,7 @@ class GuestLogcatTests(unittest.TestCase):
             ['getprop', 'sys.boot_completed'], ['getprop', 'sys.boot_completed'],
             ['getprop', 'ro.debuggable'], ['setprop', 'debug.vulkan.enable_callback', 'true'],
             ['getprop', 'debug.vulkan.enable_callback'],
-            ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash', '-d', '-v', 'threadtime'],
+            ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash', '-d', '-t', '1000', '-v', 'threadtime'],
             ['getprop', 'sys.boot_completed'], ['wm', 'dismiss-keyguard'], ['dumpsys', 'window', 'policy'],
         ], [args[4:] for args, _, _ in self.calls])
         self.assertEqual(['initial'], [row['window'] for row in self.report()['guestLogcat']])
@@ -373,7 +403,7 @@ class GuestLogcatTests(unittest.TestCase):
             ['setprop', 'debug.vulkan.enable_callback', 'true'], ['getprop', 'debug.vulkan.enable_callback'],
             ['setprop', 'debug.angle.feature_overrides_disabled', 'supportsHostQueryReset'],
             ['getprop', 'debug.angle.feature_overrides_disabled'],
-            ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash', '-d', '-v', 'threadtime'],
+            ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash', '-d', '-t', '1000', '-v', 'threadtime'],
             ['wm', 'dismiss-keyguard'], ['dumpsys', 'window', 'policy'],
         ], [args[4:] for args, _, _ in self.calls])
         self.assertTrue(report['guestVulkanDebug']['propertyReadbackVerified'])

@@ -5,6 +5,8 @@ import subprocess
 import time
 
 SERIAL = 'emulator-5554'
+LOGCAT_INTERVAL = 10
+LOGCAT_STREAM_BYTES = 64 * 1024
 
 
 def keyguard_ready(text):
@@ -31,6 +33,7 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
     initial_logcat = False
     deadline_logcat = False
     guest_setup_attempted = False
+    last_logcat = None
     if debug_guest_vulkan:
         report['guestVulkanDebug'] = dict(property='debug.vulkan.enable_callback',
                                         requestedValue='true', propertyReadbackVerified=False)
@@ -42,6 +45,7 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
         report['guestLogcat'] = []
 
     def guest_logcat(window):
+        nonlocal last_logcat
         check_cancelled(receipt)
         if emulator.poll() is not None:
             raise RuntimeError('Owned emulator exited before bootstrap guest logcat')
@@ -49,7 +53,7 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
         if remaining <= 0:
             return
         arguments = ['logcat', '-b', 'main', '-b', 'system', '-b', 'crash',
-                     '-d', '-v', 'threadtime']
+                     '-d', '-t', '1000', '-v', 'threadtime']
         row = dict(window=window, arguments=arguments,
                    elapsedStart=time.monotonic() - started)
         report['guestLogcat'].append(row)
@@ -64,7 +68,13 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
         except OSError as error:
             row.update(errorType=type(error).__name__, error=str(error))
         finally:
+            for stream in ('stdout', 'stderr'):
+                raw = row.get(stream, '').encode('utf-8')
+                row[stream + 'Bytes'] = len(raw)
+                row[stream + 'Truncated'] = len(raw) > LOGCAT_STREAM_BYTES
+                row[stream] = raw[-LOGCAT_STREAM_BYTES:].decode('utf-8', errors='ignore')
             row['elapsedEnd'] = time.monotonic() - started
+            last_logcat = time.monotonic()
         check_cancelled(receipt)
         if emulator.poll() is not None:
             raise RuntimeError('Owned emulator exited during bootstrap guest logcat')
@@ -141,6 +151,12 @@ def wait_ready(emulator, directory, receipt, check_cancelled, *, capture_guest_l
         if capture_guest_logcat and boot_shell_ready and not deadline_logcat and remaining <= 10:
             deadline_logcat = True
             guest_logcat('before-deadline')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Existing 600-second boot/readiness deadline reached')
+        elif (capture_guest_logcat and boot_shell_ready and not deadline_logcat
+              and last_logcat is not None and time.monotonic() - last_logcat >= LOGCAT_INTERVAL):
+            guest_logcat('periodic')
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError('Existing 600-second boot/readiness deadline reached')
