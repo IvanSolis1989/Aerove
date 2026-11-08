@@ -75,7 +75,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'lite328-surface', 'lite333-graphics', 'lite333-graphics-host-default', 'lite333-graphics-host-sigill', 'gfxstream37-static', 'gfxstream-zero-attachments-host', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'lite328-surface', 'lite343-anr', 'lite333-graphics', 'lite333-graphics-host-default', 'lite333-graphics-host-sigill', 'gfxstream37-static', 'gfxstream-zero-attachments-host', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite236_pixels:
@@ -2400,6 +2400,131 @@ jobs:
       env:
         RESULTS: ${{ toJSON(needs) }}
       run: python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); assert all(x["result"]=="success" for x in results.values()), results'
+  original343_anr:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite343-anr' }}
+    needs:
+    - diagnostic_guard
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - phase: flutter-ui
+          label: original343 preview ANR evidence
+          artifact_suffix: flutter-ui
+        - phase: flutter-full
+          label: original343 full ANR evidence
+          artifact_suffix: flutter-full
+    name: Original343 ANR diagnostic (${{ matrix.label }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AEROVE_LITE343_ANR: '1'
+      ANDROID_SERIAL: emulator-5554
+      AEROVE_GUEST_ANGLE: '1'
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Validate fixed original343 tools on canonical Linux checkout
+      working-directory: apps/aerove-lite/tool
+      run: env -u AEROVE_LITE343_ANR -u AEROVE_GUEST_ANGLE -u ANDROID_SERIAL python3 -B -m unittest test_lite343_anr test_emulator_current test_ci_artifacts test_prebuilt_android_runtime test_android_acceptance test_flutter_android_qa
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      with:
+        packages: platform-tools
+        log-accepted-android-sdk-licenses: false
+        cmdline-tools-version: '16111833'
+    - name: Prepare pinned APK signature verifier and independent owner fixture compiler
+      run: sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
+    - name: Fetch exact prebuilt x86 runtime
+      run: python3 apps/aerove-lite/tool/lite343_anr.py fetch --directory "$RUNNER_TEMP/lite-runtime-input"
+    - name: Existing API33 emulator environment with unchanged configuration
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      run: |
+        set -euo pipefail
+        sdk_install_dir="$RUNNER_TEMP/lite-diagnostics/sdk-install"
+        mkdir -p "$sdk_install_dir"
+        for sdk_attempt in 1 2; do
+          sdk_install_log="$sdk_install_dir/attempt-${sdk_attempt}.log"
+          set +e
+          timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'build-tools;37.0.0' 'system-images;android-33;google_apis;x86_64' --channel=0 2>&1 | tee "$sdk_install_log"
+          sdk_install_status=("${PIPESTATUS[@]}")
+          set -e
+          sdkmanager_rc="${sdk_install_status[0]}"
+          tee_rc="${sdk_install_status[1]}"
+          printf 'sdkmanager_exit=%s\ntee_exit=%s\n' "$sdkmanager_rc" "$tee_rc" > "$sdk_install_dir/attempt-${sdk_attempt}.status.txt"
+          if (( tee_rc != 0 )); then
+            printf 'SDK install log tee failed (exit %s)\n' "$tee_rc" >&2
+            exit "$tee_rc"
+          fi
+          if (( sdkmanager_rc == 0 )); then
+            break
+          fi
+          if (( sdkmanager_rc == 124 || sdkmanager_rc == 137 )); then
+            exit "$sdkmanager_rc"
+          fi
+          if (( sdk_attempt == 1 )) &&
+              grep -Eiq 'Failed to download package archive for (emulator|system-images/android-33/google_apis/x86_64): (closed|.*connection reset|.*read (timed out|timeout)|.*EOF(Exception)?|.*unexpected end of (file|stream))([[:space:]:.]|$)' "$sdk_install_log" &&
+              ! grep -Eiq 'LicenseNotAccepted|license.*(not accepted|not been accepted)|no space left on device|insufficient.*(space|storage)|not enough.*space|failed to find package|unknown package|package .*not (found|available)|UnsupportedClassVersionError|requires? (Java|JDK)' "$sdk_install_log"; then
+            printf 'Retrying emulator SDK install once after a diagnosed archive transport interruption\n' >&2
+            continue
+          fi
+          exit "$sdkmanager_rc"
+        done
+        mkdir -p "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}"
+        { id; stat -c 'mode=%a owner=%U group=%G type=%F' /dev/kvm; } > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/kvm-access.txt"
+        if ! test -c /dev/kvm || ! test -r /dev/kvm || ! test -w /dev/kvm; then
+          echo 'Existing /dev/kvm read/write access required; diagnosis does not change device permissions or fall back to software.' >&2
+          exit 1
+        fi
+        echo no | avdmanager create avd --force -n test --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+        avd_directory="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+        sed -i '/^[[:space:]]*disk\.dataPartition\.size[[:space:]]*=/d' "$avd_directory/test.avd/config.ini"
+        printf 'hw.cpu.ncore=2\ndisk.dataPartition.size=4G\n' >> "$avd_directory/test.avd/config.ini"
+        cp "$avd_directory/test.avd/config.ini" "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/avd-config.ini"
+        emulator_archive_url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
+        emulator_archive_sha256='cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd'
+        emulator_stage="$(mktemp -d "$RUNNER_TEMP/lite-emulator-16740729.XXXXXX")"
+        emulator_archive="$emulator_stage/emulator-linux_x64-16740729.zip"
+        printf 'url=%s\nsize=349658551\nsha256=%s\n' "$emulator_archive_url" "$emulator_archive_sha256" > "$sdk_install_dir/pinned-emulator-archive.txt"
+        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
+          --output "$emulator_archive" "$emulator_archive_url" \
+          2> "$sdk_install_dir/pinned-emulator-download.stderr.txt"
+        test "$(stat -c '%s' "$emulator_archive")" = '349658551'
+        printf '%s  %s\n' "$emulator_archive_sha256" "$emulator_archive" | sha256sum --check --strict > "$sdk_install_dir/pinned-emulator-sha256.txt"
+        unzip -q "$emulator_archive" -d "$emulator_stage/extracted"
+        test -x "$emulator_stage/extracted/emulator/emulator"
+        test -f "$emulator_stage/extracted/emulator/source.properties"
+        cp "$emulator_stage/extracted/emulator/source.properties" "$sdk_install_dir/pinned-emulator-source.properties"
+        if test -e "$ANDROID_HOME/emulator"; then
+          mv "$ANDROID_HOME/emulator" "$emulator_stage/previous-emulator"
+        fi
+        mv "$emulator_stage/extracted/emulator" "$ANDROID_HOME/emulator"
+        "$ANDROID_HOME/emulator/emulator" -no-window -version > "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt" 2>&1
+        grep -E '37\.2\.13\.0.*16740729' "$RUNNER_TEMP/lite-diagnostics/${{ matrix.phase }}/emulator-version.txt"
+    - name: Real API 33 ${{ matrix.phase }} verification
+      shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+      run: |
+        set -euo pipefail
+        python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"
+    - name: Preserve original343 raw diagnostic evidence (never acceptance)
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: Lite343-anr-${{ matrix.phase }}-attempt-${{ github.run_attempt }}
+        path: |
+          ${{ runner.temp }}/lite-diagnostics/
+          ${{ runner.temp }}/lite-runtime-input.api.json
+          ${{ runner.temp }}/lite-runtime-input.fetch.json
+        if-no-files-found: error
+
   original265_precheck:
     if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite265-original-recheck' && needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite265-precheck' || inputs.diagnostic_target == 'lite265-recheck') }}
     needs:
@@ -3210,7 +3335,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, lite328-surface, lite333-graphics, lite333-graphics-host-default, lite333-graphics-host-sigill, gfxstream37-static, gfxstream-zero-attachments-host, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, lite328-surface, lite343-anr, lite333-graphics, lite333-graphics-host-default, lite333-graphics-host-sigill, gfxstream37-static, gfxstream-zero-attachments-host, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

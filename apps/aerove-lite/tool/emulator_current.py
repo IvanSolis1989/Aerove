@@ -20,6 +20,9 @@ APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
 
 def verify_current_runtime(directory):
+    from lite343_anr import enabled as anr343_enabled, runtime as anr343_runtime
+    if anr343_enabled():
+        return anr343_runtime(directory)
     from lite290_surface_probe import enabled as probe290_enabled, runtime as probe290_runtime
     if probe290_enabled():
         return probe290_runtime(directory)
@@ -674,6 +677,14 @@ def original_sample_phase_selector(phase, sample, runtime):
 
 
 def guard_flutter_phase(phase, sample=None, runtime=None):
+    from lite343_anr import enabled as anr343_enabled, IDENTITY as ORIGINAL343
+    if anr343_enabled():
+        if phase not in ('flutter-ui', 'flutter-full') or sample is not None or runtime is not None and (
+                runtime.get('identity') != ORIGINAL343 or runtime.get('original343Anr') is not True or
+                runtime.get('harnessIdentity') != artifacts.identity() or runtime.get('diagnosticOnly') is not True or
+                runtime.get('accepted') is not False):
+            raise ValueError('Fixed343 requires separate diagnostic harness and UI/full phases only')
+        return
     from lite290_surface_probe import enabled as probe290_enabled, IDENTITY as ORIGINAL290
     if probe290_enabled():
         if (phase != 'flutter-ui' or sample is not None or runtime is not None and
@@ -846,7 +857,7 @@ def main():
     if guest_angle:
         emulator_command.extend(['-feature', 'GuestAngle,Vulkan'])
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
-    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') or current.get('original290Probe'):
+    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') or current.get('original290Probe') or current.get('original343Anr'):
         receipt.update(originalAppIdentity=current['originalAppIdentity'], harnessIdentity=current['harnessIdentity'],
                        diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
     if args.phase == 'flutter-ui':
