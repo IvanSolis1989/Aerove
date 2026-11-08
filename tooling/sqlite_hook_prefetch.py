@@ -11,6 +11,7 @@ from urllib.parse import unquote, urljoin, urlparse
 VERSION = '3.7.0'
 FILENAME = 'libsqlite3.x64.linux.so'
 SHA256 = '0f947ebe629e8d9d02d7f408bef36e056bfc63ea47e02e0d45a7bae454f04ace'
+ASSET_URL = 'https://api.github.com/repos/simolus3/sqlite3.dart/releases/assets/600688886'
 URL = f'https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-{VERSION}/{FILENAME}?download=1'
 
 
@@ -49,13 +50,23 @@ def prefetch(project, download=subprocess.run):
         return target
     with tempfile.TemporaryDirectory(prefix='prefetch-', dir=cache) as staging:
         candidate = Path(staging) / FILENAME
-        download(['curl', '--fail', '--location', '--silent', '--show-error',
-                  '--proto', '=https', '--proto-redir', '=https',
-                  '--connect-timeout', '15', '--max-time', '45',
-                  '--retry', '3', '--retry-delay', '2', '--retry-max-time', '120',
-                  '--output', str(candidate), URL], check=True, timeout=180)
-        if digest(candidate) != SHA256:
-            raise ValueError('SQLite asset checksum mismatch; refusing cache publication')
+        for index, url in enumerate((ASSET_URL, URL)):
+            candidate.unlink(missing_ok=True)
+            try:
+                download(['curl', '--fail', '--location', '--silent', '--show-error',
+                          '--proto', '=https', '--proto-redir', '=https',
+                          '--header', 'Accept: application/octet-stream',
+                          '--connect-timeout', '15', '--max-time', '45',
+                          '--retry', '3', '--retry-delay', '2', '--retry-max-time', '120',
+                          '--output', str(candidate), url], check=True, timeout=180)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                if index == 0:
+                    print('Official SQLite asset API unavailable; trying the release URL', flush=True)
+                    continue
+                raise
+            if digest(candidate) != SHA256:
+                raise ValueError('SQLite asset checksum mismatch; refusing cache publication')
+            break
         candidate.replace(target)
     return target
 

@@ -40,7 +40,7 @@ class PrefetchTests(unittest.TestCase):
         def download(args, **kwargs):
             self.assertIn('--fail', args)
             self.assertIn('--retry-max-time', args)
-            self.assertEqual(args[-1], subject.URL)
+            self.assertEqual(args[-1], subject.ASSET_URL)
             self.assertEqual(kwargs, {'check': True, 'timeout': 180})
             Path(args[args.index('--output') + 1]).write_bytes(b'504 Gateway Time-out')
         with self.assertRaises(ValueError):
@@ -54,6 +54,30 @@ class PrefetchTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             subject.prefetch(self.project, download)
         self.assertEqual(list(self.project.rglob('libsqlite3.so')), [])
+
+    def test_api_transport_failure_uses_official_release_fallback(self):
+        calls = []
+        def download(args, **kwargs):
+            calls.append(args[-1])
+            output = Path(args[args.index('--output') + 1])
+            if len(calls) == 1:
+                output.write_bytes(b'partial error response')
+                raise subprocess.CalledProcessError(22, 'curl')
+            self.assertFalse(output.exists())
+            output.write_bytes(b'valid')
+        with patch.object(subject, 'digest', return_value=subject.SHA256):
+            target = subject.prefetch(self.project, download)
+        self.assertEqual(calls, [subject.ASSET_URL, subject.URL])
+        self.assertEqual(target.read_bytes(), b'valid')
+
+    def test_hash_mismatch_does_not_retry_other_source(self):
+        calls = []
+        def download(args, **kwargs):
+            calls.append(args[-1])
+            Path(args[args.index('--output') + 1]).write_bytes(b'untrusted')
+        with self.assertRaises(ValueError):
+            subject.prefetch(self.project, download)
+        self.assertEqual(calls, [subject.ASSET_URL])
 
     def test_verified_cache_skips_network(self):
         cache = self.project / '.dart_tool/hooks_runner/shared/sqlite3/build' / f'download-{subject.SHA256[:8]}'

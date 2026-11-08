@@ -22,7 +22,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** 锁定包与官方 release tag `sqlite3-3.7.0`。
 
-**用途与采用方式：** CI 预取官方 Linux x64 SQLite 动态库，以有界下载重试避开 GitHub 504 错误响应；沿用包内原 SHA-256，原子写入该版本的内容寻址 hook 缓存，原 hook 使用前再次校验。不替换系统 SQLite、不修改依赖锁、不跳过原生资源构建或完整性校验。升级依赖时须重验缓存契约。
+**用途与采用方式：** CI 优先通过官方 GitHub API 的固定资产 ID `600688886` 预取 Linux x64 SQLite 动态库，官方 release 下载地址作为传输失败备用；两条路径都有界重试，避开 GitHub 504 错误响应；沿用包内原 SHA-256，原子写入该版本的内容寻址 hook 缓存，原 hook 使用前再次校验。不替换系统 SQLite、不修改依赖锁、不跳过原生资源构建或完整性校验。升级依赖时须重验缓存契约。
 
 **许可证、署名与证据：** MIT，保留现有依赖许可；[官方 hook 与哈希](https://github.com/simolus3/sqlite3.dart/tree/sqlite3-3.7.0/sqlite3/lib/src/hook)、[官方资产](https://github.com/simolus3/sqlite3.dart/releases/tag/sqlite3-3.7.0)。未复制上游代码，仅读取并核对版本、官方资产哈希与缓存路径约定。
 
