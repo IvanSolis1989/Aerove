@@ -526,13 +526,14 @@ class FixedSelectionTest(unittest.TestCase):
                                            '<application android:testOnly="true">' + helpers + '</application>')
         graph=":app:assembleRelease SKIPPED\n:platform-qa:assembleRelease SKIPPED\n"
         mapping="dev.aerove.lite.LiteApplication -> a.a:\n"
-        defined="C d 2 2 200 dev.aerove.lite.platformqa.AcceptanceCheckpointRunner\nC d 2 2 200 dev.aerove.lite.FlutterProductionUiTest\n"
+        defined="C d 2 2 200 dev.aerove.lite.platformqa.AcceptanceCheckpointRunner\nC d 2 2 200 dev.aerove.lite.FlutterProductionUiTest\nC d 2 2 200 dev.aerove.lite.OwnedFinalPlanCaptureTest\n"
         for signed, xml in ((signature, manifest), (modern_signature, manifest), (modern_signature, helper_manifest)):
             result=seal.seal(info,app,test,signed,xml,graph,mapping,defined,driver)
             self.assertEqual(result["productionBuildCount"],1)
             self.assertFalse(result["copiedProductionClasses"])
             self.assertFalse(result["androidExecuted"])
         for changed in (
+            dict(defined=defined.replace("C d 2 2 200 dev.aerove.lite.OwnedFinalPlanCaptureTest\n", "")),
             dict(signature=signature.replace("a"*64,"b"*64)),
             dict(signature=modern_signature.replace("a"*64,"b"*64)),
             dict(signature=modern_signature+signature),

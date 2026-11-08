@@ -54,7 +54,7 @@ class FinalPlanCaptureEntryTest(unittest.TestCase):
             pairs = [(command[i + 1], command[i + 2]) for i, value in enumerate(command) if value == '-e']
             values = dict(pairs)
             self.assertEqual(len(pairs), len(values))
-            self.assertEqual(CLASS + '#freshDefaultFinalPlanCapture', values['class'])
+            self.assertEqual(PACKAGE + '.OwnedFinalPlanCaptureTest#freshDefaultFinalPlanCapture', values['class'])
             self.assertEqual(info['meow_overlay_sha256'], values['meowOverlaySha256'])
             self.assertEqual(info['meow_file_manifest_sha256'], values['meowFileManifestSha256'])
             self.assertEqual(info['source'], values['source'])
@@ -62,6 +62,25 @@ class FinalPlanCaptureEntryTest(unittest.TestCase):
             self.assertEqual(info['signer_sha256'], values['qaFinalPlanSignerSha256'])
             self.assertEqual('https://github.com/IvanSolis1989/Aerove/actions/runs/123', values['workflow'])
             self.assertEqual('456', values['qaExecutorRun'])
+
+    def test_capture_stays_in_same_target_runner_not_black_box_driver(self):
+        root = Path(__file__).resolve().parents[1]
+        tests = root / 'app/src/androidTest/java/dev/aerove/lite'
+        driver = (tests / 'FlutterProductionUiTest.kt').read_text()
+        capture = (tests / 'OwnedFinalPlanCaptureTest.kt').read_text()
+        self.assertNotIn('dev.aerove.lite.vpn', driver)
+        self.assertNotIn('dev.aerove.lite.data', driver)
+        self.assertNotIn('freshDefaultFinalPlanCapture', driver)
+        self.assertIn('captureFinalPlansForOwnedQa(capture)', capture)
+        self.assertIn('lease.finalPlanQaSources()', capture)
+        self.assertIn('lease.isCurrent()', capture)
+        self.assertIn('"dev/aerove/lite/OwnedFinalPlanCaptureTest.kt"',
+                      (root / 'android-platform-qa/build.gradle.kts').read_text())
+        self.assertNotIn('OwnedFinalPlanCaptureTest.kt',
+                         (root / 'android-qa/build.gradle.kts').read_text())
+        observer = root / 'android-platform-qa/src/main/java/dev/aerove/lite/platformqa/AcceptanceCheckpointRunner.kt'
+        self.assertIn('dev.aerove.lite.OwnedFinalPlanCaptureTest#freshDefaultFinalPlanCapture',
+                      observer.read_text())
 
     def test_original_base_args_retains_each_core_identity_once(self):
         with tempfile.TemporaryDirectory() as temporary:

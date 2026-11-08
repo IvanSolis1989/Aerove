@@ -286,7 +286,7 @@ class Acceptance(Producer):
             qaExecutorRun=os.environ["GITHUB_RUN_ID"], qaExecutorAttempt=os.environ["GITHUB_RUN_ATTEMPT"],
             qaFinalPlanSynthetic="fresh-default-v1", qaFinalPlanOwnerSha256=sha(self.args.output / "final-plan-owner.json"),
             qaFinalPlanSignerSha256=info["signer_sha256"])
-        command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", CLASS + "#freshDefaultFinalPlanCapture"]
+        command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", PACKAGE + ".OwnedFinalPlanCaptureTest#freshDefaultFinalPlanCapture"]
         for key, value in values.items(): command += ["-e", key, str(value)]
         failure = None
         try:
@@ -304,7 +304,7 @@ class Acceptance(Producer):
         from qa_final_plan_verify import verify
         packet = verify(capture, values)
         require(len(records) == 1 and records[0]["status"] == "passed" and
-                records[0]["className"] + "#" + records[0]["testName"] == CLASS + "#freshDefaultFinalPlanCapture", "Input capture test failed")
+                records[0]["className"] + "#" + records[0]["testName"] == PACKAGE + ".OwnedFinalPlanCaptureTest#freshDefaultFinalPlanCapture", "Input capture test failed")
         self.receipt.update(inputCaptureOnly=True, original312Input=False, finalPlanCapture=packet, matrixImages=0,
             fullAcceptance=False, nativeMeowAccepted=False)
 

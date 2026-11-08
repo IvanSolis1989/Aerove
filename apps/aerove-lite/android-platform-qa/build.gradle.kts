@@ -24,6 +24,7 @@ val selectedTests = listOf(
     "dev/aerove/lite/scan/AlbumQrDecoderTest.kt",
     "dev/aerove/lite/scan/ScanSessionTest.kt",
     "dev/aerove/lite/FlutterProductionUiTest.kt",
+    "dev/aerove/lite/OwnedFinalPlanCaptureTest.kt",
 )
 // Only existing test sources enter this runner; target production classes stay in :app.
 val platformSources = layout.buildDirectory.dir("generated/platformSources").get().asFile

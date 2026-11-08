@@ -34,7 +34,9 @@ class AcceptanceCheckpointRunner : AndroidJUnitRunner() {
     }
     override fun onStart() {
         val arguments = androidx.test.platform.app.InstrumentationRegistry.getArguments()
-        if (arguments.getString("class")?.startsWith("dev.aerove.lite.FlutterProductionUiTest#") == true) {
+        val selector = arguments.getString("class")
+        if (selector?.startsWith("dev.aerove.lite.FlutterProductionUiTest#") == true ||
+            selector == "dev.aerove.lite.OwnedFinalPlanCaptureTest#freshDefaultFinalPlanCapture") {
             observer = Checkpoints(this, arguments).also { it.start() }
         }
         try { super.onStart() } finally { observer?.close() }

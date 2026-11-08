@@ -88,7 +88,8 @@ def seal(info, app, test, signature, manifest, graph, mapping, defined, driver):
     require(bool(target_firstparty), "Actual target R8 mapping is required")
     require(not defined_classes & target_firstparty, "Runner duplicated target production DEX definitions")
     require("dev.aerove.lite.platformqa.AcceptanceCheckpointRunner" in defined_classes and
-            "dev.aerove.lite.FlutterProductionUiTest" in defined_classes, "Runner lacks actual observer/UI test definitions")
+            "dev.aerove.lite.FlutterProductionUiTest" in defined_classes and
+            "dev.aerove.lite.OwnedFinalPlanCaptureTest" in defined_classes, "Runner lacks actual observer/UI/capture test definitions")
     contract = json.loads(Path(__file__).with_name("android_acceptance_contract.json").read_text())
     require(hashlib.sha256(driver.read_bytes().replace(b"\r\n",b"\n")).hexdigest() == contract["uiSourceSha256"], "Integrate the precise coordinated Flutter UI candidate before building")
     device_source = Path(__file__).resolve().parents[1] / contract["runtimeDeviceAttestorSource"]["path"]
