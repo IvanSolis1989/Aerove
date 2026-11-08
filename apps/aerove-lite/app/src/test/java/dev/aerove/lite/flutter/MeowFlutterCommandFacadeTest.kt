@@ -265,6 +265,32 @@ class MeowFlutterCommandFacadeTest {
         }
     }
 
+    @Test fun confirmedStopGraphFailureStaysSeparateAndCancellationIsPreserved() = runTest {
+        var restored = false
+        restoreQueryGraphAfterConfirmedStop { restored = true }
+        assertTrue(restored)
+        val failure = runCatching { restoreQueryGraphAfterConfirmedStop { error("anonymous private payload") } }.exceptionOrNull()
+        assertTrue(failure is MeowProtocolFailure)
+        assertEquals("stop_graph_restore_failed", (failure as MeowProtocolFailure).code)
+        assertFalse(failure.toString().contains("private payload"))
+        val cancelled = kotlinx.coroutines.CancellationException("cancelled")
+        val cancelledRestore = runCatching { restoreQueryGraphAfterConfirmedStop { throw cancelled } }.exceptionOrNull()
+        assertTrue(cancelledRestore is MeowStoppedGraphCancellation)
+        assertSame(cancelled, cancelledRestore?.cause)
+    }
+
+    @Test fun stopWireReplyPreservesRejectionCategories() {
+        assertTrue(MeowFlutterStopResult.Confirmed(7, 4).requireConfirmed())
+        for ((result, code) in listOf(
+            MeowFlutterStopResult.Superseded to "stop_superseded",
+            MeowFlutterStopResult.TerminationUnconfirmed to "termination_unconfirmed",
+        )) {
+            val failure = runCatching { result.requireConfirmed() }.exceptionOrNull()
+            assertTrue(failure is MeowProtocolFailure)
+            assertEquals(code, (failure as MeowProtocolFailure).code)
+        }
+    }
+
     @Test fun failedTerminationCannotBeReportedAsConfirmed() = runTest {
         val h = Harness()
         val result = async { h.facade.disconnectAndJoin() }

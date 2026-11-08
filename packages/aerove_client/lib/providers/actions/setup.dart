@@ -614,9 +614,13 @@ class SetupAction extends _$SetupAction {
   }
 
   Future<bool> _stop(_RunRequest request) async {
-    final bool answered;
+    var answered = false;
+    CoreStopException? stopFailure;
     try {
       answered = await _setCoreRunning(request);
+    } on CoreStopException catch (failure) {
+      answered = false;
+      stopFailure = failure;
     } catch (_) {
       _rollbackRunning(request);
       rethrow;
@@ -627,7 +631,14 @@ class SetupAction extends _$SetupAction {
     resetCoreTraffic();
     ref.read(trafficsProvider.notifier).clear();
     ref.read(totalTrafficProvider.notifier).value = const Traffic();
-    // A silent Core is gone or hung; running again would proxy traffic to it.
+    // An unconfirmed stop must not restore an optimistic running indicator.
+    if (stopFailure != null) {
+      if (stopFailure.code == 'stop_graph_restore_failed' ||
+          stopFailure.code == 'stop_graph_restore_cancelled') {
+        ref.read(runningVpnOptionsProvider.notifier).value = null;
+      }
+      throw stopFailure;
+    }
     if (!answered) {
       throw _unanswered(CoreMethod.stopListener);
     }

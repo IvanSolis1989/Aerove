@@ -42,6 +42,7 @@ class _Service implements Service {
   Future<void> Function(String)? cancel;
   String syncError = '';
   bool stopResult = true;
+  Future<bool> Function()? stopping;
 
   @override
   Future<String> init() async {
@@ -70,7 +71,7 @@ class _Service implements Service {
   @override
   Future<bool> stop() async {
     calls.add('stop');
-    return stopResult;
+    return stopping == null ? stopResult : await stopping!();
   }
 
   @override
@@ -471,6 +472,155 @@ void main() {
       expect(service.requests, isEmpty);
     },
   );
+
+  test(
+    'late successful stop cannot acknowledge a newer listener intent',
+    () async {
+      await core.start();
+      final reply = Completer<bool>();
+      service.stopping = () => reply.future;
+      final stopping = core.stopListener();
+      final checked = expectLater(
+        stopping,
+        throwsA(
+          isA<CoreStopException>().having(
+            (error) => error.code,
+            'code',
+            'stop_superseded',
+          ),
+        ),
+      );
+      expect(await core.startListener(), isTrue);
+      reply.complete(true);
+      await checked;
+      expect(service.calls.where((call) => call == 'stop'), hasLength(1));
+    },
+  );
+
+  test(
+    'false stop remains a failure but does not claim a missing Core reply',
+    () async {
+      service.stopResult = false;
+      await expectLater(
+        core.stopListener(),
+        throwsA(
+          isA<CoreStopException>().having(
+            (error) => error.code,
+            'code',
+            'termination_unconfirmed',
+          ),
+        ),
+      );
+    },
+  );
+
+  for (final code in [
+    'stop_superseded',
+    'termination_unconfirmed',
+    'stop_graph_restore_failed',
+    'stop_graph_restore_cancelled',
+  ]) {
+    test(
+      'native $code is preserved without private platform details',
+      () async {
+        service.stopping = () async => throw PlatformException(
+          code: code,
+          message: 'private example',
+          details: {'secret': 'private'},
+        );
+        await expectLater(
+          core.stopListener(),
+          throwsA(
+            isA<CoreStopException>()
+                .having((error) => error.code, 'code', code)
+                .having((error) => error.details, 'details', isNull)
+                .having(
+                  (error) => error.toString(),
+                  'safe message',
+                  isNot(contains('private')),
+                ),
+          ),
+        );
+      },
+    );
+  }
+
+  for (final failCleanup in [false, true]) {
+    test(
+      'native stop rejection joins cancellation; cleanup fails=$failCleanup',
+      () async {
+        final home = await Directory.systemTemp.createTemp(
+          'meow-stop-rejection-',
+        );
+        addTearDown(() => home.delete(recursive: true));
+        await useAppPaths(home);
+        final download = _IncompleteRuleDownload(failCancel: failCleanup);
+        core = MeowCoreHandler.scoped(
+          service,
+          readSharedState: () async => _state,
+          ruleSetRequest: download,
+        );
+        await core.start();
+        final signal = ValueNotifier(false);
+        addTearDown(signal.dispose);
+        final name = List.filled(32, 'a').join() + '.8.new';
+        final file = File('${home.path}/providers/rules/$name');
+        await file.parent.create(recursive: true);
+        await file.writeAsString('anonymous candidate');
+        CoreRequestQuiescence? state;
+        final request = core.invokeCancellableMethod<Map>(
+          method: CoreMethod.compileRuleSet,
+          arguments: {'name': name, 'url': 'https://example.invalid/rules'},
+          cancellation: signal,
+          observeQuiescence: (value) => state = value,
+        );
+        final failedRequest = expectLater(
+          request,
+          throwsA(
+            failCleanup
+                ? isA<RuleDownloadCleanupFailure>()
+                : isA<CoreMethodException>(),
+          ),
+        );
+        await download.entered.future;
+        service.stopping = () async =>
+            throw PlatformException(code: 'termination_unconfirmed');
+        var returned = false;
+        final failedStop = expectLater(
+          core.stopListener().whenComplete(() => returned = true),
+          throwsA(
+            failCleanup
+                ? isA<CoreStopCleanupException>()
+                      .having(
+                        (error) => error.stopFailure,
+                        'original stop',
+                        isA<PlatformException>(),
+                      )
+                      .having(
+                        (error) => error.cleanupFailure,
+                        'cleanup failure',
+                        isA<StateError>(),
+                      )
+                : isA<CoreStopException>().having(
+                    (error) => error.code,
+                    'code',
+                    'termination_unconfirmed',
+                  ),
+          ),
+        );
+        await download.joinEntered.future;
+        await pumpEventQueue();
+        expect(returned, isFalse);
+        expect(state!.isQuiescent, isFalse);
+        expect(await file.exists(), isTrue);
+        download.joinRelease.complete();
+        await failedRequest;
+        await failedStop;
+        expect(state!.isQuiescent, !failCleanup);
+        expect(download.sinkClosed, isTrue);
+      },
+    );
+  }
 
   test('failed sync detaches and can retry', () async {
     service.syncError = 'bad runtime projection';

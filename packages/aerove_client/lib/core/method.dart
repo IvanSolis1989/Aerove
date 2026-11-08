@@ -155,6 +155,25 @@ class CoreMethodResponse {
   }
 }
 
+/// A stop transition failure, including query restoration after confirmed stop.
+class CoreStopException extends CoreMethodException {
+  const CoreStopException({required super.code, required super.message});
+}
+
+class CoreStopCleanupException extends CoreStopException {
+  const CoreStopCleanupException({
+    required this.stopFailure,
+    required this.cleanupFailure,
+  }) : super(
+         code: 'stop_cleanup_unconfirmed',
+         message:
+             'Stop acknowledgement failed and request cleanup is unconfirmed',
+       );
+
+  final Object stopFailure;
+  final Object cleanupFailure;
+}
+
 class CoreMethodException implements Exception {
   final String code;
   final String message;

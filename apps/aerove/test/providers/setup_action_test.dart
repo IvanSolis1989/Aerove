@@ -103,7 +103,7 @@ class TestSetupAction extends SetupAction {
   int applyProfileCalls = 0;
   final List<bool> appliedForce = [];
   bool blockCoreCalls = false;
-  Error? coreRunningError;
+  Object? coreRunningError;
   final Set<bool> unansweredCoreCalls = {};
   int authorizeCalls = 0;
   AuthorizeCode authorizeResult = AuthorizeCode.none;
@@ -346,6 +346,45 @@ void main() {
       'code',
       'no_response',
     );
+
+    for (final code in [
+      'stop_superseded',
+      'termination_unconfirmed',
+      'stop_graph_restore_failed',
+      'stop_graph_restore_cancelled',
+      'stop_cleanup_unconfirmed',
+    ]) {
+      test(
+        'typed $code stop failure never restores optimistic running',
+        () async {
+          markInitialized();
+          final setup = container.read(setupActionProvider.notifier);
+          await setup.setRunning(true);
+          expect(container.read(runningVpnOptionsProvider), isNotNull);
+          action.coreRunningError = CoreStopException(
+            code: code,
+            message: 'fixed stop failure',
+          );
+          await expectLater(
+            setup.setRunning(false),
+            throwsA(
+              isA<CoreStopException>().having(
+                (error) => error.code,
+                'code',
+                code,
+              ),
+            ),
+          );
+          expect(container.read(isStartProvider), isFalse);
+          expect(container.read(runTimeProvider), isNull);
+          expect(action.trafficResets, 1);
+          if (code == 'stop_graph_restore_failed' ||
+              code == 'stop_graph_restore_cancelled') {
+            expect(container.read(runningVpnOptionsProvider), isNull);
+          }
+        },
+      );
+    }
 
     test('a start the core leaves unanswered fails and is undone', () async {
       markInitialized();

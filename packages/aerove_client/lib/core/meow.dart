@@ -215,10 +215,63 @@ class MeowCoreHandler extends CoreHandlerInterface
     _ensureOpen();
     final cancellations = _invalidate(detach: false);
     final epoch = _epoch;
-    final accepted = await _service.stop();
-    await cancellations;
-    _requireDownloadsQuiescent();
-    return !_closed && epoch == _epoch && accepted;
+    var accepted = false;
+    Object? stopError;
+    StackTrace? stopStack;
+    try {
+      accepted = await _service.stop();
+    } catch (error, stack) {
+      stopError = error;
+      stopStack = stack;
+    }
+    try {
+      await cancellations;
+      _requireDownloadsQuiescent();
+    } catch (cleanupError) {
+      if (stopError != null) {
+        throw CoreStopCleanupException(
+          stopFailure: stopError,
+          cleanupFailure: cleanupError,
+        );
+      }
+      rethrow;
+    }
+    if (stopError != null) {
+      if (stopError is PlatformException &&
+          const {
+            'stop_superseded',
+            'termination_unconfirmed',
+            'stop_graph_restore_failed',
+            'stop_graph_restore_cancelled',
+          }.contains(stopError.code)) {
+        throw CoreStopException(
+          code: stopError.code,
+          message: switch (stopError.code) {
+            'stop_superseded' =>
+              'Stop acknowledgement belongs to a superseded runtime',
+            'stop_graph_restore_cancelled' =>
+              'Service stopped; parked query graph restoration cancelled',
+            'stop_graph_restore_failed' =>
+              'Service stopped; parked query graph restoration failed',
+            _ => 'Service termination could not be confirmed',
+          },
+        );
+      }
+      Error.throwWithStackTrace(stopError, stopStack!);
+    }
+    if (_closed || epoch != _epoch) {
+      throw const CoreStopException(
+        code: 'stop_superseded',
+        message: 'Stop acknowledgement belongs to a superseded runtime',
+      );
+    }
+    if (!accepted) {
+      throw const CoreStopException(
+        code: 'termination_unconfirmed',
+        message: 'Service termination could not be confirmed',
+      );
+    }
+    return true;
   }
 
   @override

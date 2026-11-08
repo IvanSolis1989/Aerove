@@ -26,6 +26,25 @@ sealed interface MeowFlutterStopResult {
     data class Confirmed(val serviceOwner: Long, val sessionGeneration: Long) : MeowFlutterStopResult
     data object Superseded : MeowFlutterStopResult
     data object TerminationUnconfirmed : MeowFlutterStopResult
+
+    fun requireConfirmed(): Boolean = when (this) {
+        is Confirmed -> true
+        Superseded -> throw MeowProtocolFailure("stop_superseded", "Stop acknowledgement belongs to a superseded runtime")
+        TerminationUnconfirmed -> throw MeowProtocolFailure("termination_unconfirmed", "Service termination could not be confirmed")
+    }
+}
+
+internal class MeowStoppedGraphCancellation(cause: kotlinx.coroutines.CancellationException) :
+    kotlinx.coroutines.CancellationException("Service stopped; parked query graph restoration cancelled") {
+    init { initCause(cause) }
+}
+
+internal suspend fun restoreQueryGraphAfterConfirmedStop(restore: suspend () -> Unit) {
+    try { restore() }
+    catch (cancelled: kotlinx.coroutines.CancellationException) { throw MeowStoppedGraphCancellation(cancelled) }
+    catch (_: Exception) {
+        throw MeowProtocolFailure("stop_graph_restore_failed", "Service stopped; parked query graph restoration failed")
+    }
 }
 
 class MeowFlutterPermissionStart internal constructor(

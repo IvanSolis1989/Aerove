@@ -285,14 +285,14 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
                 "stop" -> {
                     cancelPermission(revision)
                     runtimeIntentGate.withLock {
-                        if (revision != intent.get()) throw MeowProtocolFailure("superseded", "Stop intent was superseded")
+                        if (revision != intent.get()) throw MeowProtocolFailure("stop_superseded", "Stop intent was superseded")
                         if (graph.runtimeHandoffs.hasAuthority) graph.runtimeHandoffs.invalidate()
                     }
                     val stopped = withContext(Dispatchers.Main.immediate) {
-                        if (revision != intent.get()) throw MeowProtocolFailure("superseded", "Stop intent was superseded before dispatch")
-                        commands.disconnectAndJoin() is MeowFlutterStopResult.Confirmed
+                        if (revision != intent.get()) throw MeowProtocolFailure("stop_superseded", "Stop intent was superseded before dispatch")
+                        commands.disconnectAndJoin().requireConfirmed()
                     }
-                    if (stopped && revision == intent.get()) {
+                    if (stopped && revision == intent.get()) restoreQueryGraphAfterConfirmedStop {
                         graph.runtimeHandoffs.readCurrent()?.takeIf { !it.userRequested && graph.runtimeHandoffs.providerSourceAllowsAdmission(it) &&
                             !graph.runtimeHandoffs.providerSourceKeepStopped() }?.let { graph.ensureParkedGraph(it) }
                     }
@@ -487,6 +487,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
     private fun run(reply: Reply, method: String, work: suspend () -> Any?) {
         scope.launch {
             try { reply.success(work()) }
+            catch (failure: MeowStoppedGraphCancellation) { reply.error("stop_graph_restore_cancelled", "Service stopped; parked query graph restoration cancelled") }
             catch (failure: CancellationException) { reply.error("cancelled", "Meow attachment operation cancelled") }
             catch (failure: MeowProtocolFailure) {
                 logMeowHostFailure(failure.code, method, failure)
