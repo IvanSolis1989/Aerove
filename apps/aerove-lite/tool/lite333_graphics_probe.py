@@ -83,6 +83,11 @@ def graphics_command(sdk, avd, mode):
     return command
 
 
+def current_focus_lines(output):
+    # Android 13 WMS full dump includes DisplayContent.dump; `window windows` does not.
+    return re.findall(r'(?m)^\s*mCurrentFocus=.*$', output)
+
+
 class Diagnostic(base.Diagnostic):
     def __init__(self, args):
         super().__init__(args)
@@ -112,7 +117,7 @@ class Diagnostic(base.Diagnostic):
             raw, _ = self.adb_command(scene + '-' + label, *command, timeout=15)
             return raw.decode(errors='replace')
         for label, command in [('sf-pid-before', ('shell', 'pidof', 'surfaceflinger')),
-                ('focus-before', ('shell', 'dumpsys', 'window', 'windows')),
+                ('focus-before', ('shell', 'dumpsys', 'window')),
                 ('sf-before', ('shell', 'dumpsys', 'SurfaceFlinger'))]:
             self.attempt(layer, label, lambda label=label, command=command: observation(label, *command))
         def raw_capture():
@@ -142,7 +147,7 @@ class Diagnostic(base.Diagnostic):
             return receipt
         self.attempt(layer, 'uiAutomation', automation_capture)
         for label, command in [('sf-pid-after', ('shell', 'pidof', 'surfaceflinger')),
-                ('focus-after', ('shell', 'dumpsys', 'window', 'windows')),
+                ('focus-after', ('shell', 'dumpsys', 'window')),
                 ('sf-after', ('shell', 'dumpsys', 'SurfaceFlinger')),
                 ('logcat', ('logcat', '-b', 'all', '-d', '-v', 'threadtime'))]:
             self.attempt(layer, label, lambda label=label, command=command: observation(label, *command))
@@ -151,11 +156,12 @@ class Diagnostic(base.Diagnostic):
         good = good and image.get('rgbBlack', 1) < image.get('pixels', 1) * .99
         good = good and layer.get('sf-pid-before', {}).get('value') == layer.get('sf-pid-after', {}).get('value')
         if expected_package:
-            focus = layer.get('focus-before', {}).get('value', '')
-            observed = re.findall(r'mCurrentFocus=.*', focus)
             layer['expectedFocusPackage'] = expected_package
-            layer['observedCurrentFocus'] = observed
-            good = good and any(re.search(r'\b' + re.escape(expected_package) + r'/', row) for row in observed)
+            layer['observedCurrentFocus'] = {}
+            for moment in ('before', 'after'):
+                observed = current_focus_lines(layer.get('focus-' + moment, {}).get('value', ''))
+                layer['observedCurrentFocus'][moment] = observed
+                good = good and len(observed) == 1 and bool(re.search(r'\b' + re.escape(expected_package) + r'/', observed[0]))
         layer['diagnosticCaptureUsable'] = bool(good)
         return good
 
@@ -200,7 +206,7 @@ class Diagnostic(base.Diagnostic):
         for label, prop, expected in [('api', 'ro.build.version.sdk', b'33'), ('abi', 'ro.product.cpu.abi', b'x86_64'),
                 ('image-fingerprint', 'ro.build.fingerprint', b'google/sdk_gphone64_x86_64/emu64x:13/TE1A.240213.009/12342917:userdebug/dev-keys')]:
             raw, _ = self.adb_command(label, 'shell', 'getprop', prop); require(raw.strip() == expected, 'Wrong image')
-        for label, cmd in [('image-properties', ['shell', 'getprop']), ('init-ranchu', ['shell', 'sh', '-c',
+        for label, cmd in [('image-properties', ['shell', 'getprop']), ('init-ranchu', ['shell',
                 'for f in /vendor/etc/init/hw/init.ranchu.rc /vendor/etc/init/init.ranchu.rc /init.ranchu.rc; do if [ -f "$f" ]; then echo "$f"; cat "$f"; fi; done'])]:
             self.adb_command(label, *cmd, check=False)
         users, _ = self.adb_command('owned-users', 'shell', 'pm', 'list', 'users')

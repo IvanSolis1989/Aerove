@@ -59,6 +59,40 @@ class Graphics333Tests(unittest.TestCase):
         self.assertIn('*action[4:]',source)
         self.assertIn("require(usable, 'System layer failed; original App deliberately not installed')",source)
         self.assertLess(source.index("require(usable, 'System layer failed"),source.index("self.adb_command('install-original'"))
+    def test_android13_display_focus_not_window_presence(self):
+        # Synthetic format contracts, not new device evidence.
+        windows = "WINDOW MANAGER WINDOWS (dumpsys window windows)\n  Window #9 Window{123 u0 com.android.settings/.Settings}:\n  mTopFocusedDisplayId=0\n"
+        self.assertEqual([],p.current_focus_lines(windows))
+        display = "WINDOW MANAGER DISPLAY CONTENTS\n  Display: mDisplayId=0 rootTasks=2\n  mCurrentFocus=Window{123 u0 com.android.settings/.Settings}\n  mFocusedApp=ActivityRecord{other}\n"
+        self.assertEqual(['  mCurrentFocus=Window{123 u0 com.android.settings/.Settings}'],p.current_focus_lines(display))
+        self.assertEqual([],p.current_focus_lines('other=mCurrentFocus=Window{123}'))
+    def test_focus_command_full_dump_and_init_single_shell(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d=p.Diagnostic(self.args(Path(temp)));calls=[]
+            def command(label,*args,**kwargs):
+                calls.append((label,args))
+                if label in ('home-raw','home-instrument'):raise ValueError('deliberate capture failure')
+                return b'123\n',{'exit':0}
+            d.adb_command=command;d.capture('home','com.android.settings')
+            for label in ('home-focus-before','home-focus-after'):
+                self.assertIn((label,('shell','dumpsys','window')),calls)
+        source=Path(p.__file__).read_text()
+        self.assertNotIn("['shell', 'sh', '-c'",source)
+    def test_both_focus_observations_are_required(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);d=p.Diagnostic(self.args(root));dest=root/'home-automation';dest.mkdir();(dest/'uiautomation.png').write_bytes(b'pixels')
+            (dest/'receipt.json').write_text(json.dumps(dict(scene='home',session=d.session,captureCompleted=True,accepted=False,sha256=p.sha(dest/'uiautomation.png'),pixels=100,width=10,height=10,rgbBlack=0)))
+            png=p.base.PNG+b'\0'*4+b'IHDR'+(1080).to_bytes(4,'big')+(2400).to_bytes(4,'big')+b'\0'*12+b'\x00\x00\x00\x00IEND\xaeB`\x82'
+            for after in ('com.android.settings','other.package',None):
+                def command(label,*args,**kwargs):
+                    if label.endswith('-raw'):return png,{'exit':0}
+                    if label.endswith('-instrument'):return b'OK (1 test)',{'exit':0}
+                    if '-focus-' in label:
+                        package='com.android.settings' if label.endswith('before') else after
+                        return (('mCurrentFocus=Window{123 u0 '+package+'/.Activity}').encode() if package else b'mCurrentFocus=null'),{'exit':0}
+                    return b'514\n',{'exit':0}
+                d.adb_command=command
+                self.assertEqual(after=='com.android.settings',d.capture('home','com.android.settings'))
     def test_self_target_and_no_mutation(self):
         import xml.etree.ElementTree as ET
         root=Path(__file__).resolve().parents[1]/'android-qa'
