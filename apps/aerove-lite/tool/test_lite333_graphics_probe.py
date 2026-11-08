@@ -52,7 +52,8 @@ class Graphics333Tests(unittest.TestCase):
         self.assertIn('from lite333_graphics_probe import original', source)
         self.assertIn('driver=graphics-baseline-diagnostic', source)
         self.assertIn('GraphicsBaselineDiagnosticTest', source)
-        self.assertIn('extra+=(--graphics-mode baseline)', source)
+        self.assertIn('extra+=(--graphics-mode "$GRAPHICS_MODE")', source)
+        self.assertIn("inputs.diagnostic_target == 'lite333-graphics-host-default' && 'host-default' || 'baseline'", source)
         self.assertIn('dev.aerove.lite.test' ,source)
     def test_resolve_arguments_keep_action_flag(self):
         source=Path(p.__file__).read_text()
@@ -93,6 +94,13 @@ class Graphics333Tests(unittest.TestCase):
                     return b'514\n',{'exit':0}
                 d.adb_command=command
                 self.assertEqual(after=='com.android.settings',d.capture('home','com.android.settings'))
+    def test_host_default_preserves_postboot_compatibility_and_no_early_navigation_claim(self):
+        source=Path(p.__file__).read_text()
+        self.assertIn('disable_guest_host_query_reset=True',source)
+        self.assertNotIn("disable_guest_host_query_reset=args.graphics_mode",source)
+        with tempfile.TemporaryDirectory() as temp:
+            d=p.Diagnostic(self.args(Path(temp)))
+            self.assertIs(d.receipt['systemNavigationPerformed'],False)
     def test_self_target_and_no_mutation(self):
         import xml.etree.ElementTree as ET
         root=Path(__file__).resolve().parents[1]/'android-qa'

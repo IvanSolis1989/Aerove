@@ -96,7 +96,7 @@ class Diagnostic(base.Diagnostic):
         self.receipt.update(producer='lite333_graphics_probe.py', originalAppIdentity=APP,
             experiment=args.graphics_mode, promotionAccepted=False, appCompiled=False, harnessCompiled=True, appOrHarnessCompiled=True,
             executorScriptSha256=sha(__file__), baseScriptSha256=sha(base.__file__),
-            acceptanceProofProduced=False, layers=[], systemNavigationPerformed=True)
+            acceptanceProofProduced=False, layers=[], systemNavigationPerformed=False)
 
     def app_version(self):
         return '0.2.0-beta.7', '39'
@@ -200,7 +200,7 @@ class Diagnostic(base.Diagnostic):
                 start_new_session=True, env=base.emulator_environment(os.environ))
         self.receipt['emulatorPid'] = self.emulator.pid
         base.wait_ready(self.emulator, args.output, self.receipt, self.check, capture_guest_logcat=True,
-                        disable_guest_host_query_reset=args.graphics_mode == 'baseline')
+                        disable_guest_host_query_reset=True)
         name, _ = self.adb_command('owned-avd-name', 'emu', 'avd', 'name')
         require(name.decode().strip().splitlines() == [args.avd, 'OK'], 'Wrong AVD')
         for label, prop, expected in [('api', 'ro.build.version.sdk', b'33'), ('abi', 'ro.product.cpu.abi', b'x86_64'),
@@ -224,6 +224,7 @@ class Diagnostic(base.Diagnostic):
             require(len(components) == 1, 'System scene must resolve one actual component')
             launch = dict(scene=scene)
             self.receipt.setdefault('sceneLaunches', []).append(launch)
+            self.receipt['systemNavigationPerformed'] = True
             self.attempt(launch, 'launch', lambda: self.adb_command(scene + '-launch', *action, timeout=30)[0].decode())
             time.sleep(2)
             usable = self.capture(scene, components[0].decode()) and launch['launch']['collected'] and usable
