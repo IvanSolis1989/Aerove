@@ -50,6 +50,9 @@ class SealedResourceInputsTest {
         val bundle = f.manager.prepare(profile,
             "proxy-providers: {old: {type: http, url: 'https://example.invalid/proxy', path: proxy.yaml, proxy: DIRECT}}\nrules: ['MATCH,DIRECT']\n",
             requestPolicy = ProviderRequestPolicy("AEROVE/review84", true))
+        val firstProviders = ConfigYaml.parse(bundle.yaml)["proxy-providers"] as Map<*, *>
+        val firstPayload = File((firstProviders["old"] as Map<*, *>)["path"] as String)
+        assertEquals(setOf("proxies"), ConfigYaml.parse(firstPayload.readText()).keys)
         val old = f.sealer.borrow(bundle.yaml, bundle.directory)
         f.manager.discard(profile, bundle.generation)
         val second = f.sealer.prepare(f.mixed(old.yaml), true)
@@ -57,7 +60,9 @@ class SealedResourceInputsTest {
         try {
             val providers = ConfigYaml.parse(third.yaml)["proxy-providers"] as Map<*, *>
             val payload = File((providers["old"] as Map<*, *>)["path"] as String)
-            val node = (ConfigYaml.parse(payload.readText())["proxies"] as List<*>).single() as Map<*, *>
+            val payloadRoot = ConfigYaml.parse(payload.readText())
+            assertEquals(setOf("proxies"), payloadRoot.keys)
+            val node = (payloadRoot["proxies"] as List<*>).single() as Map<*, *>
             assertEquals("child", node["name"])
             assertTrue(payload.toPath().startsWith(third.directory.toPath().resolve("assets")))
             val manifest = JSONObject(File(third.directory, "manifest.json").readText())
@@ -70,6 +75,20 @@ class SealedResourceInputsTest {
             assertFalse(old.directory.exists()); assertTrue(second.directory.isDirectory)
         } finally { third.closeAndJoin(); second.closeAndJoin(); old.closeAndJoin() }
         assertFalse(old.directory.exists()); assertFalse(second.directory.exists()); assertFalse(third.directory.exists())
+    }
+
+    @Test fun profileOnlyFieldsRemainRejectedInDownloadedProviderPayload() = runBlocking<Unit> {
+        val f = Fixture(temporary.root)
+        f.onDownload = { request ->
+            request.destination.writeText("strict: true\nproxies: [{name: child, type: http, server: 127.0.0.1, port: 1080}]\n")
+        }
+        val failure = runCatching {
+            f.manager.prepare(UUID.randomUUID().toString(),
+                "proxy-providers: {old: {type: http, url: 'https://example.invalid/proxy', path: proxy.yaml, proxy: DIRECT}}\nrules: ['MATCH,DIRECT']\n",
+                requestPolicy = ProviderRequestPolicy("AEROVE/review84", true))
+        }.exceptionOrNull()
+        assertTrue(failure is ConfigValidationException)
+        assertEquals("$.proxies", (failure as ConfigValidationException).issues.single().path)
     }
 
     @Test fun arbitraryAbsoluteUnrecordedAndTamperedFilesStayRejected() = runBlocking<Unit> {

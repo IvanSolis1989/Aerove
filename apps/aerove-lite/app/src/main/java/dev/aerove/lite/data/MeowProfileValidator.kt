@@ -123,7 +123,9 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
         val parsed = ConfigYaml.parse(source)
         if (parsed.keys != setOf("proxies") || parsed["proxies"] !is List<*>) fail("$.proxies", "Proxy provider must contain only a proxies list")
         // Native conversion needs the complete materialized provider graph.
-        return MeowCompatibilityValidator.normalize(parsed, features)
+        val normalized = MeowCompatibilityValidator.normalize(parsed, features)
+        // Profile-only defaults (strict) are not part of a provider payload schema.
+        return linkedMapOf("proxies" to normalized.getValue("proxies"))
     }
     // Native checked conversion owns logical expressions and Android metadata after materialization.
     override fun ruleLineIssue(line: String): String? = if (line.isBlank()) "Empty rule payload" else null

@@ -24,9 +24,14 @@ impl Stage {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum CauseType { SerdeYaml, Io, Join, Unknown }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Primary { pub stage: Stage, pub code: &'static str, pub io_kind: Option<&'static str> }
+pub(crate) struct Primary { pub stage: Stage, pub code: &'static str, pub io_kind: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cause_type: Option<CauseType> }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Diagnostic {
@@ -44,11 +49,12 @@ impl Diagnostic {
         if self.completed || self.primary.is_some() { return; }
         let code = crate::runtime::failure_detail(cause)
             .map(|e| allowed_code(e.code)).unwrap_or_else(|| self.stage.fallback());
-        self.primary = Some(Primary { stage: self.stage, code, io_kind: Some(io_kind(cause.kind())) });
+        self.primary = Some(Primary { stage: self.stage, code, io_kind: Some(io_kind(cause.kind())),
+            cause_type: (self.stage == Stage::ConfigLoad).then(|| crate::runtime::startup_cause_type(cause)) });
     }
     pub fn record_code(&mut self, stage: Stage, code: &'static str) {
         if !self.completed && self.primary.is_none() {
-            self.primary = Some(Primary { stage, code: allowed_code(code), io_kind: None });
+            self.primary = Some(Primary { stage, code: allowed_code(code), io_kind: None, cause_type: None });
         }
     }
     pub fn cleaned(&mut self, runtime_confirmed: bool, loaded: bool) {
@@ -103,6 +109,41 @@ fn io_kind(kind: io::ErrorKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wrapped(source: anyhow::Error) -> io::Error {
+        crate::runtime::failure_with_source(crate::runtime::Failure { code: "configLoadFailed",
+            field: Some("engineYaml".into()), reason: Some("password=private-context".into()) }, source)
+    }
+    fn assert_cause(source: anyhow::Error, expected: CauseType) {
+        let error = wrapped(source.context("https://private.invalid/secret"));
+        let mut d = Diagnostic::default(); d.advance(Stage::ConfigLoad); d.record_io(&error);
+        assert_eq!(d.primary.as_ref().unwrap().cause_type, Some(expected));
+        assert_eq!(crate::runtime::failure_detail(&error).unwrap().code, "configLoadFailed");
+        assert_eq!(crate::runtime::retained_failure_context(&error).unwrap().reason.as_deref(), Some("password=private-context"));
+        d.record_code(Stage::ReadyWait, "cancelled");
+        d.cleaned(false, false);
+        assert_eq!(d.primary.as_ref().unwrap().cause_type, Some(expected));
+        assert_eq!(d.cleanup, "runtimeAndLoadJoinFailed");
+        let json = serde_json::to_string(&d).unwrap();
+        for private in ["password", "private", "https", "secret", "cancelled"] { assert!(!json.contains(private)); }
+    }
+    #[test]
+    fn config_cause_classification_uses_types_never_error_text() {
+        let yaml = serde_yaml::from_str::<serde_yaml::Value>("password: [secret").unwrap_err();
+        assert_cause(anyhow::Error::new(yaml), CauseType::SerdeYaml);
+        assert_cause(anyhow::Error::new(io::Error::new(io::ErrorKind::PermissionDenied, "/private/secret")), CauseType::Io);
+        assert_cause(anyhow::anyhow!("serde_yaml::Error permission denied JoinError password=secret"), CauseType::Unknown);
+        let mut d = Diagnostic::default(); d.advance(Stage::ControlSetup);
+        d.record_io(&io::Error::other("private"));
+        assert!(!serde_json::to_string(&d).unwrap().contains("causeType"));
+        let mut d = Diagnostic::default(); d.record_code(Stage::ReadyWait, "cancelled");
+        d.advance(Stage::ConfigLoad); d.record_io(&wrapped(anyhow::anyhow!("private")));
+        assert_eq!(d.primary.unwrap().code, "cancelled");
+    }
+    #[tokio::test]
+    async fn config_task_join_failure_has_fixed_type() {
+        let task = tokio::spawn(std::future::pending::<()>()); task.abort();
+        assert_cause(anyhow::Error::new(task.await.unwrap_err()), CauseType::Join);
+    }
     #[test]
     fn primary_preserves_boundary_and_excludes_all_dynamic_payloads() {
         let mut d = Diagnostic::default(); d.advance(Stage::ConfigLoad);

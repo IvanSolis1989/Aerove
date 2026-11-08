@@ -106,6 +106,20 @@ pub(crate) fn failure_detail(error: &std::io::Error) -> Option<&Failure> {
     cause.downcast_ref::<Failure>().or_else(|| cause.downcast_ref::<FailureSource>().map(|e| &e.public))
 }
 
+// Classify types only; do not inspect Display text, YAML, paths or dynamic context.
+pub(crate) fn startup_cause_type(error: &std::io::Error) -> crate::startup_diagnostic::CauseType {
+    use crate::startup_diagnostic::CauseType;
+    let Some(source) = error.get_ref().and_then(|e| e.downcast_ref::<FailureSource>()) else {
+        return if error.get_ref().is_some_and(|e| e.is::<Failure>()) { CauseType::Unknown } else { CauseType::Io };
+    };
+    for cause in source.source.chain().take(32) {
+        if cause.is::<serde_yaml::Error>() { return CauseType::SerdeYaml; }
+        if cause.is::<std::io::Error>() { return CauseType::Io; }
+        if cause.is::<tokio::task::JoinError>() { return CauseType::Join; }
+    }
+    CauseType::Unknown
+}
+
 pub(crate) fn retained_failure_context(error: &std::io::Error) -> Option<&Failure> {
     let cause = error.get_ref()?;
     cause.downcast_ref::<FailureSource>().map(|e| &e.context)
