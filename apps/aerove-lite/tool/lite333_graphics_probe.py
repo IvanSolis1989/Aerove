@@ -120,10 +120,26 @@ class Diagnostic(base.Diagnostic):
         super().__init__(args)
         self.app, self.apk_sha, self.info_sha = APP, APK_SHA, INFO_SHA
         self.session = uuid4().hex
+        self.host_capture = None
+        self.host_sigill = getattr(args, "host_sigill", False)
+        require(not self.host_sigill or args.graphics_mode == "host-default", "Host SIGILL requires host-default mode")
         self.receipt.update(producer='lite333_graphics_probe.py', originalAppIdentity=APP,
-            experiment=args.graphics_mode, promotionAccepted=False, appCompiled=False, harnessCompiled=True, appOrHarnessCompiled=True,
+            experiment="host-default-sigill" if self.host_sigill else args.graphics_mode, promotionAccepted=False, appCompiled=False, harnessCompiled=True, appOrHarnessCompiled=True,
             executorScriptSha256=sha(__file__), baseScriptSha256=sha(base.__file__),
             acceptanceProofProduced=False, layers=[], systemNavigationPerformed=False)
+
+    def check(self, _receipt=None):
+        if self.host_capture is not None:
+            self.host_capture.check()
+        super().check(_receipt)
+
+    def execute(self):
+        try:
+            self.execute_graphics()
+        finally:
+            # Detach the owned debugger before the base owner terminates emulator.
+            if self.host_capture is not None:
+                self.host_capture.close()
 
     def app_version(self):
         return '0.2.0-beta.7', '39'
@@ -228,7 +244,7 @@ class Diagnostic(base.Diagnostic):
         layer['diagnosticCaptureUsable'] = bool(good)
         return good
 
-    def execute(self):
+    def execute_graphics(self):
         args = self.args; guard_execution()
         self.receipt['originalArtifact'] = original(args)
         require(sys.platform == 'linux' and args.run != APP['workflowRun'], 'Independent Linux execution required')
@@ -295,6 +311,10 @@ class Diagnostic(base.Diagnostic):
             captured = self.capture(scene, stable_package or components[0].decode())
             usable = captured and stable_package is not None and launch['launch']['collected'] and usable
         require(usable, 'System layer failed; original App deliberately not installed')
+        if self.host_sigill:
+            from emulator_current import SigillCapture
+            self.host_capture = SigillCapture(self.emulator, args.output, self.receipt, restricted=True)
+            self.host_capture.start()
         self.install_attempted = True
         self.adb_command('install-original', 'install', '--no-streaming', args.runtime_directory / 'apks/app-release.apk', timeout=120)
         self.receipt['installedApp'] = self.installed_hash('original-installed')
@@ -314,6 +334,7 @@ def main():
     parser.add_argument('--sdk', type=Path, required=True)
     parser.add_argument('--avd', default='test')
     parser.add_argument('--graphics-mode', choices=('baseline', 'host-default'), default='baseline')
+    parser.add_argument('--host-sigill', action='store_true')
     parser.add_argument('--original-run-number', type=int, choices=(333,), default=333)
     parser.set_defaults(app_renderer='default', disable_queue_submit_with_commands=False)
     args = parser.parse_args()

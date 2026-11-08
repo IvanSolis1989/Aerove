@@ -75,13 +75,13 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'lite328-surface', 'lite333-graphics', 'lite333-graphics-host-default', 'gfxstream37-static', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'lite328-surface', 'lite333-graphics', 'lite333-graphics-host-default', 'lite333-graphics-host-sigill', 'gfxstream37-static', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite236_pixels:
     name: Fixed original236/257/328/333 untouched pixels (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || inputs.diagnostic_target == 'lite333-graphics-host-default'))) }}
+    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -90,7 +90,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       AEROVE_GUEST_ANGLE: '1'
-      PIXEL_ORIGINAL_NUMBER: ${{ (inputs.diagnostic_target == 'lite333-graphics' || inputs.diagnostic_target == 'lite333-graphics-host-default') && '333' || inputs.diagnostic_target == 'lite328-surface' && '328' || inputs.diagnostic_target == 'lite257-surface' && '257' || '236' }}
+      PIXEL_ORIGINAL_NUMBER: ${{ (inputs.diagnostic_target == 'lite333-graphics' || (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill')) && '333' || inputs.diagnostic_target == 'lite328-surface' && '328' || inputs.diagnostic_target == 'lite257-surface' && '257' || '236' }}
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
@@ -226,12 +226,12 @@ jobs:
         test ! -e "$cleanup_archive"
         df -B1 "$ANDROID_HOME" "$runner_temp_real" "$avd_directory/test.avd" > "$sdk_install_dir/disk-after-owned-cleanup.txt"
     - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
-      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || inputs.diagnostic_target == 'lite333-graphics-host-default'))
+      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill')))
       with:
         gradle-version: 9.6.0
         cache-read-only: false
     - name: Build only the independent public-API Surface diagnostic runner
-      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || inputs.diagnostic_target == 'lite333-graphics-host-default'))
+      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill')))
       env:
         KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
         AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}
@@ -325,11 +325,21 @@ jobs:
             sourceSha256=digest(Path('apps/aerove-lite/android-qa/src/main/java/dev/aerove/lite') / (observer + '.java')))
         (evidence/'HARNESS-INFO.json').write_text(json.dumps(info,indent=2)+'\n')
         PY
+    - name: Verify restricted owned-host signal capture before SIGILL diagnosis
+      if: inputs.diagnostic_target == 'lite333-graphics-host-sigill'
+      working-directory: apps/aerove-lite/tool
+      env:
+        AEROVE_TEST_SIGILL_GDB: '1'
+      run: |
+        set -euo pipefail
+        command -v gdb
+        python3 -B -m unittest -v test_emulator_current.SigillCaptureHostTests
     - name: Capture fixed original pixels in the selected diagnostic order
       env:
         DISABLE_DEFERRED_SUBMIT: ${{ inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' }}
-        GRAPHICS_MODE: ${{ inputs.diagnostic_target == 'lite333-graphics-host-default' && 'host-default' || 'baseline' }}
-        SURFACE_READBACK: ${{ (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || inputs.diagnostic_target == 'lite333-graphics-host-default')) }}
+        HOST_SIGILL: ${{ inputs.diagnostic_target == 'lite333-graphics-host-sigill' }}
+        GRAPHICS_MODE: ${{ (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill') && 'host-default' || 'baseline' }}
+        SURFACE_READBACK: ${{ (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill'))) }}
       run: |
         extra=()
         if [[ "$DISABLE_DEFERRED_SUBMIT" == true ]]; then
@@ -343,7 +353,7 @@ jobs:
         df -B1 "$RUNNER_TEMP" "${ANDROID_AVD_HOME:-$HOME/.android/avd}/test.avd" > "$RUNNER_TEMP/lite-diagnostics/sdk-install/disk-before-pixel-launch.txt"
         pixel_script=apps/aerove-lite/tool/lite236_pixel_diagnostic.py
         if [[ "$PIXEL_ORIGINAL_NUMBER" == 328 ]]; then pixel_script=apps/aerove-lite/tool/lite328_surface_probe.py; fi
-        if [[ "$PIXEL_ORIGINAL_NUMBER" == 333 ]]; then pixel_script=apps/aerove-lite/tool/lite333_graphics_probe.py; extra+=(--graphics-mode "$GRAPHICS_MODE"); fi
+        if [[ "$PIXEL_ORIGINAL_NUMBER" == 333 ]]; then pixel_script=apps/aerove-lite/tool/lite333_graphics_probe.py; extra+=(--graphics-mode "$GRAPHICS_MODE"); if [[ "$HOST_SIGILL" == true ]]; then extra+=(--host-sigill); fi; fi
         python3 "$pixel_script" \
           --runtime-directory "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/unpacked" \
           --archive "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/official.zip" \
@@ -3124,7 +3134,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, lite328-surface, lite333-graphics, lite333-graphics-host-default, gfxstream37-static, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, lite328-surface, lite333-graphics, lite333-graphics-host-default, lite333-graphics-host-sigill, gfxstream37-static, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

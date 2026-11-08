@@ -1019,6 +1019,18 @@ class SigillCaptureHostTests(unittest.TestCase):
     def logs(self):
         return '\n'.join(path.read_text(errors='replace') for path in self.root.glob('sigill-gdb.*.log'))
 
+    def test_restricted_sigill_passes_without_data_registers_or_argument_dump(self):
+        import signal
+        self.capture.restricted = True
+        self.capture.start()
+        self.child.send_signal(signal.SIGILL)
+        self.assertEqual(-signal.SIGILL, self.child.wait(timeout=15), self.logs())
+        self.capture.close()
+        self.assertTrue(json.loads(self.capture.fault.read_text())['readbackComplete'])
+        self.assertIn('AEROVE_GDB_COMMAND info registers rip', self.logs())
+        for forbidden in ('AEROVE_GDB_COMMAND p $_siginfo', 'rsp rbp', 'AEROVE_GDB_COMMAND x/', 'AEROVE_GDB_COMMAND bt full'):
+            self.assertNotIn(forbidden, self.logs())
+
     def test_normal_child_exit_keeps_original_status_and_is_not_owner_acceptance(self):
         self.capture.start()
         self.child.stdin.write(b'exit\n')

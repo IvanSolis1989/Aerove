@@ -230,11 +230,11 @@ def derived_host_evidence(path, emulator_pid, directory):
                 loadedLibrarySha256=actual, emulatorMapsSha256=sha(output), loadedInOwnedEmulator=True)
 
 
-def sigill_gdb_script(pid, ready, fault, control=None, fault_signals=('SIGILL',), trace_exec=False):
+def sigill_gdb_script(pid, ready, fault, control=None, fault_signals=('SIGILL',), trace_exec=False, restricted=False):
     if fault_signals not in (('SIGILL',), ('SIGILL', 'SIGSEGV')):
         raise ValueError('Unsupported owned diagnostic signal set')
     # GDB reads only this live Popen PID; no process search, inferior calls or patching.
-    return """set pagination off
+    script = """set pagination off
 set confirm off
 set auto-load off
 set debuginfod enabled off
@@ -408,6 +408,31 @@ end
        'handle SIGSEGV stop print pass' if 'SIGSEGV' in fault_signals else '',
        pid, str(ready), str(fault), control, fault_signals, trace_exec)
 
+    if restricted:
+        start = script.index('        for command in ("p $_siginfo"')
+        end = script.index('        observed["readbackComplete"]', start)
+        script = script[:start] + RESTRICTED_SIGILL_READBACK + script[end:]
+    return script
+
+
+RESTRICTED_SIGILL_READBACK = '''        emit("info registers rip")
+        emit("bt 24")
+        emit("info sharedlibrary")
+        emit("info proc mappings")
+        try:
+            pc = gdb.selected_frame().pc()
+            # Only code in an actual file-backed executable mapping, never stack/JIT/heap.
+            maps = pathlib.Path("/proc") / str(pid) / "maps"
+            for line in maps.read_text().splitlines():
+                fields = line.split(None, 5)
+                low, high = [int(value, 16) for value in fields[0].split("-")]
+                if low <= pc < high and len(fields) == 6 and "x" in fields[1] and fields[5].startswith("/") and not fields[5].endswith(" (deleted)"):
+                    emit("disassemble /r " + hex(max(low, pc - 32)) + "," + hex(min(high, pc + 64)))
+                    break
+        except (gdb.error, OSError, ValueError) as error:
+            print("AEROVE_CODE_READ_ERROR " + type(error).__name__, flush=True)
+'''
+
 
 def sigill_interrupt_command(pid, starttime):
     program = """import json, os, pathlib, signal, sys
@@ -427,11 +452,12 @@ finally:
 
 class SigillCapture:
     """One opt-in sidecar; the emulator remains the owner's original Popen child."""
-    def __init__(self, emulator, directory, receipt, fault_signals=('SIGILL',), trace_exec=False):
+    def __init__(self, emulator, directory, receipt, fault_signals=('SIGILL',), trace_exec=False, restricted=False):
         self.emulator, self.directory, self.receipt = emulator, Path(directory), receipt
         self.child = None
         self.fault_signals = fault_signals
         self.trace_exec = trace_exec
+        self.restricted = restricted
         self.ready, self.fault = self.directory / 'sigill-gdb-ready.json', self.directory / 'sigill-observed.json'
         self.control = dict(path=str(self.directory / 'gdb-owner-stop.json'),
                             detached=str(self.directory / 'gdb-owner-detached.json'),
@@ -439,7 +465,7 @@ class SigillCapture:
         self.deadline = time.monotonic() + 1500
         self.state = dict(diagnosticOnly=True, performanceEvidence=False, accepted=False,
                           targetPid=emulator.pid, commands=[], status='starting', faultSignals=list(fault_signals),
-                          traceStartupExec=trace_exec)
+                          traceStartupExec=trace_exec, restrictedReadback=restricted)
         receipt['sigillForensics'] = self.state
 
     def start(self):
@@ -461,7 +487,7 @@ class SigillCapture:
         (self.directory / 'host-cpu-flags.json').write_text(json.dumps(cpu, indent=2) + '\n')
         script = self.directory / 'sigill-capture.gdb'
         args = (self.emulator.pid, self.ready, self.fault, self.control, self.fault_signals)
-        script.write_text(sigill_gdb_script(*args, trace_exec=True) if self.trace_exec else sigill_gdb_script(*args))
+        script.write_text(sigill_gdb_script(*args, trace_exec=self.trace_exec, restricted=self.restricted))
         command = ['sudo', '-n', '--', gdb, '-nx', '-nh', '--batch', '-x', str(script)]
         self.state['command'] = command
         with (self.directory / 'sigill-gdb.stdout.log').open('wb') as out, (self.directory / 'sigill-gdb.stderr.log').open('wb') as err:

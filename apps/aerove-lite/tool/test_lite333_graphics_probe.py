@@ -12,6 +12,41 @@ class Graphics333Tests(unittest.TestCase):
     def args(self, root):
         return SimpleNamespace(sdk=root,output=root,source='a'*40,run='99',attempt='1',original_run_number=333,
             app_renderer='default',disable_queue_submit_with_commands=False,graphics_mode='baseline')
+    def test_restricted_gdb_profile(self):
+        from emulator_current import sigill_gdb_script
+        script=sigill_gdb_script(123,Path('/ready'),Path('/fault'),restricted=True)
+        for forbidden in ('p $_siginfo', 'rsp rbp', 'x/256bx', 'x/160bx', 'x/16bx', 'thread.switch()', 'generate-core', 'bt full', 'info locals', 'show environment'):
+            self.assertNotIn(forbidden,script)
+        for required in ('set auto-load off','set print frame-arguments none','set print entry-values no','handle SIGILL stop print pass','emit("bt 24")','fields[5].startswith("/")','"x" in fields[1]'):
+            self.assertIn(required,script)
+        self.assertIn('rsp rbp',sigill_gdb_script(123,Path('/ready'),Path('/fault')))
+        compile(script.split('python\n',1)[1].rsplit('\nend',1)[0],'<gdb-python>','exec')
+    def test_sigill_requires_host_default_and_rejects_environment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            args=self.args(Path(temp));args.host_sigill=True
+            with self.assertRaises(ValueError):p.Diagnostic(args)
+            args.graphics_mode='host-default';d=p.Diagnostic(args)
+            self.assertEqual('host-default-sigill',d.receipt['experiment'])
+        env=dict(GITHUB_REPOSITORY='IvanSolis1989/Aerove',GITHUB_EVENT_NAME='workflow_dispatch',GITHUB_REF='refs/heads/dot/cloud-j316-checkpoint-20261108',AEROVE_EMULATOR_SIGILL_TRACE='1')
+        with patch.dict(os.environ,env,clear=True),self.assertRaises(ValueError):p.guard_execution()
+    def test_failed_attach_is_closed_and_not_success(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as temp:
+            d=p.Diagnostic(self.args(Path(temp)));capture=Mock()
+            def execute():
+                d.host_capture=capture
+                raise RuntimeError('attach failed')
+            d.execute_graphics=execute
+            with self.assertRaisesRegex(RuntimeError,'attach failed'):d.execute()
+            capture.close.assert_called_once()
+            self.assertFalse(d.receipt['accepted'])
+    def test_forensics_attach_is_after_system_gate_before_app(self):
+        source=Path(p.__file__).read_text()
+        self.assertLess(source.index("require(usable, 'System layer failed"),source.index('self.host_capture.start()'))
+        self.assertLess(source.index('self.host_capture.start()'),source.index("self.adb_command('install-original'"))
+        workflow=(Path(__file__).resolve().parents[3]/'.github/workflows/aerove-lite.yaml').read_text()
+        self.assertIn('lite333-graphics-host-sigill',workflow)
+        self.assertIn('extra+=(--host-sigill)',workflow)
     def test_fixed_artifact(self):
         api=dict(p.ARCHIVE,expired=False,url='https://api.github.com/repos/IvanSolis1989/Aerove/actions/artifacts/13624668964',
             workflow_run=dict(id=42497494765,head_sha=p.APP['sourceRevision'],repository_id=1429390079,head_repository_id=1429390079))
@@ -53,7 +88,7 @@ class Graphics333Tests(unittest.TestCase):
         self.assertIn('driver=graphics-baseline-diagnostic', source)
         self.assertIn('GraphicsBaselineDiagnosticTest', source)
         self.assertIn('extra+=(--graphics-mode "$GRAPHICS_MODE")', source)
-        self.assertIn("inputs.diagnostic_target == 'lite333-graphics-host-default' && 'host-default' || 'baseline'", source)
+        self.assertIn("inputs.diagnostic_target == 'lite333-graphics-host-sigill') && 'host-default' || 'baseline'", source)
         self.assertIn('dev.aerove.lite.test' ,source)
     def test_resolve_arguments_keep_action_flag(self):
         source=Path(p.__file__).read_text()
