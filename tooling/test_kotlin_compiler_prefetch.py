@@ -53,6 +53,40 @@ class PrefetchTests(unittest.TestCase):
         with patch.object(subject, 'verified', return_value=True):
             subject.prefetch(self.home, lambda *a, **k: self.fail('network'))
 
+    def test_repository_rejects_unverified_jar(self):
+        jar = self.home / 'bad.jar'
+        jar.write_bytes(b'bad')
+        with self.assertRaises(ValueError):
+            subject.configure_repository(self.home, jar)
+        self.assertFalse((self.home / 'init.d').exists())
+
+    def test_repository_rejects_wrong_pom_before_installing_init(self):
+        jar = self.home / 'verified.jar'
+        jar.write_bytes(b'fixture')
+        def download(args, **kwargs):
+            Path(args[args.index('--output') + 1]).write_bytes(b'wrong pom')
+        with patch.object(subject, 'verified', return_value=True):
+            with self.assertRaises(ValueError):
+                subject.configure_repository(self.home, jar, download)
+        self.assertFalse((self.home / 'init.d').exists())
+        self.assertEqual(list(self.home.rglob('prefetch-*')), [])
+
+    def test_repository_limits_override_to_one_exact_coordinate(self):
+        jar = self.home / 'verified.jar'
+        jar.write_bytes(b'fixture')
+        def download(args, **kwargs):
+            self.assertIn('--fail', args)
+            Path(args[args.index('--output') + 1]).write_bytes(b'official pom')
+        with patch.object(subject, 'verified', return_value=True), patch.object(subject, 'digest', return_value=subject.POM_SHA256):
+            init = subject.configure_repository(self.home, jar, download)
+        text = init.read_text()
+        self.assertIn("includeVersion('org.jetbrains.kotlin', 'kotlin-compiler-embeddable', '2.3.21')", text)
+        self.assertIn('RepositoriesMode.PREFER_PROJECT', text)
+        self.assertIn('mavenPom(); ignoreGradleMetadataRedirection()', text)
+        self.assertIn(subject.SHA256, text)
+        self.assertIn(subject.POM_SHA256, text)
+        self.assertNotIn('includeGroup', text)
+
     def test_real_bytes_do_not_match_expected_hashes(self):
         path = self.home / 'fake.jar'
         path.write_bytes(b'fake')
