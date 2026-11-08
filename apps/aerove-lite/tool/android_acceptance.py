@@ -447,6 +447,7 @@ class Acceptance(Producer):
                     stream.close()
                 except BaseException as error:
                     self.receipt.setdefault("cleanupErrors", []).append(repr(error))
+            self.capture_last_anr()
             if self.owner_verified:
                 for label, command in (("final-logcat", ["logcat", "-d", "-v", "threadtime"]),
                                        ("final-connectivity", ["shell", "dumpsys", "connectivity"])):

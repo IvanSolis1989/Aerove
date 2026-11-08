@@ -183,6 +183,37 @@ class Producer:
                 finally:
                     capture['endedEpochSeconds'] = time.time()
 
+    def capture_last_anr(self):
+        if not self.owner_verified:
+            return
+        limit = 1024 * 1024
+        rows = self.receipt.setdefault("lastAnrDiagnostics", [])
+        for service in ("lastanr", "lastanr-traces"):
+            label = "final-activity-" + service
+            row = dict(service=service, byteLimit=limit, acceptanceEvidence=False,
+                       anrContentValidated=False)
+            rows.append(row)
+            try:
+                # Marker uses stderr outside the capped stdout pipeline; never infer dumpsys exit from head.
+                script = "'(dumpsys -t 8 activity " + service + " 2>&1; rc=$?; " + \
+                    "printf \"AEROVE_DUMPSYS_EXIT=%s\\n\" \"$rc\" >&2) | head -c " + str(limit + 1) + "'"
+                output = self.adb_command(label, "shell", "sh", "-c", script,
+                    timeout=10, check=False, cancelling=True)
+                marker = (self.args.output / (label + ".err")).read_text()
+                match = re.fullmatch(r"AEROVE_DUMPSYS_EXIT=(\d+)\s*", marker)
+                code = int(match[1]) if match else None
+                rejected = any(text in output.lower() for text in
+                    (b"permission denial", b"permission denied", b"unknown command", b"unknown option", b"dump timeout"))
+                row.update(captureCompleted=True, dumpsysExit=code,
+                           commandSucceeded=code == 0 and not rejected,
+                           rejectedOutput=rejected, truncated=len(output) > limit,
+                           retainedBytes=min(len(output), limit))
+                if len(output) > limit:
+                    (self.args.output / (label + ".out")).write_bytes(output[:limit])
+            except BaseException as error:
+                row.update(captureCompleted=False, commandSucceeded=False, error=type(error).__name__)
+                self.receipt.setdefault("diagnosticErrors", []).append(label + ": " + type(error).__name__)
+
     def command(self, label, command, timeout=30, check=True, cancelling=False, termination_timeout=5):
         if self.cancelled and not cancelling:
             raise InterruptedError('QA cancellation observed')
@@ -333,6 +364,7 @@ class Producer:
         except BaseException as error:
             self.receipt.update(status='cancelled' if self.cancelled else 'failed', error=repr(error))
         finally:
+            self.capture_last_anr()
             # Preserve diagnostics before cleanup; no emulator kill, global adb restart, VPN or host network action.
             diagnostics = (
                 ('final-logcat', ['logcat', '-d', '-v', 'threadtime']),

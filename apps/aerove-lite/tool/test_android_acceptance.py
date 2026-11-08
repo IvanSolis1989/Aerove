@@ -774,3 +774,60 @@ class RuntimeDeviceReplayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LastAnrDiagnosticTests(unittest.TestCase):
+    def test_unverified_owner_cannot_read_device_anr(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=Path(directory), phase="flutter-full"))
+            owner.owner_verified = False
+            with patch.object(owner, "adb_command") as adb:
+                owner.capture_last_anr()
+                adb.assert_not_called()
+
+    def test_owned_capture_is_bounded_and_cannot_change_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            owner = Acceptance(Namespace(adb=Path("adb"), serial="emulator-5554", output=Path(directory), phase="flutter-full"))
+            owner.owner_verified = True
+            before = owner.receipt.get("executionPassed")
+            def response(label, *args, **kwargs):
+                if label.endswith("traces"):
+                    raise TimeoutError()
+                (Path(directory) / (label + ".err")).write_text("AEROVE_DUMPSYS_EXIT=0\n")
+                return b"x" * (1024 * 1024 + 1)
+            with patch.object(owner, "adb_command", side_effect=response) as adb:
+                owner.capture_last_anr()
+            self.assertEqual(adb.call_count, 2)
+            for call in adb.call_args_list:
+                self.assertEqual(call.kwargs, dict(timeout=10, check=False, cancelling=True))
+                self.assertIn("dumpsys -t 8 activity lastanr", call.args[-1])
+                self.assertIn("head -c 1048577", call.args[-1])
+                self.assertNotIn("root", call.args)
+            rows = owner.receipt["lastAnrDiagnostics"]
+            self.assertTrue(rows[0]["truncated"])
+            self.assertEqual((Path(directory)/"final-activity-lastanr.out").stat().st_size, 1024 * 1024)
+            self.assertFalse(rows[1]["captureCompleted"])
+            self.assertTrue(all(not row["acceptanceEvidence"] for row in rows))
+            self.assertEqual(before, owner.receipt.get("executionPassed"))
+
+    def test_real_shell_pipeline_preserves_dumpsys_failure_for_both_owners(self):
+        import subprocess
+        from flutter_android_qa import Producer
+        for kind in (Producer, Acceptance):
+            for exit_code, message in ((7, "failure"), (0, "Permission Denial"), (0, "Unknown command"), (0, "ANR diagnostic text")):
+                with self.subTest(kind=kind.__name__, exit_code=exit_code, message=message), tempfile.TemporaryDirectory() as directory:
+                    owner = kind(Namespace(adb=Path("adb"), serial="emulator-5554", output=Path(directory), phase="flutter-full"))
+                    owner.owner_verified = True
+                    def execute(label, *args, **kwargs):
+                        script = args[-1]
+                        self.assertTrue(script.startswith("'") and script.endswith("'"))
+                        completed = subprocess.run(["sh", "-c", "dumpsys() { printf '%s' '" + message + "'; return " + str(exit_code) + "; }; " + script[1:-1]], capture_output=True, timeout=2)
+                        (Path(directory)/(label+".err")).write_bytes(completed.stderr)
+                        return completed.stdout
+                    with patch.object(owner, "adb_command", side_effect=execute):
+                        owner.capture_last_anr()
+                    for row in owner.receipt["lastAnrDiagnostics"]:
+                        self.assertEqual(row["dumpsysExit"], exit_code)
+                        self.assertEqual(row["commandSucceeded"], exit_code == 0 and message == "ANR diagnostic text")
+                        self.assertFalse(row["anrContentValidated"])
+                        self.assertFalse(row["acceptanceEvidence"])
