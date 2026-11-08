@@ -1,3 +1,7 @@
+import 'dart:io';
+
+import 'package:drift/native.dart';
+import 'package:fl_clash/database/database.dart' as db;
 import 'package:fl_clash/product.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/common/maintenance_visibility.dart';
@@ -8,6 +12,8 @@ import 'package:flutter/widgets.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../helpers/app_paths.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +41,23 @@ void main() {
     backendFactory: () =>
         throw StateError('DTO test must not create a Core backend'),
   );
+  late Directory home;
+  late db.Database priorDatabase;
+  late db.Database database;
+  setUp(() async {
+    home = await Directory.systemTemp.createTemp('geo-trigger91-');
+    await useAppPaths(home);
+    priorDatabase = db.database;
+    database = db.Database(
+      NativeDatabase(File('${home.path}/database.sqlite')),
+    );
+    db.database = database;
+  });
+  tearDown(() async {
+    db.database = priorDatabase;
+    await database.close();
+    await home.delete(recursive: true);
+  });
   test(
     'existing visible sweep dispatches automatic only to Lite and respects pause',
     () async {
