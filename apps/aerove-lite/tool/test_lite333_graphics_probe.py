@@ -47,6 +47,14 @@ class Graphics333Tests(unittest.TestCase):
         workflow=(Path(__file__).resolve().parents[3]/'.github/workflows/aerove-lite.yaml').read_text()
         self.assertIn('lite333-graphics-host-sigill',workflow)
         self.assertIn('extra+=(--host-sigill)',workflow)
+    def test_sigill_preflight_provisions_missing_official_gdb(self):
+        source=(Path(__file__).resolve().parents[3]/'.github/workflows/aerove-lite.yaml').read_text()
+        block=source.split('    - name: Verify restricted owned-host signal capture before SIGILL diagnosis',1)[1].split('    - name:',1)[0]
+        for required in ("if: inputs.diagnostic_target == 'lite333-graphics-host-sigill'",'ulimit -c 0','if ! command -v gdb','install --yes --no-install-recommends gdb',"AEROVE_TEST_SIGILL_GDB: '1'",'test_emulator_current.SigillCaptureHostTests','timeout --signal=TERM --kill-after=10s 90s'):
+            self.assertIn(required,block)
+        self.assertLess(block.index('install --yes'),block.index('python3 -B -m unittest'))
+        for forbidden in ('ptrace_scope','core_pattern','--allow-unauthenticated','|| true'):
+            self.assertNotIn(forbidden,block)
     def test_fixed_artifact(self):
         api=dict(p.ARCHIVE,expired=False,url='https://api.github.com/repos/IvanSolis1989/Aerove/actions/artifacts/13624668964',
             workflow_run=dict(id=42497494765,head_sha=p.APP['sourceRevision'],repository_id=1429390079,head_repository_id=1429390079))

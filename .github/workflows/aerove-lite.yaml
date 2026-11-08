@@ -327,13 +327,29 @@ jobs:
         PY
     - name: Verify restricted owned-host signal capture before SIGILL diagnosis
       if: inputs.diagnostic_target == 'lite333-graphics-host-sigill'
+      timeout-minutes: 8
       working-directory: apps/aerove-lite/tool
       env:
         AEROVE_TEST_SIGILL_GDB: '1'
       run: |
         set -euo pipefail
+        ulimit -c 0
+        if ! command -v gdb >/dev/null 2>&1; then
+          sudo -n env DEBIAN_FRONTEND=noninteractive \
+            timeout --signal=TERM --kill-after=10s 90s \
+            apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 update
+          sudo -n env DEBIAN_FRONTEND=noninteractive \
+            timeout --signal=TERM --kill-after=10s 150s \
+            apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 \
+            -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+            install --yes --no-install-recommends gdb
+        fi
         command -v gdb
-        python3 -B -m unittest -v test_emulator_current.SigillCaptureHostTests
+        timeout --signal=TERM --kill-after=5s 10s \
+          sudo -n -- gdb -nx -nh --batch -ex 'show version' -ex quit
+        timeout --signal=TERM --kill-after=10s 90s \
+          python3 -B -m unittest -v test_emulator_current.SigillCaptureHostTests
     - name: Capture fixed original pixels in the selected diagnostic order
       env:
         DISABLE_DEFERRED_SUBMIT: ${{ inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' }}
