@@ -113,6 +113,10 @@ pub(crate) fn startup_cause_type(error: &std::io::Error) -> crate::startup_diagn
         return if error.get_ref().is_some_and(|e| e.is::<Failure>()) { CauseType::Unknown } else { CauseType::Io };
     };
     for cause in source.source.chain().take(32) {
+        if matches!(cause.downcast_ref::<meow_dns::resolver::BootstrapError>(),
+            Some(meow_dns::resolver::BootstrapError::CannotResolve { .. })) {
+            return CauseType::DnsBootstrapResolve;
+        }
         if cause.is::<serde_yaml::Error>() { return CauseType::SerdeYaml; }
         if cause.is::<std::io::Error>() { return CauseType::Io; }
         if cause.is::<tokio::task::JoinError>() { return CauseType::Join; }

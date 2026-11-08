@@ -210,3 +210,20 @@ async fn required_dns_owner_fails_closed_and_retirement_joins_actual_pending_exc
     dns.close().await;assert_eq!(tokio::time::timeout(Duration::from_secs(5),query).await.unwrap().unwrap(),None);
     assert!(dns.starts.load(Ordering::SeqCst)>0);scope.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn owned_loader_preserves_typed_bootstrap_failure_and_joins_without_network() {
+    let owner = Owner::new();
+    let scope = OwnedLoadScope::with_context(Arc::new(Context {
+        dns: Some(owner.clone()), physical: "127.0.0.1:53".parse().unwrap(),
+    }));
+    owner.bind(&scope);
+    let source = "dns:\n  enable: true\n  default-nameserver: ['rcode://refused']\n  nameserver: ['https://private.invalid/dns-query']\nrules: []\n";
+    let result = tokio::time::timeout(Duration::from_secs(5),
+        meow_config::load_config_from_str_owned(source, &scope)).await.unwrap();
+    let error = match result { Ok(_) => panic!("negative bootstrap must not create a ready resolver"), Err(error) => error };
+    assert!(error.chain().any(|cause| matches!(cause.downcast_ref::<meow_dns::resolver::BootstrapError>(),
+        Some(meow_dns::resolver::BootstrapError::CannotResolve { .. }))));
+    scope.close().await.unwrap();
+    owner.close().await;
+}

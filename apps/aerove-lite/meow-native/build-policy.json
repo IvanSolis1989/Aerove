@@ -48,7 +48,7 @@
     "user_request_context"
   ],
   "overlay": "source-metadata/full-runtime.json",
-  "overlaySha256": "cae49527f4f1b55dffb5b57dd92a0a0916772c4f454f5538e19ef0ed62248911",
+  "overlaySha256": "83ce4b54cb8d5bcc0d364503d8b6aa46c5fc3777eb2361fbe38e18361d0d04d3",
   "featureBoundary": "capabilities-no-default",
   "coreTests": "policy-runtime-counter-epoch-v1",
   "coreTestLockSha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"

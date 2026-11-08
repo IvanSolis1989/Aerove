@@ -5,7 +5,7 @@ import org.json.JSONObject
 enum class MeowStartupStage { ownerCreate, planDecode, hostPolicy, physicalDns, managedConfig, configLoad, dnsSetup, controlSetup, graphActivation, userActivation, readyWait, running }
 enum class MeowStartupCode { ownerCreateFailed, planDecodeFailed, hostPolicyFailed, physicalDnsFailed, managedConfigFailed, configLoadFailed, dnsSetupFailed, controlSetupFailed, graphActivationFailed, userActivationFailed, readyWaitFailed, candidateFieldNotIntegrated, managedDialerProxyGraphRejected, managedConfigRejected, managedGroupConfigRejected, providerConfigRejected, managedDialerProxyGraphNotIntegrated, cancelled, ownerExited, ownedRuntimePanicked, unclassified }
 enum class MeowStartupIoKind { permissionDenied, addressInUse, addressNotAvailable, invalidData, invalidInput, notConnected, interrupted, timedOut, other }
-enum class MeowStartupCauseType { serdeYaml, io, join, unknown }
+enum class MeowStartupCauseType { serdeYaml, io, join, dnsBootstrapResolve, unknown }
 enum class MeowStartupCleanup { pending, complete, runtimeCleanupFailed, loadJoinFailed, runtimeAndLoadJoinFailed }
 enum class MeowStartupPhase { loading, running, stopped, failed }
 data class MeowStartupPrimary(val stage: MeowStartupStage, val code: MeowStartupCode, val ioKind: MeowStartupIoKind?, val causeType: MeowStartupCauseType? = null)

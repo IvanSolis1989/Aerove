@@ -1859,9 +1859,18 @@
 +}
 --- a/crates/meow-config/src/dns_parser.rs
 +++ b/crates/meow-config/src/dns_parser.rs
-@@ -3,0 +4 @@
+@@ -1,6 +1,7 @@
+ use crate::raw::{HostsValue, RawConfig};
+ use crate::rule_provider::RuleProvider;
+ use crate::DnsConfig;
 +use crate::owned_load::DisabledDnsSource;
-@@ -28 +29,17 @@
+ use meow_common::DnsMode;
+ use meow_dns::fakeip::{FileStore, MemoryStore, Pool, Skipper, SkipperMode, Store};
+ use meow_dns::resolver::{
+@@ -25,7 +26,23 @@
+ /// identity (in-memory vs the same backing file) are unchanged, so clients
+ /// holding earlier `host → fake-ip` answers keep a valid reverse mapping.
+ /// Pass `None` on cold start.
 -pub async fn parse_dns(
 +pub fn parse_dns<'a>(
 +    raw: &'a RawConfig,
@@ -1880,7 +1889,13 @@
 +}
 +
 +async fn parse_dns_impl(
-@@ -48,8 +65,26 @@
+     raw: &RawConfig,
+     mmdb_path: Option<&std::path::Path>,
+     cache_dir: Option<&std::path::Path>,
+@@ -45,14 +62,32 @@
+             }
+             let hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
+             let use_hosts = raw.dns.as_ref().and_then(|d| d.use_hosts).unwrap_or(true);
 -            let resolver = Resolver::new(
 -                vec!["8.8.8.8:53".parse().unwrap()],
 -                vec![],
@@ -1915,19 +1930,57 @@
 +                    crate::effective_ipv6(raw.ipv6),
 +                ),
 +            };
-@@ -93 +128 @@
+             let resolver = Arc::new(resolver);
+             return Ok(DnsConfig {
+                 resolver_slot: meow_dns::new_resolver_slot(Arc::clone(&resolver)),
+@@ -90,7 +125,7 @@
+     let listen_addr = crate::parse_optional_socket_addr("dns.listen", dns.listen.as_deref())?;
+     let mut hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
+ 
 -    if use_hosts && use_system_hosts {
 +    if use_hosts && use_system_hosts && !crate::owned_load::offline_validation() {
-@@ -117 +152 @@
+         merge_system_hosts(&mut hosts).await;
+     }
+ 
+@@ -114,7 +149,7 @@
+             );
+         }
+         let mut proxy_hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
 -        if use_hosts && use_system_hosts {
 +        if use_hosts && use_system_hosts && !crate::owned_load::offline_validation() {
-@@ -128 +163 @@
+             merge_system_hosts(&mut proxy_hosts).await;
+         }
+         Some(Arc::new(
+@@ -125,7 +160,7 @@
+                 DnsMode::Normal,
+                 proxy_hosts,
+                 use_hosts,
 -                crate::effective_ipv6(raw.ipv6),
 +                crate::effective_ipv6(raw.ipv6) && dns.ipv6.unwrap_or(true),
-@@ -183 +218 @@
+                 None,
+                 None,
+                 proxy_registry,
+@@ -180,14 +215,14 @@
+         mode,
+         hosts,
+         use_hosts,
 -        crate::effective_ipv6(raw.ipv6),
 +        crate::effective_ipv6(raw.ipv6) && dns.ipv6.unwrap_or(true),
-@@ -207,0 +243,31 @@
+         policy,
+         fallback_filter,
+         proxy_registry,
+         crate::is_offline_validate(),
+     )
+     .await
+-    .map_err(|e| anyhow::anyhow!("{e}"))?;
++    .map_err(anyhow::Error::new)?;
+ 
+     // Fake-IP wiring: only when enhanced-mode == fake-ip. Errors here are
+     // fatal (Class A per ADR-0002) — a misconfigured fake-IP range would
+@@ -205,6 +240,37 @@
+         enabled: true,
+         proxy_resolver,
+     })
 +}
 +
 +/// Geo-only no-network construction. The Native owner has separately checked
@@ -1959,10 +2012,22 @@
 +    let proxy_resolver=prior_proxy.map(|resolver|Arc::new(resolver.owned_geo_generation(None,None)));
 +    let listen_addr=crate::parse_optional_socket_addr("dns.listen",raw.dns.as_ref().and_then(|dns|dns.listen.as_deref()))?;
 +    Ok(DnsConfig{resolver_slot:meow_dns::new_resolver_slot(resolver.clone()),resolver,listen_addr,enabled,proxy_resolver})
-@@ -229 +295 @@
+ }
+ 
+ async fn install_fakeip(
+@@ -226,7 +292,7 @@
+     // The file this generation would bind to, when persisting. Computed
+     // before the reuse check so the check can compare store identity, not
+     // just store kind.
 -    let wanted_store_path = persist.then(|| {
 +    let wanted_store_path = (persist && !crate::owned_load::offline_validation()).then(|| {
-@@ -374,0 +441,51 @@
+         // `cache_dir` is `None` for a `--config-string` run — the launch
+         // CWD is not the daemon's to write into, so persist under the
+         // resolved home (same base geodata defaults use) instead of
+@@ -372,6 +438,57 @@
+ 
+ /// Parse nameserver strings into `NameServerEntry`s — every entry must
+ /// parse or load fails. No silent warn-and-drop.
 +pub(crate) fn validate_source_dns(raw: &RawConfig, names: &std::collections::HashSet<smol_str::SmolStr>,
 +    providers: &HashMap<&str, RuleSetBehavior>) -> Result<(), String> {
 +    build_hosts_trie(raw.hosts.as_ref(), true).map_err(|error| error.to_string())?;
@@ -2014,7 +2079,13 @@
 +    Ok(())
 +}
 +
-@@ -433,0 +551,17 @@
+ fn parse_nameserver_entries(servers: &[String]) -> Result<Vec<NameServerEntry>, anyhow::Error> {
+     servers
+         .iter()
+@@ -431,6 +548,23 @@
+     // Resolution-dependent skips (bootstrap lookup failed, no addresses)
+     // stay lenient: those are transient, not config defects.
+     strict: bool,
 +) -> Result<NameserverPolicy, anyhow::Error> {
 +    build_nameserver_policy_with_retained(map,geosite,bootstrap_clients,proxy_registry,rule_providers,strict,None).await
 +}
@@ -2032,15 +2103,33 @@
 +    // stay lenient: those are transient, not config defects.
 +    strict: bool,
 +    retained:Option<&NameserverPolicy>,
-@@ -558 +692,2 @@
+ ) -> Result<NameserverPolicy, anyhow::Error> {
+     let mut policy = NameserverPolicy::new();
+     let mut warned_unsupported_prefix = false;
+@@ -555,11 +689,13 @@
+         }
+ 
+         let resolvers =
 -            build_policy_resolvers(key, value, bootstrap_clients, proxy_registry, strict).await?;
 +            match retained {Some(retained)=>retained.source_entry(key).ok_or_else(||anyhow::anyhow!("owned Geo DNS policy source was not actually constructed: {key}"))?.nameservers,
 +                None=>build_policy_resolvers(key, value, bootstrap_clients, proxy_registry, strict).await?};
-@@ -562,0 +698 @@
+ 
+         let entry = PolicyEntry {
+             nameservers: resolvers,
+         };
 +        policy.retain_source_entry(key,entry.clone());
-@@ -860 +996 @@
+         for pattern in patterns {
+             match pattern {
+                 PolicyPattern::Exact(domain) => policy.insert_exact(domain, entry.clone()),
+@@ -857,7 +993,7 @@
+     }
+ 
+     // Attempt to load GeoIP MMDB for the geoip gate.
 -    let geoip_reader = if geoip {
 +    let geoip_reader = if geoip && !crate::owned_load::offline_validation() {
+         let mmdb_path =
+             explicit_mmdb_path.map_or_else(crate::default_geoip_path, std::path::PathBuf::from);
+         match std::fs::read(&mmdb_path)
 --- a/crates/meow-config/src/ech_dns.rs
 +++ b/crates/meow-config/src/ech_dns.rs
 @@ -1,28 +1,5 @@

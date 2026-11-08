@@ -26,7 +26,7 @@ impl Stage {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) enum CauseType { SerdeYaml, Io, Join, Unknown }
+pub(crate) enum CauseType { SerdeYaml, Io, Join, DnsBootstrapResolve, Unknown }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Primary { pub stage: Stage, pub code: &'static str, pub io_kind: Option<&'static str>,
@@ -138,6 +138,18 @@ mod tests {
         let mut d = Diagnostic::default(); d.record_code(Stage::ReadyWait, "cancelled");
         d.advance(Stage::ConfigLoad); d.record_io(&wrapped(anyhow::anyhow!("private")));
         assert_eq!(d.primary.unwrap().code, "cancelled");
+    }
+    #[test]
+    fn bootstrap_resolve_is_typed_private_and_preserves_failure_priority() {
+        use meow_dns::resolver::BootstrapError;
+        assert_cause(anyhow::Error::new(BootstrapError::CannotResolve {
+            host: "private.secret.invalid".into(),
+            source: Box::new(io::Error::new(io::ErrorKind::NetworkUnreachable, "password=secret")),
+        }), CauseType::DnsBootstrapResolve);
+        assert_cause(anyhow::Error::new(BootstrapError::UnknownProxy {
+            nameserver: "https://private.invalid/secret".into(), proxy: "password".into(),
+        }), CauseType::Unknown);
+        assert_cause(anyhow::anyhow!("CannotResolve dnsBootstrapResolve password=secret"), CauseType::Unknown);
     }
     #[tokio::test]
     async fn config_task_join_failure_has_fixed_type() {
