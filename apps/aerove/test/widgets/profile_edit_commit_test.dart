@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show QueryExecutor, QueryInterceptor;
 import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
@@ -18,6 +19,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../helpers/app_paths.dart';
 import '../helpers/test_app.dart';
+
+class _RejectEdit extends QueryInterceptor {
+  bool reject = false;
+  @override
+  Future<int> runInsert(
+    QueryExecutor executor,
+    String statement,
+    List<Object?> args,
+  ) {
+    if (reject && statement.contains('profiles'))
+      throw StateError('fixture rejection');
+    return executor.runInsert(statement, args);
+  }
+}
 
 class _NoApply extends SetupAction {
   @override
@@ -100,7 +115,11 @@ void main() {
             'profile-edit-commit-',
           );
           await useAppPaths(home);
-          final sql = db.Database(NativeDatabase.memory());
+          final rejection = _RejectEdit();
+          final sql = db.Database.interceptNative(
+            NativeDatabase.memory(),
+            rejection,
+          );
           final previous = db.database;
           db.database = sql;
           await sql.profiles.put(profile.toCompanion());
@@ -124,10 +143,15 @@ void main() {
             ],
           );
           globalState.container = container;
+          // Construct I/O owners in the same real-async fixture zone as the DB.
+          await container
+              .read(setupActionProvider.notifier)
+              .withProviderSourceWrite(() async {});
           final hold = container.listen(profilesProvider, (_, _) {});
           await container.read(profilesStreamProvider.future);
           return (
             home: home,
+            rejection: rejection,
             sql: sql,
             previous: previous,
             yaml: yaml,
@@ -139,6 +163,7 @@ void main() {
         }))!;
         final (
           :home,
+          :rejection,
           :sql,
           :previous,
           :yaml,
@@ -204,10 +229,7 @@ void main() {
             );
           }
           await tester.runAsync(() async {
-            await sql.customStatement(
-              'CREATE TRIGGER reject_profile_edit BEFORE INSERT ON profiles '
-              "BEGIN SELECT RAISE(ABORT, 'fixture rejection'); END",
-            );
+            rejection.reject = true;
             await tester.tap(find.byTooltip(currentAppLocalizations.save));
             await action.saved.future.timeout(const Duration(seconds: 10));
           });

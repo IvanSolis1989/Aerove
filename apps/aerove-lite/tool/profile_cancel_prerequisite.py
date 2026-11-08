@@ -48,7 +48,7 @@ def expanded(text,default_suite=None):
 
 PRODUCTION=("common/profile_update.dart","common/request.dart","models/profile.dart","providers/action.dart","providers/actions/profiles.dart","providers/database.dart","views/profiles/profiles.dart","providers/generated/action.g.dart","providers/generated/database.g.dart")
 TEST_SOURCES=("apps/aerove/test/providers/profile_update_cancel_test.dart","apps/aerove/test/features/profile_update_cancel_view_test.dart","apps/aerove/test/models/profile_save_test.dart","apps/aerove/test/providers/action_test.dart","apps/aerove/test/providers/automatic_maintenance_reset_test.dart")
-SCOPES={"domain":("test/providers/profile_update_cancel_test.dart",13),"view":("test/features/profile_update_cancel_view_test.dart",2),"save":("test/models/profile_save_test.dart",5)}
+SCOPES={"domain":("test/providers/profile_update_cancel_test.dart",18),"view":("test/features/profile_update_cancel_view_test.dart",2),"save":("test/models/profile_save_test.dart",5)}
 
 def validate(repository,evidence_directory,implementation,green):
     root=Path(evidence_directory);manifest=json.loads(Path(implementation).read_text());proof=json.loads(Path(green).read_text())

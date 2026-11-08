@@ -686,17 +686,21 @@ Future<RealProfile> _makeRealProfileTask(
     String type,
     Map<String, String> fileReferences,
   ) async {
-    final providers = rawConfig[section];
-    if (providers is! Map) {
+    final supplied = rawConfig[section];
+    if (supplied is! Map) {
       return;
     }
+    final providers = Map<String, dynamic>.from(supplied);
+    rawConfig[section] = providers;
     final sourceProviders = data.rawConfig[section];
     for (final name in providers.keys) {
-      final provider = providers[name];
+      final suppliedProvider = providers[name];
       final source = sourceProviders is Map ? sourceProviders[name] : null;
-      if (provider is! Map || provider['type'] == 'inline') {
+      if (suppliedProvider is! Map || suppliedProvider['type'] == 'inline') {
         continue;
       }
+      final provider = Map<String, dynamic>.from(suppliedProvider);
+      providers[name] = provider;
       if (overrides.localProviderSources.containsKey('$section/$name')) {
         // The verified detached binding was applied below. Its distinct owner
         // path must not be confined back onto the original migration input.
@@ -774,7 +778,7 @@ Future<RealProfile> _makeRealProfileTask(
             homeDirPath: dirname(profilesPath),
             profileId: profileId!,
             section: section,
-            name: name as String,
+            name: name,
             sourcePath: path,
           ),
         );

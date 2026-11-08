@@ -66,6 +66,7 @@ void main() {
   late RuleSetInfo compiled;
   late Exception? compileError;
   late Completer<void>? compileGate;
+  Completer<void>? compileEntered;
   late List<({String name, String url})> compiles;
   late List<String> reloads;
   late Exception? reloadError;
@@ -104,6 +105,7 @@ void main() {
     );
     compileError = null;
     compileGate = null;
+    compileEntered = null;
     compiles = [];
     reloads = [];
     reloadError = null;
@@ -122,6 +124,9 @@ void main() {
     ) async {
       final name = invocation.positionalArguments.single as String;
       final url = invocation.namedArguments[#url] as String;
+      if (compileEntered case final entered?) {
+        if (!entered.isCompleted) entered.complete();
+      }
       await compileGate?.future;
       compiles.add((name: name, url: url));
       if (compileError case final error?) throw error;
@@ -193,6 +198,53 @@ void main() {
           .single
           .ruleProvider;
 
+  test(
+    'a rule write awaiting source admission is not an in-flight database write',
+    () async {
+      await testDatabase.clashProviders.put(rules.toCompanion());
+      await pumpEventQueue();
+      final callerZone = Zone.current;
+      final entered = Completer<void>(), release = Completer<void>();
+      Future<void>? queued;
+      final holding = setup.withProviderSourceWrite(() async {
+        entered.complete();
+        await release.future;
+      });
+      addTearDown(() async {
+        if (!release.isCompleted) release.complete();
+        await holding;
+        await queued;
+      });
+      await entered.future;
+      var finished = false;
+      queued = callerZone
+          .run(
+            () => container
+                .read(clashProvidersProvider.notifier)
+                .put(rules.copyWith(label: 'Queued')),
+          )
+          .whenComplete(() => finished = true);
+      await pumpEventQueue();
+      await waitForDatabaseWrites();
+      expect(finished, isFalse);
+      expect(
+        (await testDatabase.clashProvidersDao.query().get()).single.label,
+        rules.label,
+      );
+      release.complete();
+      await holding;
+      await queued;
+      expect(
+        (await testDatabase.clashProvidersDao.query().get()).single.label,
+        'Queued',
+      );
+      expect(
+        container.read(clashProvidersProvider).requireValue.single.label,
+        'Queued',
+      );
+    },
+  );
+
   test('a rule set a rule references reapplies', () async {
     await ruleSetIn(profileId, 'Ad block', id: 30);
 
@@ -213,6 +265,7 @@ void main() {
 
   test('renaming a used rule set reapplies under its old name', () async {
     await ruleSetIn(profileId, 'Ad block', id: 30);
+    await testDatabase.clashProvidersDao.putAll([rules.toCompanion()]);
 
     await action().putProvider(
       rules.copyWith(label: 'Renamed'),
@@ -228,7 +281,7 @@ void main() {
     await testDatabase.clashProvidersDao.putAll([rules.toCompanion()]);
     await pumpEventQueue();
 
-    action().delProvider(rules);
+    await action().delProvider(rules);
     await pumpEventQueue();
 
     expect(await testDatabase.clashProvidersDao.query().get(), isEmpty);
@@ -601,6 +654,10 @@ void main() {
         url: 'https://example.com/automatic.list',
       );
       compileGate = Completer<void>();
+      compileEntered = Completer<void>();
+      addTearDown(() {
+        if (!compileGate!.isCompleted) compileGate!.complete();
+      });
       var current = true;
       final updating = container
           .read(resourcesActionProvider.notifier)
@@ -609,7 +666,7 @@ void main() {
         updating,
         throwsA(isA<UpdateCancelledException>()),
       );
-      await pumpEventQueue();
+      await compileEntered!.future;
       current = false;
       compileGate!.complete();
       await rejected;
@@ -635,12 +692,12 @@ void main() {
       );
       await ruleSetIn(profileId, remote.label, id: 31);
       final target = File(await remote.path);
+      var visible = true;
+      action().meowRulePublicationBarrier = (phase) async {
+        if (phase == 'before-commit-readback') visible = false;
+      };
       await expectLater(
-        action().putProvider(
-          remote,
-          refresh: true,
-          isCurrent: () => !target.existsSync(),
-        ),
+        action().putProvider(remote, refresh: true, isCurrent: () => visible),
         throwsA(isA<UpdateCancelledException>()),
       );
       expect(await target.readAsString(), 'downloaded');
@@ -650,6 +707,30 @@ void main() {
       await action().resumeAutomaticUpdates(isCurrent: () => true);
       await action().resumeAutomaticUpdates(isCurrent: () => true);
       expect(setup.forced, [true]);
+    },
+  );
+
+  test(
+    'a discarded remote sync suppresses both in-place reload and reapply',
+    () async {
+      const remote = ClashProvider(
+        id: 941,
+        label: 'Discarded sync',
+        url: 'https://example.com/discard.list',
+      );
+      await ruleSetIn(profileId, remote.label, id: 943);
+      final saved = await action().putProvider(remote);
+      setup.forced.clear();
+      reloads.clear();
+      compileGate = Completer<void>();
+      final syncing = action().syncRemote(saved);
+      await pumpEventQueue();
+      await action().delProvider(saved);
+      compileGate!.complete();
+      expect(await syncing, isFalse);
+      expect(setup.forced, isEmpty);
+      expect(reloads, isEmpty);
+      expect(await testDatabase.clashProvidersDao.query().get(), isEmpty);
     },
   );
 
@@ -679,7 +760,7 @@ void main() {
     }
 
     test('stays deleted, its cache too', () async {
-      action().delProvider(saved);
+      await action().delProvider(saved);
       await pumpEventQueue();
 
       await download();
@@ -693,7 +774,7 @@ void main() {
     test('finishes discarding a deleted download before returning', () async {
       final source = File(await saved.path);
       final cache = File(await saved.compiledPath);
-      action().delProvider(saved);
+      await action().delProvider(saved);
       await pumpEventQueue();
 
       compileGate!.complete();
@@ -705,7 +786,7 @@ void main() {
     });
 
     test('keeps its new name', () async {
-      container
+      await container
           .read(clashProvidersProvider.notifier)
           .put(saved.copyWith(label: 'Renamed'));
       await pumpEventQueue();
@@ -718,7 +799,7 @@ void main() {
 
     test('drops the download of the url it no longer has', () async {
       final moved = saved.copyWith(url: 'https://example.com/moved.list');
-      container.read(clashProvidersProvider.notifier).put(moved);
+      await container.read(clashProvidersProvider.notifier).put(moved);
       await pumpEventQueue();
 
       await download();
@@ -729,7 +810,7 @@ void main() {
 
     test('keeps the cache downloaded for its replacement url', () async {
       final moved = saved.copyWith(url: 'https://example.com/moved.list');
-      container.read(clashProvidersProvider.notifier).put(moved);
+      await container.read(clashProvidersProvider.notifier).put(moved);
       await pumpEventQueue();
       final gate = compileGate!;
       compileGate = null;
@@ -798,7 +879,12 @@ void main() {
     compileError = const CoreMethodException(code: 'core_error', message: '');
 
     await testDatabase.clashProviders.put(rules.toCompanion());
+    final source = File(await rules.path)
+      ..createSync(recursive: true)
+      ..writeAsStringSync('example.test');
     expect(await action().prepare(rules), rules);
+    expect(source.readAsStringSync(), 'example.test');
+    expect(compiles, hasLength(1));
   });
 
   test('a remote sync reloads in place unless the set changed shape', () async {

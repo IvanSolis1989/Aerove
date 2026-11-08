@@ -223,6 +223,10 @@ async fn fresh_shared_producer_owned_loader() {
     let cancel = CancellationToken::new();
     let network = NetworkContext::platform(cancel.clone())
         .with_resource_roots(resources)
+        .with_physical_dns(
+            crate::physical_dns::selected_servers(&plan.physical_network.dns)
+                .expect("synthetic plan DNS must be valid"),
+        )
         .with_physical_dns_plan(plan.physical_network.dns.clone());
     let installed = Arc::new(Mutex::new(None::<Arc<OwnedRuntime>>));
     let target = installed.clone();

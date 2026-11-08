@@ -208,6 +208,11 @@ Future<String> actualProfile(
   ProfileOverrides? overrides,
 }) async {
   await useAppPaths(root);
+  final previousDatabase = db.database;
+  final fixtureDatabase = db.Database(
+    NativeDatabase(File('${root.path}/database.sqlite')),
+  );
+  db.database = fixtureDatabase;
   var actual = patch ?? PatchClashConfig(ipv6: ipv6);
   if (core == 'meow-rs')
     actual = actual.copyWith.tun(
@@ -263,6 +268,8 @@ Future<String> actualProfile(
     return built.yaml;
   } finally {
     container.dispose();
+    db.database = previousDatabase;
+    await fixtureDatabase.close();
   }
 }
 

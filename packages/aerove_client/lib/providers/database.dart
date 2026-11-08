@@ -501,32 +501,122 @@ class Profiles extends _$Profiles {
     );
   }
 
-  Future<void> publishUpdate(
+  Future<Profile> publishUpdate(
     Profile updated, {
+    required Profile? original,
     required bool Function() isCurrent,
     required void Function() publishFile,
     required void Function() rollbackFile,
-  }) {
-    return _writes.track(
-      () => _serial(() async {
-        checkUpdateCurrent(isCurrent);
-        final previous = state.getProfile(updated.id);
-        if (previous == null) throw const UpdateCancelledException();
-        final next = labeled(
-          previous.copyWith(
-            label: previous.label.takeFirstValid([updated.label]),
-            subscriptionInfo: updated.subscriptionInfo,
-            lastUpdateDate: updated.lastUpdateDate,
+  }) async {
+    Profile? committed;
+    bool sameSource(Profile? before, Profile? after) => before == null
+        ? after == null
+        : after != null &&
+              before.type == after.type &&
+              before.url == after.url &&
+              before.ageSecretKey == after.ageSecretKey &&
+              before.lastUpdateDate == after.lastUpdateDate;
+    T choose<T>(T before, T proposed, T current) =>
+        const DeepCollectionEquality().equals(before, current)
+        ? proposed
+        : current;
+    Profile metadata(Profile before, Profile proposed, Profile current) =>
+        current.copyWith(
+          label: choose(before.label, proposed.label, current.label),
+          currentGroupName: choose(
+            before.currentGroupName,
+            proposed.currentGroupName,
+            current.currentGroupName,
+          ),
+          autoUpdateDuration: choose(
+            before.autoUpdateDuration,
+            proposed.autoUpdateDuration,
+            current.autoUpdateDuration,
+          ),
+          autoUpdate: choose(
+            before.autoUpdate,
+            proposed.autoUpdate,
+            current.autoUpdate,
+          ),
+          selectedMap: choose(
+            before.selectedMap,
+            proposed.selectedMap,
+            current.selectedMap,
+          ),
+          unfoldSet: choose(
+            before.unfoldSet,
+            proposed.unfoldSet,
+            current.unfoldSet,
+          ),
+          extendType: choose(
+            before.extendType,
+            proposed.extendType,
+            current.extendType,
+          ),
+          scriptId: choose(
+            before.scriptId,
+            proposed.scriptId,
+            current.scriptId,
+          ),
+          matchTarget: choose(
+            before.matchTarget,
+            proposed.matchTarget,
+            current.matchTarget,
+          ),
+          order: choose(before.order, proposed.order, current.order),
+          overrides: choose(
+            before.overrides,
+            proposed.overrides,
+            current.overrides,
           ),
         );
-        final names = {previous.realLabel: next.realLabel};
+    await _writes.track(
+      () => _serial(() async {
+        checkUpdateCurrent(isCurrent);
+        Profile? previous;
+        late Profile next;
+        var renamed = false;
+        var names = <String, String>{};
+        var sourceConflict = false;
+        Profile? authoritative;
         try {
           await database.transaction(() async {
             checkUpdateCurrent(isCurrent);
-            if (previous.realLabel != next.realLabel) {
+            final stored = await database.profilesDao.get(updated.id);
+            final observed = state.getProfile(updated.id);
+            previous = observed;
+            if (!sameSource(original, stored)) {
+              sourceConflict = true;
+              authoritative = stored;
+              throw const UpdateCancelledException();
+            }
+            if (!sameSource(original, observed))
+              throw const UpdateCancelledException();
+            // Stored values are authoritative. Preserve later state intent, then
+            // apply only proposed metadata fields unchanged since this baseline.
+            final baseline = original;
+            final persisted = stored ?? updated;
+            final current = baseline == null
+                ? persisted
+                : metadata(baseline, persisted, observed ?? persisted);
+            final desired = baseline == null
+                ? updated
+                : metadata(baseline, updated, current);
+            next = labeled(
+              desired.copyWith(
+                type: updated.type,
+                url: updated.url,
+                ageSecretKey: updated.ageSecretKey,
+                subscriptionInfo: updated.subscriptionInfo,
+                lastUpdateDate: updated.lastUpdateDate,
+              ),
+            );
+            if (observed != null && observed.realLabel != next.realLabel) {
+              renamed = true;
+              names = {observed.realLabel: next.realLabel};
               await database.proxyGroupsDao.renameUse(
                 await database.profilesDao.customIds().get(),
-                oldName: previous.realLabel,
+                oldName: observed.realLabel,
                 newName: next.realLabel,
               );
               for (final user in state) {
@@ -541,28 +631,45 @@ class Profiles extends _$Profiles {
               }
             }
             await database.profiles.put(next.toCompanion());
+            next = (await database.profilesDao.get(updated.id))!;
             checkUpdateCurrent(isCurrent);
             publishFile();
           });
         } catch (_) {
           rollbackFile();
+          if (sourceConflict &&
+              ref.mounted &&
+              sameSource(original, state.getProfile(updated.id))) {
+            final actual = authoritative;
+            state = actual == null
+                ? state.where((item) => item.id != updated.id).toList()
+                : state.copyAndPut(actual, (item) => item.id == updated.id);
+          }
           rethrow;
         }
+        committed = next;
         if (!ref.mounted) return;
+        if (previous == null) {
+          state = [...state]
+            ..insert(
+              lowerBound(state, next, compare: ProfilesDao.compare),
+              next,
+            );
+          return;
+        }
         state = [
           for (final item in state)
             if (item.id == updated.id &&
-                item.url == previous.url &&
-                item.ageSecretKey == previous.ageSecretKey &&
-                item.type == previous.type &&
-                item.lastUpdateDate == previous.lastUpdateDate)
-              item.copyWith(
-                label: item.label.takeFirstValid([next.label]),
-                subscriptionInfo: updated.subscriptionInfo,
-                lastUpdateDate: updated.lastUpdateDate,
+                original != null &&
+                sameSource(original, item))
+              metadata(original, next, item).copyWith(
+                type: next.type,
+                url: next.url,
+                ageSecretKey: next.ageSecretKey,
+                subscriptionInfo: next.subscriptionInfo,
+                lastUpdateDate: next.lastUpdateDate,
               )
-            else if (item.type == ProfileType.custom &&
-                previous.realLabel != next.realLabel)
+            else if (item.type == ProfileType.custom && renamed)
               item.copyWith(
                 overrides: item.overrides.renamedProxyProviders(names),
               )
@@ -571,6 +678,7 @@ class Profiles extends _$Profiles {
         ];
       }),
     );
+    return committed!;
   }
 
   /// Applies the changes [body] returns to the state too, so a put landing
@@ -733,18 +841,38 @@ class ClashProviders extends _$ClashProviders
   @override
   List<ClashProvider> get value => state.value ?? [];
 
-  Future<void> _ruleWrite(Future<void> Function() write) async {
+  Future<void> _ruleWrite(
+    Future<void> Function() write, {
+    bool recover = true,
+  }) async {
     final owner = RuleSqlJournalOwner(
       database,
       Directory(await appPath.homeDirPath),
     );
     await owner.exclusive(() async {
-      await owner.recover();
+      if (recover) await owner.recover();
       await write();
     });
   }
 
   Future<void> put(
+    ClashProvider provider, {
+    ClashProvider? previous,
+    Future<void> Function()? beforePersist,
+    void Function()? beforeCommit,
+    Future<void> Function()? finishSql,
+  }) => _ruleWrite(
+    () => _putOwned(
+      provider,
+      previous: previous,
+      beforePersist: beforePersist,
+      beforeCommit: beforeCommit,
+      finishSql: finishSql,
+    ),
+    recover: beforePersist == null && beforeCommit == null && finishSql == null,
+  );
+
+  Future<void> _putOwned(
     ClashProvider provider, {
     ClashProvider? previous,
     Future<void> Function()? beforePersist,
@@ -768,9 +896,7 @@ class ClashProviders extends _$ClashProviders
         if (beforePersist == null &&
             beforeCommit == null &&
             finishSql == null) {
-          await _ruleWrite(
-            () => database.clashProviders.put(provider.toCompanion()),
-          );
+          await database.clashProviders.put(provider.toCompanion());
         } else {
           await database.transaction(() async {
             await beforePersist?.call();
@@ -805,27 +931,41 @@ class ClashProviders extends _$ClashProviders
             beforeCommit: beforeCommit,
             finishSql: finishSql,
           );
-      return finishSql == null && beforePersist == null
-          ? _ruleWrite(persist)
-          : persist();
+      return persist();
     });
   }
 
-  Future<void> del(int id) {
+  Future<void> del(int id) => _ruleWrite(() => _delOwned(id));
+
+  Future<void> _delOwned(int id) {
     final next = List<ClashProvider>.from(value);
     final index = next.indexWhere((item) => item.id == id);
     if (index == -1) return Future.value();
     next.removeAt(index);
     return optimisticAsync(
       next,
-      () => _ruleWrite(
-        () => database.clashProviders.remove((t) => t.id.equals(id)),
-      ),
+      () => database.clashProviders.remove((t) => t.id.equals(id)),
     );
   }
 
   void order(int oldIndex, int newIndex) {
-    final next = value.copyAndReorder(oldIndex, newIndex);
+    final requested = value
+        .copyAndReorder(oldIndex, newIndex)
+        .map((item) => item.id)
+        .toList();
+    unawaited(
+      _ruleWrite(
+        () => _orderOwned(requested),
+      ).catchError(_reportOptimisticFailure),
+    );
+  }
+
+  Future<void> _orderOwned(List<int> requested) {
+    final current = {for (final item in value) item.id: item};
+    if (current.length != requested.length ||
+        requested.any((id) => !current.containsKey(id)))
+      throw const UpdateCancelledException();
+    final next = [for (final id in requested) current[id]!];
     final changed = <ClashProvidersCompanion>[];
     next.forEachIndexed((index, item) {
       if (item.order != index) {
@@ -833,9 +973,9 @@ class ClashProviders extends _$ClashProviders
         changed.add(item.toCompanion(index));
       }
     });
-    optimistic(
+    return optimisticAsync(
       next,
-      () => _ruleWrite(() => database.clashProvidersDao.putAll(changed)),
+      () => database.clashProvidersDao.putAll(changed),
     );
   }
 

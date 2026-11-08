@@ -25,6 +25,13 @@ import '../helpers/test_profiles.dart';
 
 class _MockCore extends Mock implements CoreHandlerInterface {}
 
+// This widget supplies a mocked provider list, so its metadata reader belongs to
+// that view fixture too. The production SQL/source owner is exercised separately.
+class _FileMetadataAction extends ClashProvidersAction {
+  @override
+  Future<FileInfo?> sourceFileInfo(ClashProvider provider) => provider.fileInfo;
+}
+
 class _TestClashProviders extends ClashProviders {
   _TestClashProviders(this.initial);
 
@@ -137,6 +144,7 @@ void main() {
         clashProvidersProvider.overrideWith(
           () => _TestClashProviders(const [cached]),
         ),
+        clashProvidersActionProvider.overrideWith(() => _FileMetadataAction()),
       ],
     );
 

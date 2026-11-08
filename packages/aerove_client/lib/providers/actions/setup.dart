@@ -82,6 +82,25 @@ class SetupAction extends _$SetupAction {
   }
 
   final _setupScheduler = SerialTaskScheduler();
+  Future<void> _checkCompletedProviderFences(
+    ValueNotifier<bool>? operation,
+  ) async {
+    final pending = Map.of(_providerCompletions)..remove(operation);
+    // Retained completions carry failures that new reads must not bypass.
+    await Future.wait([
+      for (final done in pending.values)
+        if (done.isCompleted) done.future,
+    ]);
+  }
+
+  Future<T> _scheduleSetup<T>(
+    Future<T> Function() task, {
+    ValueNotifier<bool>? operation,
+  }) => _withProviderSourceWrite(
+    () => _setupScheduler.run(task),
+    operation: operation,
+    cancelPendingProviders: operation == null,
+  );
   final _providerCancellations = <ValueNotifier<bool>>{};
   final _providerCompletions = <ValueNotifier<bool>, Completer<void>>{};
   int _providerSourceWriters = 0;
@@ -102,18 +121,24 @@ class SetupAction extends _$SetupAction {
   Future<T> _withProviderSourceWrite<T>(
     Future<T> Function() write, {
     ValueNotifier<bool>? operation,
+    bool cancelPendingProviders = true,
   }) async {
     if (_ownsProviderSourceLease) return write();
-    _providerSourceWriters++;
+    if (cancelPendingProviders) _providerSourceWriters++;
     try {
+      // Join outside the FIFO needed by cancelled providers to finish.
+      final pending =
+          cancelPendingProviders &&
+              ClientProduct.current.expectedCoreId == 'meow-rs'
+          ? (Map.of(_providerCompletions)..remove(operation))
+          : <ValueNotifier<bool>, Completer<void>>{};
+      for (final signal in pending.keys) {
+        signal.value = true;
+      }
+      await Future.wait(pending.values.map((done) => done.future));
       return await _providerSourceScheduler.run(() async {
-        final pending = ClientProduct.current.expectedCoreId == 'meow-rs'
-            ? (Map.of(_providerCompletions)..remove(operation))
-            : <ValueNotifier<bool>, Completer<void>>{};
-        for (final signal in pending.keys) {
-          signal.value = true;
-        }
-        await Future.wait(pending.values.map((done) => done.future));
+        if (!cancelPendingProviders)
+          await _checkCompletedProviderFences(operation);
         final lease = _ProviderSourceLease(this);
         final rules = RuleSqlJournalOwner(
           database,
@@ -134,7 +159,7 @@ class SetupAction extends _$SetupAction {
         }
       });
     } finally {
-      _providerSourceWriters--;
+      if (cancelPendingProviders) _providerSourceWriters--;
     }
   }
 
@@ -474,6 +499,7 @@ class SetupAction extends _$SetupAction {
     required bool push,
     Future<void> Function()? preloadInvoke,
   }) async {
+    // Runtime receipt adoption must work even when shared storage is unavailable.
     final adopted = await _setupScheduler.run(() async {
       if (!await _adoptAppliedSetup(record) && push) {
         return false;
@@ -1081,7 +1107,7 @@ class SetupAction extends _$SetupAction {
         ref.read(currentProfileProvider)?.id == profileId &&
         ref.read(currentProfileProvider)?.selectedMap[groupName] == proxyName;
     if (!current()) return false;
-    final result = await _setupScheduler.run(
+    final result = await _scheduleSetup(
       () => _setupConfig(
         silence: true,
         metadataOnly: true,
@@ -1142,6 +1168,37 @@ class SetupAction extends _$SetupAction {
     _providerCompletions[cancellation] = completion;
     CoreRequestQuiescence? nativeRequest;
     void Function()? closeSource;
+    var operationSettled = false;
+    void settleProviderOperation() {
+      if (operationSettled) return;
+      operationSettled = true;
+      try {
+        closeSource?.call();
+      } finally {
+        _providerCancellations.remove(cancellation);
+        {
+          void release() {
+            _providerCompletions.remove(cancellation);
+            if (!completion.isCompleted) completion.complete();
+            cancellation.dispose();
+          }
+
+          final native = nativeRequest;
+          if (native == null || native.isQuiescent)
+            release();
+          else {
+            completion.completeError(
+              const CoreMethodException(
+                code: 'termination_unconfirmed',
+                message: 'Provider cancellation has not been confirmed',
+              ),
+            );
+            unawaited(native.whenQuiescent.then((_) => release()));
+          }
+        }
+      }
+    }
+
     bool current() =>
         !cancellation.value &&
         ref.mounted &&
@@ -1207,63 +1264,46 @@ class SetupAction extends _$SetupAction {
         'expected': before.applied.toJson(),
         'expectedRevision': expectedRuntimeRevision,
       };
-      await _setupScheduler.run(() async {
-        checkUpdateCurrent(current);
-        final result = await _setupConfig(
-          force: true,
-          silence: true,
-          providerUpdate: update,
-          metadataIsCurrent: current,
-          cancellation: cancellation,
-          observeQuiescence: (state) => nativeRequest = state,
-          providerApplied: (record) async {
-            checkUpdateCurrent(current);
-            final actual = await owner.readMeowProviderApplied();
-            checkUpdateCurrent(current);
-            if (actual.revision == before.revision ||
-                actual.applied != record) {
-              throw const CoreMethodException(
-                code: 'runtime_receipt_mismatch',
-                message:
-                    'Provider update has no new actual applied runtime receipt',
-              );
-            }
-          },
-          onUpdated: () async {
-            await ref.read(proxiesActionProvider.notifier).updateGroups();
-            await ref.read(providersProvider.notifier).syncProviders();
-          },
-        );
-        if (result != _SetupTaskResult.completed) {
-          throw const CoreMethodException(
-            code: 'provider_update_failed',
-            message: 'Provider runtime update did not commit',
+      await _scheduleSetup(() async {
+        try {
+          checkUpdateCurrent(current);
+          final result = await _setupConfig(
+            force: true,
+            silence: true,
+            providerUpdate: update,
+            metadataIsCurrent: current,
+            cancellation: cancellation,
+            observeQuiescence: (state) => nativeRequest = state,
+            providerApplied: (record) async {
+              checkUpdateCurrent(current);
+              final actual = await owner.readMeowProviderApplied();
+              checkUpdateCurrent(current);
+              if (actual.revision == before.revision ||
+                  actual.applied != record) {
+                throw const CoreMethodException(
+                  code: 'runtime_receipt_mismatch',
+                  message:
+                      'Provider update has no new actual applied runtime receipt',
+                );
+              }
+            },
+            onUpdated: () async {
+              await ref.read(proxiesActionProvider.notifier).updateGroups();
+              await ref.read(providersProvider.notifier).syncProviders();
+            },
           );
+          if (result != _SetupTaskResult.completed) {
+            throw const CoreMethodException(
+              code: 'provider_update_failed',
+              message: 'Provider runtime update did not commit',
+            );
+          }
+        } finally {
+          settleProviderOperation();
         }
-      });
+      }, operation: cancellation);
     } finally {
-      closeSource?.call();
-      _providerCancellations.remove(cancellation);
-      {
-        void release() {
-          _providerCompletions.remove(cancellation);
-          if (!completion.isCompleted) completion.complete();
-          cancellation.dispose();
-        }
-
-        final native = nativeRequest;
-        if (native == null || native.isQuiescent)
-          release();
-        else {
-          completion.completeError(
-            const CoreMethodException(
-              code: 'termination_unconfirmed',
-              message: 'Provider cancellation has not been confirmed',
-            ),
-          );
-          unawaited(native.whenQuiescent.then((_) => release()));
-        }
-      }
+      settleProviderOperation();
     }
   }
 
@@ -1283,7 +1323,7 @@ class SetupAction extends _$SetupAction {
       throw const FormatException(
         'provider source: selected profile is required',
       );
-    await _setupScheduler.run(() async {
+    await _scheduleSetup(() async {
       checkUpdateCurrent(current);
       final state = await ref.read(setupStateProvider(profileId).future);
       final key = '$namespace/$name';
@@ -1514,7 +1554,7 @@ class SetupAction extends _$SetupAction {
         ref.read(coreStatusProvider) == CoreStatus.connected &&
         ref.read(currentProfileIdProvider) == profileId &&
         (isCurrent?.call() ?? true);
-    await _setupScheduler.run(() async {
+    await _scheduleSetup(() async {
       if (!current()) throw UpdateCancelledException();
       _geoTransaction = (core: owner, transactionId: transactionId);
       try {
@@ -1553,7 +1593,7 @@ class SetupAction extends _$SetupAction {
     bool force = false,
     Future<void> Function()? preloadInvoke,
   }) async {
-    final result = await _setupScheduler.run(() {
+    final result = await _scheduleSetup(() {
       return _setupConfig(
         force: force,
         silence: silence,

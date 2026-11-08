@@ -286,6 +286,13 @@ void main() {
         expect(await rawRow(), beforeRow);
         expect(await target().exists(), false);
         expect(await File('${target().path}.source.json').exists(), false);
+        // Remove only the fault-injection DDL before the independent source
+        // proof. The failed UPDATE/COMMIT and retained rows/files are asserted above.
+        await db.customStatement('DROP TRIGGER reject_source');
+        if (deferred) {
+          await db.customStatement('DROP TABLE source_child');
+          await db.customStatement('DROP TABLE source_parent');
+        }
         var aborted = false;
         await journal.recover(
           database: db,

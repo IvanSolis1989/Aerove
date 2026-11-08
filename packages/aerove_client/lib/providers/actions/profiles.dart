@@ -156,13 +156,13 @@ class ProfilesAction extends _$ProfilesAction {
   }
 
   Future<void> deleteProfile(int id) async {
+    await cancelProfileUpdate(id);
     await ref
         .read(setupActionProvider.notifier)
         .withProviderSourceWrite(() => _deleteProfileSource(id));
   }
 
   Future<void> _deleteProfileSource(int id) async {
-    await cancelProfileUpdate(id);
     await ref.read(profilesProvider.notifier).del(id);
     await clearEffect(id);
     final currentProfileId = ref.read(currentProfileIdProvider);
@@ -327,15 +327,11 @@ class ProfilesAction extends _$ProfilesAction {
     Profile profile, {
     bool showLoading = false,
     bool Function()? isCurrent,
-  }) => ref
-      .read(setupActionProvider.notifier)
-      .withProviderSourceWrite(
-        () => _updateProfileSource(
-          profile,
-          showLoading: showLoading,
-          isCurrent: isCurrent,
-        ),
-      );
+  }) => _updateProfileSource(
+    profile,
+    showLoading: showLoading,
+    isCurrent: isCurrent,
+  );
 
   Future<void> _updateProfileSource(
     Profile profile, {
@@ -347,7 +343,8 @@ class ProfilesAction extends _$ProfilesAction {
     final previous = _profileUpdates[profile.id];
     previous?.cancel();
     final initial = ref.read(profilesProvider).getProfile(profile.id);
-    var admitted = false;
+    var baselineReady = false;
+    Profile? baseline = initial;
     var source = profile;
     late final ProfileUpdateIntent intent;
     bool sourceCurrent() {
@@ -357,19 +354,16 @@ class ProfilesAction extends _$ProfilesAction {
         return false;
       }
       final latest = ref.read(profilesProvider).getProfile(profile.id);
-      if (!admitted) {
-        return initial == null
-            ? latest == null
-            : latest != null &&
-                  latest.type == initial.type &&
-                  latest.url == initial.url &&
-                  latest.ageSecretKey == initial.ageSecretKey;
-      }
-      return latest != null &&
-          latest.type == source.type &&
-          latest.url == source.url &&
-          latest.ageSecretKey == source.ageSecretKey &&
-          latest.lastUpdateDate == source.lastUpdateDate;
+      if (!baselineReady)
+        return true; // The predecessor is joined below before binding a baseline.
+      final expected = intent.committedProfile ?? baseline;
+      return expected == null
+          ? latest == null
+          : latest != null &&
+                latest.type == expected.type &&
+                latest.url == expected.url &&
+                latest.ageSecretKey == expected.ageSecretKey &&
+                latest.lastUpdateDate == expected.lastUpdateDate;
     }
 
     intent = ProfileUpdateIntent(
@@ -386,6 +380,20 @@ class ProfilesAction extends _$ProfilesAction {
       await previous?.done;
       checkUpdateCurrent(() => intent.isCurrent);
       final latest = ref.read(profilesProvider).getProfile(profile.id);
+      bool sameIdentity(Profile? a, Profile? b) => a == null
+          ? b == null
+          : b != null &&
+                a.type == b.type &&
+                a.url == b.url &&
+                a.ageSecretKey == b.ageSecretKey;
+      final predecessor = previous?.committedProfile;
+      if (!sameIdentity(initial, latest) &&
+          !(predecessor != null &&
+              sameIdentity(predecessor, latest) &&
+              predecessor.lastUpdateDate == latest?.lastUpdateDate))
+        throw const UpdateCancelledException();
+      baseline = latest;
+      baselineReady = true;
       if (latest != null && initial != null) {
         T merge<T>(T requested, T before, T after) =>
             const DeepCollectionEquality().equals(before, after)
@@ -439,26 +447,35 @@ class ProfilesAction extends _$ProfilesAction {
           subscriptionInfo: latest.subscriptionInfo,
         );
       }
-      admitted = true;
-      ref.read(profilesProvider.notifier).put(source);
-      prepared = await source.prepareUpdate(
+      // Preparing metadata must not erase a newer source before the source CAS.
+      final original = baseline;
+      if (!sameIdentity(original, source))
+        source = source.copyWith(subscriptionInfo: null);
+      final update = await source.prepareUpdate(
         validate: (path, key) =>
             _core.validateProfile(path, key, (value) => compatibility = value),
         isCurrent: () => intent.isCurrent,
         cancelToken: intent.cancelToken,
       );
+      prepared = update;
       checkUpdateCurrent(() => intent.isCurrent);
-      await ref
-          .read(profilesProvider.notifier)
-          .publishUpdate(
-            prepared.profile,
-            isCurrent: () => intent.isCurrent,
-            publishFile: () {
-              intent.beginCommit();
-              prepared!.file.publish();
-            },
-            rollbackFile: prepared.file.rollback,
+      final committed = await ref
+          .read(setupActionProvider.notifier)
+          .withProviderSourceWrite(
+            () => ref
+                .read(profilesProvider.notifier)
+                .publishUpdate(
+                  update.profile,
+                  original: original,
+                  isCurrent: () => intent.isCurrent,
+                  publishFile: () {
+                    intent.beginCommit();
+                    update.file.publish();
+                  },
+                  rollbackFile: update.file.rollback,
+                ),
           );
+      intent.committedProfile = committed;
       _automaticBackoff.reset(profile.id.toString());
       if (!ref.mounted || !identical(_profileUpdates[profile.id], intent)) {
         return;

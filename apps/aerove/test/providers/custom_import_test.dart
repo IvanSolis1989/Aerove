@@ -714,7 +714,9 @@ dns:
       await AppLocalizations.load(const Locale('en'));
       home = Directory.systemTemp.createTempSync('flclash-custom-import-');
       await useAppPaths(home);
-      testDatabase = db.Database(NativeDatabase.memory());
+      testDatabase = db.Database(
+        NativeDatabase(File('${home.path}/database.sqlite')),
+      );
       db.database = testDatabase;
       await testDatabase.profiles.put(custom.toCompanion());
       await testDatabase.customProxies.put(hongKong.toCompanion('a0'));
@@ -744,6 +746,12 @@ dns:
       when(() => core.compileRuleSet(any(), url: any(named: 'url'))).thenAnswer(
         (invocation) async {
           compiledUrls.add(invocation.namedArguments[#url] as String);
+          final name = invocation.positionalArguments.single as String;
+          final url = invocation.namedArguments[#url] as String;
+          if (url.isNotEmpty)
+            await File(
+              await appPath.getProviderCachePath(name),
+            ).writeAsString('DOMAIN,fixture.example');
           return (
             behavior: RuleProviderBehavior.classical,
             format: RuleProviderFormat.text,

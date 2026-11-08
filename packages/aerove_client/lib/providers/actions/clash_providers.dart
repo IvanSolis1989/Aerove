@@ -151,6 +151,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
           (compileEnded ||
               ClientProduct.current.expectedCoreId == 'meow-rs' &&
                   (request == null || request!.isQuiescent))) {
+        await File('$path.mrs').safeDelete();
         await file.safeDelete();
       }
     }
@@ -258,6 +259,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
     bool refresh = false,
     bool inspectExisting = false,
     bool reload = true,
+    void Function()? onDiscardedSource,
     bool Function()? isCurrent,
   }) async {
     final setup = ref.read(setupActionProvider.notifier);
@@ -290,10 +292,32 @@ class ClashProvidersAction extends _$ClashProvidersAction {
         : null;
     var next = staged?.provider ?? provider;
     var committed = false;
+    var discarded = false;
     try {
       await setup.withProviderSourceWrite(() async {
         final latest = await _sqlMeowRule(provider.id);
         final before = baseline.before;
+        if (download &&
+            before != null &&
+            (latest == null ||
+                latest.url != before.url ||
+                !const DeepCollectionEquality().equals(
+                  latest.sourceDefinition,
+                  before.sourceDefinition,
+                ))) {
+          discarded = true;
+          next = latest ?? before;
+          final kept = (await database.clashProvidersDao.fileNames().get())
+              .toSet();
+          if (!kept.contains(before.fileName)) {
+            for (final old in [await before.path, await before.compiledPath]) {
+              final expected = baseline.files[old];
+              if (expected != null && await _meowRuleDigest(old) == expected)
+                await File(old).safeDelete();
+            }
+          }
+          return;
+        }
         if (before == null
             ? latest != null
             : latest == null ||
@@ -387,11 +411,16 @@ class ClashProvidersAction extends _$ClashProvidersAction {
           owner.onPhase = priorPhase;
         }
       });
+      if (discarded) {
+        onDiscardedSource?.call();
+        return next;
+      }
       if (reload) {
         final labels = {next.label, ?baseline.before?.label};
         if (staged != null && isCurrent != null)
           _pendingAutomaticApplies.addAll(labels);
-        if (committed && !(isCurrent?.call() ?? true)) return next;
+        if (committed && !(isCurrent?.call() ?? true))
+          throw const UpdateCancelledException();
         try {
           if (staged != null && next == baseline.before)
             await _reloadIfReferenced(next, isCurrent: isCurrent);
@@ -403,7 +432,7 @@ class ClashProvidersAction extends _$ClashProvidersAction {
               isCurrent: isCurrent,
             );
         } on UpdateCancelledException {
-          if (!committed) rethrow;
+          rethrow;
         }
         _pendingAutomaticApplies.removeAll(labels);
       }
@@ -448,14 +477,17 @@ class ClashProvidersAction extends _$ClashProvidersAction {
     return null;
   }
 
-  /// Returns false when the set changed shape, which only a reapply loads.
+  /// False suppresses the caller's in-place reload after shape change or discard.
   Future<bool> syncRemote(ClashProvider provider) async {
+    var discarded = false;
     final next = await _putLibraryProvider(
       provider,
       previous: provider,
       refresh: true,
       reload: false,
+      onDiscardedSource: () => discarded = true,
     );
+    if (discarded) return false;
     if (next == provider) return true;
     unawaited(applyIfReferenced(ProviderKind.rule, {next.label}, force: true));
     return false;

@@ -1,3 +1,7 @@
+import 'package:fl_clash/common/rule_sql_journal.dart';
+import 'package:drift/drift.dart' show QueryInterceptor, TransactionExecutor;
+import 'dart:convert';
+import 'package:yaml/yaml.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -21,12 +25,28 @@ import '../helpers/app_paths.dart';
 
 class _Core extends Mock implements CoreHandlerInterface {}
 
+class _CommitBarrier extends QueryInterceptor {
+  bool hold = false;
+  final entered = Completer<void>();
+  final release = Completer<void>();
+  @override
+  Future<void> commitTransaction(TransactionExecutor inner) async {
+    await inner.send();
+    if (hold) {
+      hold = false;
+      entered.complete();
+      await release.future;
+    }
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late Directory home;
   late HttpServer server;
   late db.Database sql;
+  late _CommitBarrier commitBarrier;
   late db.Database previousDatabase;
   late ProviderContainer container;
   late _Core core;
@@ -54,7 +74,11 @@ void main() {
     home = await Directory.systemTemp.createTemp('profile-cancel118-');
     await useAppPaths(home);
     previousDatabase = db.database;
-    sql = db.Database(NativeDatabase.memory());
+    commitBarrier = _CommitBarrier();
+    sql = db.Database.interceptNative(
+      NativeDatabase(File('${home.path}/database.sqlite')),
+      commitBarrier,
+    );
     db.database = sql;
     core = _Core();
     validate = null;
@@ -93,6 +117,7 @@ void main() {
   });
 
   tearDown(() async {
+    if (!commitBarrier.release.isCompleted) commitBarrier.release.complete();
     for (final socket in heldSockets.toList()) {
       socket.destroy();
     }
@@ -441,6 +466,10 @@ void main() {
         transactionEntered.complete();
         await release.future;
       });
+      addTearDown(() async {
+        if (!release.isCompleted) release.complete();
+        await holding;
+      });
       await transactionEntered.future;
       final validated = Completer<void>();
       validate = (_) async {
@@ -463,28 +492,78 @@ void main() {
     },
   );
 
+  test(
+    'delete cancels a queued publication before joining it outside the source owner',
+    () async {
+      final profile = await seed('queued-delete');
+      final originalFile = await profile.file;
+      final held = Completer<void>(), release = Completer<void>();
+      final setup = container.read(setupActionProvider.notifier);
+      final holding = setup.withProviderSourceWrite(() async {
+        held.complete();
+        await release.future;
+      });
+      addTearDown(() async {
+        if (!release.isCompleted) release.complete();
+        await holding;
+      });
+      await held.future;
+      final validated = Completer<void>();
+      validate = (_) async {
+        validated.complete();
+        return '';
+      };
+      final updating = action().updateProfile(profile, showLoading: true);
+      final cancelled = expectLater(
+        updating,
+        throwsA(isA<UpdateCancelledException>()),
+      );
+      await validated.future;
+      await pumpEventQueue();
+      final deleting = action().deleteProfile(profile.id);
+      await pumpEventQueue();
+      expect(
+        await (await profile.file).readAsString(),
+        'original-queued-delete',
+      );
+      release.complete();
+      await holding;
+      await cancelled;
+      await deleting;
+      expect(await sql.profilesDao.get(profile.id), isNull);
+      expect(await originalFile.exists(), isFalse);
+      expect(container.read(updatingKeysProvider), isEmpty);
+    },
+  );
+
   test('a deferred SQL COMMIT failure restores the published file', () async {
     final profile = await seed('commit-failure');
-    await sql.customStatement('PRAGMA foreign_keys = ON');
-    await sql.customStatement(
-      'CREATE TABLE cancel_parent (id INTEGER PRIMARY KEY)',
+    await container.read(setupActionProvider.notifier).withProviderSourceWrite(
+      () async {
+        // Install fault-only DDL after the real recovery gate, inside this owned
+        // operation; production must still reject unknown schema at entry.
+        await sql.customStatement('PRAGMA foreign_keys = ON');
+        await sql.customStatement(
+          'CREATE TABLE cancel_parent (id INTEGER PRIMARY KEY)',
+        );
+        await sql.customStatement(
+          'CREATE TABLE cancel_child ('
+          'parent INTEGER REFERENCES cancel_parent(id) DEFERRABLE INITIALLY DEFERRED)',
+        );
+        await sql.customStatement(
+          'CREATE TRIGGER reject_profile_commit '
+          'AFTER UPDATE OF last_update_date_millis ON profiles '
+          'WHEN NEW.last_update_date_millis != OLD.last_update_date_millis '
+          'BEGIN INSERT INTO cancel_child VALUES (1); END',
+        );
+        await expectLater(
+          action().updateProfile(profile, showLoading: true),
+          throwsA(anything),
+        );
+        await expectUnchanged(profile);
+        expect(container.read(updatingKeysProvider), isEmpty);
+      },
     );
-    await sql.customStatement(
-      'CREATE TABLE cancel_child ('
-      'parent INTEGER REFERENCES cancel_parent(id) DEFERRABLE INITIALLY DEFERRED)',
-    );
-    await sql.customStatement(
-      'CREATE TRIGGER reject_profile_commit '
-      'AFTER UPDATE OF last_update_date_millis ON profiles '
-      'WHEN NEW.last_update_date_millis != OLD.last_update_date_millis '
-      'BEGIN INSERT INTO cancel_child VALUES (1); END',
-    );
-    await expectLater(
-      action().updateProfile(profile, showLoading: true),
-      throwsA(anything),
-    );
-    await expectUnchanged(profile);
-    expect(container.read(updatingKeysProvider), isEmpty);
   });
 
   test(
@@ -514,6 +593,240 @@ void main() {
       expect(container.read(profilesProvider).getProfile(profile.id), stored);
       expect(await (await profile.file).readAsString(), 'proxies: []\n');
       expect(container.read(updatingKeysProvider), isEmpty);
+    },
+  );
+
+  for (final cancel in [false, true]) {
+    test(
+      'paused URL/key replacement keeps actual getProfile on the old generation; cancel=$cancel',
+      () async {
+        final seeded = await seed('generation-a');
+        final original = seeded.copyWith(ageSecretKey: 'OLD-KEY');
+        await sql.profiles.put(original.toCompanion());
+        await pumpEventQueue();
+        const before = 'proxies: []\nrules: [MATCH,REJECT]\n';
+        await (await original.file).writeAsString(before);
+        final enteredValidation = Completer<void>(),
+            releaseValidation = Completer<void>();
+        validate = (_) async {
+          enteredValidation.complete();
+          await releaseValidation.future;
+          return '';
+        };
+        addTearDown(() {
+          if (!releaseValidation.isCompleted) releaseValidation.complete();
+        });
+        final proposed = original.copyWith(
+          url: 'http://127.0.0.1:${server.port}/generation-b',
+          ageSecretKey: 'NEW-KEY',
+          label: 'requested metadata',
+          order: 7,
+        );
+        final saving = action().updateProfile(proposed, showLoading: true);
+        final checked = cancel
+            ? expectLater(saving, throwsA(isA<UpdateCancelledException>()))
+            : saving;
+        await enteredValidation.future;
+        await waitForDatabaseWrites();
+        ({String url, String? key, String body})? observed;
+        when(() => core.getProfileBase(any())).thenAnswer((call) async {
+          final stored = await sql.profilesDao.get(original.id);
+          if (stored == null) throw StateError('Missing consumer source');
+          final body = await (await original.file).readAsString();
+          observed = (url: stored.url, key: stored.ageSecretKey, body: body);
+          return ProfileBase(
+            config: Map<String, dynamic>.from(
+              jsonDecode(jsonEncode(loadYaml(body))) as Map,
+            ),
+            digest: body.toMd5(),
+          );
+        });
+        final state = await container.read(
+          setupStateProvider(original.id).future,
+        );
+        await container
+            .read(setupActionProvider.notifier)
+            .getProfile(
+              setupState: state,
+              patchConfig: const PatchClashConfig(),
+            );
+        expect(observed, (
+          url: original.url,
+          key: original.ageSecretKey,
+          body: before,
+        ));
+        final during = await sql.profilesDao.get(original.id);
+        expect(during?.url, original.url);
+        expect(during?.ageSecretKey, original.ageSecretKey);
+        final later = container
+            .read(profilesProvider)
+            .getProfile(original.id)!
+            .copyWith(
+              label: 'later metadata',
+              order: 19,
+              autoUpdateDuration: const Duration(hours: 9),
+              autoUpdate: false,
+              selectedMap: {'later': 'DIRECT'},
+              unfoldSet: {'later'},
+            );
+        container.read(profilesProvider.notifier).put(later);
+        await waitForDatabaseWrites();
+        final cancelling = cancel
+            ? action().cancelProfileUpdate(original.id)
+            : Future<void>.value();
+        releaseValidation.complete();
+        await checked;
+        await cancelling;
+        await waitForDatabaseWrites();
+        final finalRow = (await sql.profilesDao.get(original.id))!;
+        expect(finalRow.url, cancel ? original.url : proposed.url);
+        expect(
+          finalRow.ageSecretKey,
+          cancel ? original.ageSecretKey : proposed.ageSecretKey,
+        );
+        expect(
+          await (await original.file).readAsString(),
+          cancel ? before : 'proxies: []\nrules: [MATCH,DIRECT]\n',
+        );
+        expect(finalRow.label, 'later metadata');
+        expect(finalRow.order, 19);
+        expect(finalRow.autoUpdateDuration, const Duration(hours: 9));
+        expect(finalRow.autoUpdate, isFalse);
+        expect(finalRow.selectedMap, {'later': 'DIRECT'});
+        expect(finalRow.unfoldSet, {'later'});
+        expect(
+          container.read(profilesProvider).getProfile(original.id),
+          finalRow,
+        );
+      },
+    );
+  }
+
+  test(
+    'third source X committed on another connection cannot be erased by queued A metadata',
+    () async {
+      final original = await seed('authority-a');
+      final callerZone = Zone.current;
+      final enteredSql = Completer<void>(), releaseSql = Completer<void>();
+      final enteredValidation = Completer<void>(),
+          releaseValidation = Completer<void>();
+      final holding = sql.ruleSqlFence.publication(() async {
+        // Hold this connection's queue without Drift's BEGIN IMMEDIATE writer lock.
+        enteredSql.complete();
+        await releaseSql.future;
+      });
+      addTearDown(() async {
+        if (!releaseSql.isCompleted) releaseSql.complete();
+        if (!releaseValidation.isCompleted) releaseValidation.complete();
+        await holding;
+      });
+      await enteredSql.future;
+      validate = (_) async {
+        enteredValidation.complete();
+        await releaseValidation.future;
+        return '';
+      };
+      final proposed = original.copyWith(
+        url: 'http://127.0.0.1:${server.port}/request-b',
+        ageSecretKey: 'B-KEY',
+        label: 'requested metadata must not revive A',
+        order: 7,
+      );
+      final pending = callerZone.run(
+        () => action().updateProfile(proposed, showLoading: true),
+      );
+      final rejected = expectLater(
+        pending,
+        throwsA(isA<UpdateCancelledException>()),
+      );
+      await enteredValidation.future;
+      final writer = db.Database(
+        NativeDatabase(File('${home.path}/database.sqlite')),
+      );
+      const xBody = 'proxies: []\nrules: [MATCH,REJECT]\n';
+      final xUrl = 'http://127.0.0.1:${server.port}/authority-x';
+      final third = original.copyWith(
+        url: xUrl,
+        ageSecretKey: 'X-KEY',
+        label: 'Authority X',
+        lastUpdateDate: DateTime(2035),
+        order: 99,
+        selectedMap: {'X': 'DIRECT'},
+        unfoldSet: {'X'},
+        subscriptionInfo: SubscriptionInfo.observe(
+          'upload=5; download=8; total=999',
+          url: xUrl,
+          at: DateTime(2035),
+          previous: null,
+        ),
+      );
+      try {
+        final owner = RuleSqlJournalOwner(writer, home);
+        await callerZone.run(
+          () => owner.exclusive(() async {
+            await owner.recover();
+            await owner.externalJournal(() async {
+              await (await third.file).writeAsString(xBody);
+              await writer.restore(
+                [third],
+                const [],
+                const [],
+                const [],
+                const [],
+              );
+            });
+          }),
+        );
+        releaseSql.complete();
+        await holding;
+        await waitForDatabaseWrites();
+        // This assertion is before B validation resumes: V2's queued full-row A
+        // metadata would already have destroyed the independently committed X.
+        expect(await sql.profilesDao.get(original.id), third);
+        expect(await (await original.file).readAsString(), xBody);
+        releaseValidation.complete();
+        await rejected;
+        await waitForDatabaseWrites();
+        expect(await sql.profilesDao.get(original.id), third);
+        expect(await (await original.file).readAsString(), xBody);
+        expect(container.read(profilesProvider).getProfile(original.id), third);
+      } finally {
+        await writer.close();
+      }
+    },
+  );
+
+  test(
+    'successor rebases only on the joined predecessor actual committed source',
+    () async {
+      final original = await seed('commit-source-a');
+      final first = original.copyWith(
+        url: 'http://127.0.0.1:${server.port}/commit-source-b',
+      );
+      final second = original.copyWith(
+        url: 'http://127.0.0.1:${server.port}/commit-source-c',
+      );
+      commitBarrier.hold = true;
+      addTearDown(() {
+        if (!commitBarrier.release.isCompleted)
+          commitBarrier.release.complete();
+      });
+      final saving = action().updateProfile(first, showLoading: true);
+      await commitBarrier.entered.future;
+      // Physical COMMIT has completed; the owner's acknowledgment is held. The
+      // state has not cut over yet, so the successor initially sees generation A.
+      final next = action().updateProfile(second, showLoading: true);
+      commitBarrier.release.complete();
+      await saving;
+      await next;
+      final stored = (await sql.profilesDao.get(original.id))!;
+      expect(stored.url, second.url);
+      expect(requests, 2);
+      expect(container.read(profilesProvider).getProfile(original.id), stored);
+      expect(
+        await (await original.file).readAsString(),
+        'proxies: []\nrules: [MATCH,DIRECT]\n',
+      );
     },
   );
 

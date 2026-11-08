@@ -99,10 +99,19 @@ private suspend fun exportFreshFixture(root: File) {
         check(setupCalls == 1)
     }
     val snapshot = checkNotNull(staged) { "Actual setup did not produce a staged snapshot" }
-    val lease = FlutterRuntimeResources.create(home, snapshot) { store.isCurrent(snapshot.revision, snapshot.intentEpoch) }
+    check(!snapshot.userRequested) { "Fresh default graph must not imply VPN intent" }
+    val lease = FlutterRuntimeResources.create(home, snapshot) { store.isGraphCandidate(snapshot.revision, snapshot.intentEpoch) }
     try {
         val settings = MeowRuntimeSnapshotSettings.decode(snapshot.handoff.runtimeSettingsJson)
-        val prepared = PreparedProfile(snapshot.profileId, lease.yaml, emptyList(), snapshot.revision, snapshot.handoff.compiledSha256, lease.readRoot)
+        val prepared = PreparedProfile(
+            profileId = snapshot.profileId,
+            source = lease.yaml,
+            yaml = lease.yaml,
+            revision = snapshot.revision,
+            generation = snapshot.handoff.compiledSha256,
+            resourceDirectory = lease.readRoot,
+            nextRefreshAt = null,
+        )
         val cache = File(home, "meow-cache/fresh-host").apply { check(mkdirs()) }
         ServerSocket(0).use { reservation ->
             val actual = MeowRuntimeConfigComposer(home, cacheDirectory = cache).composeFlutter(prepared, lease, settings,
