@@ -88,6 +88,33 @@ def current_focus_lines(output):
     return re.findall(r'(?m)^\s*mCurrentFocus=.*$', output)
 
 
+def resolved_component(output):
+    rows = re.findall(r'(?m)^([a-zA-Z0-9_.]+)/([a-zA-Z0-9_.$]+)\s*$', output)
+    require(len(rows) == 1, 'Scene must resolve exactly one actual component')
+    package, activity = rows[0]
+    return package + '/' + (package + activity if activity.startswith('.') else activity)
+
+
+def focused_component(output):
+    rows = current_focus_lines(output)
+    if len(rows) != 1:
+        return None
+    match = re.search(r'\bu[0-9]+ ([a-zA-Z0-9_.]+)/([a-zA-Z0-9_.$]+)\}', rows[0])
+    return resolved_component(match[1] + '/' + match[2]) if match else None
+
+
+def focused_surface_ready(output):
+    focus = current_focus_lines(output)
+    if len(focus) != 1:
+        return False
+    window = re.search(r'mCurrentFocus=(Window\{[^}]+\})', focus[0])
+    if window is None:
+        return False
+    block = re.search(r'(?m)^  Window #[0-9]+ ' + re.escape(window[1]) + r':\n(.*?)(?=^  Window #|\Z)', output, re.S | re.M)
+    return block is not None and all(token in block[1] for token in
+        ('mHasSurface=true', 'isReadyForDisplay()=true', 'isOnScreen=true', 'isVisible=true', 'Surface: shown=true'))
+
+
 class Diagnostic(base.Diagnostic):
     def __init__(self, args):
         super().__init__(args)
@@ -109,6 +136,42 @@ class Diagnostic(base.Diagnostic):
         except (ValueError, RuntimeError, subprocess.TimeoutExpired, OSError) as error:
             layer[name] = dict(collected=False, errorType=type(error).__name__, error=str(error))
             return None
+
+    def wait_scene_stable(self, scene, intent, budget=30):
+        deadline = time.monotonic() + budget
+        evidence = dict(scene=scene, budgetSeconds=budget, observations=[], ready=False,
+                        setupStateWritten=False)
+        self.receipt.setdefault('sceneReadiness', []).append(evidence)
+        previous = None
+        consecutive = 0
+        while time.monotonic() < deadline:
+            self.check()
+            row = dict(index=len(evidence['observations']), elapsedSeconds=budget - (deadline - time.monotonic()))
+            evidence['observations'].append(row)
+            def read(label, *command):
+                remaining = deadline - time.monotonic()
+                require(remaining > 0, 'Scene stabilization deadline reached')
+                raw, _ = self.adb_command(scene + '-stable-' + str(row['index']) + '-' + label,
+                                         *command, timeout=min(3, remaining))
+                return raw.decode(errors='replace')
+            setup = read('setup', 'shell', 'settings', 'get', 'secure', 'user_setup_complete').strip() if scene == 'home' else None
+            row['userSetupComplete'] = setup
+            component = resolved_component(read('resolve', 'shell', 'cmd', 'package', 'resolve-activity', '--brief', *intent))
+            window = read('focus', 'shell', 'dumpsys', 'window')
+            focus = focused_component(window)
+            ready = focused_surface_ready(window)
+            row.update(resolvedComponent=component, focusedComponent=focus, focusedSurfaceReady=ready)
+            package = component.split('/')[0]
+            setup_component = package in ('com.google.android.sdksetup', 'com.google.android.setupwizard', 'com.android.provision')
+            matches = ready and component == focus and (scene != 'home' or (setup == '1' and not setup_component))
+            consecutive = consecutive + 1 if matches and previous == component else (1 if matches else 0)
+            previous = component if matches else None
+            row['consecutiveMatches'] = consecutive
+            if consecutive >= 2:
+                evidence.update(ready=True, resolvedComponent=component, elapsedSeconds=budget - (deadline - time.monotonic()))
+                return package
+            time.sleep(min(.5, max(0, deadline - time.monotonic())))
+        raise ValueError('System scene did not naturally stabilize within its deadline')
 
     def capture(self, scene, expected_package=None):
         layer = dict(scene=scene, beforeAppInstall=not self.install_attempted, diagnosticOnly=True, accepted=False)
@@ -216,6 +279,8 @@ class Diagnostic(base.Diagnostic):
         self.surface_install_attempted = True
         self.adb_command('install-observer', 'install', '-t', '--no-streaming', args.surface_test_apk, timeout=120)
         self.start_scene_logcat()
+        self.receipt['sceneLogcat'].update(coverage='after independent observer install; before original App install',
+                                          observerInstalled=True, originalAppInstalled=False)
         usable = True
         for scene, action in [('home', ['shell', 'am', 'start', '-W', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.HOME']),
                               ('settings', ['shell', 'am', 'start', '-W', '-a', 'android.settings.SETTINGS'])]:
@@ -226,8 +291,9 @@ class Diagnostic(base.Diagnostic):
             self.receipt.setdefault('sceneLaunches', []).append(launch)
             self.receipt['systemNavigationPerformed'] = True
             self.attempt(launch, 'launch', lambda: self.adb_command(scene + '-launch', *action, timeout=30)[0].decode())
-            time.sleep(2)
-            usable = self.capture(scene, components[0].decode()) and launch['launch']['collected'] and usable
+            stable_package = self.attempt(launch, 'readiness', lambda: self.wait_scene_stable(scene, action[4:]))
+            captured = self.capture(scene, stable_package or components[0].decode())
+            usable = captured and stable_package is not None and launch['launch']['collected'] and usable
         require(usable, 'System layer failed; original App deliberately not installed')
         self.install_attempted = True
         self.adb_command('install-original', 'install', '--no-streaming', args.runtime_directory / 'apks/app-release.apk', timeout=120)

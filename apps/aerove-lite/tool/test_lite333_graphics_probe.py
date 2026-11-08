@@ -101,6 +101,52 @@ class Graphics333Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             d=p.Diagnostic(self.args(Path(temp)))
             self.assertIs(d.receipt['systemNavigationPerformed'],False)
+    def test_home_waits_for_natural_setup_and_current_resolved_surface(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d=p.Diagnostic(self.args(Path(temp)));clock=[0.0];seen=[]
+            def command(label,*args,**kwargs):
+                seen.append(args);index=d.receipt['sceneReadiness'][-1]['observations'][-1]['index']
+                package='com.google.android.sdksetup' if index==0 else 'com.google.android.apps.nexuslauncher'
+                if label.endswith('-setup'):return (b'0' if index==0 else b'1'),{'exit':0}
+                if label.endswith('-resolve'):return (package+'/.Activity').encode(),{'exit':0}
+                if index==0:return b'mCurrentFocus=null',{'exit':0}
+                value='mCurrentFocus=Window{abc u0 '+package+'/'+package+'.Activity}\n  Window #1 Window{abc u0 '+package+'/'+package+'.Activity}:\n    mHasSurface=true isReadyForDisplay()=true isOnScreen=true isVisible=true Surface: shown=true\n'
+                return value.encode(),{'exit':0}
+            d.adb_command=command
+            with patch.object(p.time,'monotonic',side_effect=lambda:clock[0]),patch.object(p.time,'sleep',side_effect=lambda n:clock.__setitem__(0,clock[0]+n)):
+                self.assertEqual('com.google.android.apps.nexuslauncher',d.wait_scene_stable('home',['-a','android.intent.action.MAIN'],budget=3))
+            self.assertEqual(3,len(d.receipt['sceneReadiness'][0]['observations']))
+            self.assertTrue(all(args[:3] != ('shell','settings','put') for args in seen))
+    def test_missing_setup_state_fails_at_bounded_deadline(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d=p.Diagnostic(self.args(Path(temp)));clock=[0.0]
+            def command(label,*args,**kwargs):
+                return (b'null' if label.endswith('-setup') else b'com.google.android.sdksetup/.DefaultActivity' if label.endswith('-resolve') else b'mCurrentFocus=null'),{'exit':0}
+            d.adb_command=command
+            with patch.object(p.time,'monotonic',side_effect=lambda:clock[0]),patch.object(p.time,'sleep',side_effect=lambda n:clock.__setitem__(0,clock[0]+n)),self.assertRaises(ValueError):
+                d.wait_scene_stable('home',[],budget=1)
+            self.assertEqual(1,clock[0]);self.assertFalse(d.receipt['sceneReadiness'][0]['ready'])
+    def test_setup_complete_without_matching_home_focus_still_times_out(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d=p.Diagnostic(self.args(Path(temp)));clock=[0.0]
+            def command(label,*args,**kwargs):
+                if label.endswith('-setup'):return b'1',{'exit':0}
+                if label.endswith('-resolve'):return b'com.google.android.apps.nexuslauncher/.Home',{'exit':0}
+                return b'mCurrentFocus=Window{abc u0 other/.Home}\n  Window #1 Window{abc u0 other/.Home}:\n mHasSurface=true isReadyForDisplay()=true isOnScreen=true isVisible=true Surface: shown=true\n',{'exit':0}
+            d.adb_command=command
+            with patch.object(p.time,'monotonic',side_effect=lambda:clock[0]),patch.object(p.time,'sleep',side_effect=lambda n:clock.__setitem__(0,clock[0]+n)),self.assertRaises(ValueError):d.wait_scene_stable('home',[],budget=1)
+            self.assertFalse(d.receipt['sceneReadiness'][0]['ready'])
+    def test_readiness_command_error_is_not_readiness(self):
+        with tempfile.TemporaryDirectory() as temp:
+            d=p.Diagnostic(self.args(Path(temp)))
+            def command(*args,**kwargs):raise OSError('adb unavailable')
+            d.adb_command=command;row={}
+            self.assertIsNone(d.attempt(row,'readiness',lambda:d.wait_scene_stable('home',[])))
+            self.assertFalse(row['readiness']['collected']);self.assertFalse(d.receipt['sceneReadiness'][0]['ready'])
+    def test_surface_readiness_is_bound_to_focused_window_id(self):
+        window='mCurrentFocus=Window{abc u0 p/.A}\n  Window #1 Window{other u0 p/.A}:\n mHasSurface=true isReadyForDisplay()=true isOnScreen=true isVisible=true Surface: shown=true\n'
+        self.assertFalse(p.focused_surface_ready(window))
+        self.assertTrue(p.focused_surface_ready(window.replace('Window{other','Window{abc')))
     def test_self_target_and_no_mutation(self):
         import xml.etree.ElementTree as ET
         root=Path(__file__).resolve().parents[1]/'android-qa'
