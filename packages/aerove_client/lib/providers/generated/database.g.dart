@@ -119,7 +119,7 @@ final class ProfilesProvider
   }
 }
 
-String _$profilesHash() => r'9a8cbaa17db63295a440ab7b4c869a796ec35449';
+String _$profilesHash() => r'71f0a9d01c8fd2353c14e3e515e961587d149024';
 
 abstract class _$Profiles extends $Notifier<List<Profile>> {
   List<Profile> build();
@@ -207,7 +207,7 @@ final class ClashProvidersProvider
   ClashProviders create() => ClashProviders();
 }
 
-String _$clashProvidersHash() => r'd2c299d27e2ecf989521a173d9705c354d0b5730';
+String _$clashProvidersHash() => r'48db7c6c2837d88b9fb6c3dcc279ecfe8ab7e7cc';
 
 abstract class _$ClashProviders extends $StreamNotifier<List<ClashProvider>> {
   Stream<List<ClashProvider>> build();
