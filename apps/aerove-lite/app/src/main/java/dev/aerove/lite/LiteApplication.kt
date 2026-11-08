@@ -1,6 +1,7 @@
 package dev.aerove.lite
 
 import android.app.Application
+import android.content.pm.PackageManager
 import dev.aerove.lite.core.MeowNativeCore
 import dev.aerove.lite.data.CompatibilityValidator
 import dev.aerove.lite.data.LiteSettingsStore
@@ -51,20 +52,25 @@ class LiteApplication : Application() {
     suspend fun startSharedExternal(autoRun: Boolean, expectedStartEpoch: Long): Boolean = startSharedExternalOwned(autoRun, expectedStartEpoch, null)
 
     private suspend fun startSharedExternalOwned(autoRun: Boolean, expectedStartEpoch: Long, permit: dev.aerove.lite.flutter.ProviderSourcePermit?): Boolean {
+        suspend fun qualify(): dev.aerove.lite.flutter.MeowRuntimeSnapshot? {
+            check(usesSharedFlutterClient && !maintenanceActive && startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
+            if (!dev.aerove.lite.flutter.sharedStartOwnerAvailable(autoRun, vpn.value.phase)) return null
+            val snapshot=checkNotNull(runtimeHandoffs.readCurrent()) { "shared_runtime_configuration_required" }
+            if (autoRun && runtimeHandoffs.providerSourceKeepStopped()) return null
+            val config=verifySharedStartSource(snapshot, permit)
+            if(autoRun && !config.getJSONObject("appSettingProps").getBoolean("autoRun")) return null
+            val vpnRequired=org.json.JSONObject(snapshot.handoff.vpnOptionsJson).getBoolean("enable")
+            check(!vpnRequired || android.net.VpnService.prepare(this@LiteApplication) == null) { "shared_vpn_authorization_required" }
+            check(vpnRequired || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) { "shared_notification_authorization_required" }
+            check(startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
+            return snapshot
+        }
         val requested=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            nativeLifecycle.withLock {
-                check(usesSharedFlutterClient && !maintenanceActive && startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
-                val snapshot=checkNotNull(runtimeHandoffs.readCurrent()) { "shared_runtime_configuration_required" }
-                if (autoRun && runtimeHandoffs.providerSourceKeepStopped()) return@withLock null
-                val config=verifySharedStartSource(snapshot, permit)
-                if(autoRun && !config.getJSONObject("appSettingProps").getBoolean("autoRun")) return@withLock null
-                val vpnRequired=org.json.JSONObject(snapshot.handoff.vpnOptionsJson).getBoolean("enable")
-                check(!vpnRequired || android.net.VpnService.prepare(this@LiteApplication) == null) { "shared_vpn_authorization_required" }
-                check(vpnRequired || checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) { "shared_notification_authorization_required" }
-                check(startIntentEpoch() == expectedStartEpoch) { "shared_start_superseded" }
-                retireParkedGraph()
-                runtimeHandoffs.beginStart(snapshot.revision,snapshot.intentEpoch, permit)
-            }
+            dev.aerove.lite.flutter.sharedStartTransition(parkedGraphGate, nativeLifecycle,
+                qualify = ::qualify,
+                same = { before, after -> before.revision == after.revision && before.intentEpoch == after.intentEpoch },
+                retire = ::retireParkedGraph,
+                commit = { snapshot -> runtimeHandoffs.beginStart(snapshot.revision, snapshot.intentEpoch, permit) })
         } ?: return false
         var sent=false
         try {
