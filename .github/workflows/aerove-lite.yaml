@@ -75,13 +75,13 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'gfxstream37-static', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'lite328-surface', 'gfxstream37-static', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite236_pixels:
-    name: Fixed original236/257 untouched pixels (diagnostic only)
+    name: Fixed original236/257/328 untouched pixels (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface')) }}
+    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -90,7 +90,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       AEROVE_GUEST_ANGLE: '1'
-      PIXEL_ORIGINAL_NUMBER: ${{ inputs.diagnostic_target == 'lite257-surface' && '257' || '236' }}
+      PIXEL_ORIGINAL_NUMBER: ${{ inputs.diagnostic_target == 'lite328-surface' && '328' || inputs.diagnostic_target == 'lite257-surface' && '257' || '236' }}
     steps:
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       with:
@@ -104,17 +104,20 @@ jobs:
         packages: platform-tools
         log-accepted-android-sdk-licenses: false
         cmdline-tools-version: '16111833'
-    - name: Fetch the selected fixed original236/257 archive and official API row
+    - name: Fetch the selected fixed original236/257/328 archive and official API row
       run: |
         python3 - <<'PY'
         import json, os, stat, sys, zipfile
         from pathlib import Path, PurePosixPath
         sys.path.insert(0, 'apps/aerove-lite/tool')
         from lite_release import _gh_json, _gh_binary
-        from lite236_pixel_diagnostic import original
         from argparse import Namespace
         number = int(os.environ['PIXEL_ORIGINAL_NUMBER'])
-        artifact = {236: 13300156190, 257: 13385808111}[number]
+        if number == 328:
+            from lite328_surface_probe import original
+        else:
+            from lite236_pixel_diagnostic import original
+        artifact = {236: 13300156190, 257: 13385808111, 328: 13619525870}[number]
         root = Path(os.environ['RUNNER_TEMP']) / f'lite{number}-original'
         root.mkdir()
         api = root / 'ARTIFACT-API.json'
@@ -221,12 +224,12 @@ jobs:
         test ! -e "$cleanup_archive"
         df -B1 "$ANDROID_HOME" "$runner_temp_real" "$avd_directory/test.avd" > "$sdk_install_dir/disk-after-owned-cleanup.txt"
     - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
-      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface')
+      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface')
       with:
         gradle-version: 9.6.0
         cache-read-only: false
     - name: Build only the independent public-API Surface diagnostic runner
-      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface')
+      if: (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface')
       env:
         KEYSTORE_BASE64: ${{ secrets.AEROVE_LITE_KEYSTORE }}
         AEROVE_LITE_KEYSTORE_PASSWORD: ${{ secrets.AEROVE_LITE_KEYSTORE_PASSWORD }}
@@ -318,7 +321,7 @@ jobs:
     - name: Capture fixed original pixels in the selected diagnostic order
       env:
         DISABLE_DEFERRED_SUBMIT: ${{ inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' }}
-        SURFACE_READBACK: ${{ (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface') }}
+        SURFACE_READBACK: ${{ (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface') }}
       run: |
         extra=()
         if [[ "$DISABLE_DEFERRED_SUBMIT" == true ]]; then
@@ -330,7 +333,9 @@ jobs:
         fi
         if [[ "$PIXEL_ORIGINAL_NUMBER" == 257 ]]; then extra+=(--app-renderer skia); fi
         df -B1 "$RUNNER_TEMP" "${ANDROID_AVD_HOME:-$HOME/.android/avd}/test.avd" > "$RUNNER_TEMP/lite-diagnostics/sdk-install/disk-before-pixel-launch.txt"
-        python3 apps/aerove-lite/tool/lite236_pixel_diagnostic.py \
+        pixel_script=apps/aerove-lite/tool/lite236_pixel_diagnostic.py
+        if [[ "$PIXEL_ORIGINAL_NUMBER" == 328 ]]; then pixel_script=apps/aerove-lite/tool/lite328_surface_probe.py; fi
+        python3 "$pixel_script" \
           --runtime-directory "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/unpacked" \
           --archive "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/official.zip" \
           --artifact-api "$RUNNER_TEMP/lite${PIXEL_ORIGINAL_NUMBER}-original/ARTIFACT-API.json" \
@@ -3110,7 +3115,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, gfxstream37-static, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, lite328-surface, gfxstream37-static, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false

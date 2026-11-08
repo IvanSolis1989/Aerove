@@ -151,6 +151,18 @@ class Diagnostic:
             self.receipt["appRenderer"] = dict(requested="skia", launcherEnableImpellerExtra=False,
                 backendConfirmation="backend-unconfirmed", runtimeBackendChangeRequested=True, diagnosticOnly=True)
 
+    def resilient_surface(self):
+        return self.original257
+
+    def original_artifact(self):
+        return original(self.args)
+
+    def app_version(self):
+        return ("0.2.0-beta.1", "34") if self.original257 else ("0.1.0-beta.28", "28")
+
+    def surface_selector(self):
+        return "dev.aerove.lite.SurfacePixelDiagnosticTest#testCaptureLateSurfaceAndCompositor"
+
     def record_app_renderer(self):
         # No explicit Skia startup message exists in the pinned Android backend.
         # Absence of an Impeller message is not affirmative Skia evidence.
@@ -188,12 +200,12 @@ class Diagnostic:
         remote = "/sdcard/Android/data/" + PACKAGE + "/files/surface-pixel-diagnostic/" + token
         self.surface_evidence_remote = remote
         values = dict(qaToken=token, originalAppApkSha256=self.apk_sha, originalAppSignerSha256=SIGNER,
-            originalAppVersionCode="34" if self.original257 else "28", harnessApkSha256=harness["apkSha256"], harnessSignerSha256=SIGNER,
+            originalAppVersionCode=self.app_version()[1], harnessApkSha256=harness["apkSha256"], harnessSignerSha256=SIGNER,
             harnessSourceSha=args.source, harnessBuildRun=args.run, harnessBuildAttempt=args.attempt,
             executorSourceSha=args.source, executionRun=args.run, executionAttempt=args.attempt)
         if self.app_renderer == "skia":
             values["appRenderer"] = "skia"
-        selector = "dev.aerove.lite.SurfacePixelDiagnosticTest#testCaptureLateSurfaceAndCompositor"
+        selector = self.surface_selector()
         command = ["shell", "am", "instrument", "-w", "-r", "-e", "class", selector]
         for key, value in values.items():
             command += ["-e", key, str(value)]
@@ -373,7 +385,7 @@ class Diagnostic:
 
     def execute(self):
         args = self.args
-        self.receipt["originalArtifact"] = original(args)
+        self.receipt["originalArtifact"] = self.original_artifact()
         require(sys.platform == "linux", "Use the existing isolated Linux/KVM runner; no other device is supported")
         require(not os.environ.get("ANDROID_EMU_VK_DISABLE_FEATURE_DEPS_CHECK"), "Never bypass emulator feature dependencies")
         for key, supplied in (("GITHUB_SHA", args.source), ("GITHUB_RUN_ID", args.run), ("GITHUB_RUN_ATTEMPT", args.attempt)):
@@ -394,8 +406,8 @@ class Diagnostic:
         badging, _ = self.command("original-apk-badging", [args.sdk / "build-tools/37.0.0/aapt", "dump", "badging", apk])
         signature, _ = self.command("original-apk-signature", [args.sdk / "build-tools/37.0.0/apksigner", "verify", "--verbose", "--print-certs", apk], timeout=120)
         self.receipt["packageIdentity"] = verify_identity(badging.decode(), signature.decode(),
-            dict(applicationId=PACKAGE, version="0.2.0-beta.1" if self.original257 else "0.1.0-beta.28",
-                 versionCode="34" if self.original257 else "28", signerSha256=SIGNER), "preview")
+            dict(applicationId=PACKAGE, version=self.app_version()[0],
+                 versionCode=self.app_version()[1], signerSha256=SIGNER), "preview")
         features = "GuestAngle,Vulkan"
         if args.disable_queue_submit_with_commands:
             features += ",-VulkanQueueSubmitWithCommands"
@@ -427,7 +439,7 @@ class Diagnostic:
         packages, _ = self.adb_command("preexisting-target-packages", "shell", "pm", "list", "packages", "-u", "--user", "0", PACKAGE)
         require(not packages.strip(), "Refuses an AVD with an existing Lite package; never clears/replaces user data")
         baseline_failure = None
-        if self.original257:
+        if self.resilient_surface():
             self.start_scene_logcat()
             try:
                 raw, _ = self.adb_command("system-before-install", "exec-out", "screencap", "-p", timeout=30)
@@ -463,7 +475,7 @@ class Diagnostic:
             while time.monotonic() < deadline:
                 self.check()
                 time.sleep(max(0, min(0.1, deadline - time.monotonic())))
-            if self.original257:
+            if self.resilient_surface():
                 try:
                     self.frame(label, target=offset)
                 except (ValueError, subprocess.TimeoutExpired) as error:
@@ -474,7 +486,7 @@ class Diagnostic:
                     break
             else:
                 self.frame(label, target=offset)
-        if not self.original257:
+        if not self.resilient_surface():
             self.scene_diagnostics("before-accessibility")
         if args.disable_queue_submit_with_commands:
             own_log = (args.output / "before-accessibility-app-logcat.out").read_text(errors="replace")
@@ -487,7 +499,7 @@ class Diagnostic:
                     "App did not retain the original Impeller OpenGLES backend")
             self.receipt["queueSubmitControl"] = dict(overrideDisabled=True, extensionAdvertised=False,
                 hostCompositionRows=len(capabilities), impellerBackend="OpenGLES")
-        if self.original257:
+        if self.resilient_surface():
             self.receipt["surfaceHostOrdering"] = "shell baselines, Java PixelCopy, Java compositor, then host hierarchy"
             try:
                 self.surface_capture()
@@ -514,7 +526,7 @@ class Diagnostic:
             require(hierarchy_root.tag == "hierarchy", "uiautomator did not return an actual hierarchy XML")
             self.receipt["hierarchyContainsTargetPackage"] = any(
                 node.get("package") == PACKAGE for node in hierarchy_root.iter("node"))
-            if self.original257:
+            if self.resilient_surface():
                 self.receipt["hostHierarchyAfterInstrumentation"] = True
                 self.receipt["hostHierarchyIsSameSceneProof"] = False
                 self.adb_command("post-surface-app-pid", "shell", "pidof", PACKAGE, timeout=3, check=False)
@@ -526,7 +538,7 @@ class Diagnostic:
             self.receipt["ownedHierarchyRemoved"] = True
         else:
             self.receipt["hierarchyUnavailable"] = True
-        if args.surface_test_apk and not self.original257:
+        if args.surface_test_apk and not self.resilient_surface():
             self.surface_capture()
         self.receipt["installedAppAfter"] = self.installed_hash("final-original")
         require(sha(apk) == self.apk_sha and sha(args.runtime_directory / "BUILD_INFO.json") == self.info_sha,

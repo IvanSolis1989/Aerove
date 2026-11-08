@@ -535,6 +535,13 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     }
 
 
+    private boolean original328Probe;
+
+    public void testOriginal328SurfaceWindowAndCompositor() throws Exception {
+        original328Probe = true;
+        testCaptureLateSurfaceAndCompositor();
+    }
+
     public void testOriginal265SurfaceWindowAndStartupMetadata() throws Exception {
         original265Probe = true;
         testCaptureLateSurfaceAndCompositor();
@@ -716,7 +723,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
             checkSame(before, afterCopy);
             receipt.put("afterSurfaceCopy", afterCopy.json);
             receipt.getJSONObject("surfaceCopy").put("image", savePng(root, "surface.png", destination));
-            if (original265Probe) {
+            if (original265Probe || original328Probe) {
                 stage = "window-copy";
                 Bitmap target = Bitmap.createBitmap(before.displayWidth, before.displayHeight, Bitmap.Config.ARGB_8888);
                 windowBitmap = target;
@@ -1018,6 +1025,16 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
     }
 
     private JSONObject originalIdentity() throws Exception {
+        if (original328Probe) {
+            String apk = "ba6a826c487ba2f243aeed306f5ab5bdd3c1545fff2476a847b297c4404aacfa";
+            check(apk.equals(argument("originalAppApkSha256")) && "39".equals(argument("originalAppVersionCode"))
+                    && ORIGINAL_SIGNER.equals(argument("originalAppSignerSha256")), "Unexpected original328 identity argument");
+            JSONObject identity = installedIdentity(TARGET, apk, ORIGINAL_SIGNER, 39L);
+            check("0.2.0-beta.7".equals(identity.getString("versionName")), "Unexpected original328 versionName");
+            return identity.put("source", "2288e88304783ccc7113f7c1eecc5b7cd43a53b5")
+                    .put("tree", "11a94ba01a840edfdb2b046753b537b5db546669")
+                    .put("buildRun", "42482381897").put("buildAttempt", "1");
+        }
         if (original290Probe) {
             check(ORIGINAL290_APK.equals(argument("originalAppApkSha256"))
                     && "38".equals(argument("originalAppVersionCode"))
@@ -1240,7 +1257,7 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
         }
     }
 
-    private static JSONObject savePng(File root, String name, Bitmap bitmap) throws Exception {
+    private JSONObject savePng(File root, String name, Bitmap bitmap) throws Exception {
         File file = new File(root, name);
         check(file.createNewFile(), "Capture output must be new");
         try (FileOutputStream output = new FileOutputStream(file)) {
@@ -1252,10 +1269,32 @@ public class SurfacePixelDiagnosticTest extends InstrumentationTestCase {
         BitmapFactory.decodeFile(file.getAbsolutePath(), options);
         check(options.outWidth == bitmap.getWidth() && options.outHeight == bitmap.getHeight()
                 && "image/png".equals(options.outMimeType), "Encoded PNG dimensions or format mismatch");
-        return new JSONObject().put("file", name).put("bytes", file.length()).put("sha256", fileDigest(file))
+        JSONObject image = new JSONObject().put("file", name).put("bytes", file.length()).put("sha256", fileDigest(file))
                 .put("width", bitmap.getWidth()).put("height", bitmap.getHeight())
                 .put("config", bitmap.getConfig() == null ? null : bitmap.getConfig().name())
                 .put("encoding", "lossless PNG; no crop, resize or nonblack assertion");
+        if (original328Probe) {
+            long total = (long) bitmap.getWidth() * bitmap.getHeight();
+            check(total > 0 && total <= 16_777_216L, "Diagnostic pixel budget exceeded");
+            Bitmap readable = bitmap.getConfig() == Bitmap.Config.HARDWARE
+                    ? required(bitmap.copy(Bitmap.Config.ARGB_8888, false), "Readable pixel copy failed") : bitmap;
+            long black = 0, transparent = 0, sentinel = 0;
+            int[] row = new int[bitmap.getWidth()];
+            try {
+                for (int y = 0; y < bitmap.getHeight(); y++) {
+                    readable.getPixels(row, 0, row.length, 0, y, row.length, 1);
+                    for (int pixel : row) {
+                        if ((pixel & 0x00ffffff) == 0) black++;
+                        if ((pixel >>> 24) == 0) transparent++;
+                        if (pixel == 0xfff10df1) sentinel++;
+                    }
+                }
+            } finally { if (readable != bitmap) readable.recycle(); }
+            image.put("pixelStats", new JSONObject().put("pixels", total).put("rgbBlack", black)
+                    .put("transparent", transparent).put("sentinel", sentinel)
+                    .put("observationOnly", true));
+        }
+        return image;
     }
 
     private static void saveReceipt(File root, JSONObject receipt) throws Exception {
