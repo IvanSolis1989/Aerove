@@ -1124,6 +1124,7 @@ jobs:
         (cd packages/aerove_client && flutter pub get --enforce-lockfile)
         (cd apps/aerove && flutter pub get --enforce-lockfile)
         python3 tooling/sqlite_hook_prefetch.py apps/aerove apps/aerove-lite packages/aerove_client
+        python3 tooling/sqlite_hook_prefetch.py apps/aerove-lite --target android-x64
         python3 - <<'PY'
         import re
         from pathlib import Path

@@ -160,6 +160,16 @@ jobs:
     - name: Resolve the canonical shared Flutter client graph
       working-directory: apps/aerove-lite
       run: flutter pub get --enforce-lockfile
+    - name: Prefetch verified SQLite assets for the selected Android ABI
+      env:
+        LITE_ABI: ${{ inputs.abi }}
+      run: |-
+        case "$LITE_ABI" in
+          arm64-v8a) target=android-arm64 ;;
+          x86_64) target=android-x64 ;;
+          *) echo "Unsupported Lite ABI: $LITE_ABI" >&2; exit 1 ;;
+        esac
+        python3 tooling/sqlite_hook_prefetch.py apps/aerove-lite --target "$target"
     - name: Fetch exact same-run build inputs
       run: python3 apps/aerove-lite/tool/ci_artifacts.py fetch --name "Lite-core-${{ inputs.abi }}-attempt-${{ github.run_attempt }}" --destination "$RUNNER_TEMP/lite-core" --abi "${{ inputs.abi }}"
     - name: Fetch exact same-run build inputs

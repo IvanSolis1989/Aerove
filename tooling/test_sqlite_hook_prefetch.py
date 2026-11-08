@@ -18,13 +18,42 @@ class PrefetchTests(unittest.TestCase):
         (package / 'pubspec.yaml').write_text(f'version: {subject.VERSION}\n')
         (package / 'lib/src/hook/asset_hashes.dart').write_text(
             f"releaseTag = 'sqlite3-{subject.VERSION}';\n"
-            f"'{subject.FILENAME}': '{subject.SHA256}'\n")
+            ''.join(f"'{filename}': '{sha256}'\n" for filename, sha256, _ in subject.ASSETS.values()))
         (self.project / '.dart_tool').mkdir()
         (self.project / '.dart_tool/package_config.json').write_text(json.dumps({
             'packages': [{'name': 'sqlite3', 'rootUri': package.as_uri()}]}))
 
     def test_resolves_pinned_package(self):
         self.assertEqual(subject.package_root(self.project), self.project / 'package')
+
+    def test_android_assets_keep_separate_verified_cache_identities(self):
+        paths = []
+        for platform in ('android-x64', 'android-arm64'):
+            filename, checksum, asset_id = subject.ASSETS[platform]
+            def download(args, **kwargs):
+                self.assertTrue(args[-1].endswith(f'/assets/{asset_id}'))
+                candidate = Path(args[args.index('--output') + 1])
+                self.assertEqual(candidate.name, filename)
+                candidate.write_bytes(b'fixture')
+            with patch.object(subject, 'digest', return_value=checksum):
+                path = subject.prefetch(self.project, download, target=platform)
+            self.assertEqual(path.parent.name, 'download-' + checksum[:8])
+            paths.append(path)
+        self.assertNotEqual(*paths)
+
+    def test_android_expected_hash_must_match_resolved_package(self):
+        hashes = self.project / 'package/lib/src/hook/asset_hashes.dart'
+        hashes.write_text(hashes.read_text().replace(subject.ASSETS['android-arm64'][1], '0' * 64))
+        with self.assertRaises(ValueError):
+            subject.prefetch(self.project, lambda *a, **k: self.fail('network'), target='android-arm64')
+
+    def test_android_wrong_download_is_not_published(self):
+        for platform in ('android-x64', 'android-arm64'):
+            def download(args, **kwargs):
+                Path(args[args.index('--output') + 1]).write_bytes(b'wrong ABI or error page')
+            with self.assertRaises(ValueError):
+                subject.prefetch(self.project, download, target=platform)
+        self.assertEqual(list(self.project.rglob('libsqlite3.so')), [])
 
     def test_rejects_package_upgrade(self):
         (self.project / 'package/pubspec.yaml').write_text('version: 3.9.0\n')

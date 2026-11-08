@@ -1,4 +1,4 @@
-"""Prefetch the pinned host SQLite asset without weakening its hook checksum."""
+"""Prefetch the pinned SQLite native assets without weakening its hook checksum."""
 import argparse
 import hashlib
 import json
@@ -14,13 +14,22 @@ SHA256 = '0f947ebe629e8d9d02d7f408bef36e056bfc63ea47e02e0d45a7bae454f04ace'
 ASSET_URL = 'https://api.github.com/repos/simolus3/sqlite3.dart/releases/assets/600688886'
 URL = f'https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-{VERSION}/{FILENAME}?download=1'
 
+ASSETS = {
+    'linux-x64': (FILENAME, SHA256, 600688886),
+    'android-x64': ('libsqlite3.x64.android.so',
+                    '949965f0eba976f707ae364cdcb42c342b5f0626081f8d7f0378fb7b52848772', 600688868),
+    'android-arm64': ('libsqlite3.arm64.android.so',
+                      '0c2d3bfc8c87abceb21ed72a4bb49964121c5fe1a8ef3848d83ba907d01b6161', 600688808),
+}
+
 
 def digest(path):
     with path.open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
-def package_root(project):
+def package_root(project, target="linux-x64"):
+    filename, sha256, _ = ASSETS[target]
     config = project / '.dart_tool/package_config.json'
     packages = json.loads(config.read_text())['packages']
     entry = next(item for item in packages if item['name'] == 'sqlite3')
@@ -34,23 +43,26 @@ def package_root(project):
         raise ValueError('Revalidate the SQLite hook cache contract before upgrading')
     if f"releaseTag = 'sqlite3-{VERSION}'" not in hashes:
         raise ValueError('Unexpected SQLite release tag')
-    if f"'{FILENAME}': '{SHA256}'" not in hashes:
+    if f"'{filename}': '{sha256}'" not in hashes:
         raise ValueError('Pinned checksum disagrees with the resolved SQLite package')
     return root
 
 
-def prefetch(project, download=subprocess.run):
+def prefetch(project, download=subprocess.run, target="linux-x64"):
+    filename, sha256, asset_id = ASSETS[target]
+    asset_url = f'https://api.github.com/repos/simolus3/sqlite3.dart/releases/assets/{asset_id}'
+    release_url = f'https://github.com/simolus3/sqlite3.dart/releases/download/sqlite3-{VERSION}/{filename}?download=1'
     project = project.resolve()
-    package_root(project)
+    package_root(project, target)
     # sqlite3 3.7.0 validates this content-addressed cache again before use.
-    cache = project / '.dart_tool/hooks_runner/shared/sqlite3/build' / f'download-{SHA256[:8]}'
+    cache = project / '.dart_tool/hooks_runner/shared/sqlite3/build' / f'download-{sha256[:8]}'
     cache.mkdir(parents=True, exist_ok=True)
     target = cache / 'libsqlite3.so'
-    if target.is_file() and digest(target) == SHA256:
+    if target.is_file() and digest(target) == sha256:
         return target
     with tempfile.TemporaryDirectory(prefix='prefetch-', dir=cache) as staging:
-        candidate = Path(staging) / FILENAME
-        for index, url in enumerate((ASSET_URL, URL)):
+        candidate = Path(staging) / filename
+        for index, url in enumerate((asset_url, release_url)):
             candidate.unlink(missing_ok=True)
             try:
                 download(['curl', '--fail', '--location', '--silent', '--show-error',
@@ -64,7 +76,7 @@ def prefetch(project, download=subprocess.run):
                     print('Official SQLite asset API unavailable; trying the release URL', flush=True)
                     continue
                 raise
-            if digest(candidate) != SHA256:
+            if digest(candidate) != sha256:
                 raise ValueError('SQLite asset checksum mismatch; refusing cache publication')
             break
         candidate.replace(target)
@@ -74,10 +86,12 @@ def prefetch(project, download=subprocess.run):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('project', type=Path, nargs='+')
+    parser.add_argument('--target', choices=tuple(ASSETS), action='append')
     args = parser.parse_args()
     for project in args.project:
-        target = prefetch(project)
-        print(f'Verified SQLite {VERSION}: {target} sha256={digest(target)}')
+        for platform in args.target or ['linux-x64']:
+            target = prefetch(project, target=platform)
+            print(f'Verified SQLite {VERSION} {platform}: {target} sha256={digest(target)}')
 
 
 if __name__ == '__main__':
