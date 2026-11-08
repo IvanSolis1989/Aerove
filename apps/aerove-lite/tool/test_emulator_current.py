@@ -1048,7 +1048,7 @@ class SigillCaptureHostTests(unittest.TestCase):
         release = self.root / 'allow-gdb-normal-exit'
         original = current.sigill_gdb_script
         marker = 'AEROVE_GDB_NORMAL_EXIT_PENDING'
-        def delayed_finalization(*args):
+        def delayed_finalization(*args, **kwargs):
             barrier = (
                 'finally:\n'
                 '    if not gdb.selected_inferior().pid:\n'
@@ -1060,7 +1060,7 @@ class SigillCaptureHostTests(unittest.TestCase):
                 '            time.sleep(.01)\n'
                 '    if gdb.selected_inferior().pid:'
             )
-            return original(*args).replace('finally:\n    if gdb.selected_inferior().pid:', barrier)
+            return original(*args, **kwargs).replace('finally:\n    if gdb.selected_inferior().pid:', barrier)
         with patch.object(current, 'sigill_gdb_script', side_effect=delayed_finalization):
             self.capture.start()
         self.child.stdin.write(b'exit\n')
@@ -1088,8 +1088,8 @@ class SigillCaptureHostTests(unittest.TestCase):
     def test_original_sigill_reaches_parent_even_if_one_diagnostic_read_fails(self):
         import signal
         original = current.sigill_gdb_script
-        with patch.object(current, 'sigill_gdb_script', side_effect=lambda *args:
-                          original(*args).replace('"info symbol $pc"', '"aerove-intentionally-unknown-read"')):
+        with patch.object(current, 'sigill_gdb_script', side_effect=lambda *args, **kwargs:
+                          original(*args, **kwargs).replace('"info symbol $pc"', '"aerove-intentionally-unknown-read"')):
             self.capture.start()
         self.child.send_signal(signal.SIGILL)
         self.assertEqual(-signal.SIGILL, self.child.wait(timeout=15), self.logs())
