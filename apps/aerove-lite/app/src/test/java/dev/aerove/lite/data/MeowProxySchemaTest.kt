@@ -54,6 +54,24 @@ class MeowProxySchemaTest {
         reject("ports", "hysteria2", "password: pass, ports: 70000")
         reject("fingerprint", "hysteria2", "password: pass, fingerprint: not-sha256")
     }
+    @Test fun hy2MportAliasPreservesCanonicalHoppingRange() {
+        for (options in listOf("mport: 4443-4445", "mport: 4443-4445, ports: 4443-4445")) {
+            val out = accept("hysteria2", "password: pass, $options, hop-interval: 10-30")
+            assertFalse(out.contains("mport:"))
+            assertTrue(out.contains("ports: 4443-4445"))
+            assertTrue(out.contains("hop-interval: 10-30"))
+        }
+        val out = MeowCompatibilityValidator.normalize(
+            "proxies: [{name: t, type: hysteria2, server: example.com, password: pass, mport: 4443-4445}]", features)
+        assertTrue(out.contains("ports: 4443-4445")); assertFalse(out.contains("mport:"))
+    }
+    @Test fun hy2MportAliasRejectsConflictInvalidRangeAndOtherProtocols() {
+        reject("mport", "hysteria2", "password: pass, mport: 4443-4445, ports: 5443-5445")
+        for (value in listOf("70000", "'4445-4443'", "''", "[4443, 4444]", "true")) {
+            reject("ports", "hysteria2", "password: pass, mport: $value")
+        }
+        reject("mport", "vless", "$uuid, mport: 4443-4445")
+    }
     @Test fun hy2HoppingPortFallbackAndBounds() {
         MeowCompatibilityValidator.normalize("proxies: [{name: t, type: hysteria2, server: example.com, password: pass, port: 0, ports: 443-445}]", features)
         MeowCompatibilityValidator.normalize("proxies: [{name: t, type: hysteria2, server: example.com, password: pass, ports: 443-445}]", features)

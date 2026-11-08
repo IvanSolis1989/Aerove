@@ -98,6 +98,7 @@ internal object MeowProxySchema {
     }
 
     private fun hy2(p: MutableMap<String, Any?>, path: String) {
+        alias(p, "mport", "ports", path)
         schema(p, path, base + text("password", "sni", "ports", "obfs", "obfs-password", "fingerprint") + flags("skip-cert-verify", "fast-open"), setOf("up", "down", "hop-interval", "alpn"))
         nonempty(p["password"], "$path.password")
         p["ports"]?.let { ports ->
