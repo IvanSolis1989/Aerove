@@ -588,8 +588,9 @@ class CoreApiClient(
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                webSocket.close(code, "")
-                close(IOException("Core stream closed ($code)"))
+                closeCoreStreamBeforeReply(code, { failure -> close(failure) }) {
+                    webSocket.close(code, "")
+                }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
@@ -669,4 +670,10 @@ class CoreApiClient(
             throw IOException("Malformed core telemetry frame", error)
         }
     }
+}
+
+// OkHttp's writer can invoke onClosed before the close reply returns.
+internal fun closeCoreStreamBeforeReply(code: Int, terminate: (IOException) -> Unit, reply: () -> Unit) {
+    terminate(IOException("Core stream closed ($code)"))
+    reply()
 }
