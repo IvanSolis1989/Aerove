@@ -68,3 +68,49 @@ class HostRegressionTests(TestCase):
         recipe=(r/'apps/aerove-lite/tool/build_gfxstream_derived_host.sh').read_text()
         for required in ('_LIBCPP_HARDENING_MODE_EXTENSIVE','_LIBCPP_ABI_VERSION=1','gfxstream-zero-attachment-ready','InvalidateFramebufferTest.ZeroAttachmentsPreserveColor','InvalidateFramebufferTest.*:CombinedFramebufferBlitTest'):
             self.assertIn(required,recipe)
+
+class SparseHostCheckoutTests(TestCase):
+    def test_real_git_sparse_preserves_revision_and_required_metadata_only(self):
+        import ast, subprocess
+        script=Path(p.__file__).with_name('build_gfxstream_derived_host.sh').read_text()
+        block=script.split("<<'SPARSE_HOST'\n",1)[1].split('\nSPARSE_HOST',1)[0]
+        tree=ast.parse(block)
+        plans=ast.literal_eval(next(node.value for node in tree.body if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='plans' for t in node.targets)))
+        self.assertEqual('6d526de777b61fdbdaae61a24b1002db80870016',plans['system-images'][0])
+        self.assertEqual('9b0bdade8b09267282fb901d21219ab6af013c60',plans['archive'][0])
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for name,(_,patterns) in plans.items():
+                source=root/(name+'-source');target=root/name;source.mkdir()
+                def git(*args):return subprocess.check_output(['git',*map(str,args)],stderr=subprocess.DEVNULL,text=True).strip()
+                git('init',source)
+                files={'README.TXT':'real readme','PACKAGES.TXT':'real package inventory','LICENSE':'real license',
+                       'huge.tar.xz':'excluded archive','android-sdk/common/system-images/a/source.properties':'real metadata',
+                       'android-sdk/common/system-images/a/package.xml':'real package xml',
+                       'android-sdk/common/system-images/a/system.img':'excluded guest image',
+                       'linux/images/system.img':'excluded image'}
+                for rel,value in files.items():
+                    f=source/rel;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(value)
+                git('-C',source,'add','.')
+                git('-C',source,'-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-m','fixture')
+                sha=git('-C',source,'rev-parse','HEAD')
+                git('clone','--no-checkout',source,target)
+                git('-C',target,'config','core.sparseCheckout','true')
+                git('-C',target,'config','core.sparseCheckoutCone','false')
+                (target/'.git/info/sparse-checkout').write_text('\n'.join(patterns)+'\n')
+                git('-C',target,'checkout','HEAD')
+                self.assertEqual(sha,git('-C',target,'rev-parse','HEAD'))
+                self.assertEqual('',git('-C',target,'status','--porcelain'))
+                self.assertFalse((target/'huge.tar.xz').exists())
+                self.assertFalse((target/'android-sdk/common/system-images/a/system.img').exists())
+                if name=='system-images':
+                    self.assertEqual('real metadata',(target/'android-sdk/common/system-images/a/source.properties').read_text())
+                    self.assertTrue((target/'android-sdk').is_dir())
+                else:self.assertEqual('real package inventory',(target/'PACKAGES.TXT').read_text())
+    def test_fixed_original_source_pins_and_red_green_are_unchanged(self):
+        import hashlib
+        root=Path(p.__file__).parent
+        self.assertEqual('c04f658bc64a9c2ea1076848f836a46a212cd5748850cc5a00b04f9390f1d695',hashlib.sha256((root/'fixtures/aemu-integration-sources.json').read_bytes()).hexdigest())
+        source=(root/'build_gfxstream_derived_host.sh').read_text()
+        for required in ('source-checkout-current.txt','source-project-du.txt','source-pins-check','_LIBCPP_HARDENING_MODE_EXTENSIVE','[[ "$red_exit" == 132 || "$red_exit" == 134 ]]'):
+            self.assertIn(required,source)

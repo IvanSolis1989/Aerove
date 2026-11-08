@@ -72,7 +72,8 @@ def export_evidence(build, evidence):
              'derived-elf.txt', 'base-exports.txt', 'derived-exports.txt',
              'source-sync-phase.txt', 'disk-before.txt', 'memory-before.txt',
              'source-network-df.txt', 'source-network-du.txt', 'source-local-df.txt',
-             'source-local-du.txt', 'parser-strip-witness.json')
+             'source-local-du.txt', 'parser-strip-witness.json', 'host-sparse-plan.json',
+             'source-project-paths.txt', 'source-checkout-current.txt', 'source-project-du.txt')
     candidates = [build / name for name in names]
     candidates += list((build / 'logs').glob('*.out')) + list((build / 'logs').glob('*.err'))
     candidates += list((build / 'logs').glob('*.exit'))
@@ -157,6 +158,14 @@ def run(args):
             except Exception as error:
                 code = 1
                 receipt.update(status='failed', cleanupError=str(error))
+        if args.output.is_dir():
+            # Bound a real usage snapshot even when a checkout is interrupted mid-project.
+            with (args.evidence / 'owned-disk-at-exit.txt').open('wb') as disk:
+                try:
+                    subprocess.run(['du', '-x', '-B1', '--max-depth=4', str(args.output)],
+                                   stdout=disk, stderr=subprocess.DEVNULL, timeout=20, check=False)
+                except subprocess.TimeoutExpired:
+                    receipt['diskSnapshotIncomplete'] = True
         receipt['files'] = export_evidence(args.output, args.evidence)
         receipt['result'] = code
         (args.evidence / 'HOST-REGRESSION.json').write_text(json.dumps(receipt, indent=2) + '\n')

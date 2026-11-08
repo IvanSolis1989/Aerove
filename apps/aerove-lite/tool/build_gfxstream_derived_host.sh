@@ -268,6 +268,12 @@ pins = json.loads(pathlib.Path(sys.argv[1]).read_text())
 root = ET.Element('manifest')
 for project in pins['projects']:
     ET.SubElement(root, 'extend-project', name=project['name'], path=project['path'], revision=project['revision'])
+# Fixed host-only payload selection, anchored to the actual #344 resolved manifest.
+for name, revision in (
+    ('system-images', '6d526de777b61fdbdaae61a24b1002db80870016'),
+    ('archive', '9b0bdade8b09267282fb901d21219ab6af013c60')):
+    path = 'prebuilts/android-emulator-build/' + name
+    ET.SubElement(root, 'extend-project', name='platform/' + path, path=path, revision=revision)
 destination = pathlib.Path(sys.argv[2]) / '.repo/local_manifests/aerove-fixed-integration.xml'
 destination.parent.mkdir(parents=True, exist_ok=True)
 ET.ElementTree(root).write(destination, encoding='utf-8', xml_declaration=True)
@@ -307,9 +313,73 @@ printf '/*\n!/*/\n/clang-r596125/\n' > "$clang_gitdir/info/sparse-checkout"
 cp -- "$clang_gitdir/info/sparse-checkout" "$OUTPUT/clang-sparse-checkout.txt"
 git --git-dir="$clang_gitdir" config --local --show-origin --get-regexp \
   '^(core\.sparsecheckout|core\.sparsecheckoutcone|extensions\.partialclone)$' > "$OUTPUT/clang-sparse-config.txt"
+# ConfigureTask and the actual GLES targets do not consume guest images or source
+# archive tarballs. Keep real metadata (including android-sdk linkfile content),
+# never fake files; qemu-android-deps/common/toolchains remain untouched.
+python3 - "$AOSP_DIR" "$OUTPUT" <<'SPARSE_HOST'
+import json, pathlib, subprocess, sys
+root, output = map(pathlib.Path, sys.argv[1:])
+plans = {
+    'system-images': ('6d526de777b61fdbdaae61a24b1002db80870016',
+        ['/README.TXT', '/LICENSE*', '/NOTICE*', '/android-sdk/**/source.properties',
+         '/android-sdk/**/package.xml', '/android-sdk/**/NOTICE*', '/android-sdk/**/LICENSE*']),
+    'archive': ('9b0bdade8b09267282fb901d21219ab6af013c60',
+        ['/PACKAGES.TXT', '/README*', '/LICENSE*', '/NOTICE*']),
+}
+receipts = []
+for name, (revision, patterns) in plans.items():
+    project = 'prebuilts/android-emulator-build/' + name
+    gitdir = root / '.repo/projects' / (project + '.git')
+    worktree = root / project
+    if gitdir.is_symlink() or gitdir.resolve() != gitdir or not gitdir.is_dir():
+        raise ValueError('Non-owned sparse git directory')
+    if (worktree / '.git').exists() or (worktree / '.git').is_symlink():
+        raise ValueError('Sparse host selection must precede first checkout')
+    for path in (gitdir / 'config', gitdir / 'info', gitdir / 'info/sparse-checkout'):
+        if path.is_symlink(): raise ValueError('Symlinked Git metadata rejected')
+    if (gitdir / 'config.worktree').exists():
+        raise ValueError('Unexpected Git worktree configuration')
+    def git(*args):
+        return subprocess.check_output(['git', '--git-dir=' + str(gitdir), *args], text=True).strip()
+    if git('config', '--local', '--get', 'extensions.partialclone') != 'aosp':
+        raise ValueError('Require official repo promisor checkout')
+    if git('rev-parse', revision + '^{commit}') != revision:
+        raise ValueError('Fixed host metadata revision missing')
+    git('config', '--local', 'core.sparseCheckout', 'true')
+    git('config', '--local', 'core.sparseCheckoutCone', 'false')
+    (gitdir / 'info').mkdir(exist_ok=True)
+    (gitdir / 'info/sparse-checkout').write_text('\n'.join(patterns) + '\n')
+    receipts.append(dict(project=project, revision=revision, patterns=patterns,
+                         purpose='host-only metadata; no guest images/archive tarballs'))
+(output / 'host-sparse-plan.json').write_text(json.dumps(receipts, indent=2) + '\n')
+SPARSE_HOST
 printf '%s\n' local-only > "$OUTPUT/source-sync-phase.txt"
 # Git's promisor lazy fetch still obtains selected blobs; local-only is not offline.
-"${REPO[@]}" sync --local-only -c -j2 --fail-fast --no-clone-bundle </dev/null
+# Serial checkout records the exact project consuming disk before any failure.
+"${REPO[@]}" list -p > "$OUTPUT/source-project-paths.txt"
+while IFS= read -r project; do
+  printf '%s\n' "$project" > "$OUTPUT/source-checkout-current.txt"
+  printf 'BEGIN %s\n' "$project" >> "$OUTPUT/source-project-du.txt"
+  df -B1 "$AOSP_DIR" >> "$OUTPUT/source-project-du.txt"
+  "${REPO[@]}" sync --local-only -c -j1 --fail-fast --no-clone-bundle "$project" </dev/null
+  du -x -B1 -s "$AOSP_DIR/$project" "$AOSP_DIR/.repo/project-objects" >> "$OUTPUT/source-project-du.txt"
+  printf 'END %s\n' "$project" >> "$OUTPUT/source-project-du.txt"
+done < "$OUTPUT/source-project-paths.txt"
+python3 - "$AOSP_DIR" "$OUTPUT/host-sparse-plan.json" <<'VERIFY_HOST'
+import json, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+for plan in json.loads(pathlib.Path(sys.argv[2]).read_text()):
+    worktree = root / plan['project']
+    head = subprocess.check_output(['git', '-C', str(worktree), 'rev-parse', 'HEAD'], text=True).strip()
+    if head != plan['revision']: raise ValueError('Sparse host revision changed')
+    gitdir = root / '.repo/projects' / (plan['project'] + '.git')
+    if (gitdir / 'info/sparse-checkout').read_text().splitlines() != plan['patterns']:
+        raise ValueError('Sparse host patterns changed')
+# Official linkfile must resolve real selected metadata, not a fabricated directory.
+sdk = root / 'prebuilts/android/android-sdk'
+if not sdk.is_dir() or not any(sdk.rglob('source.properties')):
+    raise ValueError('Official SDK metadata link target unavailable')
+VERIFY_HOST
 [[ $(realpath -e -- "$clang_worktree/.git") == "$clang_gitdir" ]]
 [[ $(git -C "$clang_worktree" config --get core.sparseCheckout) == true ]]
 [[ $(git -C "$clang_worktree" config --get core.sparseCheckoutCone) == false ]]
