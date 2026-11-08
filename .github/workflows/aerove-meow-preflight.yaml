@@ -150,6 +150,7 @@ jobs:
           (cd packages/aerove_client && flutter pub get --enforce-lockfile)
           (cd apps/aerove && flutter pub get --enforce-lockfile)
           (cd apps/aerove-lite && flutter pub get --enforce-lockfile)
+          python3 tooling/sqlite_hook_prefetch.py apps/aerove apps/aerove-lite packages/aerove_client
           (cd apps/aerove && python3 tool/mihomo_source.py prepare)
       - name: Export actual fresh producer input and compose its runtime plan
         if: steps.fresh.outputs.enabled == 'true'

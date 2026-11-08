@@ -922,6 +922,7 @@ jobs:
         python3 apps/aerove-lite/tool/test_ci_artifacts.py
         python3 apps/aerove-lite/tool/test_android_acceptance.py
         python3 apps/aerove-lite/tool/test_profile_cancel_acceptance.py
+        python3 tooling/test_sqlite_hook_prefetch.py
     - name: Check workspace layout
       run: python3 tooling/workspace.py check
     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
@@ -975,6 +976,7 @@ jobs:
       run: |-
         flutter pub get --enforce-lockfile
         python3 tool/mihomo_source.py prepare
+        python3 ../../tooling/sqlite_hook_prefetch.py .
     - name: Produce fresh resource and source-proof inputs through the real Kotlin and Dart paths
       timeout-minutes: 25
       env:
@@ -1120,6 +1122,7 @@ jobs:
       run: |-
         (cd packages/aerove_client && flutter pub get --enforce-lockfile)
         (cd apps/aerove && flutter pub get --enforce-lockfile)
+        python3 tooling/sqlite_hook_prefetch.py apps/aerove apps/aerove-lite packages/aerove_client
         python3 - <<'PY'
         import re
         from pathlib import Path
