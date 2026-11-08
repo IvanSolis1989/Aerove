@@ -6,10 +6,10 @@ plugins {
 }
 
 val qaDriver = providers.gradleProperty("qaDriver").orElse("production").get()
-check(qaDriver in setOf("production", "surface-pixel-diagnostic")) {
+check(qaDriver in setOf("production", "surface-pixel-diagnostic", "graphics-baseline-diagnostic")) {
     "Unknown qaDriver; use production or surface-pixel-diagnostic"
 }
-val surfaceDiagnostic = qaDriver == "surface-pixel-diagnostic"
+val surfaceDiagnostic = qaDriver != "production"
 if (surfaceDiagnostic) {
     check(providers.gradleProperty("android.builtInKotlin").orNull == "false") {
         "The Java Surface diagnostic requires the existing android.builtInKotlin=false"
@@ -29,6 +29,7 @@ val releasePassword = providers.environmentVariable("AEROVE_LITE_KEYSTORE_PASSWO
 val driverSource = when (qaDriver) {
     "production" -> productRoot.resolve("app/src/androidTest/java/dev/aerove/lite/FlutterProductionUiTest.kt")
     "surface-pixel-diagnostic" -> rootDir.resolve("src/main/java/dev/aerove/lite/SurfacePixelDiagnosticTest.java")
+    "graphics-baseline-diagnostic" -> rootDir.resolve("src/main/java/dev/aerove/lite/GraphicsBaselineDiagnosticTest.java")
     else -> error("Unknown qaDriver; use production or surface-pixel-diagnostic")
 }
 val prepareDriverSource = tasks.register<Sync>("prepareDriverSource") {
@@ -71,7 +72,7 @@ android {
         useLibrary("android.test.runner")
         useLibrary("android.test.base")
         useLibrary("android.test.mock")
-        sourceSets.getByName("main").manifest.srcFile("src/surfaceDiagnostic/AndroidManifest.xml")
+        sourceSets.getByName("main").manifest.srcFile(if (qaDriver == "graphics-baseline-diagnostic") "src/graphicsDiagnostic/AndroidManifest.xml" else "src/surfaceDiagnostic/AndroidManifest.xml")
     }
     signingConfigs {
         create("liteRelease") {

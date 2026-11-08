@@ -160,15 +160,26 @@ internal fun nativeLiteLiveConfig(config: Map<String, Any?>): Map<String, Any?> 
 }
 
 private fun nativeLiteCurrentConfig(context: Context): JSONObject {
-    nativeLiteConfigInput(File(context.applicationInfo.dataDir)).use { input ->
-        val parser = android.util.Xml.newPullParser()
-        parser.setInput(input, "UTF-8")
-        while (parser.eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
-            if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name == "string" && parser.getAttributeValue(null, "name") == "flutter.config") return JSONObject(parser.nextText())
-            parser.next()
-        }
-    }
-    error("shared_config_missing")
+    val encoded = nativeLiteSharedConfigSnapshot(
+        disk = {
+            nativeLiteConfigInput(File(context.applicationInfo.dataDir)).use { input ->
+                val parser = android.util.Xml.newPullParser()
+                try {
+                    parser.setInput(input, "UTF-8")
+                    var value: String? = null
+                    while (parser.eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                        if (parser.eventType == org.xmlpull.v1.XmlPullParser.START_TAG && parser.name == "string" && parser.getAttributeValue(null, "name") == "flutter.config") {
+                            check(value == null) { "shared_config_duplicate" }
+                            value = parser.nextText()
+                        }
+                        parser.next()
+                    }
+                    value
+                } catch (_: org.xmlpull.v1.XmlPullParserException) { null }
+            }
+        },
+    )
+    return JSONObject(encoded)
 }
 
 internal fun nativeLiteConfigInput(systemDataDir: File): java.io.InputStream {
