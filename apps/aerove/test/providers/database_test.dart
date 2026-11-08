@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:drift/native.dart';
 // `Profiles`, `Scripts` and `ProxyGroups` name both a drift table and a
@@ -12,6 +13,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show ProviderListenable;
 import 'package:flutter_test/flutter_test.dart';
+
+import '../helpers/app_paths.dart';
 
 /// Every notifier in `lib/providers/database.dart` writes optimistically: the
 /// in-memory state is mutated first and the row is persisted afterwards through
@@ -1066,6 +1069,17 @@ void main() {
   });
 
   group('ClashProviders', () {
+    late Directory home;
+
+    setUp(() async {
+      home = await Directory.systemTemp.createTemp('database-rule-rename-');
+      await useAppPaths(home);
+    });
+
+    tearDown(() async {
+      await home.delete(recursive: true);
+    });
+
     test(
       'renaming a set renames it wherever a custom profile names it',
       () async {
@@ -1083,16 +1097,16 @@ void main() {
         );
         await keepAlive(profilesProvider);
         await keepAlive(clashProvidersProvider);
-        container
+        await container
             .read(profilesProvider.notifier)
-            .put(
+            .putCommitted(
               profile(
                 profileId,
                 label: 'Custom',
               ).copyWith(type: ProfileType.custom, overrides: overrides),
             );
         final providers = container.read(clashProvidersProvider.notifier);
-        providers.put(const ClashProvider(id: 5, label: 'ads'));
+        await providers.put(const ClashProvider(id: 5, label: 'ads'));
         await pumpEventQueue();
         await testDatabase.rulesDao.putRule(
           const Rule(
@@ -1105,7 +1119,7 @@ void main() {
           profileId: profileId,
         );
 
-        providers.put(const ClashProvider(id: 5, label: 'block'));
+        await providers.put(const ClashProvider(id: 5, label: 'block'));
         await pumpEventQueue();
 
         final rule =

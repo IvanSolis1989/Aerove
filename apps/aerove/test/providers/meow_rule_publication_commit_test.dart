@@ -21,6 +21,7 @@ import 'package:fl_clash/providers/state.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
+
 import '../../../aerove-lite/lib/lite_product.dart';
 import '../helpers/app_paths.dart';
 
@@ -336,6 +337,11 @@ void main() {
             isCurrent: () => current,
           )
           .whenComplete(() => firstReturned = true);
+      // Committed storage survives cancellation; stale runtime apply must not.
+      final firstCancelled = expectLater(
+        first,
+        throwsA(isA<UpdateCancelledException>()),
+      );
       await laterArrived.future;
       await readbackEntered.future;
       await pumpEventQueue();
@@ -364,7 +370,8 @@ void main() {
         'first',
       );
       readbackRelease.complete();
-      expect((await first).label, 'first');
+      await firstCancelled;
+      expect(firstReturned, isTrue);
       expect((await later!).label, 'second');
       expect(
         events.indexOf('baseline:2'),

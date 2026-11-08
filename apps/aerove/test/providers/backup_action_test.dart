@@ -54,6 +54,7 @@ void main() {
 
   ProviderContainer buildContainer() {
     final container = ProviderContainer();
+    container.listen(configProvider, (_, _) {});
     addTearDown(container.dispose);
     return container;
   }

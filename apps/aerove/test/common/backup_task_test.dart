@@ -45,7 +45,7 @@ void main() {
 
   group('shakeOrphanFiles', () {
     test(
-      'only orphan provider directories are removed, not live registered source data',
+      'generic cleanup preserves Core-owned caches and registered sources',
       () async {
         final home = makeDir('source-owner-home');
         final relative = fileProviderSourcePath(
@@ -87,38 +87,49 @@ void main() {
         await Future.wait(paths.map(safeDeletePath));
         expect(source.readAsStringSync(), 'user source');
         expect(File('${source.path}.source.json').existsSync(), true);
-        expect(orphan.existsSync(), false);
+        expect(orphan.readAsStringSync(), 'discard cache');
+        expect(
+          paths,
+          isNot(contains(join(home.path, 'profiles', 'providers', '99'))),
+        );
       },
     );
-    test('reports only the files whose name is not a live id', () {
-      final profiles = makeDir('profiles');
-      final scripts = makeDir('scripts');
-      final providers = makeDir('providers');
-      writeFile(join(profiles.path, '1.yaml'), 'keep');
-      writeFile(join(profiles.path, '2.yaml'), 'drop');
-      writeFile(join(scripts.path, '10.js'), 'keep');
-      writeFile(join(scripts.path, '20.js'), 'drop');
-      writeFile(join(providers.path, '1', 'proxies', 'abc'), 'keep');
-      writeFile(join(providers.path, '2', 'proxies', 'abc'), 'drop');
+    test(
+      'reports dead profile and script files without retiring Core caches',
+      () {
+        final profiles = makeDir('profiles');
+        final scripts = makeDir('scripts');
+        final providers = makeDir('providers');
+        writeFile(join(profiles.path, '1.yaml'), 'keep');
+        writeFile(join(profiles.path, '2.yaml'), 'drop');
+        writeFile(join(scripts.path, '10.js'), 'keep');
+        writeFile(join(scripts.path, '20.js'), 'drop');
+        writeFile(join(providers.path, '1', 'proxies', 'abc'), 'keep');
+        writeFile(join(providers.path, '2', 'proxies', 'abc'), 'drop');
 
-      final orphans = shakeOrphanFiles(
-        profileIds: [1],
-        scriptIds: [10],
-        profilesDirPath: profiles.path,
-        providersDirPath: providers.path,
-        scriptsDirPath: scripts.path,
-        providerFileNames: const [],
-        providerCacheDirPath: join(root.path, 'missing'),
-      );
+        final orphans = shakeOrphanFiles(
+          profileIds: [1],
+          scriptIds: [10],
+          profilesDirPath: profiles.path,
+          providersDirPath: providers.path,
+          scriptsDirPath: scripts.path,
+          providerFileNames: const [],
+          providerCacheDirPath: join(root.path, 'missing'),
+        );
 
-      expect(orphans.map(basename), unorderedEquals(['2.yaml', '20.js', '2']));
-      expect(
-        orphans.singleWhere((path) => basename(path) == '2'),
-        join(providers.path, '2'),
-      );
-    });
+        expect(orphans.map(basename), unorderedEquals(['2.yaml', '20.js']));
+        expect(
+          File(join(providers.path, '1', 'proxies', 'abc')).readAsStringSync(),
+          'keep',
+        );
+        expect(
+          File(join(providers.path, '2', 'proxies', 'abc')).readAsStringSync(),
+          'drop',
+        );
+      },
+    );
 
-    test('reports the whole provider directory a dead profile left behind', () {
+    test('leaves absent-profile provider directories to their Core owner', () {
       final providers = makeDir('providers');
       writeFile(join(providers.path, '3', 'proxies', 'abc'), 'drop');
       writeFile(join(providers.path, '3', 'rules', 'def'), 'drop');
@@ -134,13 +145,16 @@ void main() {
         providerCacheDirPath: join(root.path, 'missing'),
       );
 
+      expect(orphans, isEmpty);
       expect(
-        orphans,
-        unorderedEquals([
-          join(providers.path, '3'),
-          join(providers.path, 'stray'),
-        ]),
+        File(join(providers.path, '3', 'proxies', 'abc')).readAsStringSync(),
+        'drop',
       );
+      expect(
+        File(join(providers.path, '3', 'rules', 'def')).readAsStringSync(),
+        'drop',
+      );
+      expect(File(join(providers.path, 'stray')).readAsStringSync(), 'drop');
     });
 
     test('treats an unparsable file name as an orphan', () {

@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:drift/native.dart';
 import 'package:fl_clash/database/database.dart' as db;
 
@@ -36,34 +38,53 @@ void main() {
   tearDownAll(() => pathsHome.delete(recursive: true));
 
   group('ProfilesAction', () {
-    test('keeps edited profile data when remote update fails', () async {
-      final original = Profile.normal(label: 'old label', url: 'bad-url');
-      final edited = original.copyWith(
-        label: 'new label',
-        url: 'still-bad-url',
-      );
-      final container = ProviderContainer(
-        overrides: [
-          currentProfileIdProvider.overrideWithBuild((_, _) => null),
-          profilesProvider.overrideWith(() => TestProfiles([original])),
-        ],
-      );
-      addTearDown(container.dispose);
+    test(
+      'failed source edit preserves the committed source and raw profile',
+      () async {
+        final original = Profile.normal(label: 'old label', url: 'bad-url');
+        final edited = original.copyWith(
+          label: 'new label',
+          url: 'still-bad-url',
+        );
+        final previous = db.database;
+        final database = db.Database(NativeDatabase.memory());
+        db.database = database;
+        await database.profiles.put(original.toCompanion());
+        final raw = await original.file;
+        await raw.writeAsString('proxies: []\nrules: []\n');
+        final before = await raw.readAsBytes();
+        final container = ProviderContainer(
+          overrides: [
+            currentProfileIdProvider.overrideWithBuild((_, _) => null),
+          ],
+        );
+        addTearDown(() async {
+          await waitForDatabaseWrites();
+          container.dispose();
+          db.database = previous;
+          await database.close();
+        });
+        container.listen(profilesProvider, (_, _) {});
+        await container.read(profilesStreamProvider.future);
+        final committed = (await database.profilesDao.get(original.id))!;
+        expect(container.read(profilesProvider).single, committed);
 
-      expect(
-        container.read(profilesProvider).getProfile(original.id),
-        original,
-      );
+        await expectLater(
+          container.read(profilesActionProvider.notifier).updateProfile(edited),
+          throwsA(
+            isA<DioException>().having(
+              (error) => error.requestOptions.path,
+              'requested source',
+              edited.url,
+            ),
+          ),
+        );
 
-      await expectLater(
-        container.read(profilesActionProvider.notifier).updateProfile(edited),
-        throwsA(anything),
-      );
-
-      final profile = container.read(profilesProvider).getProfile(original.id);
-      expect(profile?.label, edited.label);
-      expect(profile?.url, edited.url);
-    });
+        expect(container.read(profilesProvider).single, committed);
+        expect(await database.profilesDao.get(original.id), committed);
+        expect(await raw.readAsBytes(), before);
+      },
+    );
 
     test('updates selection and inserts the first profile', () async {
       final first = Profile.normal(label: 'First');

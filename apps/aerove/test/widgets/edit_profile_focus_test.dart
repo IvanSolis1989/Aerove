@@ -1,4 +1,8 @@
+import 'dart:async';
 import 'dart:io';
+
+import 'package:drift/native.dart';
+import 'package:fl_clash/database/database.dart' as db;
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/l10n/l10n.dart';
@@ -37,6 +41,26 @@ class _MemoryEditProfiles extends TestProfiles {
   }
 }
 
+class _ObservedEdit extends ProfilesAction {
+  final completed = Completer<void>();
+  Object? failure;
+
+  @override
+  Future<Profile> saveProfileEdit(
+    Profile profile, {
+    Uint8List? fileData,
+  }) async {
+    try {
+      return await super.saveProfileEdit(profile, fileData: fileData);
+    } catch (error) {
+      failure = error;
+      rethrow;
+    } finally {
+      completed.complete();
+    }
+  }
+}
+
 Profile _urlProfile() =>
     Profile.normal(label: 'test', url: 'https://example.com/sub');
 
@@ -46,18 +70,21 @@ Future<FocusNode> pumpEditProfile(
   WidgetTester tester, {
   Profile? profile,
   List<Override> overrides = const [],
+  ProviderContainer? preparedContainer,
 }) async {
   tester.view.physicalSize = const Size(900, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
 
-  final container = ProviderContainer(
-    overrides: [
-      setupActionProvider.overrideWith(() => _NoopSetupAction()),
-      ...overrides,
-    ],
-  );
+  final container =
+      preparedContainer ??
+      ProviderContainer(
+        overrides: [
+          setupActionProvider.overrideWith(() => _NoopSetupAction()),
+          ...overrides,
+        ],
+      );
   addTearDown(container.dispose);
   // Unmount the widget tree before the container is disposed so State.dispose
   // (which reads a provider) runs against a live container. Teardowns run LIFO,
@@ -192,12 +219,41 @@ void main() {
     tester,
   ) async {
     final profile = _urlProfile();
+    final fixture = (await tester.runAsync(() async {
+      final previous = db.database;
+      final sql = db.Database(NativeDatabase.memory());
+      db.database = sql;
+      await sql.profiles.put(profile.toCompanion());
+      final action = _ObservedEdit();
+      final container = ProviderContainer(
+        overrides: [
+          setupActionProvider.overrideWith(() => _NoopSetupAction()),
+          profilesProvider.overrideWith(() => _MemoryEditProfiles([profile])),
+          profilesActionProvider.overrideWith(() => action),
+        ],
+      );
+      globalState.container = container;
+      await container
+          .read(setupActionProvider.notifier)
+          .withProviderSourceWrite(() async {});
+      return (
+        previous: previous,
+        sql: sql,
+        action: action,
+        container: container,
+      );
+    }))!;
+    final action = fixture.action;
+    addTearDown(() async {
+      await tester.runAsync(() async {
+        db.database = fixture.previous;
+        await fixture.sql.close();
+      });
+    });
     await pumpEditProfile(
       tester,
       profile: profile,
-      overrides: [
-        profilesProvider.overrideWith(() => _MemoryEditProfiles([profile])),
-      ],
+      preparedContainer: fixture.container,
     );
     final interval = find.byWidgetPredicate(
       (widget) =>
@@ -208,9 +264,13 @@ void main() {
     await tester.enterText(interval, '');
     await tester.tap(find.byType(CommonSwitch));
     await tester.pump();
-    await tester.tap(find.byTooltip('Save'));
+    await tester.runAsync(() async {
+      await tester.tap(find.byTooltip('Save'));
+      await action.completed.future.timeout(const Duration(seconds: 10));
+    });
     await tester.pump();
 
+    expect(action.failure, isNull);
     expect(tester.takeException(), isNull);
     final saved = globalState.container.read(profilesProvider).single;
     expect(saved.autoUpdate, isFalse);
