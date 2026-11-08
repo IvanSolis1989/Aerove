@@ -1452,6 +1452,25 @@ if __name__ == "__main__":
 
 
 class CounterEpochArtifactTests(unittest.TestCase):
+    def test_dns_diagnostic_overlay_identity_is_exact_across_build_and_apk(self):
+        import sys
+        producer_spec = importlib.util.spec_from_file_location("dns_build_policy", module.MEOW_ROOT / "build_policy.py")
+        sys.path.insert(0, str(module.MEOW_ROOT))
+        self.addCleanup(lambda: sys.path.remove(str(module.MEOW_ROOT)))
+        producer = importlib.util.module_from_spec(producer_spec)
+        producer_spec.loader.exec_module(producer)
+        self.assertEqual(producer.COUNTER_EPOCH_OVERLAY_SHA256, module.COUNTER_EPOCH_OVERLAY_SHA256)
+        producer.load_policy(module.MEOW_ROOT)
+        policy = json.loads((module.MEOW_ROOT / "build-policy.json").read_text())
+        overlay = module.MEOW_ROOT / policy["overlay"]
+        actual = hashlib.sha256(overlay.read_bytes()).hexdigest()
+        self.assertEqual(module.COUNTER_EPOCH_OVERLAY_SHA256, actual)
+        self.assertEqual(policy["overlaySha256"], actual)
+        self.assertEqual(module.native_identity(module.MEOW_ROOT)["meow_overlay_sha256"], actual)
+        for invalid in ("0" * 64, "cae49527f4f1b55dffb5b57dd92a0a0916772c4f454f5538e19ef0ed62248911"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "exact approved proof mode/overlay"):
+                module.validate_selection_owner_source(dict(policy, overlaySha256=invalid))
+
     def test_counter_source_retains_old_proofs_and_rejects_missing_new_owner_evidence(self):
         import copy
         policy,state,receipt=ApkInspectionTests()._selection_owner_proof()
