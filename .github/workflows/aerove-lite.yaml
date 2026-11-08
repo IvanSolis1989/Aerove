@@ -5,7 +5,7 @@ defaults:
 permissions:
   contents: read
 concurrency:
-  group: ${{ inputs.publish_release && format('aerove-lite-{0}', github.ref) || format('aerove-lite-{0}-{1}-{2}', github.ref, github.sha, inputs.diagnostic_target && inputs.diagnostic_target != 'none' && format('diagnostic-{0}', inputs.diagnostic_target) || inputs.meow_host_only && 'host' || inputs.client_preflight && 'client' || inputs.qa84_only && 'qa84' || inputs.qa79_only && 'qa79' || inputs.native_preflight && 'native' || 'full') }}
+  group: ${{ inputs.publish_release && format('aerove-lite-{0}', github.ref) || format('aerove-lite-{0}-{1}-{2}', github.ref, github.sha, inputs.diagnostic_target && inputs.diagnostic_target != 'none' && format('diagnostic-{0}', inputs.diagnostic_target) || inputs.apk_only && 'apk-only' || inputs.meow_host_only && 'host' || inputs.client_preflight && 'client' || inputs.qa84_only && 'qa84' || inputs.qa79_only && 'qa79' || inputs.native_preflight && 'native' || 'full') }}
   cancel-in-progress: false
 env:
   NDK_VERSION: 28.2.13676358
@@ -14,6 +14,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     env:
+      APK_ONLY: ${{ inputs.apk_only }}
+      NATIVE_TEST_FILTER: ${{ inputs.native_test_filter }}
+      NATIVE_TEST_SERIAL: ${{ inputs.native_test_serial }}
+      NATIVE_UNDERLAY_TESTS: ${{ inputs.native_underlay_tests }}
+      NATIVE_TEST_STACKS: ${{ inputs.native_test_stacks }}
       ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
       PUBLISH_RELEASE: ${{ inputs.publish_release }}
       BUILD_APK: ${{ inputs.build_apk }}
@@ -34,6 +39,14 @@ jobs:
           import os, re
           e = os.environ
           accepted, publish = e.get('ACCEPTED_BUILD_RUN', ''), e.get('PUBLISH_RELEASE') == 'true'
+          if e.get('APK_ONLY') == 'true':
+              flags = ('PUBLISH_RELEASE', 'BUILD_APK', 'PREPARE_SOURCES', 'VERIFICATION_RECHECK', 'MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS')
+              if (e.get('GITHUB_EVENT_NAME') != 'workflow_dispatch' or e.get('GITHUB_REPOSITORY') != 'IvanSolis1989/Aerove'
+                      or e.get('GITHUB_REF') != 'refs/heads/dot/cloud-j316-checkpoint-20261108'
+                      or accepted or e.get('ORIGINAL_BUILD_RUN') or e.get('NATIVE_TEST_FILTER')
+                      or e.get('DIAGNOSTIC_TARGET', '') not in ('', 'none')
+                      or any(e.get(key) == 'true' for key in flags)):
+                  raise SystemExit('APK-only requires an exclusive isolated-branch dispatch without diagnosis or promotion')
           if bool(accepted) != publish:
               raise SystemExit('Publish requires an explicit accepted_build_run; accepted_build_run cannot start a build')
           if accepted:
@@ -50,7 +63,7 @@ jobs:
 
   diagnostic_guard:
     name: Validate prebuilt Android diagnosis only
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (inputs.diagnostic_target != 'none' && (github.event_name == 'workflow_dispatch' || inputs.diagnostic_target)) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (inputs.diagnostic_target != 'none' && (github.event_name == 'workflow_dispatch' || inputs.diagnostic_target))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -81,7 +94,7 @@ jobs:
   diagnostic_lite236_pixels:
     name: Fixed original236/257/328/333 untouched pixels (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill')))) }}
+    if: ${{ !inputs.apk_only && (needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite236-pixels' || inputs.diagnostic_target == 'lite236-pixels-no-deferred-submit' || (inputs.diagnostic_target == 'lite236-surface' || inputs.diagnostic_target == 'lite257-surface' || inputs.diagnostic_target == 'lite328-surface' || (inputs.diagnostic_target == 'lite333-graphics' || (inputs.diagnostic_target == 'lite333-graphics-host-default' || inputs.diagnostic_target == 'lite333-graphics-host-sigill'))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -388,7 +401,7 @@ jobs:
   diagnostic_gfxstream_zero_attachments_host:
     name: Fixed gfxstream host RED/GREEN (not Android acceptance)
     needs: diagnostic_guard
-    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'gfxstream-zero-attachments-host' }}
+    if: ${{ !inputs.apk_only && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'gfxstream-zero-attachments-host') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 215
     permissions:
@@ -448,7 +461,7 @@ jobs:
   diagnostic_gfxstream37_static:
     name: SDK37.2.13 gfxstream fixed code pages (static diagnosis only)
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'gfxstream37-static') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'gfxstream37-static')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
@@ -547,7 +560,7 @@ jobs:
   diagnostic_lite125_test_only:
     name: Lite125 test-only dry-run task graph (no APK build)
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-test-only') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-test-only')) }}
     permissions:
       contents: read
       actions: read
@@ -555,7 +568,7 @@ jobs:
   diagnostic_lite125_original_samples:
     name: Three isolated Lite125 original render samples
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-original-samples') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite125-original-samples')) }}
     permissions:
       contents: read
       actions: read
@@ -565,7 +578,7 @@ jobs:
   diagnostic_lite94:
     name: Immutable Lite run94 matrix diagnosis
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite94-matrix' || inputs.diagnostic_target == 'both')) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite94-matrix' || inputs.diagnostic_target == 'both'))) }}
     permissions:
       contents: read
       actions: read
@@ -576,7 +589,7 @@ jobs:
   diagnostic_beta14_profile:
     name: Immutable beta14 render profile only (no build)
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'beta14-profile-only') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'beta14-profile-only')) }}
     permissions:
       contents: read
       actions: read
@@ -587,7 +600,7 @@ jobs:
   diagnostic_lite208_flutter_ui:
     name: Lite208 original Flutter representative UI (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite208-flutter-ui') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite208-flutter-ui')) }}
     permissions:
       contents: read
       actions: read
@@ -598,7 +611,7 @@ jobs:
   diagnostic_lite201_flutter_ui:
     name: Lite201 original Flutter representative UI (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite201-flutter-ui') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite201-flutter-ui')) }}
     permissions:
       contents: read
       actions: read
@@ -609,7 +622,7 @@ jobs:
   diagnostic_lite158_frame_sample:
     name: Lite158 original first-frame trace (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite158-frame-sample') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite158-frame-sample')) }}
     permissions:
       contents: read
       actions: read
@@ -621,7 +634,7 @@ jobs:
   diagnostic_lite141_shards:
     name: Lite141 original APK remaining shard ${{ matrix.shard_index }}/8 (diagnostic only)
     needs: diagnostic_guard
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite141-prebuilt-shards') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite141-prebuilt-shards')) }}
     permissions:
       contents: read
       actions: read
@@ -637,7 +650,7 @@ jobs:
   diagnostic_lite141_aggregate:
     name: Lite141 diagnostic-only eight-shard aggregate
     needs: [diagnostic_guard, diagnostic_lite141_shards]
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (always() && needs.diagnostic_guard.result == 'success' && needs.diagnostic_lite141_shards.result != 'skipped') }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (always() && needs.diagnostic_guard.result == 'success' && needs.diagnostic_lite141_shards.result != 'skipped')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -672,7 +685,7 @@ jobs:
         path: ${{ runner.temp }}/lite141-diagnostic-aggregate.json
         if-no-files-found: warn
   qa84:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only))) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (github.event_name == 'workflow_dispatch' && inputs.qa84_only)))) }}
     permissions:
       contents: read
       actions: read
@@ -680,7 +693,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.qa79_only && !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   qa79:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only)))) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (github.event_name == 'workflow_dispatch' && inputs.qa79_only))))) }}
     permissions:
       contents: read
       actions: read
@@ -688,7 +701,7 @@ jobs:
     with:
       exclusive_mode: ${{ !inputs.publish_release && !inputs.native_preflight && !inputs.client_preflight }}
   legacy_native_diagnosis:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release)))))) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (inputs.native_preflight && !inputs.publish_release))))))) }}
     env:
       RUSTC_BOOTSTRAP: '1'
     runs-on: ubuntu-24.04
@@ -883,7 +896,8 @@ jobs:
           ${{ runner.temp }}/lite-native-preflight/
         if-no-files-found: warn
   resolve:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
+    needs: promotion_request
+    if: ${{ needs.promotion_request.result == 'success' && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (inputs.meow_host_only || (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -984,7 +998,8 @@ jobs:
           apps/aerove-lite/meow-native/build/
         if-no-files-found: error
   verify:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)))))) }}
+    needs: promotion_request
+    if: ${{ needs.promotion_request.result == 'success' && inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (inputs.client_preflight || (!inputs.native_preflight && !inputs.publish_release)))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
@@ -1816,7 +1831,7 @@ jobs:
         if-no-files-found: error
   reuse:
     needs: promotion_request
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight))))) }}
+    if: ${{ !inputs.apk_only && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight)))))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1842,7 +1857,7 @@ jobs:
         ACCEPTED_BUILD_RUN: ${{ inputs.accepted_build_run }}
       run: python3 apps/aerove-lite/tool/lite_release.py select --root "$GITHUB_WORKSPACE" --build-run "$ACCEPTED_BUILD_RUN" --source "$GITHUB_SHA" --current-run "$GITHUB_RUN_ID" --outputs "$GITHUB_OUTPUT"
   release:
-    if: ${{ (inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success'))))) }}
+    if: ${{ !inputs.apk_only && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release && !inputs.native_preflight && needs.reuse.result == 'success')))))) }}
     needs:
     - reuse
     - promotion_request
@@ -1972,7 +1987,7 @@ jobs:
   standard_original_reference:
     name: Std 原包 Android 取图诊断（不构建）
     continue-on-error: ${{ !inputs.diagnostic_target || inputs.diagnostic_target == 'none' }}
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both')) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && (github.event_name == 'workflow_dispatch' && (inputs.diagnostic_target == 'std40' || inputs.diagnostic_target == 'both'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2100,8 +2115,8 @@ jobs:
           if-no-files-found: warn
   flutter_ui_preview:
     name: Flutter production UI preview (representative only)
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name
-      != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name
+      != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))))) }}
     needs:
     - build_x86
     runs-on: ubuntu-24.04
@@ -2199,7 +2214,7 @@ jobs:
         path: ${{ runner.temp }}/lite-diagnostics/
         if-no-files-found: error
   acceptance:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release)))))) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (!inputs.native_preflight && !inputs.publish_release))))))) }}
     needs:
     - build_x86
     strategy:
@@ -2364,7 +2379,7 @@ jobs:
           ${{ runner.temp }}/lite-fixture.log
         if-no-files-found: warn
   accepted:
-    if: ${{ inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release)))))) }}
+    if: ${{ !inputs.apk_only && (inputs.accepted_build_run == '' && (!inputs.publish_release || github.event_name != 'workflow_dispatch') && ((inputs.diagnostic_target == 'none' || (!inputs.diagnostic_target && github.event_name != 'workflow_dispatch')) && (!inputs.meow_host_only && (!inputs.qa84_only && (!inputs.qa79_only && (!inputs.client_preflight && (always() && !inputs.native_preflight && !inputs.publish_release))))))) }}
     needs:
     - resolve
     - verify
@@ -2400,8 +2415,38 @@ jobs:
       env:
         RESULTS: ${{ toJSON(needs) }}
       run: python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); assert all(x["result"]=="success" for x in results.values()), results'
+  apk_only_candidate:
+    if: ${{ inputs.apk_only && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' && needs.promotion_request.result == 'success' }}
+    needs: [promotion_request, resolve, verify, flutter_host_preflight, build_arm, build_x86]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+    - name: Record both-ABI build completion without Android or release acceptance
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: |
+        python3 - <<'PYTHON'
+        import json, os
+        from pathlib import Path
+        results = json.loads(os.environ['RESULTS'])
+        expected = {'promotion_request', 'resolve', 'verify', 'flutter_host_preflight', 'build_arm', 'build_x86'}
+        assert set(results) == expected and all(row['result'] == 'success' for row in results.values())
+        receipt = dict(schema=1, kind='apk-only-build-candidate', source=os.environ['GITHUB_SHA'],
+            run=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+            abis=['arm64-v8a', 'x86_64'], prerequisiteJobs=results, androidExecuted=False,
+            accepted=False, fullAcceptance=False, releaseAccepted=False, promotionAccepted=False)
+        (Path(os.environ['RUNNER_TEMP']) / 'APK_ONLY_CANDIDATE.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        PYTHON
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-Lite-APK-only-candidate-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/APK_ONLY_CANDIDATE.json
+        if-no-files-found: error
+
   original343_anr:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite343-anr' }}
+    if: ${{ !inputs.apk_only && (github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite343-anr') }}
     needs:
     - diagnostic_guard
     strategy:
@@ -2526,7 +2571,7 @@ jobs:
         if-no-files-found: error
 
   original265_precheck:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite265-original-recheck' && needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite265-precheck' || inputs.diagnostic_target == 'lite265-recheck') }}
+    if: ${{ !inputs.apk_only && (github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite265-original-recheck' && needs.diagnostic_guard.result == 'success' && (inputs.diagnostic_target == 'lite265-precheck' || inputs.diagnostic_target == 'lite265-recheck')) }}
     needs:
     - diagnostic_guard
     strategy:
@@ -2675,7 +2720,7 @@ jobs:
         if-no-files-found: error
 
   original265_execution:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite265-original-recheck' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite265-recheck' && needs.original265_precheck.result == 'success' }}
+    if: ${{ !inputs.apk_only && (github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite265-original-recheck' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite265-recheck' && needs.original265_precheck.result == 'success') }}
     needs:
     - diagnostic_guard
     - original265_precheck
@@ -2826,7 +2871,7 @@ jobs:
         if-no-files-found: error
 
   original265_aggregate:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.diagnostic_target == 'lite265-recheck' && github.ref == 'refs/heads/codex/lite265-original-recheck' && needs.original265_execution.result == 'success' && needs.original265_precheck.result == 'success' }}
+    if: ${{ !inputs.apk_only && (github.event_name == 'workflow_dispatch' && inputs.diagnostic_target == 'lite265-recheck' && github.ref == 'refs/heads/codex/lite265-original-recheck' && needs.original265_execution.result == 'success' && needs.original265_precheck.result == 'success') }}
     needs: [original265_precheck, original265_execution]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -2858,7 +2903,7 @@ jobs:
         path: ${{ runner.temp }}/original265-evidence/
         if-no-files-found: error
   original265_surface_probe:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite37-startup-and-render' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite265-surface-startup' }}
+    if: ${{ !inputs.apk_only && (github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite37-startup-and-render' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite265-surface-startup') }}
     needs:
     - diagnostic_guard
     strategy:
@@ -3080,7 +3125,7 @@ jobs:
 
 
   original290_surface_probe:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite290-same-apk-probe' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite290-surface-startup' }}
+    if: ${{ !inputs.apk_only && (github.event_name == 'workflow_dispatch' && github.repository == 'IvanSolis1989/Aerove' && github.actor == 'IvanSolis1989' && github.ref == 'refs/heads/codex/lite290-same-apk-probe' && needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'lite290-surface-startup') }}
     needs:
     - diagnostic_guard
     strategy:
@@ -3330,6 +3375,10 @@ jobs:
     - .github/workflows/aerove-lite-build.yaml
   workflow_dispatch:
     inputs:
+      apk_only:
+        description: Isolated dual-ABI test APK build only; retains host/client/signing gates, no emulator or release acceptance
+        type: boolean
+        default: false
       diagnostic_target:
         description: Fixed Android diagnosis or original265 prebuilt recheck; no app build or promotion
         type: choice
