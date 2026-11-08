@@ -75,7 +75,7 @@ jobs:
         conflicts = [key for key in ('MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS') if os.environ[key] == 'true']
         if os.environ['NATIVE_TEST_FILTER']:
             conflicts.append('NATIVE_TEST_FILTER')
-        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'lite328-surface', 'lite333-graphics', 'lite333-graphics-host-default', 'lite333-graphics-host-sigill', 'gfxstream37-static', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
+        if value not in ('lite94-matrix', 'std40', 'both', 'beta14-profile-only', 'lite125-test-only', 'lite125-original-samples', 'lite141-prebuilt-shards', 'lite158-frame-sample', 'lite201-flutter-ui', 'lite208-flutter-ui', 'lite236-pixels', 'lite236-pixels-no-deferred-submit', 'lite236-surface', 'lite257-surface', 'lite328-surface', 'lite333-graphics', 'lite333-graphics-host-default', 'lite333-graphics-host-sigill', 'gfxstream37-static', 'gfxstream-zero-attachments-host', 'lite265-precheck', 'lite265-recheck', 'lite265-surface-startup', 'lite290-surface-startup') or os.environ['REQUEST_EVENT'] != 'workflow_dispatch' or conflicts:
             raise SystemExit('Invalid prebuilt Android diagnosis target/event or conflicting inputs: ' + repr((value, conflicts)))
         PY
   diagnostic_lite236_pixels:
@@ -383,6 +383,66 @@ jobs:
       with:
         name: AEROVE-Lite-original${{ env.PIXEL_ORIGINAL_NUMBER }}-pixels-attempt-${{ github.run_attempt }}
         path: ${{ runner.temp }}/lite-diagnostics/
+        if-no-files-found: error
+
+  diagnostic_gfxstream_zero_attachments_host:
+    name: Fixed gfxstream host RED/GREEN (not Android acceptance)
+    needs: diagnostic_guard
+    if: ${{ needs.diagnostic_guard.result == 'success' && inputs.diagnostic_target == 'gfxstream-zero-attachments-host' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 215
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - name: Check host-only supervisor contracts
+      working-directory: apps/aerove-lite/tool
+      run: python3 -B -m unittest -v test_gfxstream_host_regression
+    - name: Prepare bounded official host dependencies and fixed SDK libraries
+      timeout-minutes: 10
+      run: |
+        set -euo pipefail
+        ulimit -c 0
+        evidence="$RUNNER_TEMP/gfxstream-host-evidence"
+        mkdir -p "$evidence"
+        df -B1 "$RUNNER_TEMP" > "$evidence/disk-before.txt"
+        python3 - "$RUNNER_TEMP" <<'PYCODE'
+        import shutil, sys
+        if shutil.disk_usage(sys.argv[1]).free < 24 * 1024**3:
+            raise SystemExit('Insufficient initial disk: require 24 GiB; no unrelated cleanup')
+        PYCODE
+        sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=10s 120s \
+          apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+        sudo -n env DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=10s 180s \
+          apt-get -o DPkg::Lock::Timeout=30 -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 \
+          install --yes --no-install-recommends git binutils python3 curl unzip build-essential \
+          xvfb xauth x11-utils libgl1-mesa-dri libglx-mesa0 libegl-mesa0 libx11-dev libpulse-dev libnss3-dev libxkbcommon-dev
+        sdk="$RUNNER_TEMP/gfxstream-fixed-sdk"
+        mkdir "$sdk"
+        curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
+          https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip -o "$sdk/emulator.zip"
+        test "$(stat -c '%s' "$sdk/emulator.zip")" = 349658551
+        printf '%s  %s\n' cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd "$sdk/emulator.zip" \
+          | sha256sum --check --strict > "$evidence/sdk-archive-sha256.txt"
+        unzip -q "$sdk/emulator.zip" 'emulator/lib64/*' 'emulator/source.properties' -d "$sdk"
+        cp "$sdk/emulator/source.properties" "$evidence/sdk-source.properties"
+        sha256sum "$sdk/emulator/lib64/libgfxstream_backend.so" "$sdk/emulator/lib64/libshadertranslator.so" > "$evidence/sdk-libraries.sha256"
+        timeout --signal=TERM --kill-after=5s 20s xvfb-run -a xdpyinfo > "$evidence/xvfb-readiness.txt" 2> "$evidence/xvfb-readiness.err"
+    - name: Run fixed integrated host RED then patched GREEN without emulator or App execution
+      run: |
+        set -euo pipefail
+        ulimit -c 0
+        python3 apps/aerove-lite/tool/gfxstream_host_regression.py \
+          --base-library "$RUNNER_TEMP/gfxstream-fixed-sdk/emulator/lib64/libgfxstream_backend.so" \
+          --output "$RUNNER_TEMP/gfxstream-derived-host" --evidence "$RUNNER_TEMP/gfxstream-host-evidence"
+    - name: Preserve bounded host diagnostics only
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: AEROVE-gfxstream-zero-attachments-host-attempt-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/gfxstream-host-evidence/
         if-no-files-found: error
 
   diagnostic_gfxstream37_static:
@@ -3150,7 +3210,7 @@ jobs:
         type: choice
         required: false
         default: none
-        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, lite328-surface, lite333-graphics, lite333-graphics-host-default, lite333-graphics-host-sigill, gfxstream37-static, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
+        options: [none, lite94-matrix, std40, both, beta14-profile-only, lite125-test-only, lite125-original-samples, lite141-prebuilt-shards, lite158-frame-sample, lite201-flutter-ui, lite208-flutter-ui, lite236-pixels, lite236-pixels-no-deferred-submit, lite236-surface, lite257-surface, lite328-surface, lite333-graphics, lite333-graphics-host-default, lite333-graphics-host-sigill, gfxstream37-static, gfxstream-zero-attachments-host, lite265-precheck, lite265-recheck, lite265-surface-startup, lite290-surface-startup]
       meow_host_only:
         description: Full fixed Meow host/Core preflight only; no Android build, APK or publication
         required: false
