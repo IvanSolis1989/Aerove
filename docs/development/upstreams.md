@@ -18,6 +18,14 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 ### 来源条目
 
+#### [JetBrains/kotlin](https://github.com/JetBrains/kotlin)
+
+**固定版本 / revision：** Flutter Gradle 编译路径请求的 `kotlin-compiler-embeddable:2.3.21`，官方 release asset `598615460`。
+
+**用途与采用方式：** CI 通过官方资产 API 或 Maven Central 有界预取同一 JAR，按固定 SHA-256 及 Maven SHA-1 双校验后原子放入 Gradle 内容寻址缓存。Gradle 仍通过原 Maven 仓库解析坐标和元数据；不替换全局镜像、不更改 Kotlin 版本、不跳过编译。
+
+**许可证、署名与证据：** Apache-2.0；[官方发布与资产](https://github.com/JetBrains/kotlin/releases/tag/v2.3.21)、[许可证](https://github.com/JetBrains/kotlin/blob/v2.3.21/license/LICENSE.txt)。未复制上游代码，保留依赖版权与许可。
+
 #### [simolus3/sqlite3.dart](https://github.com/simolus3/sqlite3.dart)
 
 **固定版本 / revision：** 锁定包与官方 release tag `sqlite3-3.7.0`。

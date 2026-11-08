@@ -923,6 +923,7 @@ jobs:
         python3 apps/aerove-lite/tool/test_android_acceptance.py
         python3 apps/aerove-lite/tool/test_profile_cancel_acceptance.py
         python3 tooling/test_sqlite_hook_prefetch.py
+        python3 tooling/test_kotlin_compiler_prefetch.py
     - name: Check workspace layout
       run: python3 tooling/workspace.py check
     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
@@ -1420,6 +1421,8 @@ jobs:
             platform='Linux owned descendant process termination/reopen',
             androidExecuted=False, powerLossTested=False, appApkBuilt=False, acceptance=False), indent=2) + '\n')
         PY
+    - name: Prefetch the exact official Kotlin compiler with verified checksums
+      run: python3 tooling/kotlin_compiler_prefetch.py
     - name: Compile the Flutter host and actual platform acceptance runner
       working-directory: apps/aerove-lite
       run: |-

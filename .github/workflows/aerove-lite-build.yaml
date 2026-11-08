@@ -155,6 +155,8 @@ jobs:
       with:
         gradle-version: 9.6.0
         cache-read-only: false
+    - name: Prefetch the exact official Kotlin compiler with verified checksums
+      run: python3 tooling/kotlin_compiler_prefetch.py
     - name: Resolve the canonical shared Flutter client graph
       working-directory: apps/aerove-lite
       run: flutter pub get --enforce-lockfile
