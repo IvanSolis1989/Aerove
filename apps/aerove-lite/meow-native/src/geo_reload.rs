@@ -76,17 +76,34 @@ fn relative(value:&str)->io::Result<()> {
         || value.split('/').any(|part|part.is_empty() || part=="." || part=="..") {return Err(bad("geo.invalidRelativePath"));}Ok(())
 }
 #[cfg(unix)]
+fn directory_open_flags()->libc::c_int {
+    // Directory capabilities need search, not enumeration permission (Android rootfs).
+    #[cfg(any(target_os="linux",target_os="android"))]
+    let access=libc::O_PATH;
+    #[cfg(not(any(target_os="linux",target_os="android")))]
+    let access=libc::O_RDONLY;
+    access|libc::O_DIRECTORY|libc::O_NOFOLLOW|libc::O_CLOEXEC
+}
+#[cfg(unix)]
+fn checked_directory(fd:libc::c_int)->io::Result<File> {
+    use std::os::fd::FromRawFd;
+    if fd<0{return Err(io::Error::last_os_error());}
+    let file=unsafe{File::from_raw_fd(fd)};
+    if !file.metadata()?.is_dir(){return Err(bad("geo.notDirectory"));}
+    Ok(file)
+}
+#[cfg(unix)]
 fn open_dir(path:&Path)->io::Result<File> {
-    use std::{ffi::CString,os::{fd::{AsRawFd,FromRawFd},unix::ffi::OsStrExt},path::Component};
+    use std::{ffi::CString,os::{fd::AsRawFd,unix::ffi::OsStrExt},path::Component};
     if !path.is_absolute(){return Err(bad("geo.invalidPath"));}
     let root=CString::new("/").unwrap();
-    let fd=unsafe{libc::open(root.as_ptr(),libc::O_RDONLY|libc::O_DIRECTORY|libc::O_NOFOLLOW|libc::O_CLOEXEC)};
-    if fd<0{return Err(io::Error::last_os_error());}let mut parent=unsafe{File::from_raw_fd(fd)};
+    let fd=unsafe{libc::open(root.as_ptr(),directory_open_flags())};
+    let mut parent=checked_directory(fd)?;
     for component in path.components() {
         let part=match component{Component::RootDir=>continue,Component::Normal(part)=>part,_=>return Err(bad("geo.invalidPath"))};
         let name=CString::new(part.as_bytes()).map_err(|_|bad("geo.invalidPath"))?;
-        let fd=unsafe{libc::openat(parent.as_raw_fd(),name.as_ptr(),libc::O_RDONLY|libc::O_DIRECTORY|libc::O_NOFOLLOW|libc::O_CLOEXEC)};
-        if fd<0{return Err(io::Error::last_os_error());}parent=unsafe{File::from_raw_fd(fd)};
+        let fd=unsafe{libc::openat(parent.as_raw_fd(),name.as_ptr(),directory_open_flags())};
+        parent=checked_directory(fd)?;
     }Ok(parent)
 }
 #[cfg(unix)]
@@ -99,8 +116,11 @@ fn open_at(root:&File,relative_path:&str)->io::Result<File> {
         #[cfg(all(test,any(target_os="linux",target_os="android")))]
         if !directory{fifo_regression::before_leaf_open(root,relative_path);}
         // A replaced FIFO must not wait for a writer before fstat can reject it.
-        let fd=unsafe{libc::openat(parent.as_raw_fd(),name.as_ptr(),libc::O_RDONLY|libc::O_NOFOLLOW|libc::O_CLOEXEC|if directory{libc::O_DIRECTORY}else{libc::O_NONBLOCK})};
-        if fd<0{return Err(io::Error::last_os_error());}parent=unsafe{File::from_raw_fd(fd)};
+        let flags=if directory{directory_open_flags()}else{libc::O_RDONLY|libc::O_NOFOLLOW|libc::O_CLOEXEC|libc::O_NONBLOCK};
+        let fd=unsafe{libc::openat(parent.as_raw_fd(),name.as_ptr(),flags)};
+        if directory{parent=checked_directory(fd)?;}else{
+            if fd<0{return Err(io::Error::last_os_error());}parent=unsafe{File::from_raw_fd(fd)};
+        }
         if !directory{identity(&parent)?;}
     }
     Ok(parent)
@@ -737,6 +757,48 @@ mod tests {
             }
             assert!(fixture.owner.geo_prepare(request).await.is_err());assert_eq!(fixture.target("old.test").await,"B");fixture.close().await;
         }
+    }
+    #[cfg(any(target_os="linux",target_os="android"))]
+    #[test]
+    fn directory_capabilities_preserve_search_only_access_and_fd_identity() {
+        use std::os::unix::fs::PermissionsExt;
+        let roots=Roots::new();let nested=roots.new.join("search-only");
+        std::fs::create_dir(&nested).unwrap();std::fs::write(nested.join("leaf"),b"private").unwrap();
+        struct Restore(PathBuf);
+        impl Drop for Restore{fn drop(&mut self){let _=std::fs::set_permissions(&self.0,std::fs::Permissions::from_mode(0o700));}}
+        let _restore=Restore(nested.clone());
+        std::fs::set_permissions(&nested,std::fs::Permissions::from_mode(0o100)).unwrap();
+        if unsafe{libc::geteuid()}!=0 {
+            assert_eq!(File::open(&nested).unwrap_err().kind(),io::ErrorKind::PermissionDenied);
+        }
+        let root=open_dir(&roots.new).unwrap();let direct=open_dir(&nested).unwrap();
+        assert!(direct.metadata().unwrap().is_dir());
+        let held=open_at(&root,"search-only/leaf").unwrap();
+        assert!(identity(&held).unwrap()==identity(&open_at(&direct,"leaf").unwrap()).unwrap());
+        assert_eq!(std::io::Read::bytes(&held).collect::<Result<Vec<_>,_>>().unwrap(),b"private");
+        std::fs::set_permissions(&nested,std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::rename(nested.join("leaf"),nested.join("old-leaf")).unwrap();
+        std::fs::write(nested.join("leaf"),b"private").unwrap();
+        assert!(identity(&held).unwrap()!=identity(&open_at(&direct,"leaf").unwrap()).unwrap());
+    }
+    #[cfg(any(target_os="linux",target_os="android"))]
+    #[test]
+    fn directory_capabilities_reject_symlinks_fifo_and_nonprivate_leaves() {
+        use std::{ffi::CString,os::unix::ffi::OsStrExt};
+        let roots=Roots::new();let root=open_dir(&roots.new).unwrap();
+        symlink(&roots.old,roots.new.join("linked-dir")).unwrap();
+        assert!(open_dir(&roots.new.join("linked-dir")).is_err());
+        assert!(open_at(&root,"linked-dir/geosite.dat").is_err());
+        symlink("geosite.dat",roots.new.join("linked-leaf")).unwrap();
+        assert!(open_at(&root,"linked-leaf").is_err());
+        std::fs::create_dir(roots.new.join("directory-leaf")).unwrap();
+        assert!(open_at(&root,"directory-leaf").is_err());
+        let fifo=CString::new(roots.new.join("fifo").as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe{libc::mkfifo(fifo.as_ptr(),0o600)},0);
+        assert!(open_at(&root,"fifo").is_err());
+        std::fs::hard_link(roots.new.join("geosite.dat"),roots.new.join("hard-leaf")).unwrap();
+        assert!(open_at(&root,"hard-leaf").is_err());
+        assert!(open_at(&root,"../geosite.dat").is_err());
     }
     #[test]
     fn actual_seals_reject_write_and_nofollow_hardlink_or_namespace_replacement() {

@@ -77,6 +77,8 @@ pub struct OwnedRuntime {
     network_apply_barrier: Mutex<Option<NetworkApplyBarrier>>,
     #[cfg(test)]
     network_bind_attempts: AtomicU64,
+    #[cfg(test)]
+    control_setup_probe: Mutex<Option<Box<dyn FnOnce(&Arc<Self>, &Arc<CoreApi>) -> io::Result<()> + Send>>>,
     cleanup: CleanupState,
     transports: Arc<crate::transport_tasks::TransportTasks>,
     transport_scope: crate::transport_tasks::ScopeSlot,
@@ -170,13 +172,17 @@ impl OwnedRuntime {
             task: tokio::sync::Mutex::new(None), listener_intents: AtomicU64::new(0), network_state: Mutex::new(crate::network_api::StateValue::default()), network_fence: Arc::new(Mutex::new(())),
             #[cfg(test)] network_apply_barrier: Mutex::new(None),
             #[cfg(test)] network_bind_attempts: AtomicU64::new(0),
+            #[cfg(test)] control_setup_probe: Mutex::new(None),
             cleanup: CleanupState::default(), transports, transport_scope });
         // Register before spawn so cancellation always sees the typed-error owner.
         install_owner(owner.clone());
         let worker = owner.clone();
         let task = runtime.spawn(async move {
             let mut core = None;
-            let serving = Box::pin(worker.serve(json, plan, fd, network.clone(), scope.clone(), generation, register, receiver, &mut core));
+            // Keep startup ownership outside the unwinding serve future: CoreApi::drop
+            // cancels the shared plane and must not reclassify an IO failure as a stop.
+            let mut startup_api = None;
+            let serving = Box::pin(worker.serve(json, plan, fd, network.clone(), scope.clone(), generation, register, receiver, &mut core, &mut startup_api));
             let result = AssertUnwindSafe(serving).catch_unwind().await
                 .map(|result| result.map_err(Arc::new));
             if let Ok(Err(cause)) = &result {
@@ -199,8 +205,8 @@ impl OwnedRuntime {
                     .or_else(||payload.downcast_ref::<String>().map(String::as_str)).unwrap_or("ownedRuntimePanicked")}),
             });
             cleanup_details.insert("stopping".into(),stopping.into());
-            if !stopping && result.as_ref().ok().and_then(|outcome| outcome.as_ref().err())
-                .is_some_and(|cause| crate::runtime::failure_detail(cause).is_some()) {
+            if !stopping && !worker.safe_startup.lock().completed
+                && result.as_ref().is_ok_and(|outcome| outcome.is_err()) {
                 worker.startup_diagnostic.store(true, Ordering::Release);
             }
             worker.plane.cancel(); scope.cancel();
@@ -210,7 +216,14 @@ impl OwnedRuntime {
             let user = worker.user_controller.lock().clone();
             let user_closed = match &user { Some(owner) => owner.stop().await, None => Ok(()) };
             cleanup_details.insert("userController".into(),cleanup_outcome(&user_closed));
-            let closed = match core { Some(mut core) => core.close().await, None => Ok(()) };
+            let closed = match core {
+                Some(mut core) => core.close().await,
+                None => {
+                    if let Some(api) = startup_api.as_ref() { api.cancel(); api.join().await; }
+                    Ok(())
+                },
+            };
+            drop(startup_api.take());
             cleanup_details.insert("core".into(),cleanup_outcome(&closed));
             let closed = closed.and(user_closed).and(geo_closed);
             let network_policy = worker.network_policy.lock().clone();
@@ -384,7 +397,8 @@ impl OwnedRuntime {
 
     async fn serve(self: &Arc<Self>, json: String, plan: Arc<RuntimePlan>, fd: Option<OwnedFd>, network: NetworkContext,
         scope: Arc<OwnedLoadScope>, _generation: u64, register: RegisterControl,
-        mut commands: mpsc::Receiver<Command>, core_slot: &mut Option<RunningCore>) -> io::Result<()> {
+        mut commands: mpsc::Receiver<Command>, core_slot: &mut Option<RunningCore>,
+        startup_api: &mut Option<Arc<CoreApi>>) -> io::Result<()> {
         self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::ManagedConfig);
         let engine = managed_yaml(&plan)?;
         self.safe_startup.lock().advance(crate::startup_diagnostic::Stage::ConfigLoad);
@@ -443,6 +457,12 @@ impl OwnedRuntime {
         let address = listener.local_addr()?;
         let api = Arc::new(CoreApi::assemble_with_plane(&config, tunnel.clone(), mixed_address,
             &plan.private_control.secret, None, crate::network_api::router(Arc::downgrade(self)), self.plane.clone()).map_err(|_| error("apiAssemblyFailed"))?);
+        *startup_api = Some(api.clone());
+        #[cfg(test)]
+        {
+            let probe = self.control_setup_probe.lock().take();
+            if let Some(probe) = probe { probe(self, &api)?; }
+        }
         let geo=crate::geo_reload::Transactions::new(api.clone(),network.clone(),network_policy,&plan,dns_inputs,self.cancel.clone(),config.dns.enabled)?;
         *self.geo.lock()=Some(geo);
         let user = crate::user_controller::Owner::new(api.clone(),address,Arc::new(network.clone()))?;
@@ -1427,6 +1447,77 @@ mod cleanup_ack_tests {
     #[tokio::test(flavor="multi_thread", worker_threads=3)]
     async fn owner_install_callback_precedes_worker_spawn_and_registers_one_valid_core() {
         assert_owner_install_callback_stages(false).await;
+    }
+
+    async fn assert_post_api_startup_error(cancel_first: bool, actual_geo_error: bool) {
+        use tokio::time::{timeout, Duration};
+        let roots = super::resume_roots::Roots::new();
+        let private = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = private.local_addr().unwrap();
+        let mixed = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mixed_address = mixed.local_addr().unwrap();
+        let mut plan: serde_json::Value = serde_json::from_str(&attachment_fixture(Some(&roots), address, mixed_address.port(), "proxy", "{}")).unwrap();
+        if actual_geo_error {
+            plan["hostBinding"] = serde_json::json!({"serviceOwner":"1", "sessionGeneration":"1", "intentEpoch":"0",
+                "compiledSha256":"a".repeat(64), "sourceGuard":"b".repeat(64)});
+            // Both paths exist and pass plan parsing, but authority is not readRoot's parent.
+            plan["geoReadRootAuthority"] = roots.cache.to_str().unwrap().into();
+        }
+        let json = plan.to_string();
+        RuntimePlan::parse(&json, -1, false, false).unwrap();
+        let resources = Arc::new(crate::resource_roots::ResourceRoots::validate(roots.read.to_str(), roots.cache.to_str()).unwrap());
+        let cancel = CancellationToken::new();
+        let network = NetworkContext::platform(cancel.clone()).with_resource_roots(resources)
+            .with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
+        let observed = Arc::new(Mutex::new(None::<std::sync::Weak<CoreApi>>));
+        let probe_observed = observed.clone();
+        let registered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let calls = registered.clone();
+        drop((private, mixed));
+        let owner = OwnedRuntime::start(json, None, network, 4242, cancel.clone(),
+            Arc::new(move |_, _| { calls.fetch_add(1, Ordering::AcqRel); true }), None, move |owner| {
+                *owner.control_setup_probe.lock() = Some(Box::new(move |owner, api| {
+                    *probe_observed.lock() = Some(Arc::downgrade(api));
+                    if cancel_first { owner.cancel(); }
+                    if actual_geo_error { Ok(()) }
+                    else { Err(io::Error::new(io::ErrorKind::PermissionDenied, "private-path-not-for-log")) }
+                }));
+            }).unwrap();
+        assert!(timeout(Duration::from_secs(5), owner.ready()).await.unwrap().is_err());
+        let status = timeout(Duration::from_secs(5), owner.wait()).await.unwrap().unwrap();
+        assert_eq!(status.state, if cancel_first { "Exited" } else { "Failed" });
+        assert_eq!(status.error.is_some(), !cancel_first);
+        assert_eq!(registered.load(Ordering::Acquire), 0);
+        let original = owner.original_failure().unwrap();
+        if actual_geo_error { assert_eq!(original.to_string(), "geo.invalidInitialAuthority"); }
+        else { assert_eq!(original.kind(), io::ErrorKind::PermissionDenied); }
+        assert_eq!(owner.joining_startup_diagnostic(), !cancel_first);
+        let safe = serde_json::to_value(&*owner.safe_startup.lock()).unwrap();
+        if cancel_first { assert!(safe["primary"].is_null()); }
+        else {
+            assert_eq!(safe["primary"]["stage"], "controlSetup");
+            assert_eq!(safe["primary"]["code"], "controlSetupFailed");
+            assert_eq!(safe["primary"]["ioKind"], if actual_geo_error { "invalidInput" } else { "permissionDenied" });
+        }
+        assert!(!safe.to_string().contains("private-path-not-for-log"));
+        assert!(owner.cleanup_confirmed() && cancel.is_cancelled());
+        assert!(observed.lock().as_ref().expect("real CoreApi assembled").upgrade().is_none(), "startup API leaked after joined cleanup");
+        for address in [address, mixed_address] { assert!(TcpListener::bind(address).await.is_ok()); }
+    }
+
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn post_api_permission_failure_is_not_destructor_cancellation() {
+        assert_post_api_startup_error(false, false).await;
+    }
+
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn explicit_stop_before_post_api_failure_stays_cancelled() {
+        assert_post_api_startup_error(true, false).await;
+    }
+
+    #[tokio::test(flavor="multi_thread", worker_threads=3)]
+    async fn post_api_real_geo_authority_error_is_not_destructor_cancellation() {
+        assert_post_api_startup_error(false, true).await;
     }
 
     #[test]
