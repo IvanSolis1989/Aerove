@@ -432,6 +432,12 @@ class CompatibilityValidator private constructor(
     private fun checkResource(value: String, path: String, issues: MutableList<ConfigIssue>, bundleDirectory: File? = null) =
         checkProfileResource(value, path, issues, resourceDirectory, bundleDirectory)
 
+    internal suspend fun prepareProxyPayload(source: String): MutableMap<String, Any?> {
+        coreSchema?.let { return it.prepareProxyPayload(source) }
+        validateProxyPayload(source)
+        return ConfigYaml.parse(source)
+    }
+
     internal suspend fun validateProxyPayload(source: String) {
         coreSchema?.let { it.validateProxyPayload(source); return }
         val parsed = ConfigYaml.parse(source)

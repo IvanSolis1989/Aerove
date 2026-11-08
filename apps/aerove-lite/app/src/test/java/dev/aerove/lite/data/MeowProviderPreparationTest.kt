@@ -117,6 +117,34 @@ class MeowProviderPreparationTest {
         } finally { retained.closeAndJoin() }
     }
 
+    @Test fun filteredDialerFailsButRetainedNamesAndExternalReferencesSurvive() {
+        val old = "{name: old, type: vmess, alterId: 16}"
+        try {
+            MeowProviderProjection.prepare("proxies: [$old, {name: keep, type: http, dialer-proxy: old}]")
+            fail("Filtered dialer must not fall back")
+        } catch (expected: ConfigValidationException) { assertTrue(expected.message!!.contains("dialer-proxy")) }
+        assertEquals(2, MeowProviderProjection.prepare("proxies: [$old, {name: old, type: http}, {name: keep, type: http, dialer-proxy: old}]").retained)
+        assertEquals(1, MeowProviderProjection.prepare("proxies: [$old, {name: keep, type: http, dialer-proxy: external}]").retained)
+    }
+
+    @Test fun legacyVmessProjectionReportsReasonWithoutChangingCredentials() {
+        for (field in listOf("alterId: 16", "alter-id: 16", "alterId: 16, alter-id: 16")) {
+            val projection = MeowProviderProjection.prepare("proxies: [{name: old, type: vmess, $field}, {name: modern, type: vmess, alterId: 0}]")
+            assertEquals(1, projection.retained)
+            assertEquals(mapOf("vmess" to 1), projection.removedByType)
+            assertEquals(mapOf("vmessLegacyAlterId" to 1), projection.removedByReason)
+            assertEquals("modern", ((projection.payload["proxies"] as List<*>).single() as Map<*, *>)["name"])
+        }
+        for (field in listOf("alterId: 0", "alterId: -1", "alterId: '16'", "alterId: true", "alterId: 1.5", "alterId: 16, alter-id: 0", "alterId: 1, alter-id: 1.0")) {
+            val projection = MeowProviderProjection.prepare("proxies: [{name: untouched, type: vmess, $field}]")
+            assertEquals(1, projection.retained); assertTrue(projection.removedByReason.isEmpty())
+        }
+        try {
+            MeowProviderProjection.prepare("proxies: [{name: old, type: vmess, alterId: 16}]")
+            fail("No fallback for an empty projection")
+        } catch (_: ConfigValidationException) { }
+    }
+
     @Test fun projectionDoesNotDiscardUnknownOrMalformedNodesAndRejectsEmptyResult() {
         val unknown = MeowProviderProjection.prepare("proxies: [{name: unknown,type: unknown},{name: invalid}]\n")
         assertEquals(2, unknown.retained); assertTrue(unknown.removedByType.isEmpty())

@@ -449,8 +449,7 @@ class ResourceBundleManager(
                     if (!rule) {
                         val text = payloadFile.inputStream().use { it.readBounded(MAX_PROFILE_BYTES).strictUtf8() }
                         val projection = if (validator.coreVersion == MeowUnsupportedOutbounds.CORE) MeowProviderProjection.prepare(text) else null
-                        val payload = projection?.payload ?: ConfigYaml.parse(text)
-                        validator.validateProxyPayload(ConfigYaml.dump(payload))
+                        val payload = validator.prepareProxyPayload(ConfigYaml.dump(projection?.payload ?: ConfigYaml.parse(text)))
                         (payload["proxies"] as List<*>).forEachIndexed { index, value ->
                             @Suppress("UNCHECKED_CAST")
                             val proxy = value as MutableMap<String, Any?>
@@ -461,7 +460,7 @@ class ResourceBundleManager(
                             }
                         }
                         val preparedPayload = ConfigYaml.dump(payload)
-                        val compatibility = projection?.let { MeowProviderCompatibility(record.sha256, sha256(preparedPayload), it.retained, it.removedByType) }
+                        val compatibility = projection?.let { MeowProviderCompatibility(record.sha256, sha256(preparedPayload), it.retained, it.removedByType, it.removedByReason) }
                         provider["path"] = finalPath(derived("$key.prepared", "proxy-provider", preparedPayload, compatibility = compatibility))
                     }
                     provider["type"] = "file"

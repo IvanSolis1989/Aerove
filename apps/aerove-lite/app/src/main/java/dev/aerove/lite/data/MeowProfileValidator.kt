@@ -19,6 +19,10 @@ internal interface ProfileCompatibilitySchema {
     fun providerDownloadInput(yaml: String): String
     suspend fun validate(yaml: String, managed: Boolean, bundleDirectory: File?, sourceAdmission: Boolean = false)
     fun validateProxyPayload(source: String)
+    fun prepareProxyPayload(source: String): MutableMap<String, Any?> {
+        validateProxyPayload(source)
+        return ConfigYaml.parse(source)
+    }
     fun ruleLineIssue(line: String): String?
     fun validateRulePayload(lines: List<String>, path: String) = RuleLineCheck(path, ::ruleLineIssue).run { lines.forEachIndexed(::line); finish() }
 }
@@ -113,11 +117,13 @@ internal class MeowProfileValidator(private val native: NativeConfigValidator,
         }
     }
 
-    override fun validateProxyPayload(source: String) {
+    override fun validateProxyPayload(source: String) { prepareProxyPayload(source) }
+
+    override fun prepareProxyPayload(source: String): MutableMap<String, Any?> {
         val parsed = ConfigYaml.parse(source)
         if (parsed.keys != setOf("proxies") || parsed["proxies"] !is List<*>) fail("$.proxies", "Proxy provider must contain only a proxies list")
         // Native conversion needs the complete materialized provider graph.
-        MeowCompatibilityValidator.normalize(parsed, features)
+        return MeowCompatibilityValidator.normalize(parsed, features)
     }
     // Native checked conversion owns logical expressions and Android metadata after materialization.
     override fun ruleLineIssue(line: String): String? = if (line.isBlank()) "Empty rule payload" else null

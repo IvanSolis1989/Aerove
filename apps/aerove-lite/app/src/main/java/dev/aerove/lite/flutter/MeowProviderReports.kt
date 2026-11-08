@@ -29,7 +29,7 @@ internal fun meowProviderMetadata(home: File, snapshot: MeowRuntimeSnapshot, nam
     val report = if (kind == "proxies") derived.optJSONObject("compatibility") else null
     val source = if (kind == "proxies") rows.single { it.getString("key") == key && it.getString("kind") == "source-proxy" } else derived
     if (report != null) require(report.getString("coreIdentity") == MeowUnsupportedOutbounds.CORE &&
-        report.getString("filterIdentity") == MeowUnsupportedOutbounds.FILTER && report.getString("sourceSha256") == source.getString("sha256") &&
+        report.getString("filterIdentity") in MeowUnsupportedOutbounds.readableFilters && report.getString("sourceSha256") == source.getString("sha256") &&
         report.getString("derivedSha256") == derived.getString("sha256")) { "Provider report lineage differs from its manifest" }
     require(sha256(owned(source.getString("file"))) == source.getString("sha256") &&
         sha256(owned(derived.getString("file"))) == derived.getString("sha256"))

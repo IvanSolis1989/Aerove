@@ -1,3 +1,4 @@
+import 'package:fl_clash/models/provider_compatibility.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -325,17 +326,37 @@ class _ExternalProviderItem extends StatelessWidget {
         chip: usage == null ? null : count.compact,
         expire: subscriptionInfo?.expireDate,
       ),
-      subtitle: switch ((subscriptionInfo, usage)) {
-        (final info?, final usage?) => _TrafficMeter(info: info, usage: usage),
-        (final info?, _) => Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            GlassText(countDescription),
-            SubscriptionInfoView(subscriptionInfo: info),
-          ],
-        ),
-        _ => GlassText(countDescription),
-      },
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          switch ((subscriptionInfo, usage)) {
+            (final info?, final usage?) => _TrafficMeter(
+              info: info,
+              usage: usage,
+            ),
+            (final info?, _) => Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GlassText(countDescription),
+                SubscriptionInfoView(subscriptionInfo: info),
+              ],
+            ),
+            _ => GlassText(countDescription),
+          },
+          if (provider.compatibility case final report?
+              when report.removedByType.values.any((n) => n > 0))
+            GlassText(
+              appLocalizations.subscriptionCompatibilitySummary(
+                providerCompatibilityDetails(
+                  report.removedByType,
+                  report.removedByReason,
+                ),
+                report.removedByType.values.fold(0, (sum, n) => sum + n),
+                '',
+              ),
+            ),
+        ],
+      ),
       trailing: AnimatedSwitcher(
         duration: context.motionDuration(commonDuration),
         layoutBuilder: (current, previous) => Stack(

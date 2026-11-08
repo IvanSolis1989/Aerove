@@ -13,9 +13,10 @@ class ProfilesAction extends _$ProfilesAction {
     final message = report.removed == 0
         ? adjustments
         : l10n.subscriptionCompatibilitySummary(
-            report.removedByType.entries
-                .map((entry) => '${entry.key}: ${entry.value}')
-                .join(', '),
+            providerCompatibilityDetails(
+              report.removedByType,
+              report.removedByReason,
+            ),
             report.removed,
             adjustments,
           );

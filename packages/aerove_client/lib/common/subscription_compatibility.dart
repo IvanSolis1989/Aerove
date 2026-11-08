@@ -30,11 +30,13 @@ const meowUnsupportedOutboundTypes = {
 class SubscriptionCompatibilityReport {
   const SubscriptionCompatibilityReport({
     this.removedByType = const {},
+    this.removedByReason = const {},
     this.retained = 0,
     this.tunStackProjected = false,
   });
 
   final Map<String, int> removedByType;
+  final Map<String, int> removedByReason;
   final int retained;
   final bool tunStackProjected;
   int get removed => removedByType.values.fold(0, (sum, value) => sum + value);
@@ -55,6 +57,7 @@ SubscriptionCompatibilityProjection projectSubscriptionCompatibility(
   }
   final output = Map<String, dynamic>.from(source);
   final counts = <String, int>{};
+  final reasons = <String, int>{};
   final removedNames = <String>{};
   final retainedNodes = <Map<String, dynamic>>[];
   List<dynamic> projectNodes(Object? value, String path) {
@@ -65,7 +68,10 @@ SubscriptionCompatibilityProjection projectSubscriptionCompatibility(
         throw FormatException('$path[$index]: expected named proxy with type');
       }
       final type = node['type'] as String;
-      if (meowUnsupportedOutboundTypes.contains(type)) {
+      final legacy = isLegacyVmess(node);
+      if (meowUnsupportedOutboundTypes.contains(type) || legacy) {
+        if (legacy)
+          reasons.update('vmessLegacyAlterId', (n) => n + 1, ifAbsent: () => 1);
         counts.update(type, (count) => count + 1, ifAbsent: () => 1);
         removedNames.add(node['name'] as String);
       } else {
@@ -158,8 +164,23 @@ SubscriptionCompatibilityProjection projectSubscriptionCompatibility(
     config: output,
     report: SubscriptionCompatibilityReport(
       removedByType: Map.unmodifiable(counts),
+      removedByReason: Map.unmodifiable(reasons),
       retained: retainedNodes.length,
       tunStackProjected: stackProjected,
     ),
   );
+}
+
+bool isLegacyVmess(Map node) {
+  if (node['type'] != 'vmess') return false;
+  if (node.containsKey('alterId') &&
+      node.containsKey('alter-id') &&
+      (node['alterId'] is! int ||
+          node['alter-id'] is! int ||
+          node['alterId'] != node['alter-id']))
+    return false;
+  final value = node.containsKey('alterId')
+      ? node['alterId']
+      : node['alter-id'];
+  return value is int && value > 0;
 }

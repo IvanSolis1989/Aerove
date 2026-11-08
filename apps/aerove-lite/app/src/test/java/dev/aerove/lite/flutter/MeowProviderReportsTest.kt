@@ -15,6 +15,12 @@ class MeowProviderReportsTest {
     @get:Rule val temporary = TemporaryFolder()
 
     @Test fun reportUsesActualRelocationReceiptAndRejectsRetiredRevisionOrChangedBytes() {
+        verifyReport("meow-provider-outbounds-v2")
+    }
+    @Test fun legacyV1ReportStillRequiresActualRelocationAndUnchangedBytes() {
+        verifyReport("meow-provider-outbounds-v1")
+    }
+    private fun verifyReport(filter: String) {
         val home = temporary.root.canonicalFile
         val store = File(home, "runtime-handoffs/resources/${UUID.randomUUID()}").apply { mkdirs() }
         val runtime = File(home, "runtime/meow-read/${UUID.randomUUID()}").apply { mkdirs() }
@@ -29,7 +35,7 @@ class MeowProviderReportsTest {
         val manifest = File(store, "manifest.json").apply { writeText(JSONObject().put("records", JSONArray()
             .put(JSONObject().put("key", "$.proxy-providers.feed").put("kind", "source-proxy").put("file", "assets/source.bin").put("sha256", sha256(source)))
             .put(JSONObject().put("key", "$.proxy-providers.feed.prepared").put("kind", "proxy-provider").put("file", "assets/prepared.yaml")
-                .put("sha256", sha256(derived)).put("compatibility", compatibility.json()))).toString()) }
+                .put("sha256", sha256(derived)).put("compatibility", compatibility.json().put("filterIdentity", filter)))).toString()) }
         val yaml = "proxy-providers: {feed: {type: file,path: '${relocated.path.replace('\\', '/')}'}}\n"
         val handoff = RuntimeHandoff(MEOW_RUNTIME_CORE_SHA, "source", "revision", sha256(original), yaml, sha256(yaml), "{}", "{}", "{}", "{}",
             listOf(source, derived, manifest).map { file -> RuntimeHandoffResource(store.toPath().relativize(file.toPath()).joinToString("/"), file.path, sha256(file)) })

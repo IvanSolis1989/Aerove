@@ -1,8 +1,40 @@
 import 'dart:convert';
+import 'package:fl_clash/models/provider_compatibility.dart';
 import 'package:fl_clash/common/subscription_compatibility.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'old provider receipts remain readable and new reasons are explicit',
+    () {
+      final old = <String, dynamic>{
+        'sourceSha256': 'a',
+        'derivedSha256': 'b',
+        'coreIdentity': 'c',
+        'filterIdentity': 'meow-provider-outbounds-v1',
+        'retained': 1,
+        'removedByType': {'ssh': 1},
+      };
+      expect(ProviderCompatibility.fromJson(old).removedByReason, isEmpty);
+      final report = ProviderCompatibility.fromJson({
+        ...old,
+        'removedByType': {'vmess': 1},
+        'removedByReason': {'vmessLegacyAlterId': 1},
+      });
+      expect(
+        providerCompatibilityDetails(
+          report.removedByType,
+          report.removedByReason,
+        ),
+        contains('VMess alterId > 0'),
+      );
+      expect(
+        ProviderCompatibility.fromJson(report.toJson()).removedByReason,
+        report.removedByReason,
+      );
+    },
+  );
+
   test(
     'include-all-proxies keeps an explicitly emptied group for core expansion',
     () {
@@ -139,4 +171,94 @@ void main() {
       }
     },
   );
+  test('legacy VMess is isolated with an explicit reason, never rewritten', () {
+    for (final fields in [
+      {'alterId': 16},
+      {'alter-id': 16},
+      {'alterId': 16, 'alter-id': 16},
+    ]) {
+      final raw = <String, dynamic>{
+        'proxies': [
+          {'name': 'old', 'type': 'vmess', ...fields},
+          {'name': 'modern', 'type': 'vmess', 'alterId': 0},
+        ],
+      };
+      final before = jsonEncode(raw);
+      final result = projectSubscriptionCompatibility(raw, coreId: 'meow-rs');
+      expect(result.report.removedByType, {'vmess': 1});
+      expect(result.report.removedByReason, {'vmessLegacyAlterId': 1});
+      expect((result.config['proxies'] as List).single['name'], 'modern');
+      expect(jsonEncode(raw), before);
+      expect(
+        projectSubscriptionCompatibility(raw, coreId: 'mihomo').config,
+        raw,
+      );
+      for (final extra in [
+        <String, dynamic>{
+          'rules': ['MATCH,old'],
+        },
+        <String, dynamic>{
+          'proxy-groups': [
+            {
+              'name': 'choice',
+              'type': 'select',
+              'proxies': ['old'],
+            },
+          ],
+        },
+        <String, dynamic>{
+          'proxies': [
+            {'name': 'old', 'type': 'vmess', ...fields},
+          ],
+        },
+      ]) {
+        expect(
+          () => projectSubscriptionCompatibility({
+            ...raw,
+            ...extra,
+          }, coreId: 'meow-rs'),
+          throwsFormatException,
+        );
+      }
+    }
+    for (final value in [0, -1, '16', true, 1.5, null]) {
+      final raw = {
+        'proxies': [
+          {'name': 'unchanged', 'type': 'vmess', 'alterId': value},
+        ],
+      };
+      expect(
+        projectSubscriptionCompatibility(raw, coreId: 'meow-rs').config,
+        raw,
+      );
+    }
+    final dangling = {
+      'proxies': [
+        {'name': 'old', 'type': 'vmess', 'alterId': 16},
+        {'name': 'keep', 'type': 'http', 'dialer-proxy': 'old'},
+      ],
+    };
+    expect(
+      () => projectSubscriptionCompatibility(dangling, coreId: 'meow-rs'),
+      throwsFormatException,
+    );
+    final mixed = {
+      'proxies': [
+        {'name': 'mixed', 'type': 'vmess', 'alterId': 1, 'alter-id': 1.0},
+      ],
+    };
+    expect(
+      projectSubscriptionCompatibility(mixed, coreId: 'meow-rs').config,
+      mixed,
+    );
+    final conflict = {
+      'proxies': [
+        {'name': 'conflict', 'type': 'vmess', 'alterId': 16, 'alter-id': 0},
+      ],
+    };
+    expect(
+      projectSubscriptionCompatibility(conflict, coreId: 'meow-rs').config,
+      conflict,
+    );
+  });
 }

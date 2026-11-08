@@ -1,3 +1,4 @@
+import 'package:fl_clash/models/provider_compatibility.dart';
 import 'package:fl_clash/product.dart';
 import 'package:fl_clash/common/native_lite_migration.dart';
 import 'dart:async';
