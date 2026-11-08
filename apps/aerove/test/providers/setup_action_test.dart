@@ -59,6 +59,27 @@ class _MessageFailureSetupAction extends SetupAction {
   }
 }
 
+class _ObservedSetupAction extends SetupAction {
+  Completer<bool>? nextApply;
+
+  @override
+  Future<bool> applyProfile({
+    bool silence = false,
+    bool force = false,
+    Future<void> Function()? preloadInvoke,
+  }) {
+    final completion = nextApply;
+    nextApply = null;
+    final result = super.applyProfile(
+      silence: silence,
+      force: force,
+      preloadInvoke: preloadInvoke,
+    );
+    completion?.complete(result);
+    return result;
+  }
+}
+
 class TestCommonAction extends CommonAction {
   int trafficUpdates = 0;
 
@@ -455,6 +476,8 @@ void main() {
       expect(trafficUpdates(), 5);
 
       await setup.setRunning(false);
+      scoped.dispose();
+      await tester.pump();
     });
 
     testWidgets('reads nothing while no visible card shows traffic', (
@@ -484,6 +507,8 @@ void main() {
       expect(scoped.read(runTimeProvider), shownAt);
 
       await setup.setRunning(false);
+      scoped.dispose();
+      await tester.pump();
     });
 
     testWidgets('a start while hidden waits for the app to be shown', (
@@ -502,6 +527,8 @@ void main() {
       expect(trafficUpdates(), 1);
 
       await setup.setRunning(false);
+      scoped.dispose();
+      await tester.pump();
     });
 
     testWidgets('the macOS menu bar title keeps traffic coming while hidden', (
@@ -521,6 +548,8 @@ void main() {
       expect(trafficUpdates(), system.isMacOS ? 3 : 0);
 
       await setup.setRunning(false);
+      scoped.dispose();
+      await tester.pump();
     });
   });
 
@@ -1535,14 +1564,19 @@ void main() {
         () => core.getProfileBase(any()),
       ).thenAnswer((_) async => const ProfileBase(config: {}, digest: 'd'));
       when(() => core.setupConfig(any())).thenAnswer((_) async => '');
+      when(() => core.getExternalProviders()).thenAnswer((_) async => []);
+      when(
+        () => core.getProxies(),
+      ).thenAnswer((_) async => const ProxiesData(all: [], proxies: {}));
       var setupState = nullProfileSetupState.copyWith(profileId: profile.id);
+      final observed = _ObservedSetupAction();
       final scoped = ProviderContainer(
         overrides: [
           profilesProvider.overrideWith(() => TestProfiles([profile])),
           currentProfileIdProvider.overrideWithBuild((_, _) => profile.id),
           setupStateProvider.overrideWith((_, _) => setupState),
           coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
-          setupActionProvider.overrideWith(SetupAction.new),
+          setupActionProvider.overrideWith(() => observed),
         ],
       );
       addTearDown(scoped.dispose);
@@ -1561,13 +1595,17 @@ void main() {
       await leaveEditor();
       verifyNever(() => core.getProfileBase(any()));
 
+      final rebuilt = Completer<bool>();
+      final rebuiltCheck = expectLater(
+        rebuilt.future.timeout(const Duration(seconds: 10)),
+        completion(isTrue),
+      );
+      observed.nextApply = rebuilt;
       setupState = setupState.copyWith(matchTarget: 'DIRECT');
       scoped.invalidate(setupStateProvider);
       await leaveEditor();
+      await rebuiltCheck;
       verify(() => core.getProfileBase(any())).called(1);
-      // Queued behind the rebuild: one that outlasts the pump would compare
-      // against the md5 tearDown resets and push into a disposed container.
-      await setupAction.applyProfile();
     });
 
     test('a config the Core already runs is not pushed again, while the start '
