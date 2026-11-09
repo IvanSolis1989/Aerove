@@ -537,6 +537,27 @@ class MeowSetupProtocolTest {
         }
     }
 
+    @Test fun actualSetupFailureKeepsFixedPhaseAfterDispatcherHopsWithoutFramesOrSecrets() = runBlocking<Unit> {
+        val home = home()
+        File(home, "config.yaml").writeText("rules: ['MATCH,DIRECT']\n")
+        val effects = Effects().apply {
+            onStaged = { withContext(Dispatchers.Default) {
+                throw IllegalStateException("https://secret.invalid/subscription password=private").also { it.stackTrace = emptyArray() }
+            } }
+        }
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, RuntimeHandoffStore(home), config, effects,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.syncState(shared())
+            try { withContext(Dispatchers.Default) { api.setupConfig(setup()) }; fail("Expected staged application failure") }
+            catch (failure: IllegalStateException) {
+                val text = meowFailureLocation("setupConfig", failure)
+                assertTrue(text, text.contains("{setupPhase=APPLY_STAGED}"))
+                assertFalse(text.contains("secret.invalid")); assertFalse(text.contains("password"))
+            }
+        }
+    }
+
     @get:Rule val temporary = TemporaryFolder()
     private class Effects : MeowSetupEffects {
         var initialized = true

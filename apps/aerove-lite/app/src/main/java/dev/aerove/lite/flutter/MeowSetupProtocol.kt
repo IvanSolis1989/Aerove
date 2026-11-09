@@ -193,12 +193,14 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         return next
     }
 
-    suspend fun setupConfig(arguments: Map<String, Any?>): String = withContext(Dispatchers.IO) { stage(arguments) }
+    suspend fun setupConfig(arguments: Map<String, Any?>): String = traceMeowSetup { trace ->
+        withContext(Dispatchers.IO) { stage(arguments, trace = trace) }
+    }
 
     internal suspend fun applyProviderSource(params: JSONObject, permit: ProviderSourcePermit, publication: JSONObject): String =
         withContext(Dispatchers.IO) { stage(map(params), permit, publication) }
 
-    private suspend fun stage(arguments: Map<String, Any?>, providerPermit: ProviderSourcePermit? = null, publication: JSONObject? = null): String = gate.withLock {
+    private suspend fun stage(arguments: Map<String, Any?>, providerPermit: ProviderSourcePermit? = null, publication: JSONObject? = null, trace: MeowSetupTrace = MeowSetupTrace()): String = gate.withLock {
         val providerTransactionId = providerPermit?.transactionId
         if (!effects.isInitialized()) throw MeowConfigProtocolException("not_initialized", "Meow offline protocol is not initialized")
         val request = json(arguments)
@@ -250,6 +252,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         var temporary: String? = null
         var resourceLease: dev.aerove.lite.data.FlutterResourceLease? = null
         try {
+            trace.phase = MeowSetupPhase.READ_SOURCE
             val sourceFile: File
             val sourceBytes: ByteArray
             val path = if (params.isNull("base")) {
@@ -278,6 +281,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                     throw MeowConfigProtocolException("superseded", "Compiled source changed while staging")
             }
             val sourceContext = kotlinx.coroutines.currentCoroutineContext()
+            trace.phase = MeowSetupPhase.COMPILE
             val setupUpdate = updateFromYaml(input, params)
             val decoded = decodeUpdate(setupUpdate, null)
             val inputRoot = ConfigYaml.parse(input)
@@ -303,6 +307,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                 it
             }
             val decodedPolicies = decoded.copy(requests = decoded.requests.copy(globalUserAgent = sourceUa))
+            trace.phase = MeowSetupPhase.PROJECT
             val tun = meowReconcileFlutterTun(input, decodedPolicies, state)
             val projected = tun.settings
             val effectiveState = tun.shared
@@ -326,6 +331,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                     current?.revision == before?.revision && current?.intentEpoch == before?.intentEpoch
                 }
             }
+            trace.phase = MeowSetupPhase.CAPTURE_RESOURCES
             if (meowNeedsResourceCapture(inputRoot) || resourceSealer?.requiresGeoCapture(input) == true) resourceLease = resourceSealer?.prepare(input, projected.requests.checkCertificate, selections,
                 tunReconciliation = tun.reconciliation, geoResourceReader = geoReader,
                 refreshKeys = providerKey?.let { setOf(it) }, replacements = if (replacement != null) mapOf(checkNotNull(providerKey) to replacement) else emptyMap(),
@@ -339,7 +345,9 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
                 lease.resources.map { RuntimeHandoffResource(it.relativePath, it.sourcePath, it.sha256) } to lease.directory
             } ?: checkNotNull(existing)
             val prepared = preparedValidator ?: NativePreparedConfigValidator { _, _ -> blocked("$.resources", "Prepared native validation is required for sealed resources") }
+            trace.phase = MeowSetupPhase.VALIDATE_NATIVE
             MeowProfileValidator(validator, prepared, home, verifiedFeatures, tunReconciliation = tun.reconciliation).validate(yaml, resources.second != null, resources.second)
+            trace.phase = MeowSetupPhase.BUILD_HANDOFF
             val runtimeSettings = MeowRuntimeSnapshotSettings.encode(projected).put("flutterSetup", params).put("flutterUpdate", setupUpdate)
             if (providerTransactionId != null) {
                 val transaction = checkNotNull(pendingSource)
@@ -366,12 +374,20 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             effects.requireBuilderCompatible(projected, effectiveState.getJSONObject("vpnOptions").toString())
             checkProviderOwner()
+            trace.phase = MeowSetupPhase.COMMIT_HANDOFF
             val staged = store.commitForSetup(handoff, expectedEpoch, before?.revision, effects::hasRequestedIntent, ::checkSource, providerPermit)
+            trace.phase = MeowSetupPhase.APPLY_STAGED
             effects.applyStaged(staged)
             setup = params; settings = projected; shared = effectiveState; update = setupUpdate; geoOrigin = inputGeoOrigin
+            trace.phase = MeowSetupPhase.RELEASE_RESOURCES
             ""
         } finally {
-            try { resourceLease?.closeAndJoin() } finally { temporary?.let(config::discard) }
+            try {
+                try { resourceLease?.closeAndJoin() } finally { temporary?.let(config::discard) }
+            } catch (failure: Exception) {
+                trace.phase = MeowSetupPhase.RELEASE_RESOURCES
+                throw failure
+            }
         }
     }
 

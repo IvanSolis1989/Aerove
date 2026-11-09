@@ -113,12 +113,12 @@ String delayFailureText(int delay, AppLocalizations appLocalizations) {
       : appLocalizations.delayFailed;
 }
 
-Locale effectiveAppLocale(String? savedLocale) {
-  if (savedLocale == null || savedLocale.isEmpty) return const Locale('en');
+Locale? effectiveAppLocale(String? savedLocale) {
+  if (savedLocale == null || savedLocale.isEmpty) return null;
   final locale = getLocaleForString(savedLocale);
   return locale != null && AppLocalizations.delegate.isSupported(locale)
       ? locale
-      : const Locale('en');
+      : null;
 }
 
 Locale? getLocaleForString(String? localString) {

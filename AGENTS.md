@@ -42,7 +42,7 @@ Canonical Flutter client source is [packages/aerove_client](packages/aerove_clie
 
 ## Public documentation language
 
-Public README, documentation entry points, repository About/Description and release presentation default to English. Chinese requires an explicit language choice or an initially closed section. Preserve explicit application language choices; never hide required privacy or consent information. Translate technical statements faithfully, retain GPL/upstream notices and source obligations, and do not remove regional routing features merely to change promotional wording. Do not claim a file is fully translated when only its navigation or summary is English; track remaining work in `docs/development/LANGUAGE_COVERAGE.md`. Existing acceptance gates and original artifact identities remain unchanged.
+Public README, documentation entry points, repository About/Description and release presentation default to English. Chinese requires an explicit language choice or an initially closed section. The application follows the system language by default; preserve explicit application language choices; never hide required privacy or consent information. Translate technical statements faithfully, retain GPL/upstream notices and source obligations, and do not remove regional routing features merely to change promotional wording. Do not claim a file is fully translated when only its navigation or summary is English; track remaining work in `docs/development/LANGUAGE_COVERAGE.md`. Existing acceptance gates and original artifact identities remain unchanged.
 
 ## 提交说明语言
 

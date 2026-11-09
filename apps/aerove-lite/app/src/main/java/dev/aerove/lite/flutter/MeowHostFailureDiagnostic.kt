@@ -23,8 +23,17 @@ internal fun meowFailureLocation(method: String, failure: Throwable): String {
         val frame = cause.stackTrace.firstOrNull { it.className.startsWith("dev.aerove.lite.") }
         val location = frame?.let { "@${safe(it.className)}.${safe(it.methodName)}:${it.lineNumber}" }.orEmpty()
         val evidence = cause.suppressed.filterIsInstance<dev.aerove.lite.core.MeowStartupFailureEvidence>().firstOrNull()
-        val sourceCode = cause.message?.takeIf { it in setOf("shared_config_unstable", "shared_config_duplicate", "shared_source_config_changed", "provider_source_recovery_required") }
-        "${safe(cause.javaClass.simpleName)}$location" + (evidence?.let { "{${it.label()}}" } ?: sourceCode?.let { "{$it}" }.orEmpty())
+        val setupEvidence = cause.suppressed.filterIsInstance<MeowSetupFailureEvidence>().firstOrNull()
+        val sourceCode = when (cause.message) {
+            "shared_config_unstable", "shared_config_duplicate", "shared_source_config_changed", "provider_source_recovery_required", "runtime_graph_superseded" -> cause.message
+            "skip-cert-verify: Graph policy differs from compiled setup" -> "graph_certificate_policy_mismatch"
+            "mode: Graph policy did not converge" -> "graph_mode_not_converged"
+            "Meow graph HTTP and native epochs differ" -> "graph_epoch_mismatch"
+            "Query graph user controller is not isolated" -> "graph_controller_not_isolated"
+            "Query graph opened public listeners" -> "graph_public_listeners_open"
+            else -> null
+        }
+        "${safe(cause.javaClass.simpleName)}$location" + (setupEvidence?.let { "{setupPhase=${it.phase.name}}" }.orEmpty()) + (evidence?.let { "{${it.label()}}" } ?: sourceCode?.let { "{$it}" }.orEmpty())
     }
     val knownHost = setOf("service.init", "service.shutdown", "service.syncState", "service.getRunTime",
         "service.setUiTelemetryActive", "service.start", "service.stop", "service.park", "core.invokeMethod", "core.cancel")

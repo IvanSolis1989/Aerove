@@ -47,4 +47,19 @@ class MeowHostFailureDiagnosticTest {
         assertTrue(meowFailureLocation("setupConfig", missing).contains("{shared_config_unstable}"))
         assertFalse(meowFailureLocation("setupConfig", IllegalStateException("shared_config_unstable password=secret")).contains("password"))
     }
+    @Test fun parkedGraphChecksUseFixedCodesAndNeverEchoNearMatchingSecrets() {
+        val codes = mapOf(
+            "skip-cert-verify: Graph policy differs from compiled setup" to "graph_certificate_policy_mismatch",
+            "mode: Graph policy did not converge" to "graph_mode_not_converged",
+            "Meow graph HTTP and native epochs differ" to "graph_epoch_mismatch",
+            "Query graph user controller is not isolated" to "graph_controller_not_isolated",
+            "Query graph opened public listeners" to "graph_public_listeners_open",
+        )
+        for ((message, code) in codes) {
+            val failure = IllegalStateException(message).also { it.stackTrace = emptyArray() }
+            assertTrue(meowFailureLocation("setupConfig", failure).contains("{$code}"))
+            assertFalse(meowFailureLocation("setupConfig", IllegalStateException("$message password=secret")).contains("secret"))
+        }
+    }
+
 }

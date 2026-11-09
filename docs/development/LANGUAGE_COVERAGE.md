@@ -4,7 +4,7 @@
 
 ## Policy
 
-Public entry points default to English. Chinese is an explicit language link or a closed `details` section; do not infer Chinese from browser or device locale. A saved explicit application language remains respected. Required privacy information and consent dialogs must remain visible and understandable; this presentation policy must not hide them.
+Public entry points default to English. Chinese is an explicit language link or a closed `details` section; do not infer the repository documentation language from browser or device locale. The application follows the system language by default; a saved explicit application language remains respected. Required privacy information and consent dialogs must remain visible and understandable; this presentation policy must not hide them.
 
 Keep the actual features, regional rules, DNS endpoints, license notices, source obligations, source/build identities and acceptance restrictions intact. Remove nationality-targeted promotional claims, not technical configuration or historical evidence. Do not claim zero data collection, guaranteed anonymity, guaranteed availability, immunity from law, or legal advice. GPL-3.0 rights, including permitted commercial use, are not narrowed by a product notice.
 
@@ -15,7 +15,7 @@ Keep the actual features, regional rules, DNS endpoints, license notices, source
 - The network-baseline document provides a faithful English record, identifies its obsolete pins and IPv6 values as historical, and retains the Chinese source. It does not silently change DNS/routing behavior.
 - README synchronization writes English to the root and English mirror, and Chinese only to its selected page.
 - Future Standard/Lite release renderers retain source/build acceptance bindings and generate English metadata. Existing Chinese change entries are explicitly expandable originals, **not claimed to be full English translations**. English-authored entries render directly.
-- Standard/Lite application fallback is English when no supported language is selected. Explicit Chinese and other supported selections remain intact. Older “system/default” and unset preferences both serialize as `null`; those indistinguishable cases now fall back to English.
+- Standard/Lite follows the system language when no supported language is selected. Explicit Chinese and other supported selections remain intact. “System/default” and unset preferences serialize as `null`, which is preserved rather than rewritten.
 - The shared language selector is available before first-use consent as well as in Tools. Choosing a language does not accept or hide the terms. English and Chinese are the first two explicit options.
 - About adds a brief localized responsible-use/no-service/no-warranty notice without changing the existing legal acceptance state or version.
 

@@ -5,10 +5,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('default is English without rewriting explicit language selections', () {
-    expect(effectiveAppLocale(null), const Locale('en'));
-    expect(effectiveAppLocale(''), const Locale('en'));
-    expect(effectiveAppLocale('de'), const Locale('en'));
+  test('unset and invalid selections follow system without rewriting explicit choices', () {
+    expect(effectiveAppLocale(null), isNull);
+    expect(effectiveAppLocale(''), isNull);
+    expect(effectiveAppLocale('de'), isNull);
     expect(effectiveAppLocale('en'), const Locale('en'));
     expect(effectiveAppLocale('zh_CN'), const Locale('zh', 'CN'));
     expect(effectiveAppLocale('fr'), const Locale('fr'));
@@ -16,13 +16,10 @@ void main() {
   });
 
   testWidgets(
-    'Chinese system does not override default or explicit selection',
+    'unset locale follows Chinese system and explicit selections take precedence',
     (tester) async {
-      tester.binding.platformDispatcher.localeTestValue = const Locale(
-        'zh',
-        'CN',
-      );
-      addTearDown(tester.binding.platformDispatcher.clearLocaleTestValue);
+      tester.binding.platformDispatcher.localesTestValue = const [Locale('zh', 'CN')];
+      addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
       Future<void> render(String? savedLocale) async {
         await tester.pumpWidget(
           MaterialApp(
@@ -44,11 +41,16 @@ void main() {
       }
 
       await render(null);
-      expect(find.textContaining('For lawful use'), findsOneWidget);
+      expect(find.textContaining('仅用于合法'), findsOneWidget);
       await render('zh_CN');
       expect(find.textContaining('仅用于合法'), findsOneWidget);
       await render('en');
       expect(find.textContaining('For lawful use'), findsOneWidget);
+      tester.binding.platformDispatcher.localesTestValue = const [Locale('en')];
+      await render(null);
+      expect(find.textContaining('For lawful use'), findsOneWidget);
+      await render('zh_CN');
+      expect(find.textContaining('仅用于合法'), findsOneWidget);
     },
   );
 }

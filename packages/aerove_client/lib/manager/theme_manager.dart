@@ -63,7 +63,7 @@ ThemeData watchAppTheme(WidgetRef ref, Brightness brightness) {
       : selectedFont;
   final colorScheme = ref.watch(genColorSchemeProvider(brightness));
   final locales = [
-    effectiveAppLocale(locale),
+    ?effectiveAppLocale(locale),
     ...WidgetsBinding.instance.platformDispatcher.locales,
   ];
   final inputs = (

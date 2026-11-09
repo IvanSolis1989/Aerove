@@ -1,4 +1,5 @@
 import 'package:fl_clash/product.dart';
+
 import 'dart:async';
 import 'dart:io';
 
@@ -157,7 +158,8 @@ class Bootstrap {
     );
     await container.read(lastExitProvider.notifier).load();
     await AppLocalizations.load(
-      effectiveAppLocale(config.appSettingProps.locale),
+      effectiveAppLocale(config.appSettingProps.locale) ??
+          WidgetsBinding.instance.platformDispatcher.locale,
     );
     await window?.init(version, config.windowProps);
     if (system.isAndroid) {
