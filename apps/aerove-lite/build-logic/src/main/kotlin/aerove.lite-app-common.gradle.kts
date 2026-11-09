@@ -426,6 +426,22 @@ tasks.withType<Test>().configureEach {
     }
 }
 
+// Desktop org.json differs from Android libcore (notably '/' escaping).
+// Run the same production proof implementation with the Android JSON runtime
+// as well, so desktop-only green tests cannot hide on-device proof mismatches.
+val androidJsonProofRuntime = configurations.create("androidJsonProofRuntime")
+dependencies.add(androidJsonProofRuntime.name, "com.vaadin.external.google:android-json:0.0.20131108.vaadin1")
+val androidJsonProofTest = tasks.register<Test>("testReleaseAndroidJsonProof") {
+    dependsOn("compileReleaseUnitTestKotlin", "processReleaseUnitTestJavaRes")
+    systemProperty("aerove.test.androidJson", "true")
+    filter { includeTestsMatching("dev.aerove.lite.flutter.SourceProof89Test") }
+    testClassesDirs = files(provider { tasks.named<Test>("testReleaseUnitTest").get().testClassesDirs })
+    classpath = files(androidJsonProofRuntime) + files(provider {
+        tasks.named<Test>("testReleaseUnitTest").get().classpath.filter { !it.name.startsWith("json-") }
+    })
+}
+tasks.matching { it.name == "testReleaseUnitTest" }.configureEach { dependsOn(androidJsonProofTest) }
+
 tasks.register<JavaExec>("prepareNativeMigrationFixture") {
     dependsOn("compileReleaseUnitTestKotlin")
     mainClass.set("org.junit.runner.JUnitCore")

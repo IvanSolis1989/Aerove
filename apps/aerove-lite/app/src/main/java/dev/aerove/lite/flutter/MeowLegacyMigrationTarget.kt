@@ -38,15 +38,22 @@ internal fun nativeLiteCanonical(value: Any?): Any? = when (value) {
     else -> value
 }
 internal fun nativeLiteJsonHash(value: Any?): String {
+    // These tokens contain only Base64 or our numeric tags, never arbitrary JSON
+    // strings. Quote them directly: Android JSONObject.quote escapes '/', while
+    // Dart jsonEncode and desktop org.json do not. Hashes must match on device.
+    fun quoteToken(token: String): String {
+        require(token.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it in "+/:=.-" })
+        return "\"$token\""
+    }
     fun encoded(value: Any?): String = when (value) {
         null, JSONObject.NULL -> "null"
         is JSONObject -> encoded(nativeLiteMap(value))
         is org.json.JSONArray -> encoded(nativeLiteList(value))
-        is Map<*, *> -> value.keys.map { it as String }.sorted().joinToString(",", "{", "}") { JSONObject.quote(Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8))) + ":" + encoded(value[it]) }
+        is Map<*, *> -> value.keys.map { it as String }.sorted().joinToString(",", "{", "}") { quoteToken(Base64.getEncoder().encodeToString(it.toByteArray(Charsets.UTF_8))) + ":" + encoded(value[it]) }
         is List<*> -> value.joinToString(",", "[", "]") { encoded(it) }
-        is Number -> JSONObject.quote(nativeLiteCanonical(value).toString())
+        is Number -> quoteToken(nativeLiteCanonical(value).toString())
         is Boolean -> value.toString()
-        else -> JSONObject.quote("s:" + Base64.getEncoder().encodeToString(value.toString().toByteArray(Charsets.UTF_8)))
+        else -> quoteToken("s:" + Base64.getEncoder().encodeToString(value.toString().toByteArray(Charsets.UTF_8)))
     }
     return sha256(encoded(value))
 }

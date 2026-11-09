@@ -11,6 +11,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SourceProof89Test {
+    @Test fun canonicalProofDoesNotEscapeBase64SlashOnAndroid() {
+        if (System.getProperty("aerove.test.androidJson") == "true") {
+            assertEquals("\"a\\/b\"", JSONObject.quote("a/b"))
+        }
+        // Dart jsonEncode of the canonical token is exactly "s:5LiT57q/".
+        // Android JSONObject.quote escapes '/', unlike the desktop org.json substitute.
+        assertEquals("fc39ea0670f02c52119d3cee45a9c5173cabe621dc2f6546b6523cf7c5bae3b5", nativeLiteJsonHash("专线"))
+        assertEquals("efa0b01208868aba8dbb6c59e31bd9670966da88c60141f638744d879d0646ab",
+            nativeLiteJsonHash("https://example.com/?target=ClashMeta"))
+        assertNotEquals(nativeLiteJsonHash("https://example.com/?target=ClashMeta"),
+            nativeLiteJsonHash("https://example.com/?target=Other"))
+    }
+
     private fun map(value: JSONObject): Map<String, Any?> = value.keys().asSequence().associateWith { key -> convert(value.get(key)) }
     private fun convert(value: Any?): Any? = when(value) { JSONObject.NULL -> null; is JSONObject -> map(value); is JSONArray -> (0 until value.length()).map { convert(value.get(it)) }; else -> value }
     @Test fun independentNativeProjectionMatchesRealDartSqliteAndIgnoresUnrelatedEdits() {

@@ -13,6 +13,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('canonical proof keeps Base64 slash literal across Android and Dart', () {
+    expect(nativeLiteJsonHash('专线'),
+        'fc39ea0670f02c52119d3cee45a9c5173cabe621dc2f6546b6523cf7c5bae3b5');
+    expect(nativeLiteJsonHash('https://example.com/?target=ClashMeta'),
+        'efa0b01208868aba8dbb6c59e31bd9670966da88c60141f638744d879d0646ab');
+  });
   test(
     'selected SQLite closure binds real nodes/scripts/files and ignores theme and unrelated profiles',
     () async {
