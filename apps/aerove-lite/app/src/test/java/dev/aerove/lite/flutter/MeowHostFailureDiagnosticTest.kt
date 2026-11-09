@@ -17,4 +17,18 @@ class MeowHostFailureDiagnosticTest {
         assertTrue(unknown.contains("code=invalid_code method=unknown")); assertFalse(unknown.contains("never-log-secret"))
         assertTrue(unknown.length <= 2048)
     }
+    @Test fun shareableFailureContainsOnlyBoundedCodeLocations() {
+        val secret = "https://private.invalid/password"
+        val failure = IllegalStateException(secret, IllegalArgumentException(secret))
+        failure.stackTrace = arrayOf(StackTraceElement("dev.aerove.lite.Loader", "load", secret, 37))
+        val diagnostic = meowFailureLocation("setupConfig", failure)
+        assertTrue(diagnostic.startsWith("setupConfig: IllegalStateException@dev.aerove.lite.Loader.load:37"))
+        assertTrue(diagnostic.contains("IllegalArgumentException"))
+        assertFalse(diagnostic.contains(secret))
+        assertTrue(meowFailureLocation(secret, failure).startsWith("unknown:"))
+        assertTrue(meowFailureLocation("privateToken", failure).startsWith("unknown:"))
+        failure.stackTrace = arrayOf(StackTraceElement("dev.aerove.lite.$secret", secret, secret, 9))
+        assertFalse(meowFailureLocation("setupConfig", failure).contains(secret))
+        assertTrue(diagnostic.length <= 1024)
+    }
 }

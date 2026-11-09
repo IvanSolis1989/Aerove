@@ -8,6 +8,14 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MeowAppPluginTest {
+    @Test fun installedBuildIdentityIsReadOnlyAndBounded() {
+        val raw = "{\"schema\":1,\"identified\":false}"
+        assertEquals(raw, meowBuildIdentity(raw.byteInputStream()))
+        assertThrows(IllegalArgumentException::class.java) {
+            meowBuildIdentity(ByteArray(4097).inputStream())
+        }
+    }
+
     private val official = "https://github.com/IvanSolis1989/Aerove/releases/download/" +
         "lite-v0.1.0-beta.26%2B26/$LITE_APK_NAME"
 

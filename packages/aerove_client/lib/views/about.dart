@@ -1,3 +1,5 @@
+import 'package:fl_clash/common/candidate_build_identity.dart';
+import 'package:flutter/services.dart';
 import 'package:fl_clash/common/product_core_copy.dart';
 import 'package:fl_clash/product.dart';
 
@@ -181,6 +183,8 @@ class _AboutHero extends StatelessWidget {
               ),
             ],
           ),
+          if (ClientProduct.current.id == 'aerove-lite')
+            const CandidateIdentityPanel(),
           const SizedBox(height: 16),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
@@ -310,4 +314,44 @@ class _DeveloperModeDetectorState extends State<_DeveloperModeDetector> {
   Widget build(BuildContext context) {
     return GestureDetector(onTap: _handleTap, child: widget.child);
   }
+}
+
+class CandidateIdentityPanel extends StatefulWidget {
+  const CandidateIdentityPanel({super.key});
+
+  @override
+  State<CandidateIdentityPanel> createState() => CandidateIdentityPanelState();
+}
+
+class CandidateIdentityPanelState extends State<CandidateIdentityPanel> {
+  late final Future<CandidateBuildIdentity?> _identity =
+      CandidateBuildIdentity.load();
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<CandidateBuildIdentity?>(
+    future: _identity,
+    builder: (context, snapshot) {
+      final identity = snapshot.data;
+      return Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Column(
+          children: [
+            SelectableText(
+              '${context.appLocalizations.preview} · '
+              '${identity?.label ?? context.appLocalizations.unknown}',
+              textAlign: TextAlign.center,
+              style: AppTextStyle.caption1.of(context),
+            ),
+            if (identity != null)
+              TonalButton(
+                size: TonalButtonSize.compact,
+                label: context.appLocalizations.copy,
+                onPressed: () =>
+                    Clipboard.setData(ClipboardData(text: identity.details)),
+              ),
+          ],
+        ),
+      );
+    },
+  );
 }

@@ -178,7 +178,7 @@ class MeowProtocolDispatcher(
                 }
                 else -> translateFailure(failure) ?: run {
                     logFailure(call.method, failure)
-                    MeowProtocolFailure("method_failed", "Meow method failed",
+                    MeowProtocolFailure("method_failed", "Meow method failed [${meowFailureLocation(call.method, failure)}]",
                         mapOf("method" to call.method, "cause" to failure.javaClass.simpleName), failure)
                 }
             }

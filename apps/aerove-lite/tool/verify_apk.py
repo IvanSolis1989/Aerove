@@ -998,6 +998,30 @@ def validate_helper_provenance(source_root, receipt_path, abi):
     return {"source_sha256": source_sha256, "outputs": matching}
 
 
+def verify_candidate_identity(apk, abi, source, tree, workflow, run_number, run_attempt):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("candidate_identity", Path(__file__).with_name("candidate_identity.py"))
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    with zipfile.ZipFile(apk) as archive:
+        entries = [entry for entry in archive.infolist() if entry.filename == producer.ASSET]
+        if len(entries) != 1 or entries[0].file_size > 4096:
+            raise ValueError("APK requires one bounded candidate identity")
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("Duplicate candidate identity field")
+                result[key] = value
+            return result
+        identity = producer.validate(json.loads(archive.read(entries[0]), object_pairs_hook=unique_pairs))
+    expected = dict(schema=1, product="aerove-lite", source=source, tree=tree,
+        runId=workflow.rsplit("/", 1)[-1], runNumber=str(run_number), attempt=str(run_attempt), abi=abi)
+    if identity != expected:
+        raise ValueError("Installed candidate identity differs from source or original build")
+    return identity
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--apk", required=True, type=Path)
@@ -1030,6 +1054,8 @@ def main():
     badging = args.badging.read_text(encoding="utf-8")
     try:
         identity = verify_identity(badging, args.signature.read_text(encoding="utf-8"), product_version(args.version_file), args.channel)
+        result["candidate_identity"] = verify_candidate_identity(args.apk, args.abi, args.source, args.tree,
+            args.workflow, args.run_number, args.run_attempt)
     except ValueError as error:
         parser.error(str(error))
     args.output.mkdir(parents=True, exist_ok=True)

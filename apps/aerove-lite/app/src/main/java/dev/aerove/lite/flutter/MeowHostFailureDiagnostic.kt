@@ -14,3 +14,18 @@ internal fun meowHostFailureDiagnostic(code: String, method: String, failure: Th
     }
     return "transport_failure code=$safeCode method=$safeMethod causes=$causes".take(2048)
 }
+
+/** Shareable code locations only: never include exception messages, paths or request data. */
+internal fun meowFailureLocation(method: String, failure: Throwable): String {
+    val token = Regex("[A-Za-z_$][A-Za-z0-9_.$]{0,159}")
+    fun safe(value: String) = value.takeIf { token.matches(it) } ?: "unknown"
+    val causes = generateSequence(failure) { it.cause }.take(3).joinToString(" <- ") { cause ->
+        val frame = cause.stackTrace.firstOrNull { it.className.startsWith("dev.aerove.lite.") }
+        val location = frame?.let { "@${safe(it.className)}.${safe(it.methodName)}:${it.lineNumber}" }.orEmpty()
+        "${safe(cause.javaClass.simpleName)}$location"
+    }
+    val knownHost = setOf("service.init", "service.shutdown", "service.syncState", "service.getRunTime",
+        "service.setUiTelemetryActive", "service.start", "service.stop", "service.park", "core.invokeMethod", "core.cancel")
+    val safeMethod = method.takeIf { it in MeowProtocolDispatcher.METHODS || it in knownHost } ?: "unknown"
+    return "$safeMethod: $causes".take(1024)
+}

@@ -120,6 +120,10 @@ class MeowAppPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHand
                 }
                 "moveTaskToBack" -> reply.success(activityBinding?.activity?.moveTaskToBack(true) ?: false)
                 "getSupportedAbis" -> reply.success(Build.SUPPORTED_ABIS.toList())
+                "getBuildIdentity" -> background(reply) {
+                    context.assets.open("aerove/candidate_identity.json").use(::meowBuildIdentity)
+
+                }
                 "getPackages" -> background(reply) { meowPackagesJson(installed().applications) }
                 "getChinaPackageNames" -> background(reply) {
                     JSONArray(applications.chinaPackages(installed().applications).sorted()).toString()
@@ -412,4 +416,10 @@ internal fun meowUpdateAsset(raw: String, fileName: String): String {
     ProductVersion.parse(parts.groupValues[1])
     require(parts.groupValues[2].toLong() <= 2_100_000_000L) { "Invalid Lite install version code" }
     return trustedAssetUrl(raw, tag, fileName)
+}
+
+internal fun meowBuildIdentity(input: java.io.InputStream): String {
+    val bytes = input.readNBytes(4097)
+    require(bytes.size <= 4096) { "Build identity is too large" }
+    return String(bytes, Charsets.UTF_8)
 }

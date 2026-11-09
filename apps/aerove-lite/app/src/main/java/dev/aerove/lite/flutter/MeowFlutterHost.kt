@@ -499,7 +499,7 @@ private class MeowServiceBridge : FlutterPlugin, ActivityAware {
             }
             catch (failure: Exception) {
                 logMeowHostFailure("method_failed", method, failure)
-                reply.error("method_failed", "Meow attachment method failed", mapOf("cause" to failure.javaClass.simpleName.take(128)))
+                reply.error("method_failed", "Meow attachment method failed [${meowFailureLocation(method, failure)}]", mapOf("cause" to failure.javaClass.simpleName.take(128)))
             }
         }
     }

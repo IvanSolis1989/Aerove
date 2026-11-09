@@ -186,6 +186,22 @@ val prepareClientHelperLicenses = tasks.register<Sync>("prepareClientHelperLicen
     into(clientHelperLicenseDirectory)
 }
 
+val candidateIdentityDirectory = layout.buildDirectory.dir("generated/candidateIdentity")
+val prepareCandidateIdentity = tasks.register<Exec>("prepareCandidateIdentity") {
+    val producer = productRoot.resolve("tool/candidate_identity.py")
+    inputs.file(producer)
+    val abi = providers.gradleProperty("liteAbi").getOrElse("arm64-v8a")
+    val source = providers.gradleProperty("sourceSha").getOrElse(providers.environmentVariable("GITHUB_SHA").getOrElse(""))
+    inputs.property("abi", abi)
+    inputs.property("source", source)
+    listOf("GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_NUMBER", "GITHUB_RUN_ATTEMPT").forEach {
+        inputs.property(it, providers.environmentVariable(it).getOrElse(""))
+    }
+    outputs.dir(candidateIdentityDirectory)
+    commandLine("python3", producer.path, "--abi", abi, "--source", source,
+        "--output", candidateIdentityDirectory.get().file("aerove/candidate_identity.json").asFile.path)
+}
+
 val legacySourceTasks = if (flutterHost) {
     emptyMap<String, TaskProvider<Sync>>()
 } else {
@@ -258,6 +274,7 @@ android.apply {
     sourceSets.getByName("main").assets.srcDir(platformAppRoot.resolve("src/main/java/dev/aerove/lite/editor/assets"))
     if (flutterHost) sourceSets.getByName("main").java.srcDir(sharedAndroidSourceRoot)
     sourceSets.getByName("main").assets.srcDir(clientHelperLicenseDirectory.get().asFile)
+    sourceSets.getByName("main").assets.srcDir(candidateIdentityDirectory.get().asFile)
     testOptions { unitTests.isReturnDefaultValues = true }
     packaging {
         jniLibs.useLegacyPackaging = false
@@ -353,16 +370,16 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("NativeLibs") }
     dependsOn(verifyNativeCore, verifyClientHelper)
 }
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(prepareClientHelperLicenses)
+    dependsOn(prepareClientHelperLicenses, prepareCandidateIdentity)
 }
 
 // Lint reads source assets directly, without passing through mergeAssets.
 tasks.withType<com.android.build.gradle.internal.lint.LintModelWriterTask>().configureEach {
-    dependsOn(prepareClientHelperLicenses)
+    dependsOn(prepareClientHelperLicenses, prepareCandidateIdentity)
     dependsOn(legacySourceTasks.values)
 }
 tasks.withType<com.android.build.gradle.internal.lint.AndroidLintAnalysisTask>().configureEach {
-    dependsOn(prepareClientHelperLicenses)
+    dependsOn(prepareClientHelperLicenses, prepareCandidateIdentity)
     dependsOn(legacySourceTasks.values)
 }
 

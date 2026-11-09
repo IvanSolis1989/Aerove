@@ -514,6 +514,49 @@ void main() {
     },
   );
 
+  for (final reply in [true, false, null]) {
+    test(
+      'real Service channel stop reply $reply retains its outcome',
+      () async {
+        const channel = MethodChannel('$packageName/service');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'stop');
+          expect(call.arguments, isA<int>());
+          return reply;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        final controller = CoreController.scoped(
+          MeowCoreHandler.scoped(
+            Service(),
+            readSharedState: () async => _state,
+          ),
+        );
+        if (reply == true) {
+          expect(await controller.stopListener(), isTrue);
+        } else {
+          await expectLater(
+            controller.stopListener(),
+            throwsA(
+              isA<CoreStopException>()
+                  .having(
+                    (error) => error.code,
+                    'code',
+                    'termination_unconfirmed',
+                  )
+                  .having(
+                    (error) => error.message.contains('did not answer'),
+                    'old error',
+                    isFalse,
+                  ),
+            ),
+          );
+        }
+      },
+    );
+  }
+
   for (final code in [
     'stop_superseded',
     'termination_unconfirmed',
