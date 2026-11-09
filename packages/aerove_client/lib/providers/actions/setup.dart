@@ -2314,11 +2314,17 @@ class SetupAction extends _$SetupAction {
               setupParams: setupParams.copyWith(applied: record),
             ),
           );
-        } catch (_) {
-          // A lost observer is not evidence that the Core rolled back.
-          reply = await owner.updateGeoPrepared(
-            MeowGeoRequest.status(transactionId: geoTransactionId),
-          );
+        } catch (failure, stack) {
+          // A lost observer is not evidence that the Core rolled back. Recover
+          // a confirmed commit, but never replace the original preparation
+          // failure with an unknown transaction or a second transport error.
+          try {
+            reply = await owner.updateGeoPrepared(
+              MeowGeoRequest.status(transactionId: geoTransactionId),
+            );
+          } catch (_) {
+            Error.throwWithStackTrace(failure, stack);
+          }
         }
         if (reply.state != 'committed' ||
             !reply.active ||

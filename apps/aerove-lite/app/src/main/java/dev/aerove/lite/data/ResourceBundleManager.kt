@@ -1166,9 +1166,9 @@ class ResourceBundleManager(
         private fun checkIdentifier(value: String) { require(UUID.fromString(value).toString() == value) { "Invalid profile/generation id" } }
         private fun isIdentifier(value: String): Boolean = runCatching { checkIdentifier(value); true }.getOrDefault(false)
         private fun problem(path: String, reason: String): ConfigValidationException = ConfigValidationException(listOf(ConfigIssue(path, reason)))
-        private fun safeError(error: Exception): String = when (error) {
+        internal fun safeError(error: Exception): String = when (error) {
             is IOException -> error.message?.takeIf {
-                it.matches(Regex("Resource HTTP [0-9]{3}|Resource exceeds [0-9]+ bytes|Resource HTTPS downgrade refused|Resource redirect limit exceeded|Resource is empty"))
+                it.matches(Regex("Resource HTTP [0-9]{3}|Resource exceeds [0-9]+ bytes|Resource HTTPS downgrade refused|Resource redirect limit exceeded|Resource is empty|Resource transport failed: (?:tls|proxy-dial|direct-connect|read-timeout|http-status|body-limit|url|header|redirect|io|response-or-transport)"))
             } ?: "network or file I/O error"
             else -> "invalid resource request"
         }

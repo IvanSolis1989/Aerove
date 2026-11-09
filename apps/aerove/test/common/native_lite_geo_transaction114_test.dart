@@ -459,6 +459,20 @@ void main() {
     },
   );
 
+  test('failed Geo recovery preserves the original preparation error', () async {
+    await _withFixture((fixture) async {
+      globalState.lastConfigMd5 = 'previous-applied-body';
+      fixture.protocol.loseUpdateObserver = true;
+      fixture.protocol.unknownStatus = true;
+      await expectLater(
+        fixture.setup.updateMeowGeo('mmdb'),
+        throwsA(same(fixture.protocol.updateFailure)),
+      );
+      expect(fixture.protocol.operations, ['update', 'status']);
+      expect(globalState.lastConfigMd5, 'previous-applied-body');
+    });
+  });
+
   test(
     'profile switch aborts the owned transaction and keeps the previous applied MD5',
     () async {
@@ -663,6 +677,8 @@ class _GeoProtocol implements CoreHandlerInterface {
   final entered = Completer<void>();
   final released = Completer<void>();
   bool loseUpdateObserver = false;
+  bool unknownStatus = false;
+  final updateFailure = StateError('Original resource preparation failed');
   bool holdUntilAbort = false;
   bool mismatchProducer = false;
   MeowGeoUpdateRequest? request;
@@ -708,6 +724,9 @@ class _GeoProtocol implements CoreHandlerInterface {
         active: false,
       );
     }
+    if (operation == 'status' && unknownStatus) {
+      throw StateError('Unknown or superseded Geo request');
+    }
     if (operation == 'abort') {
       if (!released.isCompleted) released.complete();
       return MeowGeoReply(
@@ -733,7 +752,7 @@ class _GeoProtocol implements CoreHandlerInterface {
         );
       }
       if (loseUpdateObserver)
-        throw StateError('Observer lost after Native commit');
+        throw updateFailure;
     }
     final submitted = request!;
     expect(value.transactionId, submitted.transactionId);

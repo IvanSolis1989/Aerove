@@ -400,6 +400,9 @@ fn resource_result<T>(env: &mut jni::Env<'_>, work:impl std::future::Future<Outp
         if let Some(ended) = cause.get_ref().and_then(|inner| inner.downcast_ref::<crate::resource_fetch::ResourceRequestOwnerEnded>()) {
             resource_owner_ended_exception(env, ended.exit);
         }
+        if let Some(http) = cause.get_ref().and_then(|inner| inner.downcast_ref::<crate::resource_fetch::ResourceHttpFailure>()) {
+            if !env.exception_check() { let _ = env.throw_new(jni_str!("java/io/IOException"), jni::strings::JNIString::from(http.to_string())); }
+        }
         BridgeError(cause.to_string())
     })
 }

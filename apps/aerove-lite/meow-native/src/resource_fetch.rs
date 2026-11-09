@@ -7,6 +7,33 @@ use std::{collections::BTreeMap, future::Future, io, path::{Path, PathBuf}, sync
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
+/// Finite, source-owned HTTP evidence: never carry an URL, node, header or response body across JNI.
+#[derive(Debug)]
+pub struct ResourceHttpFailure { pub category: &'static str, cause: anyhow::Error }
+impl ResourceHttpFailure {
+    pub fn new(cause: anyhow::Error) -> Self {
+        let message = cause.to_string();
+        let category = if message.starts_with("TLS handshake to ") || message.starts_with("invalid TLS server name ") { "tls" }
+            else if message.starts_with("dial via proxy '") { "proxy-dial" }
+            else if message.starts_with("connect to ") { "direct-connect" }
+            else if message.starts_with("response read timed out after ") { "read-timeout" }
+            else if message.starts_with("HTTP ") && message.as_bytes().get(5..8).is_some_and(|s| s.iter().all(u8::is_ascii_digit)) { "http-status" }
+            else if message.starts_with("response exceeds max body size (") { "body-limit" }
+            else if message.starts_with("invalid URL '") || message.starts_with("unsupported URL scheme '") || message.starts_with("URL has no ") { "url" }
+            else if message.starts_with("invalid HTTP header ") { "header" }
+            else if message.starts_with("too many redirects (") || message.starts_with("bad redirect Location '") { "redirect" }
+            else if cause.chain().any(|error| error.downcast_ref::<io::Error>().is_some()) { "io" }
+            else { "response-or-transport" };
+        Self { category, cause }
+    }
+}
+impl std::fmt::Display for ResourceHttpFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "Resource transport failed: {}", self.category) }
+}
+impl std::error::Error for ResourceHttpFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(self.cause.as_ref()) }
+}
+
 const MAX_BYTES: usize = 64 * 1024 * 1024;
 fn error(reason: impl Into<String>) -> io::Error { io::Error::other(reason.into()) }
 
@@ -233,7 +260,7 @@ impl ResourceFetch {
         let headers=request.headers.into_iter().flat_map(|(name,values)|values.into_iter().map(move|value|(name.clone(),value))).collect::<Vec<_>>();
         let owner=self.clone();
         self.operation(async move {
-            let response=meow_config::internal_http::fetch_capped(&request.url,proxy.as_ref(),&headers,request.max_bytes).await.map_err(|cause|error(format!("resource HTTP: {cause:#}")))?;
+            let response=meow_config::internal_http::fetch_capped(&request.url,proxy.as_ref(),&headers,request.max_bytes).await.map_err(|cause| io::Error::other(ResourceHttpFailure::new(cause)))?;
             let info=response.header("subscription-userinfo").map(str::to_owned); let bytes=response.body.len();
             let job=owner.scope.spawn_blocking_owned(move || {
                 use std::io::Write;
@@ -767,5 +794,31 @@ mod offline_read_owner_tests {
         assert_eq!(error.to_string(), "resourceReadCancelled");
         assert_eq!(probe.calls(), 1, "the fetch token must stop transport geodata reading at its next check");
         fetch.close_and_join().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod http_failure_evidence_tests {
+    use super::*;
+    #[test]
+    fn only_finite_transport_categories_cross_jni() {
+        for (message, expected) in [
+            ("HTTP 404: secret response", "http-status"),
+            ("TLS handshake to private.example: secret", "tls"),
+            ("dial via proxy 'private node': secret", "proxy-dial"),
+            ("connect to private.example:443: secret", "direct-connect"),
+            ("response read timed out after 60s", "read-timeout"),
+            ("response exceeds max body size (3 bytes)", "body-limit"),
+            ("invalid URL 'https://secret': error", "url"),
+            ("invalid HTTP header secret", "header"),
+            ("too many redirects (> 5) starting from secret", "redirect"),
+            ("arbitrary private error", "response-or-transport"),
+        ] {
+            let failure = ResourceHttpFailure::new(anyhow::anyhow!(message));
+            assert_eq!(failure.to_string(), format!("Resource transport failed: {expected}"));
+            assert!(std::error::Error::source(&failure).is_some());
+        }
+        let failure = ResourceHttpFailure::new(io::Error::new(io::ErrorKind::ConnectionReset, "private address").into());
+        assert_eq!(failure.category, "io");
     }
 }

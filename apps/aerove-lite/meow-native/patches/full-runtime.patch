@@ -2606,6 +2606,133 @@
 +        let mut config = TlsConfig::new(host.trim_start_matches('[').trim_end_matches(']'));
 +        if let Some(policy) = policy { config.skip_cert_verify = !policy.check_certificate; }
 +        let tls = TlsLayer::new(&config)
+@@ -389,4 +391,3 @@
+-    // Read until EOF with a wall-clock timeout. Connection: close means
+-    // the server signals end-of-body by closing the socket. The read cap is
+-    // the body cap plus header headroom; the exact body-size checks happen
+-    // in `parse_response` once the framing is known.
++    // Framed messages end at their declared boundary, not the peer's EOF.
++    // Waiting for EOF rejects a complete response when a proxy keeps the
++    // connection open or resets it after forwarding the final body bytes.
+@@ -394,0 +396 @@
++    let mut framing = ResponseFraming::Headers;
+@@ -405,0 +408 @@
++            if framing.complete(&buf, limit)? { break; }
+@@ -413,0 +417,87 @@
++}
++
++enum ResponseFraming {
++    Headers,
++    UntilEof,
++    Length(usize),
++    Chunked { offset: usize, body_bytes: usize, phase: ChunkPhase },
++}
++enum ChunkPhase { Size, Data(usize), Trailers }
++
++impl ResponseFraming {
++    fn complete(&mut self, buf: &[u8], limit: usize) -> Result<bool> {
++        if matches!(self, Self::Headers) {
++            let mut headers = [httparse::EMPTY_HEADER; 64];
++            let mut response = httparse::Response::new(&mut headers);
++            let parsed = response.parse(buf).map_err(|e| anyhow!("response parse error: {e}"))?;
++            let start = match parsed {
++                httparse::Status::Partial => {
++                    if buf.len() > MAX_HEADER_BYTES { bail!("response headers exceed limit"); }
++                    return Ok(false);
++                },
++                httparse::Status::Complete(start) => start,
++            };
++            if start > MAX_HEADER_BYTES { bail!("response headers exceed limit"); }
++            let length = response_content_length(response.headers, limit)?;
++            *self = if response_is_chunked(response.headers) {
++                Self::Chunked { offset: start, body_bytes: 0, phase: ChunkPhase::Size }
++            } else if let Some(length) = length {
++                Self::Length(start.checked_add(length as usize).ok_or_else(|| anyhow!("response length overflow"))?)
++            } else {
++                Self::UntilEof
++            };
++        }
++        match self {
++            Self::Headers | Self::UntilEof => Ok(false),
++            Self::Length(end) => Ok(buf.len() >= *end),
++            Self::Chunked { offset, body_bytes, phase } => loop {
++                match phase {
++                    ChunkPhase::Size => {
++                        let Some(line_end) = buf[*offset..].windows(2).position(|w| w == b"\r\n") else { return Ok(false); };
++                        let text = std::str::from_utf8(&buf[*offset..*offset + line_end])
++                            .map_err(|e| anyhow!("non-UTF-8 chunk size: {e}"))?;
++                        let size = usize::from_str_radix(text.split(';').next().unwrap_or_default().trim(), 16)
++                            .map_err(|e| anyhow!("invalid chunk size '{text}': {e}"))?;
++                        *offset += line_end + 2;
++                        if size == 0 { *phase = ChunkPhase::Trailers; }
++                        else {
++                            if size > limit.saturating_sub(*body_bytes) { bail!("response exceeds max body size ({limit} bytes)"); }
++                            *body_bytes += size;
++                            *phase = ChunkPhase::Data(size);
++                        }
++                    },
++                    ChunkPhase::Data(size) => {
++                        let end = offset.checked_add(*size).and_then(|end| end.checked_add(2))
++                            .ok_or_else(|| anyhow!("chunk size overflow"))?;
++                        if buf.len() < end { return Ok(false); }
++                        if &buf[end - 2..end] != b"\r\n" { bail!("incomplete chunk data"); }
++                        *offset = end;
++                        *phase = ChunkPhase::Size;
++                    },
++                    ChunkPhase::Trailers => {
++                        let rest = &buf[*offset..];
++                        return Ok(rest.starts_with(b"\r\n") || rest.windows(4).any(|w| w == b"\r\n\r\n"));
++                    },
++                }
++            },
++        }
++    }
++}
++
++fn response_content_length(headers: &[httparse::Header<'_>], limit: usize) -> Result<Option<u64>> {
++    let mut content_length = None;
++    for h in headers {
++        if h.name.eq_ignore_ascii_case("content-length") {
++            let declared = std::str::from_utf8(h.value).ok()
++                .and_then(|v| v.trim().parse::<u64>().ok())
++                .ok_or_else(|| anyhow!("invalid Content-Length header"))?;
++            if declared > limit as u64 { bail!("response exceeds max body size ({limit} bytes)"); }
++            if content_length.is_some_and(|previous| previous != declared) { bail!("conflicting Content-Length headers"); }
++            content_length = Some(declared);
++        }
++    }
++    Ok(content_length)
++}
++fn response_is_chunked(headers: &[httparse::Header<'_>]) -> bool {
++    headers.iter().any(|header| header.name.eq_ignore_ascii_case("transfer-encoding")
++        && std::str::from_utf8(header.value).is_ok_and(|value| value.split(',').any(|v| v.trim().eq_ignore_ascii_case("chunked"))))
+@@ -452,24 +542,2 @@
+-    let mut content_length = None;
+-    for h in resp.headers.iter() {
+-        if h.name.eq_ignore_ascii_case("content-length") {
+-            let declared = std::str::from_utf8(h.value)
+-                .ok()
+-                .and_then(|v| v.trim().parse::<u64>().ok())
+-                .ok_or_else(|| anyhow!("invalid Content-Length header"))?;
+-            if declared > limit as u64 {
+-                bail!("response exceeds max body size ({limit} bytes)");
+-            }
+-            if content_length.is_some_and(|previous| previous != declared) {
+-                bail!("conflicting Content-Length headers");
+-            }
+-            content_length = Some(declared);
+-        }
+-    }
+-    let chunked = resp.headers.iter().any(|header| {
+-        header.name.eq_ignore_ascii_case("transfer-encoding")
+-            && std::str::from_utf8(header.value).is_ok_and(|value| {
+-                value
+-                    .split(',')
+-                    .any(|v| v.trim().eq_ignore_ascii_case("chunked"))
+-            })
+-    });
++    let content_length = response_content_length(resp.headers, limit)?;
++    let chunked = response_is_chunked(resp.headers);
 --- a/crates/meow-config/src/lib.rs
 +++ b/crates/meow-config/src/lib.rs
 @@ -5,0 +6,6 @@

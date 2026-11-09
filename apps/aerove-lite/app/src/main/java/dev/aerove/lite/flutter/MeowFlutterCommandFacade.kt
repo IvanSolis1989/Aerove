@@ -42,8 +42,9 @@ internal class MeowStoppedGraphCancellation(cause: kotlinx.coroutines.Cancellati
 internal suspend fun restoreQueryGraphAfterConfirmedStop(restore: suspend () -> Unit) {
     try { restore() }
     catch (cancelled: kotlinx.coroutines.CancellationException) { throw MeowStoppedGraphCancellation(cancelled) }
-    catch (_: Exception) {
-        throw MeowProtocolFailure("stop_graph_restore_failed", "Service stopped; parked query graph restoration failed")
+    catch (failure: Exception) {
+        throw MeowProtocolFailure("stop_graph_restore_failed", "Service stopped; parked query graph restoration failed",
+            mapOf("stopRestoreLocation" to meowFailureLocation("service.stop", failure)), failure)
     }
 }
 

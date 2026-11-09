@@ -589,6 +589,55 @@ void main() {
     },
   );
 
+  test('real stop wire retains only bounded native code locations', () async {
+    const channel = MethodChannel('$packageName/service');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const safe =
+        'service.stop: IllegalStateException@dev.aerove.lite.flutter.MeowParkedGraphOwner.applyStaged:91{graph_epoch_mismatch}';
+    Object? details = {
+      'stopRestoreLocation': safe,
+      'url': 'https://private.invalid/token',
+    };
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      throw PlatformException(
+        code: 'stop_graph_restore_failed',
+        message: 'private original',
+        details: details,
+      );
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final controller = CoreController.scoped(
+      MeowCoreHandler.scoped(Service(), readSharedState: () async => _state),
+    );
+    await expectLater(
+      controller.stopListener(),
+      throwsA(
+        isA<CoreStopException>()
+            .having((e) => e.code, 'code', 'stop_graph_restore_failed')
+            .having((e) => e.message, 'location', contains(safe))
+            .having((e) => e.toString(), 'privacy', isNot(contains('private'))),
+      ),
+    );
+    for (final unsafe in [
+      'service.stop: https://private.invalid/token',
+      'service.stop: /private/path',
+      'service.stop: ' + 'x' * 1025,
+    ]) {
+      details = {'stopRestoreLocation': unsafe};
+      await expectLater(
+        controller.stopListener(),
+        throwsA(
+          isA<CoreStopException>().having(
+            (e) => e.message,
+            'fixed safe fallback',
+            'Service stopped; parked query graph restoration failed',
+          ),
+        ),
+      );
+    }
+  });
+
   for (final reply in [true, false, null]) {
     test(
       'real Service channel stop reply $reply retains its outcome',

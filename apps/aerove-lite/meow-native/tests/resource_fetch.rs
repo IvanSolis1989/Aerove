@@ -298,3 +298,7 @@ fn resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo() {
     std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(aerove_meow_core::config_validation::MAX_RULE_TEXT_BYTES as u64+1).unwrap();
     assert_eq!(preflight_rule_resource(&path,"classical","yaml").unwrap_err(),"resource input exceeds 67108864 bytes");
 }
+
+// Keep framing regressions in the existing resource-fetch acceptance target.
+#[path = "resource_http_framing.rs"]
+mod resource_http_framing;

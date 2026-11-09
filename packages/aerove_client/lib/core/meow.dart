@@ -245,17 +245,21 @@ class MeowCoreHandler extends CoreHandlerInterface
             'stop_graph_restore_failed',
             'stop_graph_restore_cancelled',
           }.contains(stopError.code)) {
+        final message = switch (stopError.code) {
+          'stop_superseded' =>
+            'Stop acknowledgement belongs to a superseded runtime',
+          'stop_graph_restore_cancelled' =>
+            'Service stopped; parked query graph restoration cancelled',
+          'stop_graph_restore_failed' =>
+            'Service stopped; parked query graph restoration failed',
+          _ => 'Service termination could not be confirmed',
+        };
+        final location = stopError.code == 'stop_graph_restore_failed'
+            ? _stopRestoreLocation(stopError.details)
+            : null;
         throw CoreStopException(
           code: stopError.code,
-          message: switch (stopError.code) {
-            'stop_superseded' =>
-              'Stop acknowledgement belongs to a superseded runtime',
-            'stop_graph_restore_cancelled' =>
-              'Service stopped; parked query graph restoration cancelled',
-            'stop_graph_restore_failed' =>
-              'Service stopped; parked query graph restoration failed',
-            _ => 'Service termination could not be confirmed',
-          },
+          message: location == null ? message : '$message [$location]',
         );
       }
       Error.throwWithStackTrace(stopError, stopStack!);
@@ -552,4 +556,16 @@ class _MeowCall implements CoreRequestQuiescence {
   bool get isQuiescent => _quiescent.isCompleted;
   @override
   Future<void> get whenQuiescent => _quiescent.future;
+}
+
+String? _stopRestoreLocation(Object? details) {
+  if (details is! Map) return null;
+  final value = details['stopRestoreLocation'];
+  if (value is! String ||
+      value.length > 1024 ||
+      !value.startsWith('service.stop: ') ||
+      !RegExp(r'^[A-Za-z0-9_.$@:{}= ,<>-]+$').hasMatch(value)) {
+    return null;
+  }
+  return value;
 }

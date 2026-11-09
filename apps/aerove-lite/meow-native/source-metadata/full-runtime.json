@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "ca22374e2071002aa773818dee77ed90a6f95d677ecf9bcfeb7b3e9b23e7d089",
+  "patchSha256": "faf8b42c04cc098b9d35c029b4e5b857ecb2f1d5e2a25973c79f7b9ca01b4445",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "5ca805839d4416d683e93b6fb5e6ee489224566915d8d3f2cf5a5f995c99df7d",
+  "adaptedFileManifestSha256": "4ba77d87073ef42e296db8b75da3d7e4878f85d11f0e5811656ba73c32aea43b",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -107,7 +107,7 @@
     },
     "crates/meow-config/src/internal_http.rs": {
       "beforeSha256": "3f61360076060ebb60289c48476625ba541ef0f88c49b04e3c4ca304afb6e753",
-      "afterSha256": "8613784bb8124c9db983c7d6a48b66fb945b262adddc8397639fec9e428ae738"
+      "afterSha256": "51cf2d37378ae4a3cac046bc1e76e35aaf10b66e1655b8f955a13d858c40fdf6"
     },
     "crates/meow-config/src/lib.rs": {
       "beforeSha256": "9490de648857f9e26be6f8f2cff054996fe755ff52e2b51ee8eeca8e3b1339ec",
@@ -834,7 +834,7 @@
     "crates/meow-config/src/ech_dns.rs": "149f0e788e1806febbe2dcf77288153f588d01559643addf4c9e4c81c79e189d",
     "crates/meow-config/src/external_ui.rs": "e97b5df73a24748862405c7efea5f686ca404f171af460daa2f29432de18453b",
     "crates/meow-config/src/geodata.rs": "039b0ef9470cd61e346cd3ab213a547252d5fde7675a2322979f2b96edbafa52",
-    "crates/meow-config/src/internal_http.rs": "8613784bb8124c9db983c7d6a48b66fb945b262adddc8397639fec9e428ae738",
+    "crates/meow-config/src/internal_http.rs": "51cf2d37378ae4a3cac046bc1e76e35aaf10b66e1655b8f955a13d858c40fdf6",
     "crates/meow-config/src/lib.rs": "7bc778c42a2f36d3bb92732de9bf20cc9426a8b7fdb47dab83bd037f525537a5",
     "crates/meow-config/src/offline_validation.rs": "eb3d039d79546e04b7ee3136fb320c945382b26f4ee96b4bd81dbca398bee0b1",
     "crates/meow-config/src/owned_dns_tests.rs": "f798b40264f1e1354dc0e8e9a9af41d5ac02a5f1eb94041c5334521f76689fb5",
