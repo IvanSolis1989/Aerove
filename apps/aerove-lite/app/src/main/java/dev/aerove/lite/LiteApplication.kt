@@ -203,6 +203,7 @@ class LiteApplication : Application() {
             catch (failure: Exception) { android.util.Log.w("MeowGraph", "Stopped runtime graph could not be restored", failure) }
         }
     }
+    internal val ownedStops = dev.aerove.lite.vpn.OwnedStopRegistry()
     internal val ownedStarts = dev.aerove.lite.vpn.OwnedStartRegistry()
     private val pendingStarts = java.util.concurrent.atomic.AtomicLong()
     fun startIntentEpoch(): Long = pendingStarts.get()

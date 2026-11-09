@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/native_lite_migration.dart'
@@ -18,7 +19,7 @@ import 'method.dart';
 import 'spill.dart';
 
 class MeowCoreHandler extends CoreHandlerInterface
-    implements CancellableCoreRequest {
+    implements CancellableCoreRequest, StagedCoreSetup {
   MeowCoreHandler() : this.scoped(Service());
 
   MeowCoreHandler.scoped(
@@ -377,10 +378,8 @@ class MeowCoreHandler extends CoreHandlerInterface
     Future<void> connection,
   ) async {
     try {
-      await Future.any([
-        connection,
-        call.response.future.then<void>((_) {}),
-      ]).timeout(connectionTimeout);
+      await Future.any([connection, call.response.future.then<void>((_) {})])
+          .timeout(connectionTimeout);
       if (!_current(call)) {
         _settleCall(call);
         return;

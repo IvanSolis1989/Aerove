@@ -266,6 +266,20 @@ class CoreController {
     if (preloadInvoke == null) {
       return invoke();
     }
+    if (_interface is StagedCoreSetup) {
+      // Meow startListener invalidates in-flight calls and requires a staged
+      // snapshot. Concurrent preload would cancel this very setup request.
+      final result = await invoke();
+      if (result.isNotEmpty) return result;
+      if (cancellation?.value == true) {
+        throw const CoreMethodException(
+          code: 'cancelled',
+          message: 'Setup was cancelled before listener start',
+        );
+      }
+      await preloadInvoke();
+      return result;
+    }
     final (result, _) = await (invoke(), preloadInvoke()).wait;
     return result;
   }

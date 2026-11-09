@@ -39,6 +39,11 @@ fun createMeowFlutterCommandFacade(
     runtimeCurrent = { application.runtimeHandoffs.isCurrent(it.revision, it.intentEpoch) },
     currentStopSnapshot = { application.vpn.value.stopSnapshot() },
     stopSnapshots = application.vpn.map { it.stopSnapshot() },
+    ownedStops = application.ownedStops,
+    dispatchOwnedStop = { request ->
+        application.startService(Intent(application, LiteVpnService::class.java).setAction(LiteVpnService.ACTION_STOP)
+            .putExtra(LiteVpnService.EXTRA_OWNED_STOP_ID, request.id))
+    },
 )
 
 private fun VpnSnapshot.stopSnapshot() = MeowFlutterStopSnapshot(serviceOwner, sessionGeneration,

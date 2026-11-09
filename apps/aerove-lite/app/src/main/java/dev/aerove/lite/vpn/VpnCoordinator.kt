@@ -223,12 +223,13 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     }
 
     @Synchronized
-    fun stop() {
-        if (closed) return
+    fun stop(): Long? {
+        if (closed) return null
         val next = generation.incrementAndGet()
         if (mutableState.value.phase != VpnPhase.Stopped)
             mutableState.value = VpnSnapshot(VpnPhase.Stopping, sessionGeneration = next)
         requests.value = Request(next, null)
+        return next
     }
 
     /** Captures only work admitted before this stop, even if a newer start replaces its command. */

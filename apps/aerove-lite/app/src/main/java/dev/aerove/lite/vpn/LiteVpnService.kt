@@ -305,6 +305,12 @@ class LiteVpnService : VpnService() {
             null -> VpnServiceLifecycleTrace.Command.Restore
             else -> VpnServiceLifecycleTrace.Command.Other
         }
+        val stopId = if (intent?.action == ACTION_STOP && intent.hasExtra(EXTRA_OWNED_STOP_ID))
+            intent.getStringExtra(EXTRA_OWNED_STOP_ID) else null
+        val ownedStop = if (intent?.action == ACTION_STOP && intent.hasExtra(EXTRA_OWNED_STOP_ID)) {
+            stopId?.takeIf { graph.ownsVpnOwner(owner) }?.let { graph.ownedStops.admit(it, owner, intentGeneration + 1) }
+                ?: return rejectOwnedStart(startId)
+        } else null
         val command = latestReceivedCommand
         traceLifecycle(VpnServiceLifecycleTrace.Event.CommandReceived, startId, command)
         val hasOwnedId = intent?.action == ACTION_START && intent?.hasExtra(EXTRA_OWNED_START_ID) == true
@@ -350,6 +356,7 @@ class LiteVpnService : VpnService() {
             }
             return START_NOT_STICKY
         }
+        if (ownedStop == null) graph.ownedStops.supersede()
         var nextOwned: OwnedStartServiceReceipt? = null
         if (hasOwnedId) {
             val admitted = graph.ownedStarts.admit(checkNotNull(ownedId)) { request ->
@@ -390,7 +397,13 @@ class LiteVpnService : VpnService() {
                 } catch (failure: Exception) {
                     android.util.Log.e("MeowRuntime", "Runtime stop snapshot invalidation failed", failure)
                 } finally {
-                    if (generation == intentGeneration) { coordinator.stop(); finishStop(startId, generation) }
+                    if (generation == intentGeneration) {
+                        val target = coordinator.stop()
+                        if (ownedStop != null && target == null) graph.ownedStops.complete(ownedStop,
+                            dev.aerove.lite.flutter.MeowFlutterStopResult.TerminationUnconfirmed)
+                        else finishStop(startId, generation, ownedStop, target)
+                    } else if (ownedStop != null) graph.ownedStops.complete(ownedStop,
+                        dev.aerove.lite.flutter.MeowFlutterStopResult.Superseded)
                 }
             }
             return START_NOT_STICKY
@@ -894,10 +907,20 @@ class LiteVpnService : VpnService() {
         updateUnderlying()
     }
 
-    private fun finishStop(startId: Int, generation: Long) {
+    private fun finishStop(startId: Int, generation: Long, receipt: OwnedStopServiceReceipt? = null, target: Long? = null) {
         traceLifecycle(VpnServiceLifecycleTrace.Event.StopJoinQueued, startId, causeIntentGeneration = generation)
         scope.launch {
-            coordinator.state.first { it.phase == VpnPhase.Stopped }
+            if (receipt != null && target != null) {
+                fun result(snapshot: VpnSnapshot) = ownedStopTerminalResult(receipt, target,
+                    dev.aerove.lite.flutter.MeowFlutterStopSnapshot(owner, snapshot.sessionGeneration,
+                        snapshot.phase == VpnPhase.Stopped && snapshot.endpoint == null && snapshot.error.isNullOrBlank(),
+                        snapshot.phase == VpnPhase.Failed || !snapshot.error.isNullOrBlank()), graph.ownsVpnOwner(owner), intentGeneration)
+                val snapshot = coordinator.state.first { result(it) != null }
+                val outcome = checkNotNull(result(snapshot))
+                if (outcome is dev.aerove.lite.flutter.MeowFlutterStopResult.Confirmed) graph.publishVpn(owner, snapshot)
+                graph.ownedStops.complete(receipt, outcome)
+                if (outcome !is dev.aerove.lite.flutter.MeowFlutterStopResult.Confirmed) return@launch
+            } else coordinator.state.first { it.phase == VpnPhase.Stopped }
             traceLifecycle(VpnServiceLifecycleTrace.Event.StopJoined, startId, causeIntentGeneration = generation)
             requestVpnServiceStop(startId, generation, intentGeneration, lastPlan != null, maintenanceHold) { capturedId ->
                 removeNotification()
@@ -1026,6 +1049,7 @@ class LiteVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        graph.ownedStops.retireOwner(owner)
         publishFlutterRuntime(null)
         traceLifecycle(VpnServiceLifecycleTrace.Event.DestroyEntered)
         ++intentGeneration
@@ -1165,6 +1189,7 @@ class LiteVpnService : VpnService() {
         private const val EXTRA_REPLACEMENT_OWNER = "replacementOwner"
         private const val EXTRA_REPLACEMENT_INTENT = "replacementIntent"
         const val EXTRA_OWNED_START_ID = "dev.aerove.lite.OWNED_START_ID"
+        const val EXTRA_OWNED_STOP_ID = "dev.aerove.lite.OWNED_STOP_ID"
         const val ACTION_STOP = "dev.aerove.lite.STOP"
         const val ACTION_RECONFIGURE = "dev.aerove.lite.RECONFIGURE"
         const val ACTION_RETRY_NETWORK = "dev.aerove.lite.RETRY_NETWORK"

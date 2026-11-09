@@ -9,6 +9,10 @@ import 'package:flutter/foundation.dart' show ValueListenable;
 import 'desktop/model.dart';
 import 'method.dart';
 
+/// The listener consumes a validated staged snapshot and cannot preload while
+/// setup owns resource acquisition. Existing parallel backends do not opt in.
+abstract interface class StagedCoreSetup {}
+
 abstract interface class CancellableCoreRequest {
   Future<T?> invokeCancellableMethod<T>({
     required CoreMethod method,

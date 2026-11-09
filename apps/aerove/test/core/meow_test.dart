@@ -160,6 +160,81 @@ void main() {
     core = MeowCoreHandler.scoped(service, readSharedState: () async => _state);
   });
 
+  test('real Meow setup stages before listener invalidation', () async {
+    await core.start();
+    final staged = Completer<void>();
+    service.response = (call) async {
+      await staged.future;
+      return CoreMethodResponse(id: call.id, result: '');
+    };
+    final controller = CoreController.scoped(core);
+    final running = controller.setupConfig(
+      params: const SetupParams(
+        selectedMap: {},
+        testUrl: 'https://example.com',
+      ),
+      preloadInvoke: () async {
+        expect(await core.startListener(), isTrue);
+      },
+    );
+    final checked = expectLater(running, completion(''));
+    await Future<void>.delayed(Duration.zero);
+    expect(service.calls, isNot(contains('start')));
+    expect(service.cancelled, isEmpty);
+    staged.complete();
+    await checked;
+    expect(service.calls.where((call) => call == 'start'), hasLength(1));
+    await core.close();
+  });
+
+  test('Meow rejected setup never starts listener', () async {
+    await core.start();
+    service.response = (call) async =>
+        CoreMethodResponse(id: call.id, result: 'invalid setup');
+    expect(
+      await CoreController.scoped(core).setupConfig(
+        params: const SetupParams(
+          selectedMap: {},
+          testUrl: 'https://example.com',
+        ),
+        preloadInvoke: () async {
+          await core.startListener();
+        },
+      ),
+      'invalid setup',
+    );
+    expect(service.calls, isNot(contains('start')));
+    await core.close();
+  });
+
+  test('cancelled Meow staged setup never starts listener', () async {
+    await core.start();
+    final cancellation = ValueNotifier(false);
+    addTearDown(cancellation.dispose);
+    final staged = Completer<void>();
+    service.response = (call) async {
+      await staged.future;
+      return CoreMethodResponse(id: call.id, result: '');
+    };
+    final running = CoreController.scoped(core).setupConfig(
+      params: const SetupParams(
+        selectedMap: {},
+        testUrl: 'https://example.com',
+      ),
+      cancellation: cancellation,
+      preloadInvoke: () async {
+        await core.startListener();
+      },
+    );
+    final checked = expectLater(running, throwsA(isA<CoreMethodException>()));
+    await service.sent.future;
+    cancellation.value = true;
+    staged.complete();
+    await checked;
+    expect(service.calls, isNot(contains('start')));
+    await core.close();
+  });
+
   test(
     'failed HTTP cleanup never becomes quiescent or reaches native inspect',
     () async {

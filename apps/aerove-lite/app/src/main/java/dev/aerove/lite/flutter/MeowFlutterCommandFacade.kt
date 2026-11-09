@@ -79,6 +79,8 @@ class MeowFlutterCommandFacade internal constructor(
     private val runtimeCurrent: (MeowFlutterRuntimeBinding) -> Boolean = { true },
     private val currentStopSnapshot: (() -> MeowFlutterStopSnapshot)? = null,
     private val stopSnapshots: Flow<MeowFlutterStopSnapshot>? = null,
+    private val ownedStops: dev.aerove.lite.vpn.OwnedStopRegistry? = null,
+    private val dispatchOwnedStop: ((dev.aerove.lite.vpn.OwnedStopRequest) -> Unit)? = null,
 ) {
     private val permissionIntents = PlatformEntryGate()
     private data class RequestBinding(val runtime: MeowFlutterRuntimeBinding?, val startEpoch: Long, val token: Long)
@@ -92,6 +94,7 @@ class MeowFlutterCommandFacade internal constructor(
 
     private fun issue(runtime: MeowFlutterRuntimeBinding?): OwnedStartRequest? {
         if (!runtimeAllowed(runtime)) return null
+        ownedStops?.supersede()
         return ownedStarts.prepare()?.also {
             it.providerSourcePermit = runtime?.sourcePermit
             bindings[it] = RequestBinding(runtime, startIntentEpoch(), permissionIntents.beginStart())
@@ -153,6 +156,7 @@ class MeowFlutterCommandFacade internal constructor(
     }
 
     @Synchronized fun disconnect() {
+        ownedStops?.supersede()
         permissionIntents.cancelStart()
         invalidatePendingStarts()
         cancelPendingWork()
@@ -161,6 +165,25 @@ class MeowFlutterCommandFacade internal constructor(
 
     suspend fun disconnectAndJoin(awaitMillis: Long = 45_000): MeowFlutterStopResult {
         require(awaitMillis in 1..45_000L) { "Stop acknowledgement budget must be within 1..45000 ms" }
+        if (ownedStops != null && dispatchOwnedStop != null) {
+            val request = synchronized(this) {
+                permissionIntents.cancelStart()
+                invalidatePendingStarts()
+                cancelPendingWork()
+                val captured = currentStopSnapshot?.invoke()
+                    ?: return MeowFlutterStopResult.TerminationUnconfirmed
+                ownedStops.prepare(captured).also {
+                    try { dispatchOwnedStop.invoke(it) }
+                    catch (failure: Exception) { ownedStops.retire(it); throw failure }
+                }
+            }
+            return withContext(NonCancellable) {
+                try {
+                    withTimeoutOrNull(awaitMillis) { request.result.await() }
+                        ?: MeowFlutterStopResult.TerminationUnconfirmed
+                } finally { ownedStops.retire(request) }
+            }
+        }
         val before = synchronized(this) {
             val captured = currentStopSnapshot?.invoke()
             disconnect()
