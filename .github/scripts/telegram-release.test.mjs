@@ -27,18 +27,18 @@ test('retries a transient GitHub network failure without sending a Telegram mess
     return Response.json(release);
   });
   assert.equal(attempts, 2);
-  assert.match(result.preview, /修复连接/);
+  assert.match(result.preview, /See the release page/);
 });
 
 test('formats product/channel labels, removes hidden notes and bounds message size', () => {
   const message = formatMessage(repository, release);
-  assert.match(message, /AEROVE 标准版.*预览版/);
-  assert.match(message, /修复连接/);
+  assert.match(message, /AEROVE Standard.*Preview/);
+  assert.match(message, /See the release page/);
   assert.doesNotMatch(message, /hidden|##/);
   assert.match(message, /<a href="https:\/\/github.com\//);
   assert.doesNotMatch(message, /配置下载|交流讨论/);
   assert.ok(formatMessage(repository, { ...release, body: '😀内容'.repeat(5000) }).length <= 3800);
-  assert.match(formatMessage(repository, { ...release, tag_name: 'lite-v1.0.0', prerelease: false }), /AEROVE Lite.*正式版/);
+  assert.match(formatMessage(repository, { ...release, tag_name: 'lite-v1.0.0', prerelease: false }), /AEROVE Lite.*Stable/);
 });
 
 test('keeps the announcement short and removes repeated version/build metadata', () => {
@@ -115,7 +115,7 @@ test('extracts only the latest root changelog section and announces its immutabl
   const announcement = changelogAnnouncement(repo, sha, text, release.published_at);
   assert.equal(announcement.tag_name, 'v6.1.0 (2026-10-23)');
   assert.equal(announcement.body, '- 本次更新');
-  assert.match(formatMessage(repo, announcement), /Smart-Config-Kit.*配置更新/);
+  assert.match(formatMessage(repo, announcement), /Smart-Config-Kit.*Configuration update/);
   const api = async path => {
     if (path.startsWith('/compare/')) return { files: [{ filename: 'CHANGELOG.md', status: 'modified' }] };
     if (path.startsWith('/commits/')) return { sha, commit: { committer: { date: release.published_at } } };
@@ -137,7 +137,17 @@ test('expands the matching linked changelog instead of announcing a pointer', as
     : { encoding: 'base64', content: Buffer.from(path.includes('Clash%20Party') ? child : root).toString('base64') };
   const announcement = await selectAnnouncement('workflow_dispatch', {}, 'main', api, repo);
   const text = formatMessage(repo, announcement);
-  assert.match(text, /微信进程 DIRECT/);
-  assert.match(text, /规则行为不变/);
+  assert.match(announcement.detail_body, /微信进程 DIRECT/);
+  assert.match(announcement.detail_body, /规则行为不变/);
+  assert.match(text, /See the release page/);
   assert.doesNotMatch(text, /详见|旧更新|交流讨论/);
+});
+
+ test('English announcements exclude optional Chinese details without inventing translations', () => {
+  const text = formatMessage(repository, { ...release, body: '- Fix connection stability.\n<details><summary>简体中文</summary>\n- 修复连接\n</details>' });
+  assert.match(text, /Fix connection stability/);
+  assert.doesNotMatch(text, /[\u3400-\u9fff]|details|summary/);
+  const historical = formatMessage('IvanSolis1989/Smart-Config-Kit', { ...release, kind: 'changelog', tag_name: '下载修复', sha });
+  assert.doesNotMatch(historical, /[\u3400-\u9fff]/);
+  assert.match(historical, /See the release page/);
 });

@@ -29,17 +29,23 @@ export function summarizeChanges(release) {
       if (changes.length === 4) return changes;
     }
   }
-  return changes.length ? changes : ['本次更新内容见发布页'];
+  return changes.length ? changes : ['See the release page for complete change details.'];
 }
 
 export function formatMessage(repository, release, limit = 650) {
   const product = repository.endsWith('/Aerove')
-    ? (/lite/i.test(release.tag_name) ? 'AEROVE Lite' : 'AEROVE 标准版')
+    ? (/lite/i.test(release.tag_name) ? 'AEROVE Lite' : 'AEROVE Standard')
     : 'Smart-Config-Kit';
-  const channel = release.kind === 'changelog' ? '配置更新' : release.prerelease ? '预览版' : '正式版';
-  const title = `${product} ${release.tag_name} · ${channel}`;
-  const footer = `\n\n<a href="${html(release.html_url)}">发布页</a>`;
-  const rows = summarizeChanges(release).map(change => `• ${html(change)}`);
+  const channel = release.kind === 'changelog' ? 'Configuration update' : release.prerelease ? 'Preview' : 'Stable';
+  const label = /[\u3400-\u9fff]/u.test(release.tag_name) ? (release.sha || release.id || 'Update').toString().slice(0, 12) : release.tag_name;
+  const title = `${product} ${label} · ${channel}`;
+  const footer = `\n\n<a href="${html(release.html_url)}">Release page</a>`;
+  // Prefer authored English facts; never fabricate translations of historical notes.
+  const englishSource = (release.detail_body || release.body || '').replace(/<details\b[^>]*>[\s\S]*?<\/details>/gi, '');
+  const englishChanges = summarizeChanges({ ...release, detail_body: englishSource, body: englishSource })
+    .filter(change => !/[\u3400-\u9fff]/u.test(change));
+  const rows = (englishChanges.length ? englishChanges : ['See the release page for complete change details.'])
+    .map(change => `• ${html(change)}`);
   const budget = Math.min(limit, 650) - html(title).length - footer.length - 2;
   while (rows.length > 1 && rows.join('\n').length > budget) rows.pop();
   return `${html(title)}\n\n${rows.join('\n')}${footer}`;
@@ -82,7 +88,7 @@ export async function selectAnnouncement(eventName, event, tag, api, repository)
   }
   if (eventName === 'release') return api(`/releases/${event.release.id}`);
   if (eventName === 'workflow_dispatch') {
-    if (!tag) throw new Error('发布预览或发送必须填写准确的 Release tag。');
+    if (!tag) throw new Error('An exact release tag is required to preview or send a release.');
     return api(`/releases/tags/${encodeURIComponent(tag)}`);
   }
   if (eventName !== 'workflow_run') throw new Error('Unsupported notification event');
@@ -123,7 +129,7 @@ export async function publishRelease({ release, repository, api, telegram, prepa
   }
   if (receipt?.state === 'success' && !verify) return { skipped: true, url: receipt.target_url };
   if (receipt && !recover && !verify) {
-    throw new Error('上次发送结果不确定。请先检查频道，再用 recover 模式重试，避免重复发布。');
+    throw new Error('The previous send outcome is uncertain. Check the channel before retrying in recover mode to avoid duplicates.');
   }
   await telegram('getChatMember', { chat_id: channelId }, true);
   const files = await prepare(repository, release);
@@ -187,7 +193,7 @@ export async function main(env = process.env, fetcher = fetch) {
     await telegram('getChatMember', { chat_id: channelId }, true);
     const message = await telegram('sendMessage', {
       chat_id: channelId, disable_notification: true,
-      text: `机器人部署测试\n\n${repository} 的 GitHub Actions 已连接 Olympus 官方频道。\n${repository.endsWith('/Aerove') ? '后续公开 Release' : '后续 main 根 CHANGELOG.md 更新'}将自动发送更新说明和下载入口。\n\n讨论群：${discussionUrl}`,
+      text: `Bot deployment test\n\nGitHub Actions for ${repository} is connected to the Olympus channel.\n${repository.endsWith('/Aerove') ? 'Future public releases' : 'Future root CHANGELOG.md updates on main'} will announce change details and download links.\n\nDiscussion: ${discussionUrl}`,
       link_preview_options: { is_disabled: true },
     });
     result = { test: true, url: `${channelUrl}/${message.message_id}` };
@@ -214,7 +220,7 @@ export async function main(env = process.env, fetcher = fetch) {
   }
   const output = JSON.stringify(result, null, 2);
   console.log(output);
-  if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `\n### Telegram notification\n\n${result.url ? `[查看频道消息](${result.url})` : '```json\n' + output + '\n```'}\n`);
+  if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `\n### Telegram notification\n\n${result.url ? `[View channel message](${result.url})` : '```json\n' + output + '\n```'}\n`);
   return result;
 }
 
