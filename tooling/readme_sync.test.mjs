@@ -26,6 +26,7 @@ function sandbox(t) {
   mkdirSync(join(root, 'docs/i18n'), { recursive: true });
   writeFileSync(join(root, 'README.md'), document());
   writeFileSync(join(root, 'docs/i18n/README.en.md'), document());
+  writeFileSync(join(root, 'docs/i18n/README.zh-CN.md'), document());
   return root;
 }
 // Tiny, solid-colour PNG fixtures only exercise the importer; they are not screenshot evidence.
@@ -74,7 +75,7 @@ test('release-only update preserves showcase, actual API URLs and both languages
   assert.deepEqual(readFileSync(join(root, 'README.md')), before);
   syncReadmes({ root, releases: [stable(), preview()] });
   const text = readFileSync(join(root, 'README.md'), 'utf8');
-  assert.ok(text.includes(`[0.9.1](${stable().html_url})`)); assert.ok(text.includes('构建 `2026102203`'));
+  assert.ok(text.includes(`[0.9.1](${stable().html_url})`)); assert.ok(text.includes('Build `2026102203`'));
   assert.ok(text.includes(stable().assets[0].browser_download_url));
   assert.ok(text.includes(block('showcase'))); assert.ok(text.startsWith('untouched before\n'));
   assert.match(readFileSync(join(root, 'docs/i18n/README.en.md'), 'utf8'), /Public preview/);
@@ -88,7 +89,8 @@ test('imports twelve original PNGs and provenance bytes, is idempotent, and emit
   const dest = join(root, 'docs/assets/screenshots/showcase');
   assert.deepEqual(readFileSync(join(dest, CASE_IDS[0] + '.png')), f.bytes);
   assert.deepEqual(readFileSync(join(dest, 'render-info.json')), readFileSync(join(f.dir, 'render-info.json')));
-  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /离线/);
+  assert.match(readFileSync(join(root, 'README.md'), 'utf8'), /offline/);
+  assert.match(readFileSync(join(root, 'docs/i18n/README.zh-CN.md'), 'utf8'), /离线/);
   assert.match(readFileSync(join(root, 'docs/i18n/README.en.md'), 'utf8'), /not Android device or Lite acceptance/);
   const mtime = statSync(join(dest, CASE_IDS[0] + '.png')).mtimeMs;
   assert.equal(syncReadmes({ root, releases: [stable(), preview()], previewDir: f.dir }).changed, false);

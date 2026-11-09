@@ -139,7 +139,7 @@ export function syncReadmes({ root = defaultRoot, releases, previewDir, check = 
   const channels = selectReleases(releases);
   const preview = previewDir ? validatePreview(resolve(previewDir)) : null;
   const planned = [];
-  for (const [file, language, prefix] of [['README.md', 'zh', ''], ['docs/i18n/README.en.md', 'en', '../../']]) {
+  for (const [file, language, prefix] of [['README.md', 'en', ''], ['docs/i18n/README.en.md', 'en', '../../'], ['docs/i18n/README.zh-CN.md', 'zh', '../../']]) {
     const target = join(root, file); safeTarget(root, target);
     let text = regularFile(target).toString('utf8');
     text = replaceBlock(text, 'releases', renderReleases(language, channels));
