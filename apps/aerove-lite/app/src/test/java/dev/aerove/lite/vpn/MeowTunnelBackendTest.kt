@@ -5,6 +5,7 @@ import dev.aerove.lite.core.*
 import dev.aerove.lite.data.*
 import dev.aerove.lite.networksettings.NetworkSettings
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -362,7 +363,10 @@ class MeowTunnelBackendTest {
             owner.retire(); assertEquals(3, f.released)
             httpEpoch = "2"
             try { owner.applyStaged(successor); fail("foreign HTTP epoch was applied") }
-            catch (failure: IllegalStateException) { assertTrue(failure.message.orEmpty().contains("epochs differ")) }
+            catch (failure: IllegalStateException) {
+                assertTrue(failure.message.orEmpty().contains("epochs differ"))
+                assertTrue(meowFailureLocation("fixture", failure).contains("setupPhase=GRAPH_VERIFY"))
+            }
             assertEquals(latest, store.readAppliedIdentity()); assertNull(owner.queryGraph())
             assertEquals(4, f.released)
             cache.assertCompleteRestores(4)
@@ -392,7 +396,10 @@ class MeowTunnelBackendTest {
         }, { _, _ -> })
         try {
             try { owner.applyStaged(candidate); fail("Stale startup selection CAS was published") }
-            catch (failure: CoreApiException) { assertEquals(409, failure.statusCode) }
+            catch (failure: CoreApiException) {
+                assertEquals(409, failure.statusCode)
+                assertTrue(meowFailureLocation("fixture", failure).contains("setupPhase=GRAPH_SELECTION"))
+            }
             cache.assertRejectedRestore()
             assertNull(owner.queryGraph()); assertNull(store.readAppliedIdentity())
             val unchanged = checkNotNull(store.readCurrent())
@@ -416,7 +423,10 @@ class MeowTunnelBackendTest {
         val loading = async(Dispatchers.Default) { runCatching { owner.applyStaged(candidate) } }
         ready.entered()
         withTimeout(4_000) { owner.retire() }
-        assertTrue(loading.await().isFailure); assertNull(owner.queryGraph()); assertNull(store.readAppliedIdentity())
+        val failure = loading.await().exceptionOrNull()
+        assertNotNull(failure)
+        assertTrue(meowFailureLocation("fixture", checkNotNull(failure)).contains("setupPhase=GRAPH_READY"))
+        assertNull(owner.queryGraph()); assertNull(store.readAppliedIdentity())
         assertEquals(1, f.released); assertEquals(1, f.native.starts)
     }
     @Test fun qaFinalPlanCaptureUsesTheSameObjectAsActualStartAndDoesNotChangeNormalOwnership() = runBlocking<Unit> {
@@ -579,6 +589,107 @@ class MeowTunnelBackendTest {
             assertEquals(1, f.native.stops); assertEquals(1, f.released)
         }
     }
+    @Test fun packageEventMutationAndPublicationUseExistingOwnerTransaction() = runBlocking<Unit> {
+        val f = Fixture(tunMode = true)
+        val exit = CountDownLatch(1)
+        f.native.onExit = { check(exit.await(5, TimeUnit.SECONDS)) }
+        f.native.onStop = { exit.countDown() }
+        val gate = kotlinx.coroutines.sync.Mutex(locked = true)
+        val admitted = CompletableDeferred<Unit>()
+        val published = CompletableDeferred<String>()
+        var proofEpoch: String? = null
+        val coordinator = VpnCoordinator(this, f.backend, onIdentityChanged = { endpoint, invalidate ->
+            assertEquals(f.native.port, endpoint.port)
+            admitted.complete(Unit)
+            gate.lock()
+            try {
+                invalidate()
+                proofEpoch = f.native.policy.epoch()
+                published.complete(checkNotNull(proofEpoch))
+            } finally { gate.unlock() }
+        })
+        try {
+            coordinator.start(f.plan)
+            withTimeout(3_000) { coordinator.state.first { it.phase == dev.aerove.lite.VpnPhase.Running } }
+            val before = f.native.policy.epoch()
+            proofEpoch = before
+            checkNotNull(f.identityCallback).invoke()
+            withTimeout(3_000) { admitted.await() }
+            assertEquals("Native mutation escaped the publication owner's gate", before, f.native.policy.epoch())
+            assertEquals(0, f.identityClears)
+            gate.unlock()
+            val after = withTimeout(3_000) { published.await() }
+            assertTrue(after.toULong() > before.toULong())
+            assertEquals(after, proofEpoch)
+            assertEquals(dev.aerove.lite.VpnPhase.Running, coordinator.state.value.phase)
+            assertNotNull(coordinator.state.value.endpoint)
+            assertEquals(1, f.native.starts)
+            assertEquals(0, f.native.stops)
+        } finally {
+            if (gate.isLocked) gate.unlock()
+            coordinator.close()
+        }
+        assertTrue(f.observerClosed)
+    }
+
+    @Test fun stoppedPackageCallbackCannotCommitAfterOwnerGateRelease() = runBlocking<Unit> {
+        val f = Fixture(tunMode = true)
+        val exit = CountDownLatch(1)
+        f.native.onExit = { check(exit.await(5, TimeUnit.SECONDS)) }
+        f.native.onStop = { exit.countDown() }
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val rejected = CompletableDeferred<Throwable>()
+        var published = false
+        val coordinator = VpnCoordinator(this, f.backend, onIdentityChanged = { _, invalidate ->
+            withContext(NonCancellable) {
+                entered.complete(Unit)
+                release.await()
+                try { invalidate(); published = true }
+                catch (failure: Throwable) { rejected.complete(failure); throw failure }
+            }
+        })
+        try {
+            coordinator.start(f.plan)
+            withTimeout(3_000) { coordinator.state.first { it.phase == dev.aerove.lite.VpnPhase.Running } }
+            val before = f.native.policy.epoch()
+            checkNotNull(f.identityCallback).invoke()
+            withTimeout(3_000) { entered.await() }
+            coordinator.stop()
+            release.complete(Unit)
+            val failure = withTimeout(3_000) { rejected.await() }
+            assertTrue(failure.message.orEmpty().contains("superseded"))
+            withTimeout(3_000) { coordinator.state.first { it.phase == dev.aerove.lite.VpnPhase.Stopped } }
+            assertEquals(before, f.native.policy.epoch())
+            assertEquals(0, f.identityClears)
+            assertFalse(published)
+            assertEquals(1, f.native.starts)
+        } finally { release.complete(Unit); coordinator.close() }
+        assertEquals(1, f.native.stops)
+    }
+
+    @Test fun packageEpochPublicationFailureRetainsExistingSessionCleanup() = runBlocking<Unit> {
+        val f = Fixture(tunMode = true)
+        val exit = CountDownLatch(1)
+        f.native.onExit = { check(exit.await(5, TimeUnit.SECONDS)) }
+        f.native.onStop = { exit.countDown() }
+        val coordinator = VpnCoordinator(this, f.backend, onIdentityChanged = { _, invalidate ->
+            invalidate()
+            error("fixture publication failed")
+        })
+        try {
+            coordinator.start(f.plan)
+            withTimeout(3_000) { coordinator.state.first { it.phase == dev.aerove.lite.VpnPhase.Running } }
+            checkNotNull(f.identityCallback).invoke()
+            val failed = withTimeout(3_000) { coordinator.state.first { it.phase == dev.aerove.lite.VpnPhase.Failed } }
+            assertEquals("fixture publication failed", failed.error)
+            assertNull(failed.endpoint)
+            assertEquals(1, f.native.starts)
+        } finally { coordinator.close() }
+        assertEquals(1, f.native.stops)
+        assertTrue(f.observerClosed)
+    }
+
     @Test fun packageEventUsesSameSessionIdentityCommandAndObserverClosesAfterJoin()=runBlocking<Unit>{
         val f = Fixture(); val session = f.backend.open(f.plan); session.awaitReady()
         val exit = CountDownLatch(1); val invalidated = CompletableDeferred<Unit>()

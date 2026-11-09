@@ -105,6 +105,7 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
     private val latestNetworkDns: () -> dev.aerove.lite.data.SystemDnsSnapshot? = { null },
     private val onSessionReady: (VpnSnapshot) -> Unit = {},
     private val nanoTime: () -> Long = System::nanoTime,
+    private val onIdentityChanged: suspend (CoreEndpoint, suspend () -> Unit) -> Unit = { _, invalidate -> invalidate() },
 ) {
     private data class Request(val generation: Long, val plan: VpnPlan?, val internalReconnect: Boolean = false, val startedAtNanos: Long = 0,
         val failureReason: String? = null, val networkApplyFailure: dev.aerove.lite.networksettings.NetworkApplyFailure? = null)
@@ -176,7 +177,12 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                 if (request.generation == generation.get()) onSessionReady(ready)
                 publish(request, ready)
                 if (desiredListening != ready.listening) convergeListenerPolicy { request.generation == generation.get() }
-                running.awaitExit()
+                if (running is MeowTunnelBackend.Session) running.awaitExit { invalidate ->
+                    onIdentityChanged(running.endpoint) {
+                        check(request.generation == generation.get() && synchronized(this@VpnCoordinator) { activeSession?.session === running }) { "Meow identity owner was superseded" }
+                        invalidate()
+                    }
+                } else running.awaitExit()
                 error("The core exited while the VPN was requested")
             } catch (cancelled: CancellationException) {
                 throw cancelled

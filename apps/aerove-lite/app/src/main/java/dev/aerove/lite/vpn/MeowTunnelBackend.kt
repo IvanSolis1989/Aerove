@@ -445,11 +445,13 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
             policy.invalidate { !stopping && lease.isCurrent() }
         }
 
-        override suspend fun awaitExit(): Unit = coroutineScope {
+        override suspend fun awaitExit(): Unit = awaitExit { invalidate -> invalidate() }
+
+        suspend fun awaitExit(identityChanged: suspend (suspend () -> Unit) -> Unit): Unit = coroutineScope {
             val terminal = async(Dispatchers.IO) { commands.awaitExit(handle) }
             val identityFailure = CompletableDeferred<Throwable>()
             val identityWorker = launch {
-                try { for (event in identityEvents) invalidateIdentity() }
+                try { for (event in identityEvents) identityChanged { invalidateIdentity() } }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (failure: Throwable) { identityFailure.complete(failure) }
             }

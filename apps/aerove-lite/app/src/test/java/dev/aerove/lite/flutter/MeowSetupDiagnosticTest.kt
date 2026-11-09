@@ -29,4 +29,21 @@ class MeowSetupDiagnosticTest {
         try { traceMeowSetup<Unit> { throw cancelled }; fail("Expected cancellation") }
         catch (failure: CancellationException) { assertSame(cancelled, failure); assertTrue(failure.suppressed.isEmpty()) }
     }
+    @Test fun graphPhaseSurvivesStopWrappingAndCoroutineRecoveryWithoutPrivatePayload() = runBlocking<Unit> {
+        val original = IllegalStateException("https://subscription.invalid/private-token").also { it.stackTrace = emptyArray() }
+        val failure = runCatching {
+            restoreQueryGraphAfterConfirmedStop {
+                traceMeowSetup<Unit> { trace ->
+                    trace.phase = MeowSetupPhase.GRAPH_OPEN
+                    withContext(Dispatchers.Default) { throw original }
+                }
+            }
+        }.exceptionOrNull() as MeowProtocolFailure
+        assertEquals("stop_graph_restore_failed", failure.code)
+        val text = failure.details["stopRestoreLocation"].toString()
+        assertTrue(text, text.contains("{setupPhase=GRAPH_OPEN}"))
+        assertFalse(text.contains("subscription.invalid")); assertFalse(text.contains("private-token"))
+        assertTrue(original.suppressed.any { it is MeowSetupFailureEvidence && it.phase == MeowSetupPhase.GRAPH_OPEN })
+    }
+
 }

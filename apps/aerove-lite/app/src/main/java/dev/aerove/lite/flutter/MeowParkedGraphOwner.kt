@@ -71,14 +71,18 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
         backend = null
     }
 
-    override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
+    override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity = traceMeowSetup { trace ->
+        trace.phase = MeowSetupPhase.GRAPH_ADMIT
         store.admitGraph(snapshot.revision, snapshot.intentEpoch, snapshot.sourcePermit)
         val requested = newIntent()
-        return gate.withLock {
+        gate.withLock {
             val candidate = store.admitGraph(snapshot.revision, snapshot.intentEpoch, snapshot.sourcePermit)
+            trace.phase = MeowSetupPhase.GRAPH_RELEASE_PREVIOUS
             release()
+            trace.phase = MeowSetupPhase.GRAPH_CLAIM_OWNER
             val owner = claimOwner()
             ownerToken = owner
+            trace.phase = MeowSetupPhase.GRAPH_DECODE
             val settings = MeowRuntimeSnapshotSettings.decode(candidate.handoff.runtimeSettingsJson)
             val effective = meowParkedEffectiveSettings(settings)
             val runtime = JSONObject(candidate.handoff.runtimeSettingsJson)
@@ -88,21 +92,27 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
             fun current() = requested == intent.get() && ownsOwner(owner) &&
                 store.isGraphCandidate(candidate.revision, candidate.intentEpoch)
             check(current()) { "runtime_graph_superseded" }
+            trace.phase = MeowSetupPhase.GRAPH_OPEN
             val owned = backendFactory(owner, setup.testUrl, ::current).also { backend = it }
             try {
                 val proxySettings = effective.copy(network = effective.network.copy(vpnEnabled = false))
                 val reservedGeneration = ++generation
                 val running = owned.open(VpnPlan(candidate.profileId, effective, vpnSettings = proxySettings,
                     ownerIntentToken = requested, runtimeSessionGeneration = reservedGeneration).withProviderSourcePermit(candidate.sourcePermit)).also { held = HeldSession(requested, it) }
+                trace.phase = MeowSetupPhase.GRAPH_READY
                 running.awaitReady()
+                trace.phase = MeowSetupPhase.GRAPH_POLICY
                 running.configurePolicies(effective)
                 val endpoint = running.endpoint
+                trace.phase = MeowSetupPhase.GRAPH_MODE
                 val epoch = CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use { client ->
                     client.setMode(settings.mode)
                     check(client.mode() == settings.mode) { "mode: Graph policy did not converge" }
+                    trace.phase = MeowSetupPhase.GRAPH_SELECTION
                     MeowRuntimeSelection(client).apply(setup.selectedMap, ::current)
                     client.routeSnapshot().coreEpoch.toString()
                 }
+                trace.phase = MeowSetupPhase.GRAPH_VERIFY
                 val listeners = running.readGraphReadiness()
                 val policy = running.readGraphPolicy()
                 check(epoch == listeners.coreEpoch && policy.coreEpoch == epoch) { "Meow graph HTTP and native epochs differ" }
@@ -116,10 +126,12 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
                 check(current()) { "runtime_graph_superseded" }
                 val proof = RuntimeAppliedProof(owner, reservedGeneration, epoch)
                 val projection = meowServiceProjection(candidate.handoff, settings, null, null, null, setup.testUrl, policy.controller)
+                trace.phase = MeowSetupPhase.GRAPH_COMMIT
                 store.commitGraphApplied(candidate.revision, candidate.intentEpoch, proof, projection)
                 val identity = checkNotNull(store.readAppliedIdentity())
                 check(current() && store.isGraphCurrent(identity)) { "runtime_graph_superseded" }
                 defaultUrl = setup.testUrl
+                trace.phase = MeowSetupPhase.GRAPH_PUBLISH
                 synchronized(publications) {
                     check(current()) { "runtime_graph_superseded" }
                     graph = MeowQueryGraph(identity, endpoint, false)

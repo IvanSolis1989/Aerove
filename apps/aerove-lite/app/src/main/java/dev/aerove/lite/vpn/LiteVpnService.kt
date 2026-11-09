@@ -119,7 +119,7 @@ class LiteVpnService : VpnService() {
             latestNetworkDns = { physical.value.takeIf { it.network != null }?.dns }, onSessionReady = { snapshot ->
                 networkRuntime.bind(snapshot.endpoint, snapshot.initialNetwork ?: snapshot.appliedNetwork, snapshot.initialIpv6 ?: snapshot.appliedIpv6,
                     snapshot.appliedNetwork, snapshot.appliedIpv6, initiallyParked = snapshot.suspended)
-            })
+            }, onIdentityChanged = ::invalidateFlutterPackageIdentity)
         listenerPolicy = BackgroundPolicyActor(coreScope, ::applyBackgroundListenerPolicy,
             { failure -> coordinator.recordListenerError(failure.message ?: failure.javaClass.simpleName) })
         graph.registerMaintenanceStop(owner, ::stopForMaintenance, ::resumeAfterMaintenance)
@@ -234,7 +234,7 @@ class LiteVpnService : VpnService() {
                 val endpointForProof = snapshot.endpoint
                 if (runtime != null && snapshot.phase == VpnPhase.Running && endpointForProof != null && snapshot.sessionGeneration != appliedGeneration) {
                     val capturedIntent = intentGeneration
-                    try {
+                    try { flutterRuntimeGate.withLock {
                         startupFlutterSetup(runtime)
                         // The same session restored selections before business listeners were activated.
                         val route = CoreApiClient(ControlEndpoint(endpointForProof.port, endpointForProof.secret)).use { it.routeSnapshot() }
@@ -247,7 +247,7 @@ class LiteVpnService : VpnService() {
                         check(capturedIntent == intentGeneration && graph.runtimeHandoffs.isCurrent(identity.revision, identity.intentEpoch)) { "runtime_apply_superseded" }
                         publishFlutterRuntime(FlutterPublication(identity, endpointForProof, capturedIntent))
                         appliedGeneration = snapshot.sessionGeneration
-                    } catch (failure: Exception) {
+                    } } catch (failure: Exception) {
                         if (capturedIntent == intentGeneration && graph.runtimeHandoffs.isCurrent(runtime.revision, runtime.intentEpoch)) {
                             try {
                                 graph.runtimeHandoffs.invalidate(runtime.intentEpoch)
@@ -629,6 +629,20 @@ class LiteVpnService : VpnService() {
         publishFlutterRuntime(FlutterPublication(identity, endpoint, intentGeneration))
         graph.publishVpn(owner, coordinator.state.value)
         return identity
+    }
+
+    private suspend fun invalidateFlutterPackageIdentity(endpoint: CoreEndpoint, invalidate: suspend () -> Unit): Unit = flutterRuntimeGate.withLock {
+        val actual = coordinator.state.value
+        check(actual.phase == VpnPhase.Running && actual.endpoint === endpoint && graph.ownsVpnOwner(owner)) {
+            "runtime_service_superseded"
+        }
+        val identity = graph.runtimeHandoffs.readAppliedIdentity()?.takeIf {
+            runtimeSnapshot != null && it.proof.serviceOwner == owner && it.proof.sessionGeneration == actual.sessionGeneration &&
+                graph.runtimeHandoffs.isCurrent(it.revision, it.intentEpoch)
+        }
+        if (runtimeSnapshot != null) publishFlutterRuntime(null)
+        invalidate()
+        if (identity != null) persistFlutterProjection(identity, endpoint, checkNotNull(graph.runtimeHandoffs.readLastApplied()).handoff)
     }
 
     private suspend fun applyBackgroundListenerPolicy(policy: dev.aerove.lite.backgroundpolicy.ListenerPolicyIntent): Unit = flutterRuntimeGate.withLock {
