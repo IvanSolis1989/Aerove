@@ -20,7 +20,11 @@ runInNewContext(readFileSync(join(defaultRoot, 'website/assets/shared.js'), 'utf
 const { standardReleases } = sandbox.AeroveSite;
 const REPO = 'https://github.com/IvanSolis1989/Aerove';
 const APK = 'Aerove-android-arm64.apk';
-const ASSETS = 'docs/assets/screenshots/showcase';
+export function galleryAssets(locale) {
+  if (locale === 'en') return 'docs/assets/screenshots/showcase-en';
+  if (locale === 'zh_CN') return 'docs/assets/screenshots/showcase';
+  fail('Unsupported or missing showcase locale');
+}
 const SEMVER = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?\+([1-9]\d*)$/;
 const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -73,6 +77,7 @@ export function validatePreview(dir) {
   const manifestBytes = regularFile(join(dir, 'render-info.json'));
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
   const m = manifest;
+  galleryAssets(m.locale);
   if (m.schema !== 1 || m.product !== 'standard' || m.method !== 'flutter-widget-test' || m.fixture !== 'offline' || m.androidDevice !== false || m.pureBlack !== false || m.complete !== true || !SHA40.test(m.source?.commit) || !SHA40.test(m.source?.tree) || typeof m.source?.ref !== 'string' || !Object.hasOwn(m.source, 'workflowRun') || typeof m.source.producerDirty !== 'boolean' || !SHA256.test(m.source.harness?.sha256)) fail('Invalid or incomplete Standard offline render provenance');
   if (m.viewport?.width !== 430 || m.viewport?.height !== 932 || m.viewport?.devicePixelRatio !== 2) fail('Expected 430×932 viewport at DPR 2');
   if (!Array.isArray(m.cases) || m.cases.length !== 12 || new Set(m.cases.map(c => c.id)).size !== 12) fail('Expected twelve unique showcase cases');
@@ -102,7 +107,8 @@ export function renderReleases(language, releases) {
 
 export function renderGallery(language, manifest, prefix = '') {
   const zh = language === 'zh';
-  const asset = `${prefix}${ASSETS}`;
+  if (manifest.locale !== (zh ? 'zh_CN' : 'en')) fail('README and showcase locale mismatch');
+  const asset = `${prefix}${galleryAssets(manifest.locale)}`;
   const labels = zh ? ['简约纯色', '柔光磨砂', '流光清透'] : ['Solid', 'Soft frost', 'Liquid clear'];
   const groups = ['solid', 'frost', 'clear'].map((material, i) => {
     const rows = ['classic', 'aurora'].map(mode => {
@@ -143,10 +149,10 @@ export function syncReadmes({ root = defaultRoot, releases, previewDir, check = 
     const target = join(root, file); safeTarget(root, target);
     let text = regularFile(target).toString('utf8');
     text = replaceBlock(text, 'releases', renderReleases(language, channels));
-    if (preview) text = replaceBlock(text, 'showcase', renderGallery(language, preview.manifest, prefix));
+    if (preview && preview.manifest.locale === (language === 'zh' ? 'zh_CN' : 'en')) text = replaceBlock(text, 'showcase', renderGallery(language, preview.manifest, prefix));
     planned.push({ target, bytes: Buffer.from(text) });
   }
-  if (preview) for (const image of [...preview.images, { file: 'render-info.json', bytes: preview.manifestBytes }]) planned.push({ target: join(root, ASSETS, image.file), bytes: image.bytes });
+  if (preview) for (const image of [...preview.images, { file: 'render-info.json', bytes: preview.manifestBytes }]) planned.push({ target: join(root, galleryAssets(preview.manifest.locale), image.file), bytes: image.bytes });
   // Complete preflight before creating directories or staging any output.
   for (const { target } of planned) safeTarget(root, target);
   const changed = planned.filter(p => !existsSync(p.target) || !regularFile(p.target).equals(p.bytes));

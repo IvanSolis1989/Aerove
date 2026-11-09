@@ -43,33 +43,33 @@ Twelve combinations of the Standard development interface. Click an image for fu
 
 **Classic monochrome**
 
-<a href="docs/assets/screenshots/showcase/solid-classic-light.png"><img src="docs/assets/screenshots/showcase/solid-classic-light.png" width="300" alt="Solid · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase/solid-classic-dark.png"><img src="docs/assets/screenshots/showcase/solid-classic-dark.png" width="300" alt="Solid · Classic monochrome · Dark"></a>
+<a href="docs/assets/screenshots/showcase-en/solid-classic-light.png"><img src="docs/assets/screenshots/showcase-en/solid-classic-light.png" width="300" alt="Solid · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase-en/solid-classic-dark.png"><img src="docs/assets/screenshots/showcase-en/solid-classic-dark.png" width="300" alt="Solid · Classic monochrome · Dark"></a>
 
 **Aurora**
 
-<a href="docs/assets/screenshots/showcase/solid-aurora-light.png"><img src="docs/assets/screenshots/showcase/solid-aurora-light.png" width="300" alt="Solid · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase/solid-aurora-dark.png"><img src="docs/assets/screenshots/showcase/solid-aurora-dark.png" width="300" alt="Solid · Aurora · Dark"></a>
+<a href="docs/assets/screenshots/showcase-en/solid-aurora-light.png"><img src="docs/assets/screenshots/showcase-en/solid-aurora-light.png" width="300" alt="Solid · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase-en/solid-aurora-dark.png"><img src="docs/assets/screenshots/showcase-en/solid-aurora-dark.png" width="300" alt="Solid · Aurora · Dark"></a>
 
 ### Soft frost
 
 **Classic monochrome**
 
-<a href="docs/assets/screenshots/showcase/frost-classic-light.png"><img src="docs/assets/screenshots/showcase/frost-classic-light.png" width="300" alt="Soft frost · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase/frost-classic-dark.png"><img src="docs/assets/screenshots/showcase/frost-classic-dark.png" width="300" alt="Soft frost · Classic monochrome · Dark"></a>
+<a href="docs/assets/screenshots/showcase-en/frost-classic-light.png"><img src="docs/assets/screenshots/showcase-en/frost-classic-light.png" width="300" alt="Soft frost · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase-en/frost-classic-dark.png"><img src="docs/assets/screenshots/showcase-en/frost-classic-dark.png" width="300" alt="Soft frost · Classic monochrome · Dark"></a>
 
 **Aurora**
 
-<a href="docs/assets/screenshots/showcase/frost-aurora-light.png"><img src="docs/assets/screenshots/showcase/frost-aurora-light.png" width="300" alt="Soft frost · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase/frost-aurora-dark.png"><img src="docs/assets/screenshots/showcase/frost-aurora-dark.png" width="300" alt="Soft frost · Aurora · Dark"></a>
+<a href="docs/assets/screenshots/showcase-en/frost-aurora-light.png"><img src="docs/assets/screenshots/showcase-en/frost-aurora-light.png" width="300" alt="Soft frost · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase-en/frost-aurora-dark.png"><img src="docs/assets/screenshots/showcase-en/frost-aurora-dark.png" width="300" alt="Soft frost · Aurora · Dark"></a>
 
 ### Liquid clear
 
 **Classic monochrome**
 
-<a href="docs/assets/screenshots/showcase/clear-classic-light.png"><img src="docs/assets/screenshots/showcase/clear-classic-light.png" width="300" alt="Liquid clear · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase/clear-classic-dark.png"><img src="docs/assets/screenshots/showcase/clear-classic-dark.png" width="300" alt="Liquid clear · Classic monochrome · Dark"></a>
+<a href="docs/assets/screenshots/showcase-en/clear-classic-light.png"><img src="docs/assets/screenshots/showcase-en/clear-classic-light.png" width="300" alt="Liquid clear · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase-en/clear-classic-dark.png"><img src="docs/assets/screenshots/showcase-en/clear-classic-dark.png" width="300" alt="Liquid clear · Classic monochrome · Dark"></a>
 
 **Aurora**
 
-<a href="docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="Liquid clear · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="Liquid clear · Aurora · Dark"></a>
+<a href="docs/assets/screenshots/showcase-en/clear-aurora-light.png"><img src="docs/assets/screenshots/showcase-en/clear-aurora-light.png" width="300" alt="Liquid clear · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase-en/clear-aurora-dark.png"><img src="docs/assets/screenshots/showcase-en/clear-aurora-dark.png" width="300" alt="Liquid clear · Aurora · Dark"></a>
 
-Source: [`03ee44322fcc81c2348e30f8f312d6b9a1931861`](https://github.com/IvanSolis1989/Aerove/commit/03ee44322fcc81c2348e30f8f312d6b9a1931861) · [Render provenance](docs/assets/screenshots/showcase/render-info.json)
+Source: [`af5ad2dc86c430b5295bcd309bddd63063a7c000`](https://github.com/IvanSolis1989/Aerove/commit/af5ad2dc86c430b5295bcd309bddd63063a7c000) · [Render provenance](docs/assets/screenshots/showcase-en/render-info.json)
 <!-- aerove:showcase:end -->
 
 The historical codebase comes from [FlClash](https://github.com/chen08209/FlClash); original attribution and licenses are
