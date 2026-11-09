@@ -880,7 +880,7 @@ jobs:
           if test -z "$existing"; then
             printf '%s\n' Aerove-android-arm64.apk BUILD_INFO.json SHA256SUMS > "$missing_assets"
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_SOURCE" \
-              --title "AEROVE $TAG · 安卓版" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
+              --title "AEROVE $TAG · Android" --draft --notes-file "$RUNNER_TEMP/xclash-release.md"
           fi
           while IFS= read -r asset; do
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "dist/$asset"

@@ -63,6 +63,16 @@ class AcceptedOriginalNotesTest(unittest.TestCase):
             return notes.release_changelog(self.case.original, self.release_source, repo=self.root,
                 build_run=build_run, release_run=release_run)
 
+    def test_chinese_notes_require_explicit_expansion_without_losing_entries(self):
+        info = {'source': 'a' * 40, 'version': '0.13.0+39'}
+        rendered = notes.render_release('## 0.13.0+39\n- 保留真实技术说明', 'v0.13.0+39', info)
+        self.assertIn('Version: `0.13.0+39`', rendered)
+        self.assertIn('<details>\n<summary>简体中文', rendered)
+        self.assertIn('- 保留真实技术说明', rendered.split('<details>', 1)[1].split('</details>', 1)[0])
+        english = notes.render_release('## 0.13.0+39\n- Preserve the actual change.', 'v0.13.0+39', info)
+        self.assertNotIn('<details>', english)
+        self.assertIn('- Preserve the actual change.', english)
+
     def test_real_fixed_recheck_consumer_accepts_harness_to_main_without_relabelling_original(self):
         with self.assertRaises(notes.product_source.ProjectionError):
             notes.release_changelog(self.case.original, self.release_source, repo=self.root)
@@ -134,7 +144,7 @@ class AeroveReleaseNotesTest(unittest.TestCase):
             subprocess.run(command, cwd=root, check=True)
             rendered = (root / 'release.md').read_text(encoding='utf-8')
             self.assertIn('真机确认的修复', rendered)
-            self.assertIn(f'源码：`{original}`', rendered)
+            self.assertIn(f'Source: `{original}`', rendered)
             self.assertNotIn('尚未提交的内容', rendered)
             self.assertEqual(json.loads(info.read_text(encoding='utf-8'))['source'], original)
             application.write_text('void main() { throw Exception(); }\n', encoding='utf-8')
@@ -154,8 +164,8 @@ class AeroveReleaseNotesTest(unittest.TestCase):
         markdown = '## 0.11.0-beta.14 — 开发候选\n\n' + status + '\n\n' + entries
         rendered = notes.render_release(markdown, 'v' + info['version'], info)
         self.assertEqual(notes.notes_for_release(markdown, 'v' + info['version']), entries)
-        self.assertIn(f'版本：`{info["version"]}`', rendered)
-        self.assertIn(f'源码：`{info["source"]}`', rendered)
+        self.assertIn(f'Version: `{info["version"]}`', rendered)
+        self.assertIn(f'Source: `{info["source"]}`', rendered)
         self.assertNotIn(status, rendered)
         for invalid in (status + '后续说明', status.replace('尚未构建', '已经构建'),
                         status + '\n\n其他状态', '<!-- control -->' + status):
@@ -202,8 +212,8 @@ class AeroveReleaseNotesTest(unittest.TestCase):
                 markdown = f'## {title}\n本候选未接受、未发行。\n\n- 本次修改\n'
                 rendered = notes.render_release(markdown, tag, info)
                 self.assertNotIn('本候选未接受、未发行。', rendered)
-                self.assertIn(f'版本：`{info["version"]}`', rendered)
-                self.assertIn(f'源码：`{info["source"]}`', rendered)
+                self.assertIn(f'Version: `{info["version"]}`', rendered)
+                self.assertIn(f'Source: `{info["source"]}`', rendered)
                 with self.assertRaises(ValueError):
                     notes.render_release(markdown, tag, INFO)
                 with self.assertRaises(ValueError):

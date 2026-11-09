@@ -52,3 +52,20 @@ internal fun meowStartupFailureDiagnostic(handle: Long, before: Result<MeowStart
     }
     return "startup_failure generation=$handle before=[${project(before)}] after=[${project(after)}]"
 }
+
+/** Typed side-channel; the original failure and cancellation semantics remain untouched. */
+internal class MeowStartupFailureEvidence private constructor(
+    val primary: MeowStartupPrimary?, val stage: MeowStartupStage, val cleanup: MeowStartupCleanup,
+) : Exception(null, null, false, false) {
+    fun label(): String = "native=${primary?.stage ?: stage}/${primary?.code ?: MeowStartupCode.unclassified}/" +
+        "${primary?.ioKind ?: "none"}/${primary?.causeType ?: MeowStartupCauseType.unknown}/cleanup=$cleanup"
+    companion object {
+        fun attach(failure: Throwable, handle: Long, before: Result<MeowStartupSnapshot?>, after: Result<MeowStartupSnapshot?>) {
+            fun matching(result: Result<MeowStartupSnapshot?>) = result.getOrNull()?.takeIf { it.generation == handle.toString() }
+            val first = matching(before)
+            val last = matching(after)
+            val selected = first?.takeIf { it.primary != null } ?: last ?: first ?: return
+            failure.addSuppressed(MeowStartupFailureEvidence(selected.primary, selected.stage, last?.cleanup ?: selected.cleanup))
+        }
+    }
+}

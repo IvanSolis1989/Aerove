@@ -22,7 +22,9 @@ internal fun meowFailureLocation(method: String, failure: Throwable): String {
     val causes = generateSequence(failure) { it.cause }.take(3).joinToString(" <- ") { cause ->
         val frame = cause.stackTrace.firstOrNull { it.className.startsWith("dev.aerove.lite.") }
         val location = frame?.let { "@${safe(it.className)}.${safe(it.methodName)}:${it.lineNumber}" }.orEmpty()
-        "${safe(cause.javaClass.simpleName)}$location"
+        val evidence = cause.suppressed.filterIsInstance<dev.aerove.lite.core.MeowStartupFailureEvidence>().firstOrNull()
+        val sourceCode = cause.message?.takeIf { it in setOf("shared_config_unstable", "shared_config_duplicate", "shared_source_config_changed", "provider_source_recovery_required") }
+        "${safe(cause.javaClass.simpleName)}$location" + (evidence?.let { "{${it.label()}}" } ?: sourceCode?.let { "{$it}" }.orEmpty())
     }
     val knownHost = setOf("service.init", "service.shutdown", "service.syncState", "service.getRunTime",
         "service.setUiTelemetryActive", "service.start", "service.stop", "service.park", "core.invokeMethod", "core.cancel")

@@ -269,6 +269,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "aboutTelegramGroup": MessageLookupByLibrary.simpleMessage(
       "Grupo de Telegram",
     ),
+    "aboutUsageNotice": MessageLookupByLibrary.simpleMessage(
+      "Para un uso legal en redes a las que tenga autorización para acceder. AEROVE es un cliente, no un proveedor de servidores proxy ni de suscripciones. No se garantiza la disponibilidad, el rendimiento ni la seguridad.",
+    ),
     "accessControl": MessageLookupByLibrary.simpleMessage("Control de acceso"),
     "accessControlAllowDesc": MessageLookupByLibrary.simpleMessage(
       "Solo las apps seleccionadas usan la VPN",

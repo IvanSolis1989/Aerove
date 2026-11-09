@@ -29,6 +29,7 @@ Future<({ProviderContainer container, GlobalKey capture})> _mount(
   Color backdrop, {
   bool contrast = false,
   bool aurora = false,
+  bool followAppLocale = false,
 }) async {
   final container = ProviderContainer(
     overrides: [
@@ -47,34 +48,40 @@ Future<({ProviderContainer container, GlobalKey capture})> _mount(
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: MaterialApp(
-        navigatorKey: globalState.navigatorKey,
-        locale: const Locale('en'),
-        theme:
-            ThemeData(
-              brightness: brightness,
-              platform: TargetPlatform.android,
-              fontFamily: 'DisclaimerProbe',
-            ).withAppShapes.withAppSurfaces.copyWith(
-              scaffoldBackgroundColor: backdrop,
-            ),
-        localizationsDelegates: const [
-          AppLocalizations.delegate,
-          AppUiLocalizations.delegate,
-          ...GlobalMaterialLocalizations.delegates,
-        ],
-        supportedLocales: AppLocalizations.delegate.supportedLocales,
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(context).copyWith(highContrast: contrast),
-          child: wrapAppScopes(
-            context,
-            RepaintBoundary(
-              key: capture,
-              child: AuroraAppSurface(motion: false, child: child!),
+      child: Consumer(
+        builder: (context, ref, _) => MaterialApp(
+          navigatorKey: globalState.navigatorKey,
+          locale: followAppLocale
+              ? effectiveAppLocale(
+                  ref.watch(appSettingProvider.select((value) => value.locale)),
+                )
+              : const Locale('en'),
+          theme:
+              ThemeData(
+                brightness: brightness,
+                platform: TargetPlatform.android,
+                fontFamily: 'DisclaimerProbe',
+              ).withAppShapes.withAppSurfaces.copyWith(
+                scaffoldBackgroundColor: backdrop,
+              ),
+          localizationsDelegates: const [
+            AppLocalizations.delegate,
+            AppUiLocalizations.delegate,
+            ...GlobalMaterialLocalizations.delegates,
+          ],
+          supportedLocales: AppLocalizations.delegate.supportedLocales,
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(highContrast: contrast),
+            child: wrapAppScopes(
+              context,
+              RepaintBoundary(
+                key: capture,
+                child: AuroraAppSurface(motion: false, child: child!),
+              ),
             ),
           ),
+          home: const Scaffold(body: SizedBox.shrink()),
         ),
-        home: const Scaffold(body: SizedBox.shrink()),
       ),
     ),
   );
@@ -204,6 +211,57 @@ void main() {
       await GlassInk.prepare().timeout(const Duration(seconds: 30));
     }
   });
+
+  testWidgets(
+    'language can be selected before consent without accepting terms',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final host = await _mount(
+        tester,
+        Brightness.light,
+        LiquidGlassMode.none,
+        Colors.white,
+        followAppLocale: true,
+      );
+      try {
+        final before = host.container
+            .read(appSettingProvider)
+            .acceptedDisclaimerVersion;
+        bool? outcome;
+        final consent = requestDisclaimerConsent().then((value) {
+          outcome = value;
+          return value;
+        });
+        await tester.pumpAndSettle();
+        expect(find.text('Language'), findsOneWidget);
+        expect(outcome, isNull);
+        await tester.tap(find.text('Language'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('简体中文').last);
+        await tester.pumpAndSettle();
+        expect(host.container.read(appSettingProvider).locale, 'zh_CN');
+        expect(find.text('免责声明'), findsOneWidget);
+        expect(find.text('数据收集与隐私'), findsOneWidget);
+        expect(outcome, isNull);
+        expect(
+          host.container.read(appSettingProvider).acceptedDisclaimerVersion,
+          before,
+        );
+        globalState.navigatorKey.currentState!.pop(false);
+        await tester.pumpAndSettle();
+        expect(await consent, isFalse);
+        expect(
+          host.container.read(appSettingProvider).acceptedDisclaimerVersion,
+          before,
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        host.container.dispose();
+      }
+    },
+  );
 
   for (final brightness in Brightness.values) {
     for (final aurora in [false, true]) {

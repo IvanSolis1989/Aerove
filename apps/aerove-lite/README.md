@@ -6,8 +6,7 @@ Build-root reference for the native Android product. Lite has not had its first 
 
 **On this page** · [Development](#development) · [Ownership and behavior](#ownership-and-behavior) · [Licenses](#licenses)
 
-Independent Android application: Kotlin/Jetpack Compose, Backdrop and a pinned Rust/meow-rs core (migration in progress). The Flutter/Go Aerove
-application remains a separate product. This directory is the actual Lite application; `../../experiments/aerove-lite-renderer`
+Independent Android application: shared Flutter client UI, native Android platform integration and a pinned Rust/meow-rs core (migration in progress). The former Compose renderer is historical. Standard uses the same client UI with the official Mihomo core and remains a separate product. This directory is the actual Lite application; `../../experiments/aerove-lite-renderer`
 is an earlier, frozen experiment and is not a dependency.
 
 Android 13 (API 33) is the minimum. The production ABI is ARM64. The `x86_64` build exists for isolated emulator tests.

@@ -977,8 +977,19 @@ class LiteReleaseNotesTests(unittest.TestCase):
         self.assertIn(ENTRIES, rendered)
         self.assertNotIn(STATUS, rendered)
         for value in (TAG, INFO["source"], INFO["tree"], INFO["workflow"],
-                      "run `123`，attempt `2`", notes.BEGIN, notes.END):
+                      "run `123`, attempt `2`", notes.BEGIN, notes.END):
             self.assertIn(value, rendered)
+
+    def test_language_selection_keeps_original_entries_and_english_default(self):
+        rendered = notes.render("## 待发布\n" + ENTRIES, TAG, INFO, 123, 2)
+        self.assertIn("<details>\n<summary>简体中文", rendered)
+        self.assertIn(ENTRIES, rendered.split("<details>", 1)[1].split("</details>", 1)[0])
+        self.assertIn("Acceptance workflow:", rendered)
+        english = notes.render("## Unreleased\n- Preserve exact source identity.", TAG, INFO, 123, 2)
+        self.assertNotIn("<details>", english)
+        self.assertIn("- Preserve exact source identity.", english)
+        with self.assertRaises(ValueError):
+            notes.render("## Unreleased\n- One\n## 待发布\n- Two", TAG, INFO, 123, 2)
 
     def test_current_changelog_renders_only_implemented_entries(self):
         path = Path(__file__).resolve().parents[3] / notes.CHANGELOG

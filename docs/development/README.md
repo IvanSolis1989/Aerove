@@ -1,3 +1,36 @@
+# Development
+
+[Documentation](../README.md) / Development
+
+Navigation for maintainers of both products. Detailed rules remain in their authoritative files rather than being copied into multiple weaker summaries.
+
+## Before making changes
+
+1. Read the [repository layout policy](REPOSITORY_LAYOUT.md) and establish ownership and working directories.
+2. Check [project context](../../.agents/project.md) and [engineering rules](../../.agents/rules.md).
+3. Select applicable [build and verification commands](../../.agents/commands.md). Product acceptance is governed by the [shared requirements](../shared/ACCEPTANCE.md).
+
+Standard commands run from `apps/aerove/`; Lite commands run from `apps/aerove-lite/`. Repository maintenance tools run from the repository root.
+
+## Architecture, versions and sources
+
+- [Independent maintenance architecture](INDEPENDENCE.md)
+- [Independent version policy](VERSIONING.md): installation identity and promotion of the original accepted artifact.
+- [Upstream sources and acknowledgements](upstreams.md): fixed sources, use and the authoritative attribution inventory.
+
+## Collaboration and automation
+
+- [Documentation style](DOCUMENTATION_STYLE.md)
+- [Issue forms and AI assistance](issue-assistant.md)
+- [Official channel automation](TELEGRAM.md)
+- [Repository tooling](../../tooling/README.md)
+- [English-first language policy and coverage](LANGUAGE_COVERAGE.md)
+
+Engineering rules remain in `.agents/`. [Standard build root](../../apps/aerove/README.md) · [Lite build root](../../apps/aerove-lite/README.md)
+
+<details>
+<summary>简体中文</summary>
+
 [文档](../README.md) → 开发维护
 
 # 开发维护
@@ -30,3 +63,5 @@
 ## 相关下一步
 
 [标准版工程](../../apps/aerove/README.md) · [Lite 工程](../../apps/aerove-lite/README.md)
+
+</details>

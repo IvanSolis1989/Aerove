@@ -26,6 +26,7 @@ class MeowTunnelBackendTest {
         var starts = 0; var stops = 0; var payload = ""; var descriptor = 0
         var statusReads = 0; var statusFailure: Throwable? = null
         var startupReads = 0; var startupReadFailure: Throwable? = null
+        var startupSnapshot: MeowStartupSnapshot? = null
         var parked = false;var tunMode = false
         var port = 49152
         val policy = MeowPolicyFixture()
@@ -35,7 +36,7 @@ class MeowTunnelBackendTest {
         }
         override fun awaitReady(handle: Long) = onReady()
         override fun startupDiagnostic(handle: Long): MeowStartupSnapshot? {
-            startupReads++; startupReadFailure?.let { throw it }; return null
+            startupReads++; startupReadFailure?.let { throw it }; return startupSnapshot
         }
         override fun awaitExit(handle: Long) = onExit()
         override fun stop(handle: Long) { stops++;onStop() }
@@ -454,6 +455,25 @@ class MeowTunnelBackendTest {
             assertEquals(1, f.native.stops); assertEquals(0, f.released); assertEquals(2, f.native.statusReads)
         }
         f.native.onStop = {}; f.backend.stopAndJoinRetained()
+    }
+    @Test fun realReadinessFailureCarriesSafeNativeEvidenceAfterCleanup() = runBlocking<Unit> {
+        val f = Fixture(); val original = IllegalStateException("password=private")
+        f.native.onReady = { throw original }
+        f.native.startupSnapshot = MeowStartupSnapshot("1", MeowStartupPhase.failed, false, false, false,
+            MeowStartupStage.configLoad, false, MeowStartupPrimary(MeowStartupStage.configLoad,
+                MeowStartupCode.configLoadFailed, MeowStartupIoKind.other, MeowStartupCauseType.dnsBootstrapResolve),
+            MeowStartupCleanup.complete)
+        val session = f.backend.open(f.plan)
+        try { supervisorScope { async(Dispatchers.IO) { session.awaitReady() }.await() }; fail("must preserve failure") }
+        catch (failure: IllegalStateException) {
+            assertTrue(generateSequence<Throwable>(failure) { it.cause }.any { it === original })
+            val evidence = generateSequence<Throwable>(failure) { it.cause }.flatMap { it.suppressed.asSequence() }
+                .filterIsInstance<MeowStartupFailureEvidence>().first()
+            assertSame(evidence, original.suppressed.filterIsInstance<MeowStartupFailureEvidence>().single())
+            assertTrue(evidence.label().contains("dnsBootstrapResolve"))
+            assertFalse(evidence.label().contains("password"))
+        }
+        assertEquals(1, f.native.stops); assertEquals(1, f.released)
     }
     @Test fun safeStartupReadbackFailuresDoNotReplaceOriginalReadinessOrCleanupFailures() = runBlocking<Unit> {
         val f = Fixture(); val original = java.io.IOException("password=private https://private.invalid")

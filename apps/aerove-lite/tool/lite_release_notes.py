@@ -52,16 +52,25 @@ def render(markdown, tag, info, acceptance_run, acceptance_attempt, previous_mar
             or type(info.get("run_number")) is not int or info["run_number"] < 1):
         raise ValueError("Acceptance attempt does not match Build Info")
     sections = _sections(markdown)
-    notes = sections.get("待发布")
+    if "Unreleased" in sections and "待发布" in sections:
+        raise ValueError("Lite changelog must have one pending language source")
+    notes = sections.get("Unreleased") or sections.get("待发布")
     if not notes:
         raise ValueError("Lite changelog must contain real pending release notes")
     notes = _release_entries(notes)
-    previous = _sections(previous_markdown).get("待发布")
+    previous_sections = _sections(previous_markdown)
+    previous = previous_sections.get("Unreleased") or previous_sections.get("待发布")
     if previous and notes == _release_entries(previous):
         raise ValueError("Lite pending release notes are unchanged from the previous release source")
+    if re.search(r"[\u4e00-\u9fff]", notes):
+        notes = ("Original change entries are available in Chinese below; no English translation is claimed.\n\n"
+                 "<details>\n<summary>简体中文 — original change entries</summary>\n\n"
+                 + notes + "\n\n</details>")
     return (f"# AEROVE Lite {tag}\n\n{BEGIN}\n"
-            f"验收工作流：`{info['workflow']}`；run `{acceptance_run}`，attempt `{acceptance_attempt}`。\n\n"
-            f"源码：`{source}`；源码树：`{tree}`。\n\n{notes}\n{END}\n")
+            f"Acceptance workflow: `{info['workflow']}`; run `{acceptance_run}`, attempt `{acceptance_attempt}`.\n\n"
+            f"Source: `{source}`; tree: `{tree}`.\n\n{notes}\n{END}\n\n"
+            "Use only with authorization and in accordance with applicable law. AEROVE does not provide proxy endpoints or subscriptions. "
+            "The GPL-3.0 warranty disclaimer applies; this notice does not restrict license rights.\n")
 
 
 def main():

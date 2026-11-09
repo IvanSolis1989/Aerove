@@ -55,6 +55,16 @@ class AppLocalizations {
     return Localizations.of<AppLocalizations>(context, AppLocalizations);
   }
 
+  /// `For lawful use on networks you are authorized to access. AEROVE is client software, not a provider of proxy servers or subscriptions. No guarantee of availability, performance, or security is made.`
+  String get aboutUsageNotice {
+    return Intl.message(
+      'For lawful use on networks you are authorized to access. AEROVE is client software, not a provider of proxy servers or subscriptions. No guarantee of availability, performance, or security is made.',
+      name: 'aboutUsageNotice',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Rule`
   String get rule {
     return Intl.message('Rule', name: 'rule', desc: '', args: []);

@@ -287,7 +287,7 @@ class ApplicationState extends ConsumerState<Application> {
           },
           scrollBehavior: const BaseScrollBehavior(),
           title: displayAppName,
-          locale: getLocaleForString(locale),
+          locale: effectiveAppLocale(locale),
           supportedLocales: AppLocalizations.delegate.supportedLocales,
           themeMode: themeProps.themeMode,
           theme: watchAppTheme(ref, Brightness.light),

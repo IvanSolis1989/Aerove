@@ -102,12 +102,19 @@ def render_release(markdown, tag, build_info, previous_markdown=''):
     if not re.fullmatch(r'[0-9a-f]{40}', source):
         raise ValueError('BUILD_INFO.json must identify the full source commit')
     notes = notes_for_release(markdown, tag, previous_markdown)
+    if re.search(r'[\u4e00-\u9fff]', notes):
+        notes = ('The original change entries are available in Chinese below; '
+                 'they have not been represented as an English translation.\n\n'
+                 '<details>\n<summary>简体中文 — original change entries</summary>\n\n'
+                 + notes + '\n\n</details>')
     return (
         f'# AEROVE {tag}\n\n'
         f'{BEGIN}\n<!-- aerove:changelog:tag {tag} -->\n{notes}\n{END}\n\n'
-        f'版本：`{version}`\n\n源码：`{source}`\n\n'
-        '适用于 Android ARM64，使用固定测试签名，包名为 `com.follow.clash.dev`。\n\n'
-        '下载后可用 `SHA256SUMS` 核对文件完整性；构建与上游来源见 `BUILD_INFO.json`。\n'
+        f'Version: `{version}`\n\nSource: `{source}`\n\n'
+        'Android ARM64. Refer to `BUILD_INFO.json` for the actual package and signing identity.\n\n'
+        'Verify downloads with `SHA256SUMS`; build and upstream provenance are recorded in `BUILD_INFO.json`.\n\n'
+        'Use only with authorization and in accordance with applicable law. AEROVE does not provide proxy endpoints or subscriptions. '
+        'The GPL-3.0 warranty disclaimer applies; this notice does not restrict license rights.\n'
     )
 
 

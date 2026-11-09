@@ -230,6 +230,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "about": MessageLookupByLibrary.simpleMessage("关于"),
     "aboutTelegramChannel": MessageLookupByLibrary.simpleMessage("Telegram 频道"),
     "aboutTelegramGroup": MessageLookupByLibrary.simpleMessage("Telegram 群组"),
+    "aboutUsageNotice": MessageLookupByLibrary.simpleMessage(
+      "仅用于合法且获得授权的网络访问。AEROVE 是客户端软件，不提供代理节点或订阅服务，不保证可用性、性能或安全性。",
+    ),
     "accessControl": MessageLookupByLibrary.simpleMessage("访问控制"),
     "accessControlAllowDesc": MessageLookupByLibrary.simpleMessage(
       "只允许选中应用进入VPN",

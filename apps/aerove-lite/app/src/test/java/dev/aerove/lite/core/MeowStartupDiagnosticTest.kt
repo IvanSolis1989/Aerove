@@ -49,4 +49,19 @@ class MeowStartupDiagnosticTest {
         val invalid = row().apply { getJSONObject("startup").put("cleanup", "runtimeAndLoadJoinFailure") }
         assertThrows(Exception::class.java) { MeowStartupCodec.decode(invalid.toString()) }
     }
+    @Test fun originalFailureRetainsFiniteEvidenceWithoutChangingIdentityOrExposingMessages() {
+        val snapshot = MeowStartupCodec.decode(row().toString())
+        val secret = "password=https://private.invalid/feed"
+        val original = IllegalStateException(secret)
+        MeowStartupFailureEvidence.attach(original, 7, Result.success(snapshot), Result.success(snapshot))
+        assertEquals(secret, original.message)
+        val evidence = original.suppressed.single() as MeowStartupFailureEvidence
+        assertTrue(evidence.label().contains("configLoad/providerConfigRejected/other"))
+        assertTrue(evidence.label().contains("cleanup=complete"))
+        assertFalse(evidence.label().contains(secret))
+        assertTrue(evidence.stackTrace.isEmpty())
+        val stale = IllegalStateException(secret)
+        MeowStartupFailureEvidence.attach(stale, 8, Result.success(snapshot), Result.failure(original))
+        assertTrue(stale.suppressed.isEmpty())
+    }
 }

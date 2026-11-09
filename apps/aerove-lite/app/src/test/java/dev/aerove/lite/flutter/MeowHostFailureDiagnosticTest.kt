@@ -31,4 +31,20 @@ class MeowHostFailureDiagnosticTest {
         assertFalse(meowFailureLocation("setupConfig", failure).contains(secret))
         assertTrue(diagnostic.length <= 1024)
     }
+    @Test fun uiDiagnosisSurvivesStrippedFramesAndNeverEmitsUntrustedMessages() {
+        val native = dev.aerove.lite.core.MeowStartupSnapshot("7", dev.aerove.lite.core.MeowStartupPhase.failed,
+            false, false, false, dev.aerove.lite.core.MeowStartupStage.configLoad, false,
+            dev.aerove.lite.core.MeowStartupPrimary(dev.aerove.lite.core.MeowStartupStage.configLoad,
+                dev.aerove.lite.core.MeowStartupCode.configLoadFailed, dev.aerove.lite.core.MeowStartupIoKind.other,
+                dev.aerove.lite.core.MeowStartupCauseType.dnsBootstrapResolve), dev.aerove.lite.core.MeowStartupCleanup.complete)
+        val original = IllegalStateException("password=https://secret.invalid")
+        original.stackTrace = emptyArray()
+        dev.aerove.lite.core.MeowStartupFailureEvidence.attach(original, 7, Result.success(native), Result.success(native))
+        val text = meowFailureLocation("setupConfig", original)
+        assertTrue(text.contains("native=configLoad/configLoadFailed/other/dnsBootstrapResolve/cleanup=complete"))
+        assertFalse(text.contains("secret.invalid")); assertFalse(text.contains("password"))
+        val missing = IllegalStateException("shared_config_unstable").also { it.stackTrace = emptyArray() }
+        assertTrue(meowFailureLocation("setupConfig", missing).contains("{shared_config_unstable}"))
+        assertFalse(meowFailureLocation("setupConfig", IllegalStateException("shared_config_unstable password=secret")).contains("password"))
+    }
 }

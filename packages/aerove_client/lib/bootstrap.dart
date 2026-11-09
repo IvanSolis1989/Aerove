@@ -157,8 +157,7 @@ class Bootstrap {
     );
     await container.read(lastExitProvider.notifier).load();
     await AppLocalizations.load(
-      getLocaleForString(config.appSettingProps.locale) ??
-          WidgetsBinding.instance.platformDispatcher.locale,
+      effectiveAppLocale(config.appSettingProps.locale),
     );
     await window?.init(version, config.windowProps);
     if (system.isAndroid) {

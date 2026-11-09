@@ -1,3 +1,32 @@
+# AEROVE Standard
+
+[Documentation](../README.md) / Standard
+
+The build root is [apps/aerove](../../apps/aerove/). Flutter and the official Mihomo core support the Android, Windows, macOS and Linux product projects. Available installable assets are determined by each published release, not by the existence of a project directory.
+
+## Get started
+
+1. Select a stable or public preview build on the [project home](../../README.md#download), then read its release notes.
+2. Import a configuration or subscription you are authorized to use, select an outbound and mode, and connect.
+3. Read the behavior references before changing settings. Defaults for new installations are not forced replacements for saved user choices.
+
+## Usage and settings
+
+- [Release history](CHANGELOG.md)
+- [Defaults](defaults.md)
+- [Network behavior](network-defaults.md)
+- [Background behavior](background.md)
+
+## Product and development references
+
+- [Shared appearance specification](../shared/appearance.md)
+- [Independent version policy](../development/VERSIONING.md)
+
+The official Mihomo source pin and replayable adaptations are recorded in `core/mihomo-upstream.json` within the product. Source replay, successful core compilation and actual platform acceptance are distinct claims.
+
+<details>
+<summary>简体中文</summary>
+
 # AEROVE 标准版
 
 [文档](../README.md) / 标准版
@@ -23,3 +52,5 @@
 - [独立版本规则](../development/VERSIONING.md)
 
 官方 Mihomo 固定源码与可重放适配补丁由产品内的 `core/mihomo-upstream.json` 记录。源码重放成功与实际核心编译、平台验收是不同结论。
+
+</details>

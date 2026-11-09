@@ -235,6 +235,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Telegram チャンネル",
     ),
     "aboutTelegramGroup": MessageLookupByLibrary.simpleMessage("Telegram グループ"),
+    "aboutUsageNotice": MessageLookupByLibrary.simpleMessage(
+      "合法かつ許可されたネットワークアクセスに使用してください。AEROVE はクライアントソフトウェアであり、プロキシサーバーやサブスクリプションを提供しません。可用性、性能、安全性は保証されません。",
+    ),
     "accessControl": MessageLookupByLibrary.simpleMessage("アクセス制御"),
     "accessControlAllowDesc": MessageLookupByLibrary.simpleMessage(
       "選択したアプリのみVPNを経由します",

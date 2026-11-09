@@ -1,3 +1,30 @@
+# Documentation
+
+[Project home](../README.md) / Documentation
+
+Start with product usage, development status or engineering references. The two products share client specifications but maintain separate implementations and release identities.
+
+## Products and usage
+
+- **[AEROVE Standard](aerove/README.md)**: application behavior, defaults, background operation and release history.
+- **[AEROVE Lite](aerove-lite/README.md)**: shared Flutter UI, native Android integration, pinned Meow migration and first-release requirements.
+
+## Engineering references
+
+| Topic | Entry point | Authority |
+|---|---|---|
+| Shared UI, functionality and performance requirements | [Shared specifications](shared/README.md) | Current specification |
+| Development, builds and upstream maintenance | [Development](development/README.md) | Current engineering rules |
+| Selection evidence and unresolved technical findings | [Research](research/README.md) | Research evidence, not acceptance |
+| Superseded material and upstream release history | [Archive](archive/README.md) | Historical reference |
+
+Read the [repository layout policy](development/REPOSITORY_LAYOUT.md) before adding files. Temporary logs and candidate artifacts belong outside this documentation directory.
+
+Language rollout is staged: these entry pages and the project README default to English. Some linked detailed specifications, audits and historical release records still contain Chinese; they have not been represented as fully translated. Their technical requirements and evidence remain in force. See [language coverage](development/LANGUAGE_COVERAGE.md).
+
+<details>
+<summary>简体中文</summary>
+
 # 文档导航
 
 [项目首页](../README.md) / 文档
@@ -19,3 +46,5 @@
 | 被替代资料和原项目发行历史 | [历史归档](archive/README.md) | 历史参考 |
 
 新增文件前先阅读[归档规则](development/REPOSITORY_LAYOUT.md)。临时日志和候选产物不进入本目录。
+
+</details>

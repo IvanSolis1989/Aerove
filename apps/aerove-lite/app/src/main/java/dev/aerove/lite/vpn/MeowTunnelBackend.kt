@@ -352,6 +352,7 @@ class MeowTunnelBackend(private val host: Host, private val commands: Commands =
                 val before = observer?.let { runCatching { commands.status(handle) } }
                 try { stop() } catch (cleanup: Throwable) { suppressMeowStartupCleanup(failure, cleanup) }
                 val safeAfter = runCatching { commands.startupDiagnostic(handle) }
+                MeowStartupFailureEvidence.attach(unrecoveredMeowStartupFailure(failure), handle, safeBefore, safeAfter)
                 runCatching { android.util.Log.w("MeowStartup", meowStartupFailureDiagnostic(handle, safeBefore, safeAfter)) }
                 if (observer != null && startupObserver.get() === observer) {
                     val after = runCatching { commands.status(handle) }

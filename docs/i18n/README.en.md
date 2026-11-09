@@ -2,13 +2,11 @@
 <!-- xclash-repository: IvanSolis1989/Aerove -->
 # AEROVE
 
-[Project home](../../README.md) / English
-
-[简体中文](../../README.md) · English
+English · [简体中文](README.zh-CN.md)
 
 An independently maintained proxy client with two products in one repository.
 
-## AEROVE Standard
+## <a name="download"></a>AEROVE Standard
 
 Flutter + Mihomo; Android, Windows, macOS and Linux.
 
@@ -21,22 +19,22 @@ Flutter + Mihomo; Android, Windows, macOS and Linux.
 
 ## AEROVE Lite
 
-Native Android + meow-rs (in development); Android 13+.
+Shared Flutter UI + native Android integration + meow-rs (in development); Android 13 / API 33+.
 
-**Source:** [apps/aerove-lite](../../apps/aerove-lite/) · **Release:** In development and validation
+**Source:** [apps/aerove-lite](../../apps/aerove-lite/) · **Release:** No first public release yet. Test candidates are not release or device acceptance.
 
 Shared UI, interactions and client features must remain identical in both directions. Only capabilities proven unsupported
 by the pinned Rust engine may be deferred. Keep product versions, packages, signing identities and update feeds separate.
 
 - [Standard preview releases](https://github.com/IvanSolis1989/Aerove/releases) (separate from stable latest)
 - [Telegram channel](https://t.me/IvanSolis89) · [Community group](https://t.me/Olympus_Habitue)
-- [Documentation](../README.md)
-- [UI, function and performance contract](../shared/UI_CONTRACT.md)
-- [AEROVE changelog](../aerove/CHANGELOG.md)
-- [Workspace and document policy](../development/REPOSITORY_LAYOUT.md)
+- [Documentation](../../docs/README.md)
+- [UI, function and performance contract](../../docs/shared/UI_CONTRACT.md)
+- [AEROVE changelog](../../docs/aerove/CHANGELOG.md)
+- [Workspace and document policy](../../docs/development/REPOSITORY_LAYOUT.md)
 - [Development commands](../../.agents/commands.md)
 
-## Interface preview
+## <a name="appearance"></a>Interface preview
 
 <!-- aerove:showcase:start -->
 Twelve combinations of the Standard development interface. Click an image for full size. Actual Flutter widgets rendered offline with no profile or connection; not Android device or Lite acceptance.
@@ -80,4 +78,18 @@ This repository uses [GPL-3.0](../../LICENSE); dependencies retain their origina
 
 ---
 
-Next: [Documentation](../README.md) · [Changelog](../aerove/CHANGELOG.md)
+Next: [Documentation](../../docs/README.md) · [Changelog](../../docs/aerove/CHANGELOG.md)
+
+## <a name="start"></a>Get started
+
+1. Select a published Standard build and read its release notes. Back up your data before switching builds.
+2. Import a configuration or subscription that you are authorized to use. AEROVE does not supply proxy nodes or subscription services.
+3. Select an outbound and routing mode, then connect. Android asks for VPN permission on first use.
+
+Routing, DNS, application rules and regional rule sets are configurable technical features. Their presence is not a promise that a service is reachable in any country or network. Review [network behavior](../../docs/aerove/network-defaults.md) and [defaults](../../docs/aerove/defaults.md) before changing them.
+
+## Responsible use and warranty
+
+Use AEROVE only where you have authorization and in accordance with applicable law and service terms. You are responsible for the configurations, endpoints and third-party services you choose. Availability, performance, anonymity and suitability for a particular purpose are not guaranteed. No statement here promises that all data stays on-device or that third-party services collect no data.
+
+The software is provided under [GPL-3.0](../../LICENSE), including its warranty disclaimer. This notice does not restrict rights granted by that license or replace applicable upstream license/NOTICE and source-distribution obligations. See [sources and acknowledgements](../../docs/development/upstreams.md#开源来源与鸣谢).

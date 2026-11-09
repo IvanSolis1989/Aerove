@@ -193,6 +193,8 @@ class DisclaimerView extends StatelessWidget {
 
   List<Widget> _buildTerms(AppLocalizations appLocalizations) {
     return [
+      const AppLanguageSelector(),
+      const SizedBox(height: 12),
       _DisclaimerIntro(text: appLocalizations.disclaimerDesc),
       for (final (index, term) in _terms(appLocalizations).indexed)
         _DisclaimerTerm(

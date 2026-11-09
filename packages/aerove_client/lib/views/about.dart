@@ -199,6 +199,12 @@ class _AboutHero extends StatelessWidget {
                   .copyWith(color: colorScheme.onSurfaceVariant, height: 1.5),
             ),
           ),
+          const SizedBox(height: 12),
+          GlassText(
+            appLocalizations.aboutUsageNotice,
+            textAlign: TextAlign.center,
+            style: AppTextStyle.caption1.of(context),
+          ),
           const SizedBox(height: 20),
           TonalButton(
             size: TonalButtonSize.bar,
