@@ -1,120 +1,95 @@
 <!-- xclash-owned-readme -->
 <!-- xclash-repository: IvanSolis1989/Aerove -->
-<p align="center">
-  <img src="apps/aerove/assets/images/icon.png" width="112" height="112" alt="AEROVE 飘带图标">
-</p>
+# AEROVE
 
-<h1 align="center">AEROVE</h1>
-<p align="center"><strong>看清连接，自在掌控。</strong></p>
-<p align="center">独立维护的代理客户端 · Android 与桌面 · 两款独立产品</p>
-<p align="center">
-  <a href="#download">下载与版本</a> ·
-  <a href="#start">开始使用</a> ·
-  <a href="#appearance">界面预览</a> ·
-  <a href="docs/README.md">文档</a> ·
-  <a href="docs/i18n/README.en.md">English</a>
-</p>
+English · [简体中文](docs/i18n/README.zh-CN.md)
 
-AEROVE 将连接状态、流量、出站模式和配置集中在仪表盘中，提供分层卡片与可编辑布局。
-标准版采用 Flutter 与官方 Mihomo，保留 Android、Windows、macOS、Linux 工程；
-Lite 采用原生 Android 与 meow-rs，面向 Android 13 及以上设备，正在开发验证中。
+An independently maintained proxy client with two products in one repository.
 
-## <a name="download"></a>选择适合你的版本
+## <a name="download"></a>AEROVE Standard
 
-### AEROVE 标准版
+Flutter + Mihomo; Android, Windows, macOS and Linux.
 
-**现在开始使用，优先选择稳定版。** Android 提供 ARM64 APK；桌面平台的可用安装包以各次发行资产为准。
-
-<a href="https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk"><img src="docs/assets/readme/download-stable.svg" width="248" height="72" alt="下载稳定版 APK，Android ARM64"></a>
-<a href="https://github.com/IvanSolis1989/Aerove/releases"><img src="docs/assets/readme/browse-releases.svg" width="248" height="72" alt="浏览全部发行、版本说明与安装包"></a>
-
-[稳定版 APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk) · [全部发行](https://github.com/IvanSolis1989/Aerove/releases)
+**Source:** [apps/aerove](apps/aerove/) · **Release:** [Stable APK](https://github.com/IvanSolis1989/Aerove/releases/latest/download/Aerove-android-arm64.apk)
 
 <!-- aerove:releases:start -->
-- **稳定版** · [0.13.0](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.13.0%2B2026102340) · 构建 `2026102340` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.13.0%2B2026102340/Aerove-android-arm64.apk)
-- **公开预览版** · [0.13.0-beta.4](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.13.0-beta.4%2B2026102336) · 构建 `2026102336` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.13.0-beta.4%2B2026102336/Aerove-android-arm64.apk)
+- **Stable** · [0.13.0](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.13.0%2B2026102340) · Build `2026102340` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.13.0%2B2026102340/Aerove-android-arm64.apk)
+- **Public preview** · [0.13.0-beta.4](https://github.com/IvanSolis1989/Aerove/releases/tag/v0.13.0-beta.4%2B2026102336) · Build `2026102336` · [Android ARM64 APK](https://github.com/IvanSolis1989/Aerove/releases/download/v0.13.0-beta.4%2B2026102336/Aerove-android-arm64.apk)
 <!-- aerove:releases:end -->
 
-预览版与稳定版属于同一标准版产品，安装前请确认版本与数据备份；稳定版入口持续指向稳定发行。
-版本变化与兼容说明见[更新记录](docs/aerove/CHANGELOG.md)。
+## AEROVE Lite
 
-### AEROVE Lite
+Shared Flutter UI + native Android integration + meow-rs (in development); Android 13 / API 33+.
 
-**尚未首发。** 原生 Android + meow-rs，最低 Android 13 / API 33。Lite 与标准版使用独立安装包、数据和更新入口；
-共享界面与客户端功能按同一契约开发，完成验证后独立发行。
+**Source:** [apps/aerove-lite](apps/aerove-lite/) · **Release:** No first public release yet. Test candidates are not release or device acceptance.
 
-关注 [Lite 产品说明](docs/aerove-lite/README.md)与[开发进展](docs/aerove-lite/core/meow-migration.md)。当前没有公开 Lite 安装包。
+Shared UI, interactions and client features must remain identical in both directions. Only capabilities proven unsupported
+by the pinned Rust engine may be deferred. Keep product versions, packages, signing identities and update feeds separate.
 
-## <a name="start"></a>从安装到连接
+- [Standard preview releases](https://github.com/IvanSolis1989/Aerove/releases) (separate from stable latest)
+- [Telegram channel](https://t.me/IvanSolis89) · [Community group](https://t.me/Olympus_Habitue)
+- [Documentation](docs/README.md)
+- [UI, function and performance contract](docs/shared/UI_CONTRACT.md)
+- [AEROVE changelog](docs/aerove/CHANGELOG.md)
+- [Workspace and document policy](docs/development/REPOSITORY_LAYOUT.md)
+- [Development commands](.agents/commands.md)
 
-1. **安装应用**：从上方标准版发行页面选择安装包，阅读版本说明后安装。
-2. **添加配置**：打开配置页面，导入自己准备的配置或订阅。AEROVE 不提供节点或订阅服务。
-3. **选择出口并连接**：选择配置、节点与出站模式，启动连接；Android 首次连接时按系统提示授权 VPN。
-
-连接后可在仪表盘查看状态与流量。默认网络策略和后台行为见[标准版说明](docs/aerove/README.md)。
-
-## <a name="appearance"></a>让连接状态一目了然
-
-**仪表盘与布局**　查看连接状态、网络速度、累计流量和当前配置，按自己的习惯编辑卡片布局。
-
-**主题与材质**　简约纯色、柔光磨砂、流光清透，配合随选单色、灵动极光与浅深色模式。
-两款产品以[共同外观规格](docs/shared/appearance.md)为目标，Lite 的完整呈现仍在验证中。
+## <a name="appearance"></a>Interface preview
 
 <!-- aerove:showcase:start -->
-标准版开发界面的十二种组合，点击图片查看原图。来自实际 Flutter 组件的离线单屏渲染，呈现空配置、未连接状态；不作为 Android 真机或 Lite 验收。
+Twelve combinations of the Standard development interface. Click an image for full size. Actual Flutter widgets rendered offline with no profile or connection; not Android device or Lite acceptance.
 
-### 简约纯色
+### Solid
 
-**经典单色**
+**Classic monochrome**
 
-<a href="docs/assets/screenshots/showcase/solid-classic-light.png"><img src="docs/assets/screenshots/showcase/solid-classic-light.png" width="300" alt="简约纯色 · 经典单色 · 浅色"></a> <a href="docs/assets/screenshots/showcase/solid-classic-dark.png"><img src="docs/assets/screenshots/showcase/solid-classic-dark.png" width="300" alt="简约纯色 · 经典单色 · 深色"></a>
+<a href="docs/assets/screenshots/showcase/solid-classic-light.png"><img src="docs/assets/screenshots/showcase/solid-classic-light.png" width="300" alt="Solid · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase/solid-classic-dark.png"><img src="docs/assets/screenshots/showcase/solid-classic-dark.png" width="300" alt="Solid · Classic monochrome · Dark"></a>
 
-**灵动极光**
+**Aurora**
 
-<a href="docs/assets/screenshots/showcase/solid-aurora-light.png"><img src="docs/assets/screenshots/showcase/solid-aurora-light.png" width="300" alt="简约纯色 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/solid-aurora-dark.png"><img src="docs/assets/screenshots/showcase/solid-aurora-dark.png" width="300" alt="简约纯色 · 灵动极光 · 深色"></a>
+<a href="docs/assets/screenshots/showcase/solid-aurora-light.png"><img src="docs/assets/screenshots/showcase/solid-aurora-light.png" width="300" alt="Solid · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase/solid-aurora-dark.png"><img src="docs/assets/screenshots/showcase/solid-aurora-dark.png" width="300" alt="Solid · Aurora · Dark"></a>
 
-### 柔光磨砂
+### Soft frost
 
-**经典单色**
+**Classic monochrome**
 
-<a href="docs/assets/screenshots/showcase/frost-classic-light.png"><img src="docs/assets/screenshots/showcase/frost-classic-light.png" width="300" alt="柔光磨砂 · 经典单色 · 浅色"></a> <a href="docs/assets/screenshots/showcase/frost-classic-dark.png"><img src="docs/assets/screenshots/showcase/frost-classic-dark.png" width="300" alt="柔光磨砂 · 经典单色 · 深色"></a>
+<a href="docs/assets/screenshots/showcase/frost-classic-light.png"><img src="docs/assets/screenshots/showcase/frost-classic-light.png" width="300" alt="Soft frost · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase/frost-classic-dark.png"><img src="docs/assets/screenshots/showcase/frost-classic-dark.png" width="300" alt="Soft frost · Classic monochrome · Dark"></a>
 
-**灵动极光**
+**Aurora**
 
-<a href="docs/assets/screenshots/showcase/frost-aurora-light.png"><img src="docs/assets/screenshots/showcase/frost-aurora-light.png" width="300" alt="柔光磨砂 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/frost-aurora-dark.png"><img src="docs/assets/screenshots/showcase/frost-aurora-dark.png" width="300" alt="柔光磨砂 · 灵动极光 · 深色"></a>
+<a href="docs/assets/screenshots/showcase/frost-aurora-light.png"><img src="docs/assets/screenshots/showcase/frost-aurora-light.png" width="300" alt="Soft frost · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase/frost-aurora-dark.png"><img src="docs/assets/screenshots/showcase/frost-aurora-dark.png" width="300" alt="Soft frost · Aurora · Dark"></a>
 
-### 流光清透
+### Liquid clear
 
-**经典单色**
+**Classic monochrome**
 
-<a href="docs/assets/screenshots/showcase/clear-classic-light.png"><img src="docs/assets/screenshots/showcase/clear-classic-light.png" width="300" alt="流光清透 · 经典单色 · 浅色"></a> <a href="docs/assets/screenshots/showcase/clear-classic-dark.png"><img src="docs/assets/screenshots/showcase/clear-classic-dark.png" width="300" alt="流光清透 · 经典单色 · 深色"></a>
+<a href="docs/assets/screenshots/showcase/clear-classic-light.png"><img src="docs/assets/screenshots/showcase/clear-classic-light.png" width="300" alt="Liquid clear · Classic monochrome · Light"></a> <a href="docs/assets/screenshots/showcase/clear-classic-dark.png"><img src="docs/assets/screenshots/showcase/clear-classic-dark.png" width="300" alt="Liquid clear · Classic monochrome · Dark"></a>
 
-**灵动极光**
+**Aurora**
 
-<a href="docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="流光清透 · 灵动极光 · 浅色"></a> <a href="docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="流光清透 · 灵动极光 · 深色"></a>
+<a href="docs/assets/screenshots/showcase/clear-aurora-light.png"><img src="docs/assets/screenshots/showcase/clear-aurora-light.png" width="300" alt="Liquid clear · Aurora · Light"></a> <a href="docs/assets/screenshots/showcase/clear-aurora-dark.png"><img src="docs/assets/screenshots/showcase/clear-aurora-dark.png" width="300" alt="Liquid clear · Aurora · Dark"></a>
 
-来源: [`03ee44322fcc81c2348e30f8f312d6b9a1931861`](https://github.com/IvanSolis1989/Aerove/commit/03ee44322fcc81c2348e30f8f312d6b9a1931861) · [完整渲染记录](docs/assets/screenshots/showcase/render-info.json)
+Source: [`03ee44322fcc81c2348e30f8f312d6b9a1931861`](https://github.com/IvanSolis1989/Aerove/commit/03ee44322fcc81c2348e30f8f312d6b9a1931861) · [Render provenance](docs/assets/screenshots/showcase/render-info.json)
 <!-- aerove:showcase:end -->
 
-## 按需深入
+The historical codebase comes from [FlClash](https://github.com/chen08209/FlClash); original attribution and licenses are
+preserved. AEROVE now owns its architecture and release process. Mihomo and meow-rs are independently pinned upstreams. Lite has no public release yet.
+This repository uses [GPL-3.0](LICENSE); dependencies retain their original notices.
 
-- **日常使用**：[标准版说明](docs/aerove/README.md) · [默认设置](docs/aerove/defaults.md) · [网络行为](docs/aerove/network-defaults.md) · [后台行为](docs/aerove/background.md)
-- **跟进变化**：[标准版更新记录](docs/aerove/CHANGELOG.md) · [Lite 进展](docs/aerove-lite/README.md) · [独立版本规则](docs/development/VERSIONING.md)
-- **参与开发**：[开发指南](docs/development/README.md) · [构建命令](.agents/commands.md) · [共享界面与功能契约](docs/shared/UI_CONTRACT.md)
+---
 
-完整目录见[文档导航](docs/README.md)。源码分别位于 [apps/aerove](apps/aerove/) 与 [apps/aerove-lite](apps/aerove-lite/)。
+Next: [Documentation](docs/README.md) · [Changelog](docs/aerove/CHANGELOG.md)
 
-## 交流与参与
+## <a name="start"></a>Get started
 
-[Telegram 频道](https://t.me/IvanSolis89)　／　[Telegram 交流群](https://t.me/Olympus_Habitue)　／　[提交问题或建议](https://github.com/IvanSolis1989/Aerove/issues)
+1. Select a published Standard build and read its release notes. Back up your data before switching builds.
+2. Import a configuration or subscription that you are authorized to use. AEROVE does not supply proxy nodes or subscription services.
+3. Select an outbound and routing mode, then connect. Android asks for VPN permission on first use.
 
-反馈问题时，请附产品名称、版本、系统和复现步骤；日志与配置请先脱敏。
-提交改进前请阅读[贡献约束](AGENTS.md)与[开发指南](docs/development/README.md)。
+Routing, DNS, application rules and regional rule sets are configurable technical features. Their presence is not a promise that a service is reachable in any country or network. Review [network behavior](docs/aerove/network-defaults.md) and [defaults](docs/aerove/defaults.md) before changing them.
 
-## 来源与许可
+## Responsible use and warranty
 
-感谢 [FlClash](https://github.com/chen08209/FlClash) 原作者与贡献者提供的历史代码基础。
-AEROVE 现独立维护产品、版本与发行；标准版采用官方 Mihomo，Lite 选用 meow-rs。
+Use AEROVE only where you have authorization and in accordance with applicable law and service terms. You are responsible for the configurations, endpoints and third-party services you choose. Availability, performance, anonymity and suitability for a particular purpose are not guaranteed. No statement here promises that all data stays on-device or that third-party services collect no data.
 
-完整来源、固定版本、采用方式和版权信息统一维护在[开源来源与鸣谢](docs/development/upstreams.md#开源来源与鸣谢)。
-本仓库遵循 [GPL-3.0](LICENSE)，各依赖保留原有许可证与署名。
+The software is provided under [GPL-3.0](LICENSE), including its warranty disclaimer. This notice does not restrict rights granted by that license or replace applicable upstream license/NOTICE and source-distribution obligations. See [sources and acknowledgements](docs/development/upstreams.md#开源来源与鸣谢).
