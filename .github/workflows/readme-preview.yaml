@@ -21,6 +21,11 @@ on:
         description: main, codex/aerove-shared-client-extraction, or a commit reachable from either branch
         type: string
         default: main
+      locale:
+        description: Language of the actual rendered UI (one isolated gallery per run)
+        type: choice
+        options: [en, zh_CN]
+        default: en
 
 permissions:
   contents: read
@@ -44,6 +49,8 @@ jobs:
       contains(fromJSON('["main","codex/aerove-shared-client-extraction"]'), github.event.workflow_run.head_branch)))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      PREVIEW_LOCALE: ${{ inputs.locale || 'en' }}
     steps:
       - name: Checkout trusted tooling
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -122,12 +129,16 @@ jobs:
               'packages/aerove_client/lib', 'packages/aerove_client/assets', 'packages/aerove_client/shaders', 'apps/aerove/lib', 'apps/aerove/assets'])
           ui_hash = hashlib.sha256(tree).hexdigest()
           harness = hashlib.sha256(Path('tooling/readme_showcase_test.dart').read_bytes()).hexdigest()
-          current_file = Path('docs/assets/screenshots/showcase/render-info.json')
+          locale = os.environ['PREVIEW_LOCALE']
+          if locale not in ('en', 'zh_CN'):
+              raise SystemExit('Unsupported showcase locale')
+          gallery = 'showcase-en' if locale == 'en' else 'showcase'
+          current_file = Path(f'docs/assets/screenshots/{gallery}/render-info.json')
           current = json.loads(current_file.read_text()) if current_file.exists() else {}
           same = (current.get('complete') is True and current.get('source', {}).get('workflowRun') is not None
               and current.get('source', {}).get('uiTreeSha256') == ui_hash
               and current.get('source', {}).get('harness', {}).get('sha256') == harness
-              and current.get('font', {}).get('sha256') == font['sha256'] and current.get('locale') == 'zh_CN')
+              and current.get('font', {}).get('sha256') == font['sha256'] and current.get('locale') == locale)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
               out.write(f'render={str(not same).lower()}\n')
           if same:
@@ -155,7 +166,7 @@ jobs:
         env:
           AEROVE_README_RENDER_DIR: ${{ runner.temp }}/readme-render
           AEROVE_README_FONT: ${{ runner.temp }}/NotoSansCJKsc-Regular.otf
-          AEROVE_README_LOCALE: zh_CN
+          AEROVE_README_LOCALE: ${{ env.PREVIEW_LOCALE }}
           GITHUB_REF_NAME: ${{ steps.source.outputs.branch }}
         run: |
           mkdir -p source/tooling
@@ -182,14 +193,14 @@ jobs:
           node --input-type=module - <<'JS'
           import { validatePreview } from './tooling/readme_sync.mjs';
           const { manifest: m } = validatePreview(process.env.RENDER_DIR);
-          if (m.source.commit !== process.env.SOURCE_SHA || String(m.source.workflowRun) !== process.env.GITHUB_RUN_ID || m.locale !== 'zh_CN' || m.nativeAssets !== false) throw Error('Producer provenance mismatch');
+          if (m.source.commit !== process.env.SOURCE_SHA || String(m.source.workflowRun) !== process.env.GITHUB_RUN_ID || m.locale !== process.env.PREVIEW_LOCALE || m.nativeAssets !== false) throw Error('Producer provenance mismatch');
           JS
 
       - name: Upload twelve PNGs and their manifest
         if: steps.changed.outputs.render == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: AEROVE-readme-preview-attempt-${{ github.run_attempt }}
+          name: AEROVE-readme-preview-${{ env.PREVIEW_LOCALE }}-attempt-${{ github.run_attempt }}
           path: ${{ runner.temp }}/readme-render/
           if-no-files-found: error
           retention-days: 14

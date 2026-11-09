@@ -92,12 +92,12 @@ jobs:
               else:
                   pages = api(f'actions/runs/{run["id"]}/artifacts?per_page=100', True)
                   artifacts = [a for page in pages for a in page['artifacts']]
-                  expected_name = f'AEROVE-readme-preview-attempt-{run["run_attempt"]}'
-                  matches = [a for a in artifacts if a['name'] == expected_name and not a['expired']]
+                  names = {f'AEROVE-readme-preview-{locale}-attempt-{run["run_attempt"]}': locale for locale in ('en', 'zh_CN')}
+                  matches = [a for a in artifacts if a['name'] in names and not a['expired']]
                   if len(matches) > 1:
                       raise SystemExit('Ambiguous preview artifact')
                   if matches:
-                      result.update(gallery='true', run_id=str(run['id']), artifact_name=expected_name)
+                      result.update(gallery='true', run_id=str(run['id']), artifact_name=matches[0]['name'], locale=names[matches[0]['name']])
                   else:
                       print('Producer rendered no new UI artifact; synchronize release metadata only.')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
@@ -125,17 +125,20 @@ jobs:
         env:
           PREVIEW_DIR: ${{ runner.temp }}/readme-preview
           PRODUCER_RUN_ID: ${{ steps.gate.outputs.run_id }}
+          PREVIEW_LOCALE: ${{ steps.gate.outputs.locale }}
         run: |
           node --input-type=module - <<'JS'
-          import { validatePreview } from './tooling/readme_sync.mjs';
+          import { validatePreview, galleryAssets } from './tooling/readme_sync.mjs';
           import { createHash } from 'node:crypto';
           import { existsSync, readFileSync, appendFileSync } from 'node:fs';
           import { execFileSync, spawnSync } from 'node:child_process';
           const { manifest: m } = validatePreview(process.env.PREVIEW_DIR);
           const allowed = ['main', 'codex/aerove-shared-client-extraction'];
-          if (!allowed.includes(m.source.ref) || String(m.source.workflowRun) !== process.env.PRODUCER_RUN_ID || !/^[1-9][0-9]*$/.test(String(m.source.workflowRun)) || m.nativeAssets !== false || m.locale !== 'zh_CN') throw Error('Untrusted producer provenance');
-          const currentFile = 'docs/assets/screenshots/showcase/render-info.json';
+          if (!allowed.includes(m.source.ref) || String(m.source.workflowRun) !== process.env.PRODUCER_RUN_ID || !/^[1-9][0-9]*$/.test(String(m.source.workflowRun)) || m.nativeAssets !== false || m.locale !== process.env.PREVIEW_LOCALE) throw Error('Untrusted producer provenance');
+          const currentFile = `${galleryAssets(m.locale)}/render-info.json`;
+
           const current = existsSync(currentFile) ? JSON.parse(readFileSync(currentFile)) : {};
+          if (existsSync(currentFile) && current.locale !== m.locale) throw Error('Existing showcase locale mismatch');
           const previous = current.source?.workflowRun;
           if (previous != null && !/^[1-9][0-9]*$/.test(String(previous))) throw Error('Invalid existing producer run identity');
           const fresh = previous == null || BigInt(m.source.workflowRun) > BigInt(previous);
@@ -179,7 +182,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git add -- README.md docs/i18n/README.en.md docs/assets/screenshots/showcase
+          git add -- README.md docs/i18n/README.en.md docs/i18n/README.zh-CN.md
+          for gallery in docs/assets/screenshots/showcase docs/assets/screenshots/showcase-en; do
+            if test -d "$gallery"; then git add -- "$gallery"; fi
+          done
           if git diff --cached --quiet; then
             echo 'README metadata and screenshots are already synchronized.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
