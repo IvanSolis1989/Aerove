@@ -300,5 +300,5 @@ fn resource_preflight_rejects_invalid_independent_rows_and_validates_no_geo() {
 }
 
 // Keep framing regressions in the existing resource-fetch acceptance target.
-#[path = "resource_http_framing.rs"]
+#[path = "support/resource_http_framing.rs"]
 mod resource_http_framing;

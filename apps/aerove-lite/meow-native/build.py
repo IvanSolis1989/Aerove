@@ -84,6 +84,11 @@ def added_native_test_proof(output, mode=None):
     return {target: list(cases) for target, cases in native_test_cases(mode).items()}
 
 
+def validate_compile_aggregation(root, targets):
+    if {p.stem for p in (Path(root) / 'tests').glob('*.rs')} != set(targets) - {'lib'}:
+        raise ValueError('Compile aggregation must match every approved Native test target')
+
+
 def run(command, environment, capture=False):
     stem='rustc-version' if command[0]=='rustc' else 'feature-boundary' if '--no-default-features' in command else 'native-tests' if command[1]=='test' else 'native-compile' if '--keep-going' in command else 'native-link'
     result=run_logged(command,ROOT,environment,ROOT/'build'/(stem+'.stdout.log'),ROOT/'build'/(stem+'.stderr.log'),timeout=None)
@@ -229,8 +234,7 @@ def main():
             receipt['bindgenEnvironment']={key:environment[key] for key in ['LIBCLANG_PATH','CLANG_PATH','BINDGEN_EXTRA_CLANG_ARGS_'+args.target]}
             command=['cargo','build','--locked','--release','--target',args.target]
         if not args.target and full_native_suite(policy):
-            if {p.stem for p in (ROOT/'tests').glob('*.rs')} != set(targets)-{'lib'}:
-                raise ValueError('Compile aggregation must match every approved Native test target')
+            validate_compile_aggregation(ROOT, targets)
             receipt['compileAggregationCommand']=['cargo','build','--locked','--tests','--keep-going']
             receipt['compileAggregationExit']=None
             try:

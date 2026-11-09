@@ -678,4 +678,35 @@ class BuildPyRequirementTests(unittest.TestCase):
         self.assertEqual(3,source.count('full_native_suite(policy)'))
         for mode in ['policy-runtime-resource-health-v1','policy-runtime-mrs-reader-v1','policy-runtime-provider-reader-v1']:self.assertNotIn(mode,source)
 
+class CompileTargetInventoryTests(unittest.TestCase):
+    def test_actual_native_inventory_matches_approved_targets(self):
+        policy = build_policy.load_policy(build.ROOT)
+        self.assertEqual(set(policy['targets']) - {'lib'},
+                         {p.stem for p in (build.ROOT / 'tests').glob('*.rs')})
+
+    def test_production_inventory_gate_rejects_missing_and_unapproved_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'tests' / 'support').mkdir(parents=True)
+            (root / 'tests' / 'resource_fetch.rs').write_text('// declared target')
+            (root / 'tests' / 'support' / 'framing.rs').write_text('// included test module')
+            targets = ['lib', 'resource_fetch']
+            build.validate_compile_aggregation(root, targets)
+            extra = root / 'tests' / 'framing.rs'
+            extra.write_text('// unexpected Cargo auto-discovered target')
+            with self.assertRaisesRegex(ValueError, 'every approved Native test target'):
+                build.validate_compile_aggregation(root, targets)
+            extra.unlink()
+            (root / 'tests' / 'resource_fetch.rs').unlink()
+            with self.assertRaisesRegex(ValueError, 'every approved Native test target'):
+                build.validate_compile_aggregation(root, targets)
+
+    def test_http_regressions_are_included_once_in_the_resource_target(self):
+        build.validate_compile_aggregation(build.ROOT, build_policy.load_policy(build.ROOT)['targets'])
+        parent = (build.ROOT / 'tests/resource_fetch.rs').read_text()
+        self.assertEqual(1, parent.count('#[path = "support/resource_http_framing.rs"]'))
+        self.assertEqual(1, parent.count('mod resource_http_framing;'))
+        self.assertTrue((build.ROOT / 'tests/support/resource_http_framing.rs').is_file())
+        self.assertFalse((build.ROOT / 'tests/resource_http_framing.rs').exists())
+
 if __name__=='__main__':unittest.main()
