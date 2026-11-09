@@ -42,7 +42,7 @@ jobs:
           if e.get('APK_ONLY') == 'true':
               flags = ('PUBLISH_RELEASE', 'BUILD_APK', 'PREPARE_SOURCES', 'VERIFICATION_RECHECK', 'MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS')
               if (e.get('GITHUB_EVENT_NAME') != 'workflow_dispatch' or e.get('GITHUB_REPOSITORY') != 'IvanSolis1989/Aerove'
-                      or e.get('GITHUB_REF') != 'refs/heads/dot/cloud-j316-checkpoint-20261108'
+                      or e.get('GITHUB_REF') not in ('refs/heads/dot/cloud-j316-checkpoint-20261108', 'refs/heads/dot/english-public-docs-20261109')
                       or accepted or e.get('ORIGINAL_BUILD_RUN') or e.get('NATIVE_TEST_FILTER')
                       or e.get('DIAGNOSTIC_TARGET', '') not in ('', 'none')
                       or any(e.get(key) == 'true' for key in flags)):
@@ -2416,7 +2416,7 @@ jobs:
         RESULTS: ${{ toJSON(needs) }}
       run: python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); assert all(x["result"]=="success" for x in results.values()), results'
   apk_only_candidate:
-    if: ${{ inputs.apk_only && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' && needs.promotion_request.result == 'success' }}
+    if: ${{ inputs.apk_only && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' || github.ref == 'refs/heads/dot/english-public-docs-20261109') && needs.promotion_request.result == 'success' }}
     needs: [promotion_request, resolve, verify, flutter_host_preflight, build_arm, build_x86]
     runs-on: ubuntu-24.04
     timeout-minutes: 2

@@ -1,6 +1,7 @@
 """APK-only admission and job graph safety; no producer or Android process is launched."""
 import json
 import os
+import re
 from pathlib import Path
 import unittest
 import tempfile
@@ -10,6 +11,7 @@ import yaml
 ROOT=Path(__file__).resolve().parents[3]
 WORKFLOW=ROOT/'.github/workflows/aerove-lite.yaml'
 ALLOWED={'promotion_request','resolve','verify','flutter_host_preflight','build_arm','build_x86','apk_only_candidate'}
+REFS={'refs/heads/dot/cloud-j316-checkpoint-20261108', 'refs/heads/dot/english-public-docs-20261109'}
 BASE=dict(APK_ONLY='true',GITHUB_EVENT_NAME='workflow_dispatch',GITHUB_REPOSITORY='IvanSolis1989/Aerove',GITHUB_REF='refs/heads/dot/cloud-j316-checkpoint-20261108',DIAGNOSTIC_TARGET='none')
 class ApkOnlyWorkflowTests(unittest.TestCase):
     @classmethod
@@ -21,14 +23,16 @@ class ApkOnlyWorkflowTests(unittest.TestCase):
     def admit(self, environment):
         with patch.dict(os.environ,environment,clear=True):exec(self.guard,{})
     def test_exact_isolated_dispatch_and_legacy_default(self):
-        self.admit(BASE)
+        for ref in REFS:
+            with self.subTest(ref=ref):self.admit(dict(BASE,GITHUB_REF=ref))
         self.admit(dict(BASE,APK_ONLY='false',GITHUB_REF='refs/heads/main'))
-        for key,value in [('GITHUB_EVENT_NAME','push'),('GITHUB_REPOSITORY','other/repository'),('GITHUB_REF','refs/heads/main'),('GITHUB_REF','refs/heads/other')]:
+        for key,value in [('GITHUB_EVENT_NAME','push'),('GITHUB_REPOSITORY','other/repository'),('GITHUB_REF','refs/heads/main'),('GITHUB_REF','refs/heads/other'),('GITHUB_REF','refs/heads/dot/english-public-docs-20261109-extra'),('GITHUB_REF','refs/tags/dot/english-public-docs-20261109'),('GITHUB_REF','refs/heads/dot/cloud-j316-checkpoint-20261108-extra')]:
             with self.subTest(key=key,value=value),self.assertRaises(SystemExit):self.admit(dict(BASE,**{key:value}))
     def test_every_conflicting_mode_is_rejected(self):
         flags=('PUBLISH_RELEASE','BUILD_APK','PREPARE_SOURCES','VERIFICATION_RECHECK','MEOW_HOST_ONLY','QA84_ONLY','QA79_ONLY','CLIENT_PREFLIGHT','NATIVE_PREFLIGHT','NATIVE_TEST_SERIAL','NATIVE_UNDERLAY_TESTS','NATIVE_TEST_STACKS')
         for flag in flags:
-            with self.subTest(flag=flag),self.assertRaises(SystemExit):self.admit(dict(BASE,**{flag:'true'}))
+            for ref in REFS:
+                with self.subTest(flag=flag,ref=ref),self.assertRaises(SystemExit):self.admit(dict(BASE,GITHUB_REF=ref,**{flag:'true'}))
         for key,value in [('ACCEPTED_BUILD_RUN','123'),('ORIGINAL_BUILD_RUN','123'),('NATIVE_TEST_FILTER','one_test')]:
             with self.subTest(key=key),self.assertRaises(SystemExit):self.admit(dict(BASE,**{key:value}))
         trigger=self.workflow.get('on',self.workflow.get(True))
@@ -52,6 +56,13 @@ class ApkOnlyWorkflowTests(unittest.TestCase):
         job=self.jobs['apk_only_candidate']
         self.assertEqual(set(job['needs']),ALLOWED-{'apk_only_candidate'})
         self.assertNotIn('always()',job['if'])
+        self.assertEqual(set(re.findall(r"github.ref == '([^']+)'", job['if'])),REFS)
+        self.assertIn("github.event_name == 'workflow_dispatch'",job['if'])
+        self.assertIn("needs.promotion_request.result == 'success'",job['if'])
+        self.assertNotIn('startsWith',job['if'])
+        self.assertNotIn('contains',job['if'])
+        expected_refs="(github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' || github.ref == 'refs/heads/dot/english-public-docs-20261109')"
+        self.assertEqual(job['if'],"${{ inputs.apk_only && github.event_name == 'workflow_dispatch' && "+expected_refs+" && needs.promotion_request.result == 'success' }}")
         body=job['steps'][0]['run'];self.assertIn("all(row['result'] == 'success'",body)
         for marker in ['androidExecuted=False','accepted=False','fullAcceptance=False','releaseAccepted=False','promotionAccepted=False']:
             self.assertIn(marker,body)
