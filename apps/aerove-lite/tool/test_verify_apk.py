@@ -1446,15 +1446,13 @@ class BundledScriptApkTests(unittest.TestCase):
             module.verify(self.path, "x86_64", Path(self.root.name), {}, {})
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 
 class CounterEpochArtifactTests(unittest.TestCase):
-    def test_dns_diagnostic_overlay_identity_is_exact_across_build_and_apk(self):
+    def test_resource_http_overlay_identity_is_exact_across_build_and_apk(self):
         import sys
-        producer_spec = importlib.util.spec_from_file_location("dns_build_policy", module.MEOW_ROOT / "build_policy.py")
+        producer_spec = importlib.util.spec_from_file_location("resource_http_build_policy", module.MEOW_ROOT / "build_policy.py")
         sys.path.insert(0, str(module.MEOW_ROOT))
         self.addCleanup(lambda: sys.path.remove(str(module.MEOW_ROOT)))
         producer = importlib.util.module_from_spec(producer_spec)
@@ -1467,9 +1465,15 @@ class CounterEpochArtifactTests(unittest.TestCase):
         self.assertEqual(module.COUNTER_EPOCH_OVERLAY_SHA256, actual)
         self.assertEqual(policy["overlaySha256"], actual)
         self.assertEqual(module.native_identity(module.MEOW_ROOT)["meow_overlay_sha256"], actual)
-        for invalid in ("0" * 64, "cae49527f4f1b55dffb5b57dd92a0a0916772c4f454f5538e19ef0ed62248911"):
-            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "exact approved proof mode/overlay"):
-                module.validate_selection_owner_source(dict(policy, overlaySha256=invalid))
+        for validator in (producer.validate_selection_owner_source, module.validate_selection_owner_source):
+            validator(policy)
+            for invalid in ("0" * 64, "83ce4b54cb8d5bcc0d364503d8b6aa46c5fc3777eb2361fbe38e18361d0d04d3",
+                            "cae49527f4f1b55dffb5b57dd92a0a0916772c4f454f5538e19ef0ed62248911"):
+                with self.subTest(validator=validator.__module__, invalid=invalid), self.assertRaisesRegex(ValueError, "exact approved proof mode/overlay"):
+                    validator(dict(policy, overlaySha256=invalid))
+            for mode in (None, module.SELECTION_STALE_MODE, "policy-runtime-v1"):
+                with self.subTest(validator=validator.__module__, mode=mode), self.assertRaisesRegex(ValueError, "exact approved proof mode/overlay"):
+                    validator(dict(policy, coreTests=mode))
 
     def test_counter_source_retains_old_proofs_and_rejects_missing_new_owner_evidence(self):
         import copy
@@ -1488,3 +1492,7 @@ class CounterEpochArtifactTests(unittest.TestCase):
             module.validate_native_receipt(bad,root=module.MEOW_ROOT)
         with self.assertRaisesRegex(ValueError,'exact approved proof mode/overlay'):
             module.validate_selection_owner_source(dict(policy,overlaySha256=module.SELECTION_STALE_OVERLAY_SHA256))
+
+
+if __name__ == "__main__":
+    unittest.main()
