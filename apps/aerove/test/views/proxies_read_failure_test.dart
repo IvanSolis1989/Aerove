@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/method.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 
+import '../helpers/app_paths.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
 
@@ -54,7 +56,14 @@ Future<List<Group>> _read(_MockCore core) => core.getProxiesGroups(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  late Directory home;
   setUpAll(() => registerFallbackValue(ProxiesSortType.none));
+  setUp(() async {
+    home = await Directory.systemTemp.createTemp('aerove-proxies-read-');
+    await useAppPaths(home);
+  });
+  tearDown(() => home.delete(recursive: true));
   testWidgets(
     'initial cleanup retains the first visible error and stopped state',
     (tester) async {

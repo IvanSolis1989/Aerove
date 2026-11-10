@@ -1,4 +1,4 @@
-"""Seed Gradle's checksum-addressed store with the exact official Kotlin JAR."""
+"""Seed Gradle's checksum-addressed store with the exact official Kotlin assets."""
 import argparse
 import hashlib
 import os
@@ -57,6 +57,33 @@ def prefetch(home, download=subprocess.run):
     return target
 
 
+def prefetch_pom(home, download=subprocess.run):
+    filename = f'{MODULE}-{VERSION}.pom'
+    store = home.resolve() / 'caches/modules-2/files-2.1/org.jetbrains.kotlin' / MODULE / VERSION
+    store.mkdir(parents=True, exist_ok=True)
+    # setup-gradle restores this store; never trust its directory name alone.
+    for cached in sorted(store.glob(f'*/{filename}')):
+        if cached.is_file() and digest(cached, 'sha256') == POM_SHA256:
+            return cached
+    with tempfile.TemporaryDirectory(prefix='prefetch-', dir=store) as staging:
+        candidate = Path(staging) / filename
+        # Both Central hostnames serve the same repository, not independent mirrors.
+        # Use a cacheable URL and curl's exponential backoff / Retry-After handling.
+        download(['curl', '--fail', '--location', '--silent', '--show-error',
+                  '--proto', '=https', '--proto-redir', '=https',
+                  '--connect-timeout', '15', '--max-time', '45',
+                  '--retry', '6', '--retry-max-time', '240',
+                  '--output', str(candidate),
+                  f'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/{MODULE}/{VERSION}/{filename}'],
+                 check=True, timeout=300)
+        if not candidate.is_file() or digest(candidate, 'sha256') != POM_SHA256:
+            raise ValueError('Kotlin POM checksum mismatch; refusing cache publication')
+        target = store / digest(candidate, 'sha1') / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        candidate.replace(target)
+        return target
+
+
 def configure_repository(home, jar, download=subprocess.run):
     if not verified(jar):
         raise ValueError('Unverified Kotlin JAR cannot be installed in the local repository')
@@ -70,13 +97,7 @@ def configure_repository(home, jar, download=subprocess.run):
         staging = Path(staging)
         if not pom.is_file() or digest(pom, 'sha256') != POM_SHA256:
             candidate = staging / pom.name
-            download(['curl', '--fail', '--location', '--silent', '--show-error',
-                      '--proto', '=https', '--proto-redir', '=https',
-                      '--connect-timeout', '15', '--max-time', '45',
-                      '--retry', '3', '--retry-delay', '2', '--retry-max-time', '120',
-                      '--output', str(candidate),
-                      f'https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/{MODULE}/{VERSION}/{pom.name}?download=1'],
-                     check=True, timeout=180)
+            shutil.copyfile(prefetch_pom(home, download), candidate)
             if digest(candidate, 'sha256') != POM_SHA256:
                 raise ValueError('Kotlin POM checksum mismatch; refusing repository publication')
             candidate.replace(pom)
