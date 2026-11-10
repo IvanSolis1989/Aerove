@@ -20,6 +20,125 @@ void main() {
         'efa0b01208868aba8dbb6c59e31bd9670966da88c60141f638744d879d0646ab');
   });
   test(
+    'profile presentation writes preserve the selected source proof',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final storage = await SharedPreferences.getInstance();
+      final home = await Directory.systemTemp.createTemp('source-proof-ui-');
+      final db = Database(NativeDatabase(File('${home.path}/database.sqlite')));
+      try {
+        const profile = Profile(
+          id: 1,
+          autoUpdateDuration: Duration.zero,
+          type: ProfileType.custom,
+          label: 'Selected',
+        );
+        await db.profiles.put(profile.toCompanion());
+        final config = Config(
+          currentProfileId: 1,
+          themeProps: defaultThemeProps,
+          patchClashConfig: newPatchClashConfig('meow-rs'),
+        );
+        final first = await nativeLiteBusinessSource(db, home, storage, config);
+        expect(first['schema'], 4);
+        expect(first['databaseSchema'], 23);
+        Future<Map<String, List<Map<String, dynamic>>>> readRows() async => {
+          for (final name in (first['tables'] as Map).keys.cast<String>())
+            name:
+                (await db
+                        .customSelect('SELECT * FROM "$name" ORDER BY rowid')
+                        .get())
+                    .map((row) => row.data)
+                    .toList(),
+        };
+        final beforeRows = await readRows();
+        for (final schema in [1, 5]) {
+          for (final id in <int?>[null, 1]) {
+            expect(
+              () => nativeLiteSelectedRows(beforeRows, id, proofSchema: schema),
+              throwsA(isA<NativeLiteMigrationException>()),
+            );
+          }
+        }
+        final selection = ProfileSelectionPolicy(
+          sourceStoreSelected: null,
+          requestedStoreSelected: null,
+          binding: ProfileSelectionBinding(1, {}),
+        );
+        final params = SetupParams(
+          selectedMap: {},
+          testUrl: 'https://example.test/probe',
+          dataSourceProof: first,
+        );
+        expect(selection.consumeSql(params, profileId: 1).selectedMap, isEmpty);
+        for (final invalid in [
+          {...first, 'schema': 5},
+          {...first, 'databaseSchema': 22},
+          {...first}..remove('ruleSql'),
+        ]) {
+          expect(
+            () => selection.consumeSql(
+              params.copyWith(dataSourceProof: invalid),
+              profileId: 1,
+            ),
+            throwsStateError,
+          );
+        }
+        final navigated = profile.copyWith(currentGroupName: 'Other group');
+        await db.profiles.put(navigated.toCompanion());
+        expect(
+          await nativeLiteBusinessSource(db, home, storage, config),
+          first,
+        );
+        final afterRows = await readRows();
+        for (final schema in [2, 3]) {
+          expect(
+            nativeLiteSelectedRows(afterRows, 1, proofSchema: schema),
+            isNot(nativeLiteSelectedRows(beforeRows, 1, proofSchema: schema)),
+          );
+        }
+        final businessRows = nativeLiteSelectedRows(afterRows, 1);
+        expect(
+          businessRows['profiles']!.single.containsKey('current_group_name'),
+          false,
+        );
+        expect(
+          businessRows['profiles']!.single.containsKey('unfold_set'),
+          false,
+        );
+        expect(
+          afterRows['profiles']!.single['current_group_name'],
+          'Other group',
+        );
+        final expanded = navigated.copyWith(unfoldSet: {'Other group'});
+        await db.profiles.put(expanded.toCompanion());
+        expect(
+          await nativeLiteBusinessSource(db, home, storage, config),
+          first,
+        );
+        await db.profiles.put(
+          expanded
+              .copyWith(selectedMap: {'Other group': 'DIRECT'})
+              .toCompanion(),
+        );
+        expect(
+          (await nativeLiteBusinessSource(db, home, storage, config))['tables'],
+          isNot(first['tables']),
+        );
+        await db.profiles.put(
+          expanded.copyWith(label: 'Changed business row').toCompanion(),
+        );
+        expect(
+          (await nativeLiteBusinessSource(db, home, storage, config))['tables'],
+          isNot(first['tables']),
+        );
+      } finally {
+        await db.close();
+        await home.delete(recursive: true);
+      }
+    },
+  );
+  test(
     'selected SQLite closure binds real nodes/scripts/files and ignores theme and unrelated profiles',
     () async {
       SharedPreferences.setMockInitialValues({});
@@ -316,6 +435,14 @@ void main() {
           home,
           storage,
           boundConfig,
+        );
+        await db.customStatement(
+          'UPDATE profiles SET current_group_name = ?, unfold_set = ? WHERE id = 3',
+          ['Feed group', '["Feed group"]'],
+        );
+        expect(
+          await nativeLiteBusinessSource(db, home, storage, boundConfig),
+          withResources,
         );
         final unrelatedFilter = boundConfig.copyWith.appSettingProps(
           filters: [

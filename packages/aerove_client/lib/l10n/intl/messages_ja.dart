@@ -1270,6 +1270,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "起動するとここにグループが表示されます",
     ),
     "proxyGroupsCount": m76,
+    "proxyGroupsUnavailable": MessageLookupByLibrary.simpleMessage(
+      "プロキシグループを読み込めませんでした",
+    ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("プロキシプロバイダー"),
     "proxyType": MessageLookupByLibrary.simpleMessage("プロキシタイプ"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("キャッシュを整理"),

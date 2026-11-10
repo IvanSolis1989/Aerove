@@ -6,6 +6,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
+import 'package:fl_clash/providers/proxy_read.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
 import 'package:fl_clash/providers/state.dart';
@@ -360,6 +361,47 @@ void main() {
     container.read(sortNumProvider.notifier).add();
     expect(names('hk'), ['HK 02']);
   });
+
+  for (final width in [400.0, 1200.0]) {
+    test('saved profiles keep Proxies reachable at width $width', () {
+      _profiles(container).replace([Profile.normal()]);
+      container.read(viewSizeProvider.notifier).value = Size(width, 800);
+      container
+          .read(currentPageLabelProvider.notifier)
+          .toPage(PageLabel.proxies);
+      container.listen(navigationStateProvider, (_, _) {});
+
+      for (final initialized in [false, true]) {
+        container.read(initProvider.notifier).value = initialized;
+        container.read(groupsProvider.notifier).value = [];
+        container.read(groupsReadFailedProvider.notifier).value = initialized;
+        expect(
+          container.read(navigationStateProvider).pageLabel,
+          PageLabel.proxies,
+        );
+        expect(
+          container
+              .read(currentNavigationItemsStateProvider)
+              .value
+              .map((item) => item.label),
+          contains(PageLabel.proxies),
+        );
+      }
+
+      container
+          .read(patchClashConfigProvider.notifier)
+          .update((state) => state.copyWith(mode: Mode.direct));
+      expect(
+        container.read(navigationStateProvider).pageLabel,
+        PageLabel.proxies,
+      );
+      _profiles(container).replace([]);
+      expect(
+        container.read(navigationStateProvider).pageLabel,
+        PageLabel.dashboard,
+      );
+    });
+  }
 
   test('navigation providers select items for width and current page', () {
     container

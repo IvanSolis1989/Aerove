@@ -592,6 +592,7 @@
   "restoreAllData": "Restaurer toutes les données",
   "addProfile": "Ajouter un profil",
   "delayTest": "Test de délai",
+  "proxyGroupsUnavailable": "Impossible de charger les groupes de proxys",
   "proxyGroupEmpty": "Le groupe de proxys est vide",
   "confirmExitWindow": "Voulez-vous vraiment quitter la fenêtre actuelle ?",
   "optional": "Facultatif",

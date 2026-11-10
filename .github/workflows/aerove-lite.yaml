@@ -42,7 +42,7 @@ jobs:
           if e.get('APK_ONLY') == 'true':
               flags = ('PUBLISH_RELEASE', 'BUILD_APK', 'PREPARE_SOURCES', 'VERIFICATION_RECHECK', 'MEOW_HOST_ONLY', 'QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS')
               if (e.get('GITHUB_EVENT_NAME') != 'workflow_dispatch' or e.get('GITHUB_REPOSITORY') != 'IvanSolis1989/Aerove'
-                      or e.get('GITHUB_REF') not in ('refs/heads/dot/cloud-j316-checkpoint-20261108', 'refs/heads/dot/english-public-docs-20261109')
+                      or e.get('GITHUB_REF') not in ('refs/heads/dot/cloud-j316-checkpoint-20261108', 'refs/heads/dot/english-public-docs-20261109', 'refs/heads/dot/fix-360-integrated-20261110')
                       or accepted or e.get('ORIGINAL_BUILD_RUN') or e.get('NATIVE_TEST_FILTER')
                       or e.get('DIAGNOSTIC_TARGET', '') not in ('', 'none')
                       or any(e.get(key) == 'true' for key in flags)):
@@ -1039,6 +1039,7 @@ jobs:
         python3 apps/aerove-lite/tool/test_profile_cancel_acceptance.py
         python3 tooling/test_sqlite_hook_prefetch.py
         python3 tooling/test_kotlin_compiler_prefetch.py
+        python3 -B -m unittest discover -s apps/aerove-lite/tool -p test_apk_only_workflow.py -v
     - name: Check workspace layout
       run: python3 tooling/workspace.py check
     - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
@@ -1252,6 +1253,11 @@ jobs:
             for hook in hooks:
                 assert re.search(r'^    ' + hook + r':\s*\n      build_assets: true\s*$', text, re.M), (filename, hook)
         PY
+    - name: Analyze the canonical shared client and both product entries
+      run: |-
+        (cd packages/aerove_client && flutter analyze --no-pub --no-fatal-infos)
+        (cd apps/aerove && flutter analyze --no-pub --no-fatal-infos)
+        (cd apps/aerove-lite && flutter analyze --no-pub --no-fatal-infos)
     - name: Prepare the pinned Standard source required by the existing test hooks and assets
       working-directory: apps/aerove
       run: python3 tool/mihomo_source.py prepare
@@ -1436,6 +1442,15 @@ jobs:
           providers/action_test.dart
           providers/common_action_test.dart
           providers/proxies_action_test.dart
+          providers/state_derived_test.dart
+          core/interface_message_test.dart
+          views/proxies_read_failure_test.dart
+          l10n/localization_contract_test.dart
+          l10n/product_core_copy_test.dart
+          l10n/default_locale_test.dart
+          l10n/app_localizations_test.dart
+          lint/dynamic_message_key_test.dart
+          lint/superellipse_corners_test.dart
           features/profile_update_cancel_view_test.dart
           state_storage/profile_write_test.dart
           providers/database_test.dart
@@ -1510,7 +1525,7 @@ jobs:
             composition='Standard and explicitly selected Lite test entries; core arguments and MeowCoreHandler fixtures retain their own identities',
             results=results, appApkBuilt=False, acceptance=False)
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert len(results) == 42 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        assert len(results) == 51 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
         assert all(r.get('pixelReadback', True) for r in results.values()), 'Host shader pixels were not retained'
         PY
     - name: Execute owned Linux process termination and rule journal recovery
@@ -2416,7 +2431,7 @@ jobs:
         RESULTS: ${{ toJSON(needs) }}
       run: python3 -c 'import json,os; results=json.loads(os.environ["RESULTS"]); assert all(x["result"]=="success" for x in results.values()), results'
   apk_only_candidate:
-    if: ${{ inputs.apk_only && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' || github.ref == 'refs/heads/dot/english-public-docs-20261109') && needs.promotion_request.result == 'success' }}
+    if: ${{ inputs.apk_only && github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dot/cloud-j316-checkpoint-20261108' || github.ref == 'refs/heads/dot/english-public-docs-20261109' || github.ref == 'refs/heads/dot/fix-360-integrated-20261110') && needs.promotion_request.result == 'success' }}
     needs: [promotion_request, resolve, verify, flutter_host_preflight, build_arm, build_x86]
     runs-on: ubuntu-24.04
     timeout-minutes: 2

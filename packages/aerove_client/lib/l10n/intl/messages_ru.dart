@@ -1538,6 +1538,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Группы появятся здесь после запуска ядра",
     ),
     "proxyGroupsCount": m76,
+    "proxyGroupsUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Не удалось загрузить группы прокси",
+    ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Провайдеры прокси"),
     "proxyType": MessageLookupByLibrary.simpleMessage("Тип прокси"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("Очистить кэш"),

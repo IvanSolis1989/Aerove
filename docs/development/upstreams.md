@@ -62,6 +62,8 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 Lite 初始化前状态同步另只读核对同一 `8d4f9744948751f1273fe871e1d05276fac09b0e` 的 [`ServicePlugin.syncState`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/android/app/src/main/kotlin/com/follow/clash/plugins/ServicePlugin.kt) 与 [`ServiceState`](https://github.com/chen08209/FlClash/blob/8d4f9744948751f1273fe871e1d05276fac09b0e/android/app/src/main/kotlin/com/follow/clash/ServiceState.kt)。复用本项目标准版已保留的离线同步合同，在 Lite 原 owner 与严格解码器中适配；未复制上游整段实现或引入依赖，保留既有版权和许可。
 
+代理组读取失败与导航修复检索 `updateGroups`，只读核对 FlClash `be84736605527034689c95bf27828ff27d912c5e` 的 [`providers/actions/proxies.dart`](https://github.com/chen08209/FlClash/blob/be84736605527034689c95bf27828ff27d912c5e/lib/providers/actions/proxies.dart)。该实现同样将读取错误转为空列表，没有可直接复用的修复；本项目在已有共享状态与重试入口区分失败、成功空结果和过期请求，未复制新上游代码或引入依赖。
+
 #### [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo)
 
 **固定版本 / revision：** `v1.19.33` / `3f27ef39f8c96bbfbc8b0b9bb10f5c9ef60149d8`

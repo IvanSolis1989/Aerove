@@ -515,9 +515,13 @@ abstract class CoreHandlerInterface with CoreInterface {
     final data = await _invokeMethod<Map<String, dynamic>>(
       method: CoreMethod.getProxies,
     );
-    return data != null
-        ? ProxiesData.fromJson(data)
-        : const ProxiesData(proxies: {}, all: []);
+    if (data == null) {
+      throw const CoreMethodException(
+        code: 'no_response',
+        message: 'Core did not answer getProxies',
+      );
+    }
+    return ProxiesData.fromJson(data);
   }
 
   @override

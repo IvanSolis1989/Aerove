@@ -592,6 +592,7 @@
   "restoreAllData": "모든 데이터 복원",
   "addProfile": "프로필 추가",
   "delayTest": "지연 테스트",
+  "proxyGroupsUnavailable": "프록시 그룹을 불러올 수 없습니다",
   "proxyGroupEmpty": "프록시 그룹이 비어 있습니다",
   "confirmExitWindow": "현재 창을 닫으시겠습니까?",
   "optional": "선택 사항",

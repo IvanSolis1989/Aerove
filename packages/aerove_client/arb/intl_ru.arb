@@ -592,6 +592,7 @@
   "restoreAllData": "Восстановить все данные",
   "addProfile": "Добавить профиль",
   "delayTest": "Тест задержки",
+  "proxyGroupsUnavailable": "Не удалось загрузить группы прокси",
   "proxyGroupEmpty": "Группа прокси пуста",
   "confirmExitWindow": "Вы уверены, что хотите закрыть текущее окно?",
   "optional": "Необязательно",

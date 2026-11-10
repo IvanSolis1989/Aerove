@@ -84,7 +84,10 @@ internal fun nativeLiteCurrentProfileId(config: JSONObject): Long? {
     require(value is Int || value is Long) { "shared_source_selection_invalid" }
     return (value as Number).toLong()
 }
-internal fun nativeLiteSelectedRows(all: Map<String, List<Map<String, Any?>>>, id: Long?): Map<String, List<Map<String, Any?>>> {
+@JvmOverloads
+internal fun nativeLiteSelectedRows(all: Map<String, List<Map<String, Any?>>>, id: Long?,
+    proofSchema: Int = 4): Map<String, List<Map<String, Any?>>> {
+    require(proofSchema in 2..4) { "shared_source_proof_invalid" }
     if (id == null) return all.mapValues { emptyList() }
     fun same(value: Any?, id: Any?) = value is Number && id is Number && value.toLong() == id.toLong()
     val profile = all.getValue("profiles").single { same(it["id"], id) }
@@ -123,7 +126,10 @@ internal fun nativeLiteSelectedRows(all: Map<String, List<Map<String, Any?>>>, i
     val iconIds = nativeLiteObject(overrides["iconBindings"]).values.mapNotNull { (nativeLiteObject(it)["set"] as? Number)?.toLong() }.toSet()
     val script = if (profile["extend_type"] == "script" && (!custom || overrides["applyExtensionToCustom"] == true)) profile["script_id"] else null
     return linkedMapOf(
-        "profiles" to all.getValue("profiles").filter { (it["id"] as Number).toLong() in profileIds },
+        // Schema 4 excludes presentation only. Existing proofs keep their exact old projection.
+        "profiles" to all.getValue("profiles").filter { (it["id"] as Number).toLong() in profileIds }.map { row ->
+            if (proofSchema == 4) row.filterKeys { it != "current_group_name" && it != "unfold_set" } else row
+        },
         "scripts" to all.getValue("scripts").filter { same(it["id"], script) },
         "rules" to rules,
         "disabled_rules" to all.getValue("disabled_rules").filter { (custom || standard) && same(it["profile_id"], id) },
@@ -302,9 +308,9 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
     val proofSchema = proof.getInt("schema")
     val databaseSchema = proof.getInt("databaseSchema")
     val proofKeys = setOf("schema", "databaseSchema", "configSha256", "setupSha256", "liveSha256", "tables", "files") +
-        if (proofSchema == 3) setOf("ruleSql") else emptySet()
+        if (proofSchema in 3..4) setOf("ruleSql") else emptySet()
     require(proof.keys().asSequence().toSet() == proofKeys &&
-        (databaseSchema == 22 && proofSchema == 2 || databaseSchema == 23 && proofSchema == 3)) { "shared_source_proof_invalid" }
+        (databaseSchema == 22 && proofSchema == 2 || databaseSchema == 23 && proofSchema in 3..4)) { "shared_source_proof_invalid" }
     val phase = NativeLiteDataAuthority.phase(context.filesDir)
     check(phase == "shared" || phase == null && listOf("profiles/index.json", "settings/settings.json", "settings/overrides.json", "settings/builder-resources.yaml", "backups/webdav.json").none { File(context.filesDir, it).exists() }) { "native_data_migration_required" }
     val config = nativeLiteCurrentConfig(context)
@@ -323,7 +329,7 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
             }
         }
         val selectedId = nativeLiteCurrentProfileId(config)
-        val rows = nativeLiteSelectedRows(all, selectedId)
+        val rows = nativeLiteSelectedRows(all, selectedId, proofSchema)
         val tables = proof.getJSONObject("tables")
         check(tables.keys().asSequence().toSet() == rows.keys) { "shared_source_tables_invalid" }
         rows.forEach { (name, values) -> val expected = tables.getJSONObject(name); check(expected.getInt("rows") == values.size && expected.getString("sha256") == nativeLiteJsonHash(values)) { "shared_source_table_changed:$name" } }
@@ -370,7 +376,7 @@ internal fun verifyNativeLiteBusinessSourceReceipt(context: Context, proof: JSON
         }
         definitionSha256=nativeLiteJsonHash(mapOf("schema" to proof.getInt("schema"),
             "setupSha256" to proof.getString("setupSha256"),"tables" to definitions,"files" to nativeLiteList(files)) +
-            if(proofSchema == 3) mapOf("ruleSql" to nativeLiteMap(proof.getJSONObject("ruleSql"))) else emptyMap())
+            if(proofSchema in 3..4) mapOf("ruleSql" to nativeLiteMap(proof.getJSONObject("ruleSql"))) else emptyMap())
     }
     return NativeLiteVerifiedSource(config,checkNotNull(selectedMap),checkNotNull(definitionSha256),providerBindings)
 }

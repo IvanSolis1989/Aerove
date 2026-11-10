@@ -1475,6 +1475,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Groups show up here once the core starts",
     ),
     "proxyGroupsCount": m76,
+    "proxyGroupsUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Could not load proxy groups",
+    ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("Proxy providers"),
     "proxyType": MessageLookupByLibrary.simpleMessage("Proxy type"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("Prune cache"),

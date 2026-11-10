@@ -84,6 +84,27 @@ void main() {
     });
   });
 
+  test('an unanswered proxy read is not a successful empty result', () {
+    expect(
+      core.getProxies(),
+      throwsA(
+        isA<CoreMethodException>().having(
+          (error) => error.code,
+          'code',
+          'no_response',
+        ),
+      ),
+    );
+  });
+
+  test('an explicit empty proxy response remains a valid result', () async {
+    final core = _AnsweringCore(<String, dynamic>{
+      'proxies': <String, dynamic>{},
+      'all': <String>[],
+    });
+    expect(await core.getProxies(), const ProxiesData(proxies: {}, all: []));
+  });
+
   test('an unanswered changeProxy is not reported as applied', () {
     expect(
       core.changeProxy(const ChangeProxyParams(groupName: 'G', proxyName: 'P')),
@@ -153,7 +174,7 @@ class _DisconnectedCore extends _SilentCore {
 class _AnsweringCore extends _SilentCore {
   _AnsweringCore(this.message);
 
-  final String message;
+  final Object message;
 
   @override
   Future<T?> invokeMethod<T>({

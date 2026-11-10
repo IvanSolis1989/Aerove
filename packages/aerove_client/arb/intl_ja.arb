@@ -592,6 +592,7 @@
   "restoreAllData": "すべてのデータを復元",
   "addProfile": "プロファイルを追加",
   "delayTest": "遅延テスト",
+  "proxyGroupsUnavailable": "プロキシグループを読み込めませんでした",
   "proxyGroupEmpty": "プロキシグループが空です",
   "confirmExitWindow": "現在のウィンドウを閉じてもよろしいですか？",
   "optional": "任意",

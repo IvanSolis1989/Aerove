@@ -11,11 +11,11 @@ internal class MeowGeoResourceIntent(val settings: LiteSettings, val runtime: Me
 
 internal fun meowGeoSourceGuard(proof: JSONObject): String {
     require(proof.getInt("schema") == 2 && proof.getInt("databaseSchema") == 22 ||
-        proof.getInt("schema") == 3 && proof.getInt("databaseSchema") == 23 && proof.opt("ruleSql") is JSONObject) { "Current business source proof schema is required" }
+        proof.getInt("schema") in 3..4 && proof.getInt("databaseSchema") == 23 && proof.opt("ruleSql") is JSONObject) { "Current business source proof schema is required" }
     require(proof.getString("setupSha256").matches(Regex("[0-9a-f]{64}"))) { "Invalid setup source hash" }
     proof.getJSONObject("tables");proof.getJSONArray("files")
     return nativeLiteJsonHash(JSONObject().apply {
-        (listOf("schema","setupSha256","tables","files") + if (proof.getInt("schema") == 3) listOf("ruleSql") else emptyList()).forEach { put(it,proof.get(it)) }
+        (listOf("schema","setupSha256","tables","files") + if (proof.getInt("schema") in 3..4) listOf("ruleSql") else emptyList()).forEach { put(it,proof.get(it)) }
     })
 }
 

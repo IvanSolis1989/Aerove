@@ -59,6 +59,7 @@ class ProxiesAction extends _$ProxiesAction {
   final Set<(int, int)> _dirtySelectionMetadata = {};
   final Map<(int, int), int> _selectionMetadataRefreshes = {};
   int _groupsRevision = 0;
+  int _groupsReadRevision = 0;
   int _selectionMetadataRevision = 0;
 
   @override
@@ -70,6 +71,14 @@ class ProxiesAction extends _$ProxiesAction {
         debouncer.cancel(FunctionTag.updateGroups);
         cancelDelayTests();
       }
+    });
+    ref.listen(currentProfileIdProvider, (previous, next) {
+      if (previous == next) return;
+      _groupsRevision++;
+      debouncer.cancel(FunctionTag.updateGroups);
+      cancelDelayTests();
+      ref.read(groupsProvider.notifier).value = [];
+      ref.read(groupsReadFailedProvider.notifier).value = false;
     });
     ref.listen(coreStatusProvider, (_, next) {
       if (next != CoreStatus.connected) {
@@ -168,16 +177,16 @@ class ProxiesAction extends _$ProxiesAction {
   Future<bool> updateGroups() async {
     if (!ref.read(appVisibleProvider)) return false;
     final revision = _groupsRevision;
-    bool readSucceeded = false;
+    final readRevision = ++_groupsReadRevision;
+    bool isCurrent() =>
+        ref.mounted &&
+        ref.read(appVisibleProvider) &&
+        revision == _groupsRevision &&
+        readRevision == _groupsReadRevision;
     try {
-      final groups = await retry<List<Group>>(
+      final groups = await retry<List<Group>?>(
         task: () async {
-          readSucceeded = false;
-          if (!ref.mounted ||
-              !ref.read(appVisibleProvider) ||
-              revision != _groupsRevision) {
-            return <Group>[];
-          }
+          if (!isCurrent()) return null;
           final sortType = ref.read(
             proxiesStyleSettingProvider.select((state) => state.sortType),
           );
@@ -189,38 +198,28 @@ class ProxiesAction extends _$ProxiesAction {
             currentProfileProvider.select((state) => state?.selectedMap ?? {}),
           );
           try {
-            final groups = await _core.getProxiesGroups(
+            return await _core.getProxiesGroups(
               selectedMap: selectedMap,
               sortType: sortType,
               delayMap: delayMap,
               defaultTestUrl: testUrl,
             );
-            readSucceeded = true;
-            return groups;
           } catch (e) {
             commonPrint.log(
               'updateGroups error: $e',
               logLevel: coreFailureLogLevel(e),
             );
-            return [];
+            return null;
           }
         },
-        retryIf: (res) =>
-            res.isEmpty &&
-            ref.mounted &&
-            ref.read(appVisibleProvider) &&
-            revision == _groupsRevision,
+        retryIf: (res) => res == null && isCurrent(),
       );
-      if (ref.mounted &&
-          ref.read(appVisibleProvider) &&
-          revision == _groupsRevision) {
-        ref.read(groupsProvider.notifier).value = groups;
-        return readSucceeded;
+      if (isCurrent()) {
+        ref.read(groupsProvider.notifier).value = groups ?? [];
+        ref.read(groupsReadFailedProvider.notifier).value = groups == null;
+        return groups != null;
       }
     } catch (e) {
-      // The Core failure path already runs inside the retry task above; a
-      // throw here only means ref.read hit a disposed container or the
-      // groupsProvider write itself failed.
       commonPrint.log(
         'updateGroups failed: $e',
         logLevel: coreFailureLogLevel(e),

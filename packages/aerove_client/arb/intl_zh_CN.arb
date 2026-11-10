@@ -592,6 +592,7 @@
   "restoreAllData": "恢复所有数据",
   "addProfile": "添加配置",
   "delayTest": "延迟测试",
+  "proxyGroupsUnavailable": "无法读取代理组",
   "proxyGroupEmpty": "策略组为空",
   "confirmExitWindow": "确定要退出当前窗口吗？",
   "optional": "可选",

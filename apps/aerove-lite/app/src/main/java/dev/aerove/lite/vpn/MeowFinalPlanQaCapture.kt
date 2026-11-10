@@ -80,7 +80,7 @@ internal object MeowFinalPlanQaPacket {
         require(File(plan.getString("resourceReadRoot")) == sources.readRoot)
         val settings = JSONObject(sources.runtimeSettingsJson)
         val proof = settings.getJSONObject("flutterSetup").getJSONObject("data-source-proof")
-        require(proof.getInt("schema") == 3 && proof.getJSONObject("tables").getJSONObject("profiles").getInt("rows") == 0) { "QA source projection is not fresh-null" }
+        require(proof.getInt("schema") in 3..4 && proof.getJSONObject("tables").getJSONObject("profiles").getInt("rows") == 0) { "QA source projection is not fresh-null" }
         require(proof.getString("configSha256").matches(Regex("[0-9a-f]{64}")))
         val cache = File(plan.getString("cacheRoot"))
         val roots = linkedMapOf("store" to sources.storeRoot, "read-root" to sources.readRoot, "cache-baseline" to cache)

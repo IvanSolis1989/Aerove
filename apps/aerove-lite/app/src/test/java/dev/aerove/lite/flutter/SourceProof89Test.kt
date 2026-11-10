@@ -33,7 +33,7 @@ class SourceProof89Test {
         val fixture = JSONObject(content)
         val all = map(fixture.getJSONObject("all")).mapValues { (_, value) -> @Suppress("UNCHECKED_CAST") (value as List<Map<String, Any?>>) }
         val config = map(fixture.getJSONObject("config")); val proof = fixture.getJSONObject("proof")
-        val rows = nativeLiteSelectedRows(all, 1)
+        val rows = nativeLiteSelectedRows(all, 1, proof.getInt("schema"))
         rows.forEach { (name, values) -> assertEquals(proof.getJSONObject("tables").getJSONObject(name).getString("sha256"), nativeLiteJsonHash(values)) }
         val selected = rows.getValue("profiles").single { (it["id"] as Number).toLong() == 1L }
         val bindings = JSONObject(selected["overrides"] as String).optJSONObject("filterBindings") ?: JSONObject()
@@ -43,9 +43,9 @@ class SourceProof89Test {
         assertEquals(proof.getString("setupSha256"), nativeLiteJsonHash(nativeLiteSetupConfig(runtime)))
         assertEquals(proof.getString("liveSha256"), nativeLiteJsonHash(nativeLiteLiveConfig(config)))
         val edited = all + ("profiles" to all.getValue("profiles").map { if ((it["id"] as Number).toLong() == 2L) it + ("label" to "other-edit") else it })
-        assertEquals(nativeLiteJsonHash(rows), nativeLiteJsonHash(nativeLiteSelectedRows(edited, 1)))
+        assertEquals(nativeLiteJsonHash(rows), nativeLiteJsonHash(nativeLiteSelectedRows(edited, 1, proof.getInt("schema"))))
         val node = all + ("custom_proxies" to all.getValue("custom_proxies").map { if ((it["id"] as Number).toLong() == 10L) it + ("definition" to "changed") else it })
-        assertNotEquals(nativeLiteJsonHash(rows), nativeLiteJsonHash(nativeLiteSelectedRows(node, 1)))
+        assertNotEquals(nativeLiteJsonHash(rows), nativeLiteJsonHash(nativeLiteSelectedRows(node, 1, proof.getInt("schema"))))
         }
     }
     @Test fun explicitNullSelectionBindsEmptyClosureAndStillRejectsInvalidSelections() {

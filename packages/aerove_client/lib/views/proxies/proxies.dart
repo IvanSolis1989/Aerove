@@ -28,6 +28,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
   // group or its delay test leaves the page alone.
   late final _tabView = ProxiesTabView(key: _proxiesTabKey);
   bool _isTab = false;
+  bool _retrying = false;
 
   void _updateStyle(
     ProxiesStyleProps Function(ProxiesStyleProps state) update,
@@ -114,7 +115,7 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
   }
 
   IconButtonData? _buildPrimaryAction() {
-    if (!_isTab) {
+    if (!_isTab || ref.watch(groupsReadFailedProvider)) {
       return null;
     }
     final isDelayTesting = ref.watch(currentGroupDelayTestingProvider);
@@ -130,6 +131,16 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
 
   void _onSearch(String value) {
     ref.read(queryProvider(QueryTag.proxies).notifier).value = value;
+  }
+
+  Future<void> _retryGroups() async {
+    if (_retrying) return;
+    setState(() => _retrying = true);
+    try {
+      await ref.read(proxiesActionProvider.notifier).updateGroups();
+    } finally {
+      if (mounted) setState(() => _retrying = false);
+    }
   }
 
   @override
@@ -154,15 +165,16 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
   Widget build(BuildContext context) {
     final style = ref.watch(proxiesStyleSettingProvider);
     final isLoading = ref.watch(loadingProvider(LoadingTag.proxies));
+    final readFailed = ref.watch(groupsReadFailedProvider);
     final picker = widget.picker;
     final primaryAction = _buildPrimaryAction();
     return CommonScaffold(
-      isLoading: isLoading,
+      isLoading: isLoading || _retrying,
       resizeToAvoidBottomInset: false,
       primaryAction: primaryAction,
       searchActions: [?primaryAction],
       iconActions: [
-        if (_isTab && !picker)
+        if (_isTab && !picker && !readFailed)
           IconButtonData(
             glyph: AppGlyphs.locate,
             onPressed: () {
@@ -174,10 +186,19 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
       menuItems: picker ? const [] : _buildMenuItems(context, style),
       title: context.appLocalizations.proxies,
       searchState: AppBarSearchState(onSearch: _onSearch),
-      body: switch (style.type) {
-        ProxiesType.tab => _tabView,
-        ProxiesType.list => const ProxiesListView(),
-      },
+      body: readFailed
+          ? NullStatus(
+              illustration: NullStatusIllustration.error,
+              label: context.appLocalizations.proxyGroupsUnavailable,
+              action: FilledButton(
+                onPressed: _retrying ? null : _retryGroups,
+                child: Text(context.appLocalizations.retry),
+              ),
+            )
+          : switch (style.type) {
+              ProxiesType.tab => _tabView,
+              ProxiesType.list => const ProxiesListView(),
+            },
     );
   }
 }

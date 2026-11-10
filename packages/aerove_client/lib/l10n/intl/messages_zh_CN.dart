@@ -1159,6 +1159,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "启动后在这里显示策略组",
     ),
     "proxyGroupsCount": m76,
+    "proxyGroupsUnavailable": MessageLookupByLibrary.simpleMessage("无法读取代理组"),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("代理集"),
     "proxyType": MessageLookupByLibrary.simpleMessage("代理类型"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("修剪缓存"),

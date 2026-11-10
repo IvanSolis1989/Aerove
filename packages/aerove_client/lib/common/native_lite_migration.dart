@@ -625,8 +625,11 @@ Map<String, dynamic> nativeLiteSetupConfig(Map<String, dynamic> runtime) {
 /// The verifier rebuilds this same closure from SQLite, never caller-selected IDs.
 Map<String, List<Map<String, dynamic>>> nativeLiteSelectedRows(
   Map<String, List<Map<String, dynamic>>> all,
-  int? id,
-) {
+  int? id, {
+  int proofSchema = 4,
+}) {
+  if (proofSchema < 2 || proofSchema > 4)
+    legacyFailure('runtime.schema', 'unsupported source proof schema');
   if (id == null) {
     return {for (final table in all.keys) table: <Map<String, dynamic>>[]};
   }
@@ -745,8 +748,16 @@ Map<String, List<Map<String, dynamic>>> nativeLiteSelectedRows(
       ? profile['script_id']
       : null;
   return {
+    // Schema 4 omits presentation state; older proofs retain their full rows.
     'profiles': all['profiles']!
         .where((row) => profileIds.contains(row['id']))
+        .map(
+          (row) => proofSchema == 4
+              ? (Map<String, dynamic>.from(row)
+                  ..remove('current_group_name')
+                  ..remove('unfold_set'))
+              : row,
+        )
         .toList(),
     'scripts': all['scripts']!.where((row) => row['id'] == scriptId).toList(),
     'rules': rules,
@@ -925,7 +936,7 @@ Future<Map<String, dynamic>> _nativeLiteBusinessSource(
       .copyWith(geoXUrl: meowGlobalGeoDownloadUrls(model.patchClashConfig))
       .toJson();
   return {
-    'schema': 3,
+    'schema': 4,
     'ruleSql': await db.ruleSqlInfrastructureProof(resolved: true),
     'setupSha256': nativeLiteJsonHash(nativeLiteSetupConfig(runtime)),
     'liveSha256': nativeLiteJsonHash(live),

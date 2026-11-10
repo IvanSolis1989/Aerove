@@ -391,7 +391,7 @@ class ProfileSelectionPolicy {
         actual.profileId != profileId ||
         proof == null ||
         !(proof['schema'] == 2 && proof['databaseSchema'] == 22 ||
-            proof['schema'] == 3 &&
+            (proof['schema'] == 3 || proof['schema'] == 4) &&
                 proof['databaseSchema'] == 23 &&
                 proof['ruleSql'] is Map) ||
         proof['tables'] is! Map ||

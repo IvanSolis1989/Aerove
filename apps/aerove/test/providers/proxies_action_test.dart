@@ -10,6 +10,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/app.dart';
+import 'package:fl_clash/providers/proxy_read.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/database.dart';
@@ -53,6 +54,17 @@ ExternalProvider _provider(String name, {int count = 1}) => ExternalProvider(
   count: count,
   vehicleType: 'HTTP',
   updateAt: DateTime.utc(2026),
+);
+
+ProxiesData _proxyData(String name) => ProxiesData(
+  all: [name],
+  proxies: {
+    name: <String, dynamic>{
+      'name': name,
+      'type': 'Selector',
+      'all': <String>[],
+    },
+  },
 );
 
 void main() {
@@ -155,7 +167,7 @@ void main() {
     );
 
     test(
-      'clears the groups once retry is exhausted after core throws',
+      'marks unavailable and removes stale groups after exhausted reads',
       () async {
         when(core.getProxies).thenThrow(StateError('core down'));
         final container = buildContainer();
@@ -167,9 +179,101 @@ void main() {
 
         expect(container.read(groupsProvider), isEmpty);
         expect(refreshed, isFalse);
+        expect(container.read(groupsReadFailedProvider), isTrue);
         verify(core.getProxies).called(3);
       },
     );
+
+    test(
+      'a successful empty response clears the error without retries',
+      () async {
+        when(
+          core.getProxies,
+        ).thenAnswer((_) async => const ProxiesData(proxies: {}, all: []));
+        final container = buildContainer();
+        container.read(groupsProvider.notifier).value = [
+          _group('Stale', const []),
+        ];
+        container.read(groupsReadFailedProvider.notifier).value = true;
+
+        expect(await actionOf(container).updateGroups(), isTrue);
+
+        expect(container.read(groupsProvider), isEmpty);
+        expect(container.read(groupsReadFailedProvider), isFalse);
+        verify(core.getProxies).called(1);
+      },
+    );
+
+    for (final fails in [false, true]) {
+      test(
+        'older ${fails ? 'failure' : 'success'} cannot replace a newer read',
+        () async {
+          final first = Completer<ProxiesData>();
+          var reads = 0;
+          when(core.getProxies).thenAnswer(
+            (_) => ++reads == 1
+                ? first.future
+                : Future.value(const ProxiesData(proxies: {}, all: [])),
+          );
+          final container = buildContainer();
+          final action = actionOf(container);
+          final old = action.updateGroups();
+          expect(await action.updateGroups(), isTrue);
+          if (fails) {
+            first.completeError(StateError('old endpoint'));
+          } else {
+            first.complete(_proxyData('Old'));
+          }
+
+          expect(await old, isFalse);
+          expect(container.read(groupsProvider), isEmpty);
+          expect(container.read(groupsReadFailedProvider), isFalse);
+          verify(core.getProxies).called(2);
+        },
+      );
+
+      test(
+        'profile switch discards a pending ${fails ? 'failure' : 'success'}',
+        () async {
+          final pending = Completer<ProxiesData>();
+          when(core.getProxies).thenAnswer((_) => pending.future);
+          final container = buildContainer(profile: _selectedProfile('HK-01'));
+          final action = actionOf(container);
+          container.read(groupsProvider.notifier).value = [
+            _group('Old', const []),
+          ];
+          container.read(groupsReadFailedProvider.notifier).value = true;
+          final old = action.updateGroups();
+
+          container.read(currentProfileIdProvider.notifier).value = 2;
+          expect(container.read(groupsProvider), isEmpty);
+          expect(container.read(groupsReadFailedProvider), isFalse);
+          if (fails) {
+            pending.completeError(StateError('old endpoint'));
+          } else {
+            pending.complete(_proxyData('Old'));
+          }
+
+          expect(await old, isFalse);
+          expect(container.read(groupsProvider), isEmpty);
+          expect(container.read(groupsReadFailedProvider), isFalse);
+          verify(core.getProxies).called(1);
+        },
+      );
+    }
+
+    test('a cancelled hidden read does not become a failure', () async {
+      final pending = Completer<ProxiesData>();
+      when(core.getProxies).thenAnswer((_) => pending.future);
+      final container = buildContainer();
+      final read = actionOf(container).updateGroups();
+      container.read(appVisibleProvider.notifier).value = false;
+      pending.completeError(StateError('cancelled endpoint'));
+
+      expect(await read, isFalse);
+      expect(container.read(groupsReadFailedProvider), isFalse);
+      verify(core.getProxies).called(1);
+    });
 
     test('a core status change alone does not clear the groups', () {
       final container = buildContainer();

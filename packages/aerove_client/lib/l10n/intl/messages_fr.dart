@@ -1588,6 +1588,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "Les groupes s’affichent ici une fois le cœur démarré",
     ),
     "proxyGroupsCount": m76,
+    "proxyGroupsUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Impossible de charger les groupes de proxys",
+    ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage(
       "Fournisseurs de proxys",
     ),

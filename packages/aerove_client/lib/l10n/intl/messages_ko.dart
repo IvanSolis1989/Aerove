@@ -1245,6 +1245,9 @@ class MessageLookup extends MessageLookupByLibrary {
       "코어가 시작되면 그룹이 여기에 표시됩니다",
     ),
     "proxyGroupsCount": m76,
+    "proxyGroupsUnavailable": MessageLookupByLibrary.simpleMessage(
+      "프록시 그룹을 불러올 수 없습니다",
+    ),
     "proxyProviders": MessageLookupByLibrary.simpleMessage("프록시 공급자"),
     "proxyType": MessageLookupByLibrary.simpleMessage("프록시 유형"),
     "pruneCache": MessageLookupByLibrary.simpleMessage("캐시 정리"),

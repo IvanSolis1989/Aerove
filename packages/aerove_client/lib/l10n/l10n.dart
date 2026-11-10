@@ -4860,6 +4860,16 @@ class AppLocalizations {
     return Intl.message('Delay test', name: 'delayTest', desc: '', args: []);
   }
 
+  /// `Could not load proxy groups`
+  String get proxyGroupsUnavailable {
+    return Intl.message(
+      'Could not load proxy groups',
+      name: 'proxyGroupsUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Proxy group is empty`
   String get proxyGroupEmpty {
     return Intl.message(
