@@ -55,7 +55,7 @@ fn context(cancel: &CancellationToken, deny: bool, calls: Arc<AtomicUsize>) -> N
     NetworkContext::protected(Arc::new(Protector { calls, deny }), None, cancel.clone()).with_resource_roots(Arc::new(roots))
 }
 async fn handler(plan: Arc<RuntimePlan>, scope: Arc<meow_config::owned_load::OwnedLoadScope>, observed: mpsc::Sender<Observed>) -> io::Result<Arc<dyn PacketHandler>> {
-    let config = meow_config::load_config_from_str_owned(&plan.engine_yaml, &scope).await.map_err(|_| io::Error::other("config failed"))?;
+    let config = meow_config::load_config_from_str_owned(&plan.engine_yaml, &scope).await.map_err(io::Error::other)?;
     let tunnel = Tunnel::new_with_slot(config.dns.resolver_slot.clone());
     tunnel.set_mode(config.general.mode); tunnel.set_dialer_registry(config.provider_dialer_registry.clone());
     tunnel.update_routing(config.proxies, config.rules, config.dialer_registry);
@@ -98,7 +98,8 @@ async fn plan_owned_fd_factory_protect_netstack_packets_cancel_join_and_caller_s
     let (caller, peer)=pair(); let cancel=CancellationToken::new();
     let calls=Arc::new(AtomicUsize::new(0)); let network=context(&cancel,false,calls.clone());
     let physical=aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()],network.clone(),true).unwrap();
-    let dns_transport=physical.network().dns_transport_scope().unwrap();
+    assert!(network.scope(socket_protect::resolve_host("no-system-fallback.invalid", 443)).await.is_err());
+    let network=physical.network();
     let server=TcpListener::bind("127.0.0.1:0").await.unwrap(); let address=server.local_addr().unwrap();
     let accepted=tokio::spawn(async move { let (mut socket,_)=server.accept().await.unwrap(); socket.write_all(b"factory-protected").await.unwrap(); });
     let (tx,mut observed)=mpsc::channel(8);
@@ -107,8 +108,7 @@ async fn plan_owned_fd_factory_protect_netstack_packets_cancel_join_and_caller_s
         *captured_factory.lock().await=socket_protect::socket_protector();
         let mut probe=socket_protect::connect_tcp(address).await?;
         let mut body=[0;17]; probe.read_exact(&mut body).await?; assert_eq!(&body,b"factory-protected");
-        assert!(socket_protect::resolve_host("no-system-fallback.invalid", 443).await.is_err());
-        meow_config::owned_load::with_dns_transport_scope(dns_transport,handler(plan,scope,tx)).await
+        handler(plan,scope,tx).await
     }).await.unwrap();
     accepted.await.unwrap(); assert_eq!(calls.load(Ordering::Relaxed),1);
     assert!(driver.receipt().ready); assert!(!driver.receipt().core_done); assert_eq!(driver.receipt().mtu,9000);
@@ -138,8 +138,8 @@ async fn plan_owned_fd_factory_protect_netstack_packets_cancel_join_and_caller_s
     let next_cancel=CancellationToken::new(); let (tx,_)=mpsc::channel(8);
     let next_network=context(&next_cancel,false,calls.clone());
     let next_physical=aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()],next_network.clone(),true).unwrap();
-    let next_dns=next_physical.network().dns_transport_scope().unwrap();
-    let next=TunDriver::load(&plan().to_string(),caller.as_fd(),next_network,next_cancel,move|plan,scope|meow_config::owned_load::with_dns_transport_scope(next_dns,handler(plan,scope,tx))).await.unwrap();
+    let next_network=next_physical.network();
+    let next=TunDriver::load(&plan().to_string(),caller.as_fd(),next_network,next_cancel,move|plan,scope|handler(plan,scope,tx)).await.unwrap();
     assert!(next.receipt().ready); assert!(timeout(Duration::from_secs(5),next.stop()).await.unwrap().unwrap().core_done);
     next_physical.retire().await.unwrap(); assert!(next_physical.dns_owner().cleanup_confirmed());
 }
@@ -226,10 +226,10 @@ async fn ipv4_only_driver_drops_disabled_ipv6_and_keeps_ipv4_join_and_successor_
     let mut json = plan(); json["tun"]["ipv6"] = false.into(); json["tun"]["inet6Address"] = serde_json::Value::Null;
     let cancel = CancellationToken::new(); let network = context(&cancel, false, calls.clone());
     let physical = aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()], network.clone(), false).unwrap();
-    let dns = physical.network().dns_transport_scope().unwrap();
+    let network = physical.network();
     let (tx, mut observed) = mpsc::channel(8);
     let driver = TunDriver::load(&json.to_string(), caller.as_fd(), network, cancel, move |plan, scope|
-        meow_config::owned_load::with_dns_transport_scope(dns, handler(plan, scope, tx))).await.unwrap();
+        handler(plan, scope, tx)).await.unwrap();
     peer.send(&udp_frame(true, b"disabled-family", 443)).await.unwrap();
     let payload = vec![4; 2048];
     peer.send(&udp_frame(false, &payload, 443)).await.unwrap();
@@ -245,10 +245,55 @@ async fn ipv4_only_driver_drops_disabled_ipv6_and_keeps_ipv4_join_and_successor_
     physical.retire().await.unwrap();
     let cancel = CancellationToken::new(); let network = context(&cancel, false, calls);
     let physical = aerove_meow_core::physical_dns::PhysicalResolver::from_servers(vec!["127.0.0.1:53".parse().unwrap()], network.clone(), false).unwrap();
-    let dns = physical.network().dns_transport_scope().unwrap(); let (tx, _) = mpsc::channel(8);
+    let network = physical.network(); let (tx, _) = mpsc::channel(8);
     let successor = TunDriver::load(&json.to_string(), caller.as_fd(), network, cancel, move |plan, scope|
-        meow_config::owned_load::with_dns_transport_scope(dns, handler(plan, scope, tx))).await.unwrap();
+        handler(plan, scope, tx)).await.unwrap();
     assert!(successor.receipt().ready);
     assert!(timeout(Duration::from_secs(5), successor.stop()).await.unwrap().unwrap().core_done);
     physical.retire().await.unwrap();
+}
+
+#[tokio::test]
+async fn dns_transport_without_physical_snapshot_fails_before_stack_and_allows_successor() {
+    let _serial = TEST_LOCK.lock().await;
+    let (caller, peer) = pair();
+    let cancel = CancellationToken::new();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let bare = context(&cancel, false, calls.clone());
+    let physical = aerove_meow_core::physical_dns::PhysicalResolver::from_servers(
+        vec!["127.0.0.1:53".parse().unwrap()], bare.clone(), true).unwrap();
+    let dns = physical.network().dns_transport_scope().unwrap();
+    let (tx, _) = mpsc::channel(8);
+    // A transport owner alone cannot stand in for the captured bootstrap snapshot.
+    let failed = TunDriver::start(&plan().to_string(), caller.as_fd(), bare, cancel,
+        move |plan, scope| meow_config::owned_load::with_dns_transport_scope(dns, handler(plan, scope, tx))).unwrap();
+    assert!(failed.await_ready().await.is_err());
+    let failure = timeout(Duration::from_secs(5), failed.stop()).await.unwrap().unwrap_err();
+    assert!(failure.to_string().contains("physicalDnsSnapshotMissing"), "{failure}");
+    assert!(!failed.receipt().ready && !failed.receipt().core_done);
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+    caller.send(b"retained").unwrap();
+    let mut retained = [0; 16]; assert_eq!(peer.recv(&mut retained).await.unwrap(), 8);
+    let (tx, _) = mpsc::channel(8);
+    let successor = TunDriver::load(&plan().to_string(), caller.as_fd(), physical.network(),
+        CancellationToken::new(), move |plan, scope| handler(plan, scope, tx)).await.unwrap();
+    assert!(successor.receipt().ready);
+    assert!(timeout(Duration::from_secs(5), successor.stop()).await.unwrap().unwrap().core_done);
+    physical.retire().await.unwrap();
+    assert!(physical.dns_owner().cleanup_confirmed());
+}
+
+#[tokio::test]
+async fn load_preserves_factory_error_kind_and_message_after_join() {
+    let _serial = TEST_LOCK.lock().await;
+    let (caller, peer) = pair(); let cancel = CancellationToken::new();
+    let result = TunDriver::load(&plan().to_string(), caller.as_fd(),
+        context(&cancel, false, Arc::new(AtomicUsize::new(0))), cancel, |_, _| async {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "factory protection rejected"))
+        }).await;
+    let failure = match result { Ok(_) => panic!("failed factory became ready"), Err(error) => error };
+    assert_eq!(failure.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(failure.to_string(), "factory protection rejected");
+    caller.send(b"retained").unwrap();
+    let mut retained = [0; 16]; assert_eq!(peer.recv(&mut retained).await.unwrap(), 8);
 }

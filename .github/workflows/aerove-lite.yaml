@@ -1487,6 +1487,7 @@ jobs:
           lint/dynamic_message_key_test.dart
           lint/superellipse_corners_test.dart
           features/profile_update_cancel_view_test.dart
+          features/custom_quick_edit_test.dart
           state_storage/profile_write_test.dart
           providers/database_test.dart
           providers/clash_providers_action_test.dart

@@ -33,9 +33,15 @@ class _MemoryEditProfiles extends TestProfiles {
   @override
   Future<void> putCommitted(
     Profile profile, {
+    PreparedProfileFile? preparedFile,
     void Function()? publishFile,
     void Function()? rollbackFile,
   }) async {
+    expect(
+      preparedFile,
+      isNull,
+      reason: 'This focus fixture only supports metadata edits.',
+    );
     publishFile?.call();
     put(profile);
   }

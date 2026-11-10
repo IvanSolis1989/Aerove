@@ -61,6 +61,7 @@ class _IdleClashProvidersAction extends ClashProvidersAction {
     ProviderKind kind,
     Set<String> labels, {
     bool force = false,
+    bool confirmApplication = false,
     bool Function()? isCurrent,
   }) async {}
 }

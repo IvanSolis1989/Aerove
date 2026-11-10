@@ -131,8 +131,7 @@ impl TunDriver {
           Fut: Future<Output = io::Result<Arc<dyn PacketHandler>>> + Send + 'static {
         let owner = Self::start(json, caller, network, cancel, factory)?;
         if let Err(error) = owner.await_ready().await {
-            let _ = owner.stop().await;
-            return Err(error);
+            return Err(owner.stop().await.err().unwrap_or(error));
         }
         Ok(owner)
     }
