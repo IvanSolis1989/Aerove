@@ -35,6 +35,11 @@ jobs:
         with:
           flutter-version: 3.47.6
           cache: true
+      - name: Restore the setup action's executable bit without accepting source edits
+        run: |
+          test "$(git ls-files -s .github/actions/flutter/setup.sh | cut -d ' ' -f1)" = 100644
+          test "$(git hash-object .github/actions/flutter/setup.sh)" = "$(git rev-parse HEAD:.github/actions/flutter/setup.sh)"
+          chmod 644 .github/actions/flutter/setup.sh
       - name: Resolve the pinned shared generation dependencies
         working-directory: packages/aerove_client
         run: flutter pub get --enforce-lockfile
