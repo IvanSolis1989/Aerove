@@ -22,3 +22,65 @@ jobs:
       - run: python3 tooling/workspace.py check
       - run: python3 -B tooling/test_pages_release.py
       - run: bash tooling/hooks/test.sh
+
+  candidate_generation:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dot/fix-360-integrated-20261110' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/flutter
+        with:
+          flutter-version: 3.47.6
+          cache: true
+      - name: Resolve the pinned shared generation dependencies
+        working-directory: packages/aerove_client
+        run: flutter pub get --enforce-lockfile
+      - name: Export official generated changes without application acceptance
+        working-directory: packages/aerove_client
+        run: |
+          output="$RUNNER_TEMP/candidate-generation"
+          mkdir -p "$output"
+          cp pubspec.yaml "$output/pubspec.original"
+          trap 'cp "$output/pubspec.original" pubspec.yaml' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('pubspec.yaml')
+          s = p.read_text()
+          old = '    rust_api:\n      build_assets: true'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, '    rust_api:\n      build_assets: false'))
+          PY
+          dart run build_runner build --delete-conflicting-outputs 2>&1 | tee "$output/generation.log"
+          cp "$output/pubspec.original" pubspec.yaml
+          rm "$output/pubspec.original"
+          trap - EXIT
+          git diff --check
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          root = Path(os.environ['GITHUB_WORKSPACE'])
+          output = Path(os.environ['RUNNER_TEMP']) / 'candidate-generation'
+          git = lambda *args: subprocess.check_output(['git', *args], cwd=root)
+          files = git('diff', '--name-only').decode().splitlines()
+          rows = []
+          for name in files:
+              assert name.startswith('packages/aerove_client/lib/') and '/generated/' in name and name.endswith('.dart'), name
+              previous = git('show', 'HEAD:' + name)
+              current = (root / name).read_bytes()
+              assert b'GENERATED CODE' in previous and b'GENERATED CODE' in current, name
+              target = output / 'generated' / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(current)
+              rows.append(dict(path=name, beforeSha256=hashlib.sha256(previous).hexdigest(), afterSha256=hashlib.sha256(current).hexdigest()))
+          (output / 'generated.patch').write_bytes(git('diff', '--binary'))
+          (output / 'manifest.json').write_text(json.dumps(dict(source=os.environ['GITHUB_SHA'], tree=git('rev-parse', 'HEAD^{tree}').decode().strip(), run=os.environ['GITHUB_RUN_ID'], files=rows, appBuilt=False, acceptance=False), indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: AEROVE-candidate-official-generation-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate-generation/
+          if-no-files-found: error
