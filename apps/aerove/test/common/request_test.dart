@@ -11,6 +11,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 class _StalledHttpClient extends Fake implements HttpClient {
+  final opening = Completer<HttpClientRequest>();
+  bool closed = false;
   @override
   Duration? connectionTimeout;
 
@@ -18,8 +20,15 @@ class _StalledHttpClient extends Fake implements HttpClient {
   String Function(Uri url)? findProxy;
 
   @override
-  Future<HttpClientRequest> openUrl(String method, Uri url) =>
-      Completer<HttpClientRequest>().future;
+  Future<HttpClientRequest> openUrl(String method, Uri url) => opening.future;
+
+  @override
+  void close({bool force = false}) {
+    closed = true;
+    if (!opening.isCompleted) {
+      opening.completeError(const HttpException('Client closed'));
+    }
+  }
 }
 
 class _HostAdapter implements HttpClientAdapter {
@@ -691,10 +700,11 @@ void main() {
   testWidgets('a stalled download fails at the shared download deadline', (
     tester,
   ) async {
+    final client = _StalledHttpClient();
     late final Future<Response<String>> pending;
     HttpOverrides.runZoned(() {
       pending = Request().getTextResponseForUrl('http://127.0.0.1/stalled');
-    }, createHttpClient: (_) => _StalledHttpClient());
+    }, createHttpClient: (_) => client);
     var settled = false;
     final outcome = expectLater(
       pending.whenComplete(() => settled = true),
@@ -711,5 +721,6 @@ void main() {
     expect(settled, isFalse);
     await tester.pump(const Duration(seconds: 1));
     await outcome;
+    expect(client.closed, isTrue);
   });
 }

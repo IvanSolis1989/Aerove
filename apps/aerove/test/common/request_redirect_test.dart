@@ -6,6 +6,7 @@ import 'package:fl_clash/common/download_redirect.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 class _TrustedLoopback extends HttpOverrides {
@@ -42,6 +43,9 @@ void main() {
   );
 
   setUp(() async {
+    final container = ProviderContainer();
+    globalState.container = container;
+    addTearDown(container.dispose);
     final original = HttpOverrides.current;
     addTearDown(() => HttpOverrides.global = original);
     globalState.packageInfo = PackageInfo(

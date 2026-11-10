@@ -409,7 +409,7 @@ void main() {
       final heldEntered = Completer<void>();
       respond = (request) async {
         if (request.uri.path == '/held') {
-          await holdResponse(request, heldEntered);
+          await holdResponse(request, heldEntered, gone: disconnected);
           return;
         }
         request.response.headers.set('subscription-userinfo', 'total=789');
@@ -427,6 +427,7 @@ void main() {
       final committed = await sql.profilesDao.get(finished.id);
       await action().cancelProfileUpdates([finished.id, held.id]);
       await secondAssertion;
+      await disconnected.future.timeout(const Duration(seconds: 2));
       expect(await sql.profilesDao.get(finished.id), committed);
       expect(committed?.subscriptionInfo?.total, 789);
       expect(await (await finished.file).readAsString(), 'finished bytes');

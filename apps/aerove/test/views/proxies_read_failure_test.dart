@@ -79,12 +79,12 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(
-        await container
+      final applied = await tester.runAsync(
+        () => container
             .read(setupActionProvider.notifier)
             .setRunning(true, initialize: true),
-        isFalse,
       );
+      expect(applied, isFalse);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.textContaining('original source failure'), findsOneWidget);

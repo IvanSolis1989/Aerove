@@ -5,6 +5,7 @@ import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../helpers/app_paths.dart';
@@ -18,6 +19,9 @@ void main() {
   late Script script;
 
   setUp(() async {
+    final container = ProviderContainer();
+    globalState.container = container;
+    addTearDown(container.dispose);
     final original = HttpOverrides.current;
     HttpOverrides.global = null;
     addTearDown(() => HttpOverrides.global = original);

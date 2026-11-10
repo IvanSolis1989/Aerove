@@ -195,7 +195,8 @@ class _ReattachSetupAction extends SetupAction {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUpAll(() {
+  setUpAll(() async {
+    await AppLocalizations.load(const Locale('en'));
     registerFallbackValue(const SetupParams(selectedMap: {}, testUrl: ''));
     registerFallbackValue(const SetupBase(path: '', overlay: ''));
     registerFallbackValue(

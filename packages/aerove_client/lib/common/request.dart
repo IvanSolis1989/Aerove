@@ -690,13 +690,13 @@ class DownloadSizeException implements Exception {
   String toString() => 'Download exceeds $limit bytes';
 }
 
-Stream<Uint8List> _boundedResponse(Stream<Uint8List> source, int limit) async* {
+Stream<Uint8List> _boundedResponse(Stream<Uint8List> source, int limit) {
   var count = 0;
-  await for (final chunk in source) {
+  return source.map((chunk) {
     count += chunk.length;
     if (count > limit) throw DownloadSizeException(limit);
-    yield chunk;
-  }
+    return chunk;
+  });
 }
 
 class _BoundedBytes implements Sink<List<int>> {

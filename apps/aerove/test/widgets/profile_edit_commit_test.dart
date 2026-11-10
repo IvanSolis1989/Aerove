@@ -117,7 +117,7 @@ void main() {
           await useAppPaths(home);
           final rejection = _RejectEdit();
           final sql = db.Database.interceptNative(
-            NativeDatabase.memory(),
+            NativeDatabase(File('${home.path}/database.sqlite')),
             rejection,
           );
           final previous = db.database;

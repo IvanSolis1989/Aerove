@@ -5,10 +5,16 @@ import 'package:dio/dio.dart';
 import 'package:fl_clash/common/request.dart';
 import 'package:fl_clash/state.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    final container = ProviderContainer();
+    globalState.container = container;
+    addTearDown(container.dispose);
+  });
   test('unlabelled gzip cannot expand beyond the subscription budget', () {
     final compressed = Uint8List.fromList(
       gzip.encode(Uint8List(17 * 1024 * 1024)),
@@ -37,6 +43,42 @@ void main() {
       throwsA(isA<DownloadSizeException>()),
     );
   });
+
+  test(
+    'an interrupted body without cancellation remains a download failure',
+    () async {
+      final original = HttpOverrides.current;
+      HttpOverrides.global = null;
+      addTearDown(() => HttpOverrides.global = original);
+      globalState.packageInfo = PackageInfo(
+        appName: 'Aerove',
+        packageName: 'dev.aerove.test',
+        version: '1.0.0',
+        buildNumber: '1',
+      );
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(() => server.close(force: true));
+      server.listen((request) async {
+        request.response.contentLength = 1000;
+        final socket = await request.response.detachSocket();
+        socket.write('partial');
+        await socket.flush();
+        await socket.close();
+      });
+      await expectLater(
+        Request().getFileResponseForUrl(
+          'http://127.0.0.1:${server.port}/broken',
+        ),
+        throwsA(
+          isA<DioException>().having(
+            (error) => error.error,
+            'transport failure',
+            isA<HttpException>(),
+          ),
+        ),
+      );
+    },
+  );
 
   for (final declared in [true, false]) {
     test(
