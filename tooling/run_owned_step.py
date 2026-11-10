@@ -161,9 +161,14 @@ def run(script, evidence):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--evidence', required=True, type=Path)
+    parser.add_argument('--evidence', type=Path)
     parser.add_argument('script', type=Path)
     args = parser.parse_args()
+    if args.evidence is None:
+        runner_temp = os.environ.get('RUNNER_TEMP')
+        if not runner_temp:
+            parser.error('--evidence or RUNNER_TEMP is required')
+        args.evidence = Path(runner_temp) / 'lite-flutter-host/subscription-behavior/process-owner.json'
     return run(args.script, args.evidence)
 
 

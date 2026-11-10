@@ -202,6 +202,24 @@ class OwnedStepTests(unittest.TestCase):
         numeric.assert_not_called()
         self.assertEqual(identities[123], 'new')
 
+    def test_workflow_shell_has_no_unsupported_expression_context(self):
+        # actions/runner workflow-v1.0.json: run-step.shell is non-empty-string,
+        # not string-steps-context. A locally interpolated test cannot validate it.
+        text = (ROOT / '.github/workflows/aerove-lite.yaml').read_text()
+        shells = [line.strip()[len('shell: '):] for line in text.splitlines()
+                  if line.strip().startswith('shell: ')]
+        self.assertTrue(shells)
+        self.assertTrue(all('${{' not in shell for shell in shells))
+
+    def test_missing_evidence_destination_fails_before_script_launch(self):
+        self.script.write_text('echo wrong > ' + shlex.quote(str(self.home / 'executed')))
+        env = {key: value for key, value in os.environ.items() if key != 'RUNNER_TEMP'}
+        result = subprocess.run([sys.executable, '../../tooling/run_owned_step.py', str(self.script)],
+                                cwd=ROOT / 'apps/aerove', env=env, capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('--evidence or RUNNER_TEMP is required', result.stderr)
+        self.assertFalse((self.home / 'executed').exists())
+
     def test_exact_workflow_shell_from_product_cwd_and_budget_contracts(self):
         text = (ROOT / '.github/workflows/aerove-lite.yaml').read_text()
         step = text.split('      id: subscription_tests\n', 1)[1].split('    - name:', 1)[0]
@@ -210,11 +228,15 @@ class OwnedStepTests(unittest.TestCase):
         self.assertIn('python3 tooling/test_owned_step.py', text)
         shell = next(line.strip().removeprefix('shell: ') for line in step.splitlines() if line.strip().startswith('shell: '))
         self.assertTrue(shell.startswith('nice -n 19 python3 '))
-        command = shlex.split(shell.replace('${{ github.workspace }}', str(ROOT))
-                              .replace('${{ runner.temp }}', str(self.home)))
+        self.assertNotIn('${{', shell)
+        self.assertNotIn('$RUNNER_TEMP', shell)
+        command = shlex.split(shell)
+        self.assertEqual(command, ['nice', '-n', '19', 'python3',
+                                   '../../tooling/run_owned_step.py', '{0}'])
         command = [str(self.script) if arg == '{0}' else arg for arg in command]
         self.script.write_text('pwd > ' + shlex.quote(str(self.home / 'production-cwd')))
-        subprocess.run(command, cwd=ROOT / 'apps/aerove', check=True, timeout=5)
+        subprocess.run(command, cwd=ROOT / 'apps/aerove',
+                       env=dict(os.environ, RUNNER_TEMP=str(self.home)), check=True, timeout=5)
         self.assertEqual((self.home / 'production-cwd').read_text().strip(), str(ROOT / 'apps/aerove'))
         receipt = json.loads((self.home / 'lite-flutter-host/subscription-behavior/process-owner.json').read_text())
         self.assertEqual(receipt['status'], 'PASSED')

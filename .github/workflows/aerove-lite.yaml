@@ -1438,7 +1438,7 @@ jobs:
       id: subscription_tests
       timeout-minutes: 30
       working-directory: apps/aerove
-      shell: nice -n 19 python3 "${{ github.workspace }}/tooling/run_owned_step.py" --evidence "${{ runner.temp }}/lite-flutter-host/subscription-behavior/process-owner.json" "{0}"
+      shell: nice -n 19 python3 ../../tooling/run_owned_step.py "{0}"
       run: |-
         set -euo pipefail
         evidence="$RUNNER_TEMP/lite-flutter-host/subscription-behavior"
