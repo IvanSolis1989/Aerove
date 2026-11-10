@@ -2,10 +2,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+
+import 'package:fl_clash/common/file.dart';
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/common/rule_sql_journal.dart';
 import 'package:fl_clash/common/snowflake.dart' show uuidV4;
 import 'package:flutter_test/flutter_test.dart';
+
 import 'rule_sql_fixture.dart';
 
 void main() {
@@ -16,13 +19,12 @@ void main() {
     final f = RuleDiskFixture(home);
     f.owner.onPhase = (at) async {
       if (at != env['AEROVE_RULE_PHASE']) return;
-      await File('${home.path}/worker-ready.json').writeAsString(
+      await File('${home.path}/worker-ready.json').writeAsStringAtomically(
         jsonEncode({
           'nonce': env['AEROVE_RULE_NONCE'],
           'pid': pid,
           'phase': at,
         }),
-        flush: true,
       );
       await Completer<void>().future;
     };

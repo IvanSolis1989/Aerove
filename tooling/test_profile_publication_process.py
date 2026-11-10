@@ -4,11 +4,10 @@ import json
 import os
 from pathlib import Path
 import secrets
-import signal
 import subprocess
 import time
 
-from test_rule_sql_process import descendant, proc, os_absence_proof
+from test_rule_sql_process import descendant, proc, os_absence_proof, retire_owned_launcher, kill_owned_process
 
 
 def worker(args, home, mode, phase='', expected='before', original='keep'):
@@ -25,12 +24,14 @@ def worker(args, home, mode, phase='', expected='before', original='keep'):
     child = None
     target = None
     birth = None
+    launcher_birth = None
     record = {'mode': mode, 'phase': phase, 'expected': expected, 'log': str(log)}
     try:
         with log.open('w') as output:
             child = subprocess.Popen(command, cwd=args.app, env=env,
                                      stdout=output, stderr=subprocess.STDOUT)
             record['launcher_pid'] = child.pid
+            launcher_birth = proc(child.pid)[1]
             if not phase:
                 code = child.wait(timeout=240)
                 if code != 0:
@@ -51,7 +52,7 @@ def worker(args, home, mode, phase='', expected='before', original='keep'):
                         raise AssertionError('worker identity changed')
                     record['target_pid'] = target
                     record['target_birth'] = birth
-                    os.kill(target, signal.SIGKILL)
+                    kill_owned_process(target, birth, child.pid, launcher_birth)
                     child.wait(timeout=60)
                     for _ in range(100):
                         if not Path(f'/proc/{target}').exists():
@@ -64,16 +65,15 @@ def worker(args, home, mode, phase='', expected='before', original='keep'):
                     raise AssertionError(log.read_text())
                 time.sleep(.05)
             raise TimeoutError('worker did not reach requested publication phase')
-    finally:
-        if target is not None and birth is not None:
-            try:
-                if proc(target)[1] == birth and descendant(target, child.pid):
-                    os.kill(target, signal.SIGKILL)
-            except FileNotFoundError:
-                pass
-        if child is not None and child.poll() is None:
-            child.terminate()
-            child.wait(timeout=30)
+    except BaseException:
+        if child is not None and launcher_birth is not None:
+            record['failure_cleanup'] = retire_owned_launcher(child, launcher_birth)
+        try:
+            (home / f'failed-{mode}-{phase.replace(":", "-") or "complete"}.json').write_text(
+                json.dumps(record, indent=2) + '\n')
+        except Exception as archive_error:
+            print('Additional failure evidence error:', archive_error, flush=True)
+        raise
 
 
 def main():

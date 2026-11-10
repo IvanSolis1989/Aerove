@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:fl_clash/common/file.dart';
+
 import 'package:flutter_test/flutter_test.dart';
+
 import 'profile_publication_fixture.dart';
 
 void main() {
@@ -13,13 +16,12 @@ void main() {
     final f = ProfilePublicationFixture(home);
     f.owner.onPhase = (phase) async {
       if (phase != env['AEROVE_PROFILE_PHASE']) return;
-      await File('${home.path}/ready.json').writeAsString(
+      await File('${home.path}/ready.json').writeAsStringAtomically(
         jsonEncode({
           'nonce': env['AEROVE_PROFILE_NONCE'],
           'pid': pid,
           'phase': phase,
         }),
-        flush: true,
       );
       await Completer<void>().future;
     };

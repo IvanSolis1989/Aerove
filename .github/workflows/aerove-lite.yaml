@@ -1576,6 +1576,7 @@ jobs:
       timeout-minutes: 20
       run: |-
         set -euo pipefail
+        DART="$(command -v dart)" python3 tooling/test_process_recovery_harness.py
         evidence="$RUNNER_TEMP/lite-flutter-host/rule-process-recovery"
         mkdir -p "$evidence"
         python3 tooling/test_rule_sql_process.py --flutter "$(command -v flutter)" --app "$GITHUB_WORKSPACE/apps/aerove" \

@@ -195,14 +195,18 @@ def proc(pid):
     return int(fields[1]), fields[19]
 
 
-def descendant(pid, parent):
-    for _ in range(100):
+def descendant_depth(pid, parent):
+    for depth in range(100):
         if pid == parent:
-            return True
+            return depth
         if pid <= 1:
-            return False
+            return None
         pid, _ = proc(pid)
     raise AssertionError('invalid process lineage')
+
+
+def descendant(pid, parent):
+    return descendant_depth(pid, parent) is not None
 
 
 def os_absence_proof(target):
@@ -215,6 +219,86 @@ def os_absence_proof(target):
             raise
         return {'method': 'lstat /proc/PID returned ENOENT', 'errno': error.errno, 'observed': stamp()}
     raise AssertionError('OS PID entry still exists at evidence qualification')
+
+
+def kill_owned_process(target, birth, launcher_pid, launcher_birth):
+    """Bind SIGKILL to a Linux process handle, not a reusable numeric PID."""
+    if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
+        raise RuntimeError('Linux pidfd signaling required for owned process termination')
+    handle = os.pidfd_open(target)
+    try:
+        if (proc(launcher_pid)[1] != launcher_birth or proc(target)[1] != birth
+                or not descendant(target, launcher_pid)):
+            raise AssertionError('process identity/ownership changed before pidfd signal')
+        signal.pidfd_send_signal(handle, signal.SIGKILL)
+    finally:
+        os.close(handle)
+
+
+def retire_owned_launcher(child, launcher_birth):
+    """Retire only recorded descendants of the original launcher on failure.
+
+    Descendants are killed before their launcher so it can reap its children.
+    Never signal a reused PID or a process whose ownership is no longer provable.
+    """
+    result = {'targets': [], 'errors': [], 'descendant_snapshot_complete': False}
+    owned = []
+    try:
+        if proc(child.pid)[1] != launcher_birth:
+            raise AssertionError('launcher PID identity changed before cleanup')
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdigit() or int(entry.name) == child.pid:
+                continue
+            target = int(entry.name)
+            try:
+                _, birth = proc(target)
+                depth = descendant_depth(target, child.pid)
+                if depth is not None and proc(target)[1] == birth:
+                    owned.append((depth, target, birth))
+            except FileNotFoundError:
+                continue
+        result['descendant_snapshot_complete'] = True
+        # Keep intermediate parents alive until their children are signaled.
+        for _, target, birth in sorted(owned, reverse=True):
+            record = {'pid': target, 'birth': birth}
+            result['targets'].append(record)
+            try:
+                kill_owned_process(target, birth, child.pid, launcher_birth)
+                record['sigkill_sent'] = True
+            except FileNotFoundError:
+                record['already_absent'] = True
+            except Exception as error:
+                result['errors'].append(error_record(error))
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            if proc(child.pid)[1] != launcher_birth:
+                raise AssertionError('launcher PID reused before termination')
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                if proc(child.pid)[1] != launcher_birth:
+                    raise AssertionError('launcher PID reused before kill')
+                child.kill()
+                child.wait(timeout=5)
+        result['launcher_exit'] = child.returncode
+    except FileNotFoundError:
+        # A naturally exited launcher may already have been reaped by poll().
+        result['launcher_exit'] = child.poll()
+        if not result['descendant_snapshot_complete'] or result['launcher_exit'] is None:
+            result['errors'].append(error_record(AssertionError(
+                'launcher absent before complete descendant qualification; cleanup unconfirmed')))
+    except Exception as error:
+        result['errors'].append(error_record(error))
+    for record in result['targets']:
+        try:
+            record['retirement'] = os_absence_proof(record['pid'])
+        except Exception as error:
+            result['errors'].append(error_record(error))
+    result['recorded_processes_retired'] = (result['descendant_snapshot_complete']
+        and result.get('launcher_exit') is not None and not result['errors'])
+    return result
 
 
 def worker(flutter, app, home, mode, phase='', expected='before', *, evidence, case_record):
@@ -235,10 +319,13 @@ def worker(flutter, app, home, mode, phase='', expected='before', *, evidence, c
     evidence.save()
     child = None
     primary = None
+    launcher_birth = None
     try:
         with log.open('wb') as output:
             child = subprocess.Popen(command, cwd=app, env=env, stdout=output, stderr=subprocess.STDOUT)
             run['launcher_pid'] = child.pid
+            launcher_birth = proc(child.pid)[1]
+            run['launcher_birth'] = launcher_birth
             (home / 'launcher.json').write_text(json.dumps({'pid': child.pid, 'nonce': nonce}))
             evidence.event(run, 'launcher-started', pid=child.pid)
             if not phase:
@@ -270,7 +357,7 @@ def worker(flutter, app, home, mode, phase='', expected='before', *, evidence, c
             evidence.event(run, 'descendant-qualification', target=target, birth=birth, qualified=True)
             assert proc(target)[1] == birth, 'PID reuse before kill'
             run['signal_attempt'] = stamp()
-            os.kill(target, signal.SIGKILL)
+            kill_owned_process(target, birth, child.pid, launcher_birth)
             evidence.event(run, 'sigkill-sent', pid=target, signal=int(signal.SIGKILL))
             run['launcher_exit'] = child.wait(timeout=30)
             evidence.event(run, 'launcher-exited', returncode=run['launcher_exit'])
@@ -292,6 +379,8 @@ def worker(flutter, app, home, mode, phase='', expected='before', *, evidence, c
         run['error'] = error_record(error)
         raise
     finally:
+        if primary is not None and child is not None and launcher_birth is not None:
+            run['failure_cleanup'] = retire_owned_launcher(child, launcher_birth)
         run['ended'] = stamp()
         if child is not None:
             run['launcher_exit'] = child.poll()
