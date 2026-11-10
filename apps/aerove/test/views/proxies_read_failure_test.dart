@@ -69,7 +69,10 @@ void main() {
     (tester) async {
       final initialStatus = globalState.needInitStatus;
       addTearDown(() => globalState.needInitStatus = initialStatus);
-      final setup = _FailedInitialSetup();
+      late _FailedInitialSetup setup;
+      await tester.runAsync(() async {
+        setup = _FailedInitialSetup();
+      });
       final container = ProviderContainer(
         overrides: [
           profilesProvider.overrideWith(TestProfiles.new),

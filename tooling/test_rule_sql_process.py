@@ -21,6 +21,8 @@ import tempfile
 import time
 import traceback
 
+from owned_process import signal_qualified_process
+
 RAW = 'providers/rules/11111111111111111111111111111111'
 CASES = (
     ('admission-restore', (('admission-restore', '', 'before'),), 'restored', 'restored.example\n', 3, 'empty'),
@@ -223,16 +225,9 @@ def os_absence_proof(target):
 
 def kill_owned_process(target, birth, launcher_pid, launcher_birth):
     """Bind SIGKILL to a Linux process handle, not a reusable numeric PID."""
-    if not hasattr(os, 'pidfd_open') or not hasattr(signal, 'pidfd_send_signal'):
-        raise RuntimeError('Linux pidfd signaling required for owned process termination')
-    handle = os.pidfd_open(target)
-    try:
-        if (proc(launcher_pid)[1] != launcher_birth or proc(target)[1] != birth
-                or not descendant(target, launcher_pid)):
-            raise AssertionError('process identity/ownership changed before pidfd signal')
-        signal.pidfd_send_signal(handle, signal.SIGKILL)
-    finally:
-        os.close(handle)
+    signal_qualified_process(target, signal.SIGKILL, lambda: (
+        proc(launcher_pid)[1] == launcher_birth and proc(target)[1] == birth
+        and descendant(target, launcher_pid)))
 
 
 def retire_owned_launcher(child, launcher_birth):

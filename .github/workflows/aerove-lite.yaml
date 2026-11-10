@@ -1039,6 +1039,7 @@ jobs:
         python3 apps/aerove-lite/tool/test_profile_cancel_acceptance.py
         python3 tooling/test_sqlite_hook_prefetch.py
         python3 tooling/test_kotlin_compiler_prefetch.py
+        python3 tooling/test_owned_step.py
         python3 -B -m unittest discover -s apps/aerove-lite/tool -p test_apk_only_workflow.py -v
         python3 apps/aerove-lite/tool/test_flutter_host_workflow.py
     - name: Check workspace layout
@@ -1437,6 +1438,7 @@ jobs:
       id: subscription_tests
       timeout-minutes: 30
       working-directory: apps/aerove
+      shell: nice -n 19 python3 "${{ github.workspace }}/tooling/run_owned_step.py" --evidence "${{ runner.temp }}/lite-flutter-host/subscription-behavior/process-owner.json" "{0}"
       run: |-
         set -euo pipefail
         evidence="$RUNNER_TEMP/lite-flutter-host/subscription-behavior"
