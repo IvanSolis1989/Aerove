@@ -3,11 +3,13 @@ import 'package:fl_clash/product.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:dio/io.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/download_redirect.dart';
 import 'package:fl_clash/common/update_download.dart';
 import 'package:fl_clash/common/update_feed.dart';
 import 'package:fl_clash/enum/enum.dart';
@@ -19,7 +21,6 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 class Request {
   late final Dio dio;
-  late final Dio _clashDio;
   String? userAgent;
   Future<Map<String, dynamic>?>? _pendingUpdateCheck;
 
@@ -31,58 +32,29 @@ class Request {
 
   Request() {
     dio = Dio(BaseOptions(headers: {'User-Agent': browserUa}));
-    _clashDio = Dio();
-    _clashDio.httpClientAdapter = IOHttpClientAdapter(
-      createHttpClient: () {
-        final client = HttpClient();
-        client.findProxy = (Uri uri) {
-          client.userAgent = globalState.ua;
-          final read = _read;
-          if (read == null) {
-            return 'DIRECT';
-          }
-          return FlClashHttpOverrides.findProxyForReader(read, uri);
-        };
-        return client;
-      },
-    );
   }
 
   Future<Response<T>> _download<T>(
     String url,
     ResponseType responseType, {
     CancelToken? cancellation,
-  }) {
-    if (cancellation != null) {
-      return _downloadJoined<T>(url, responseType, cancellation);
-    }
-    final target = downloadTarget(url);
-    final cancelToken = CancelToken();
-    return _clashDio
-        .getUri<T>(
-          target.uri,
-          options: Options(responseType: responseType, headers: target.headers),
-          cancelToken: cancelToken,
-        )
-        .timeout(
-          downloadTimeoutDuration,
-          onTimeout: () {
-            cancelToken.cancel();
-            throw DioException.receiveTimeout(
-              timeout: downloadTimeoutDuration,
-              requestOptions: RequestOptions(path: url),
-            );
-          },
-        );
-  }
+    int? maxBytes,
+  }) => _downloadJoined<T>(
+    url,
+    responseType,
+    cancellation ?? CancelToken(),
+    maxBytes: maxBytes,
+  );
 
   Future<Response<T>> _downloadJoined<T>(
     String url,
     ResponseType responseType,
-    CancelToken cancellation,
-  ) async {
+    CancelToken cancellation, {
+    int? maxBytes,
+  }) async {
     final target = downloadTarget(url);
     final adapter = _JoinedDownloadAdapter(
+      maxBytes: maxBytes,
       createHttpClient: () {
         final client = HttpClient();
         client.findProxy = (uri) {
@@ -253,12 +225,14 @@ class Request {
   Future<Response<Uint8List>> getFileResponseForUrl(
     String url, {
     CancelToken? cancelToken,
+    int maxBytes = maxSubscriptionBytes,
   }) async {
     try {
       return await _download<Uint8List>(
         url,
         ResponseType.bytes,
         cancellation: cancelToken,
+        maxBytes: maxBytes,
       );
     } catch (e) {
       commonPrint.log(
@@ -269,9 +243,18 @@ class Request {
     }
   }
 
-  Future<Response<String>> getTextResponseForUrl(String url) async {
+  Future<Response<String>> getTextResponseForUrl(
+    String url, {
+    CancelToken? cancelToken,
+    int? maxBytes,
+  }) async {
     try {
-      return await _download<String>(url, ResponseType.plain);
+      return await _download<String>(
+        url,
+        ResponseType.plain,
+        cancellation: cancelToken,
+        maxBytes: maxBytes,
+      );
     } catch (e) {
       commonPrint.log(
         'getTextResponseForUrl error ${compactError(e)}',
@@ -439,7 +422,9 @@ class RuleDownloadOwner {
 }
 
 class _JoinedDownloadAdapter extends IOHttpClientAdapter {
-  _JoinedDownloadAdapter({required super.createHttpClient});
+  _JoinedDownloadAdapter({required super.createHttpClient, this.maxBytes});
+
+  final int? maxBytes;
 
   final _fetches = <Future<void>>[];
   final _bodies = <_JoinedDownloadBody>[];
@@ -453,11 +438,59 @@ class _JoinedDownloadAdapter extends IOHttpClientAdapter {
     final done = Completer<void>();
     _fetches.add(done.future);
     try {
-      final response = await super.fetch(options, requestStream, cancelFuture);
-      final body = _JoinedDownloadBody(response.stream);
-      _bodies.add(body);
-      response.stream = body.stream;
-      return response;
+      var hop = options.copyWith(followRedirects: false);
+      final policy = DownloadRedirectPolicy(
+        options.uri,
+        maxRedirects: options.maxRedirects,
+      );
+      final redirects = <RedirectRecord>[];
+      while (true) {
+        final cancelled = options.cancelToken?.cancelError;
+        if (cancelled != null) throw cancelled;
+        final response = await super.fetch(hop, requestStream, cancelFuture);
+        final body = _JoinedDownloadBody(response.stream);
+        _bodies.add(body);
+        final locations = response.headers[HttpHeaders.locationHeader];
+        final follow =
+            options.followRedirects &&
+            requestStream == null &&
+            const {'GET', 'HEAD'}.contains(options.method) &&
+            const {301, 302, 303, 307, 308}.contains(response.statusCode) &&
+            locations != null;
+        if (follow) {
+          await body.close();
+          if (locations.length != 1)
+            throw const DownloadRedirectException('invalid destination');
+          final target = policy.follow(locations.single, hop.headers);
+          redirects.add(
+            RedirectRecord(response.statusCode, hop.method, target.uri),
+          );
+          hop = hop.copyWith(
+            path: target.uri.toString(),
+            baseUrl: '',
+            queryParameters: {},
+            headers: target.headers,
+          );
+          continue;
+        }
+        final limit = maxBytes;
+        if (limit != null) {
+          final declared = int.tryParse(
+            response.headers[HttpHeaders.contentLengthHeader]?.firstOrNull ??
+                '',
+          );
+          if (declared != null && declared > limit)
+            throw DownloadSizeException(limit);
+        }
+        return ResponseBody(
+          limit == null ? body.stream : _boundedResponse(body.stream, limit),
+          response.statusCode,
+          headers: response.headers,
+          statusMessage: response.statusMessage,
+          isRedirect: response.isRedirect || redirects.isNotEmpty,
+          redirects: [...redirects, ...?response.redirects],
+        )..extra.addAll(response.extra);
+      }
     } finally {
       done.complete();
     }
@@ -647,19 +680,68 @@ Uri standardReleasePage(Map<String, dynamic> release) {
       : exact;
 }
 
-/// Some subscription servers send a gzip or zlib body without saying so in
-/// Content-Encoding, which is the only signal dart:io decompresses on.
-Uint8List decompressUnlabeled(Uint8List bytes) {
+const maxSubscriptionBytes = 16 * 1024 * 1024;
+const maxScriptBytes = 4 * 1024 * 1024;
+
+class DownloadSizeException implements Exception {
+  const DownloadSizeException(this.limit);
+  final int limit;
+  @override
+  String toString() => 'Download exceeds $limit bytes';
+}
+
+Stream<Uint8List> _boundedResponse(Stream<Uint8List> source, int limit) async* {
+  var count = 0;
+  await for (final chunk in source) {
+    count += chunk.length;
+    if (count > limit) throw DownloadSizeException(limit);
+    yield chunk;
+  }
+}
+
+class _BoundedBytes implements Sink<List<int>> {
+  _BoundedBytes(this.limit);
+  final int limit;
+  final bytes = BytesBuilder(copy: false);
+  @override
+  void add(List<int> chunk) {
+    if (bytes.length + chunk.length > limit) throw DownloadSizeException(limit);
+    bytes.add(chunk);
+  }
+
+  @override
+  void close() {}
+}
+
+Future<Uint8List> decompressUnlabeledTask(Uint8List bytes) =>
+    Isolate.run(() => decompressUnlabeled(bytes));
+
+/// Handles compressed subscription bodies that omitted Content-Encoding.
+Uint8List decompressUnlabeled(
+  Uint8List bytes, {
+  int maxBytes = maxSubscriptionBytes,
+}) {
+  if (bytes.length > maxBytes) throw DownloadSizeException(maxBytes);
   final codec = switch (bytes) {
     [0x1f, 0x8b, ...] => gzip,
     [0x78, final flags, ...] when (0x78 << 8 | flags) % 31 == 0 => zlib,
     _ => null,
   };
-  if (codec == null) {
-    return bytes;
-  }
+  if (codec == null) return bytes;
   try {
-    return Uint8List.fromList(codec.decode(bytes));
+    final output = _BoundedBytes(maxBytes);
+    final decoder = codec.decoder.startChunkedConversion(output);
+    for (var offset = 0; offset < bytes.length; offset += 16384) {
+      decoder.add(
+        Uint8List.sublistView(
+          bytes,
+          offset,
+          offset + 16384 < bytes.length ? offset + 16384 : bytes.length,
+        ),
+      );
+    }
+    decoder.close();
+    return output.bytes.takeBytes();
   } on FormatException {
     return bytes;
   }

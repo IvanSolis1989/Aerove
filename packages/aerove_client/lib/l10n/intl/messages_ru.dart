@@ -234,23 +234,26 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m87(label) => "«${label}» — только одно значение";
 
-  static String m88(protocols, removed, adjustments) =>
+  static String m88(detail) =>
+      "Источник сохранён, но применить его не удалось: ${detail}";
+
+  static String m89(protocols, removed, adjustments) =>
       "Пропущено узлов, не поддерживаемых этим ядром: ${removed} (${protocols}). ${adjustments}";
 
-  static String m89(speed) => "Скорость загрузки: ${speed}";
+  static String m90(speed) => "Скорость загрузки: ${speed}";
 
-  static String m90(value) => "Всего ${value}";
+  static String m91(value) => "Всего ${value}";
 
-  static String m91(speed) => "Скорость отправки: ${speed}";
+  static String m92(speed) => "Скорость отправки: ${speed}";
 
-  static String m92(transport) => "Заголовки ${transport}";
+  static String m93(transport) => "Заголовки ${transport}";
 
-  static String m93(label) => "Значение «${label}» должно быть URL";
-
-  static String m94(count) =>
-      "${Intl.plural(count, one: '${count} год назад', few: '${count} года назад', many: '${count} лет назад', other: '${count} года назад')}";
+  static String m94(label) => "Значение «${label}» должно быть URL";
 
   static String m95(count) =>
+      "${Intl.plural(count, one: '${count} год назад', few: '${count} года назад', many: '${count} лет назад', other: '${count} года назад')}";
+
+  static String m96(count) =>
       "${Intl.plural(count, one: '${count} г. назад', few: '${count} г. назад', many: '${count} л. назад', other: '${count} г. назад')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
@@ -1942,6 +1945,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "sort": MessageLookupByLibrary.simpleMessage("Сортировка"),
     "source": MessageLookupByLibrary.simpleMessage("Источник"),
     "sourceIp": MessageLookupByLibrary.simpleMessage("IP источника"),
+    "sourceSavedApplyFailed": m88,
+    "sourceSavedApplyUnconfirmed": MessageLookupByLibrary.simpleMessage(
+      "Источник сохранён, но применение не подтверждено. Примените его ещё раз; может потребоваться перезапуск.",
+    ),
     "specialProxy": MessageLookupByLibrary.simpleMessage("Специальный прокси"),
     "specialRules": MessageLookupByLibrary.simpleMessage("Специальные правила"),
     "spectrum": MessageLookupByLibrary.simpleMessage("Спектр"),
@@ -1982,7 +1989,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("Стиль"),
     "submit": MessageLookupByLibrary.simpleMessage("Отправить"),
-    "subscriptionCompatibilitySummary": m88,
+    "subscriptionCompatibilitySummary": m89,
     "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
       "Применён поддерживаемый текущим ядром стек TUN lwIP.",
     ),
@@ -2037,12 +2044,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("Отдано"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Порт TProxy"),
     "traffic": MessageLookupByLibrary.simpleMessage("Трафик"),
-    "trafficDownloadSpeed": m89,
-    "trafficTotal": m90,
-    "trafficUploadSpeed": m91,
+    "trafficDownloadSpeed": m90,
+    "trafficTotal": m91,
+    "trafficUploadSpeed": m92,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Статистика трафика"),
     "transport": MessageLookupByLibrary.simpleMessage("Транспорт"),
-    "transportHeaders": m92,
+    "transportHeaders": m93,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "Не удалось получить права для TUN, поэтому он выключен.",
@@ -2087,7 +2094,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("Отдача"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("Скорость отдачи"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m93,
+    "urlTip": m94,
     "useHosts": MessageLookupByLibrary.simpleMessage("Использовать hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Использовать системный hosts",
@@ -2120,8 +2127,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "«Записывать в систему» также устанавливает системные часы; Android это игнорирует.",
     ),
-    "yearsAgo": m94,
-    "yearsAgoShort": m95,
+    "yearsAgo": m95,
+    "yearsAgoShort": m96,
     "yes": MessageLookupByLibrary.simpleMessage("Да"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Упрощённый китайский"),
   };

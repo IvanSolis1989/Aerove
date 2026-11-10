@@ -212,22 +212,24 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m87(label) => "${label}은(는) 하나만 입력해야 합니다";
 
-  static String m88(protocols, removed, adjustments) =>
+  static String m88(detail) => "소스는 저장되었지만 적용하지 못했습니다: ${detail}";
+
+  static String m89(protocols, removed, adjustments) =>
       "이 코어가 지원하지 않는 노드 ${removed}개(${protocols})를 제외했습니다. ${adjustments}";
 
-  static String m89(speed) => "다운로드 속도: ${speed}";
+  static String m90(speed) => "다운로드 속도: ${speed}";
 
-  static String m90(value) => "합계 ${value}";
+  static String m91(value) => "합계 ${value}";
 
-  static String m91(speed) => "업로드 속도: ${speed}";
+  static String m92(speed) => "업로드 속도: ${speed}";
 
-  static String m92(transport) => "${transport} 요청 헤더";
+  static String m93(transport) => "${transport} 요청 헤더";
 
-  static String m93(label) => "${label}은(는) URL이어야 합니다";
-
-  static String m94(count) => "${Intl.plural(count, other: '${count}년 전')}";
+  static String m94(label) => "${label}은(는) URL이어야 합니다";
 
   static String m95(count) => "${Intl.plural(count, other: '${count}년 전')}";
+
+  static String m96(count) => "${Intl.plural(count, other: '${count}년 전')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1571,6 +1573,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "sort": MessageLookupByLibrary.simpleMessage("정렬"),
     "source": MessageLookupByLibrary.simpleMessage("소스"),
     "sourceIp": MessageLookupByLibrary.simpleMessage("출발지 IP"),
+    "sourceSavedApplyFailed": m88,
+    "sourceSavedApplyUnconfirmed": MessageLookupByLibrary.simpleMessage(
+      "소스는 저장되었지만 적용이 확인되지 않았습니다. 다시 적용해 주세요. 다시 시작해야 할 수 있습니다.",
+    ),
     "specialProxy": MessageLookupByLibrary.simpleMessage("특수 프록시"),
     "specialRules": MessageLookupByLibrary.simpleMessage("특수 규칙"),
     "spectrum": MessageLookupByLibrary.simpleMessage("스펙트럼"),
@@ -1603,7 +1609,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("스타일"),
     "submit": MessageLookupByLibrary.simpleMessage("제출"),
-    "subscriptionCompatibilitySummary": m88,
+    "subscriptionCompatibilitySummary": m89,
     "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
       "현재 코어가 지원하는 lwIP TUN 스택을 적용했습니다.",
     ),
@@ -1648,12 +1654,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("업로드량"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("TProxy 포트"),
     "traffic": MessageLookupByLibrary.simpleMessage("트래픽"),
-    "trafficDownloadSpeed": m89,
-    "trafficTotal": m90,
-    "trafficUploadSpeed": m91,
+    "trafficDownloadSpeed": m90,
+    "trafficTotal": m91,
+    "trafficUploadSpeed": m92,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("트래픽 사용량"),
     "transport": MessageLookupByLibrary.simpleMessage("전송"),
-    "transportHeaders": m92,
+    "transportHeaders": m93,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "TUN 권한을 얻지 못해 끄기로 되돌렸습니다.",
@@ -1694,7 +1700,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("업로드"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("업로드 대역폭"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m93,
+    "urlTip": m94,
     "useHosts": MessageLookupByLibrary.simpleMessage("hosts 사용"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("시스템 hosts 사용"),
     "usedShort": MessageLookupByLibrary.simpleMessage("사용"),
@@ -1717,8 +1723,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "시스템에 기록하면 시스템 시계도 설정합니다. Android에서는 무시됩니다.",
     ),
-    "yearsAgo": m94,
-    "yearsAgoShort": m95,
+    "yearsAgo": m95,
+    "yearsAgoShort": m96,
     "yes": MessageLookupByLibrary.simpleMessage("예"),
     "zhCN": MessageLookupByLibrary.simpleMessage("중국어 간체"),
   };

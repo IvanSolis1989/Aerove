@@ -206,6 +206,7 @@ class SetupAction extends _$SetupAction {
   final _listenerScheduler = SerialTaskScheduler();
   final _updateScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
+  ValueNotifier<bool>? _proxyRecoveryCancellation;
   DateTime? _startTime;
   _SetupInputs? _appliedInputs;
   var _pendingForceApply = false;
@@ -548,6 +549,7 @@ class SetupAction extends _$SetupAction {
   }
 
   _RunRequest _claim(bool running, {required bool initialize}) {
+    _proxyRecoveryCancellation?.value = true;
     if (!(running && initialize && isLanEnableRestarting)) {
       _finishLanEnable(false);
     }
@@ -571,13 +573,34 @@ class SetupAction extends _$SetupAction {
     var applied = false;
     try {
       applied = await apply();
-    } catch (_) {
-      applied = false;
+    } catch (error, stack) {
+      commonPrint.log(
+        'initial setup failed: ${compactError(error)}, $stack',
+        logLevel: coreFailureLogLevel(error),
+      );
+      if (_isCurrent(request))
+        dialogs.showNotifier(
+          userFacingErrorMessage(error, currentAppLocalizations),
+          level: MessageLevel.error,
+        );
     }
     if (!applied && _isCurrent(request)) {
-      await globalState.safeRun(() => setRunning(false));
+      final stopping = setRunning(false);
+      final cleanup = _latestRunRequest!;
+      try {
+        await stopping;
+      } catch (error, stack) {
+        commonPrint.log(
+          'initial setup cleanup failed: ${compactError(error)}, $stack',
+          logLevel: coreFailureLogLevel(error),
+        );
+        if (_isCurrent(cleanup)) {
+          _setLocalRunning(false);
+          ref.read(runningVpnOptionsProvider.notifier).value = null;
+        }
+      }
     }
-    return applied;
+    return applied && _isCurrent(request);
   }
 
   Future<bool> _start(_RunRequest request) async {
@@ -1039,6 +1062,7 @@ class SetupAction extends _$SetupAction {
     _SetupInputs inputs,
     BuiltProfile profile, {
     bool Function()? isCurrent,
+    bool rethrowFailures = false,
   }) async {
     final record = await _setupRecord(inputs, profile);
     if (record == null || (isCurrent != null && !isCurrent())) return false;
@@ -1067,6 +1091,7 @@ class SetupAction extends _$SetupAction {
         'refreshAppliedSetup ===> ${compactError(e)}',
         logLevel: coreFailureLogLevel(e),
       );
+      if (rethrowFailures) rethrow;
       return false;
     }
   }
@@ -1102,6 +1127,113 @@ class SetupAction extends _$SetupAction {
       preloadInvoke: preloadInvoke,
     );
     return result != _SetupTaskResult.failed;
+  }
+
+  Future<bool> applyProfileConfirmed({
+    bool silence = false,
+    bool force = false,
+    bool Function()? isCurrent,
+  }) async {
+    bool current() => ref.mounted && (isCurrent?.call() ?? true);
+    if (!current()) return false;
+    final result = await _runSetup(
+      silence: silence,
+      force: force,
+      setupIsCurrent: current,
+      rethrowFailures: true,
+    );
+    if (result != _SetupTaskResult.completed || !current()) return false;
+    final applied = await _inputsApplied();
+    return applied && current();
+  }
+
+  Future<bool> recoverProxyGroups({
+    ValueListenable<bool>? cancellation,
+    required bool Function() isCurrent,
+  }) async {
+    if (ClientProduct.current.expectedCoreId != 'meow-rs') return false;
+    _proxyRecoveryCancellation?.value = true;
+    final signal = ValueNotifier(false);
+    _proxyRecoveryCancellation = signal;
+    final owner = _core;
+    final profileId = ref.read(currentProfileIdProvider);
+    final runRequest = _latestRunRequest;
+    final completion = Completer<void>();
+    unawaited(
+      completion.future.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
+    _providerCancellations.add(signal);
+    _providerCompletions[signal] = completion;
+    CoreRequestQuiescence? nativeRequest;
+    bool current() =>
+        !signal.value &&
+        ref.mounted &&
+        cancellation?.value != true &&
+        isCurrent() &&
+        identical(owner, _core) &&
+        identical(runRequest, _latestRunRequest) &&
+        ref.read(currentProfileIdProvider) == profileId &&
+        ref.read(coreStatusProvider) == CoreStatus.connected &&
+        ref.read(appVisibleProvider);
+    void cancel() {
+      if (cancellation?.value == true) signal.value = true;
+    }
+
+    cancellation?.addListener(cancel);
+    final visibility = ref.listen(appVisibleProvider, (_, visible) {
+      if (!visible) signal.value = true;
+    });
+    try {
+      if (!current()) return false;
+      final result = await _scheduleSetup(
+        () => _setupConfig(
+          force: true,
+          cancellation: signal,
+          setupIsCurrent: current,
+          observeQuiescence: (state) => nativeRequest = state,
+        ),
+        operation: signal,
+      );
+      return result == _SetupTaskResult.completed && current();
+    } catch (error, stack) {
+      commonPrint.log(
+        'proxy graph recovery failed: ${compactError(error)}, $stack',
+        logLevel: coreFailureLogLevel(error),
+      );
+      if (current())
+        dialogs.showNotifier(
+          userFacingErrorMessage(error, currentAppLocalizations),
+          level: MessageLevel.error,
+        );
+      return false;
+    } finally {
+      visibility.close();
+      cancellation?.removeListener(cancel);
+      _providerCancellations.remove(signal);
+      if (identical(_proxyRecoveryCancellation, signal))
+        _proxyRecoveryCancellation = null;
+      void release() {
+        _providerCompletions.remove(signal);
+        if (!completion.isCompleted) completion.complete();
+        signal.dispose();
+      }
+
+      final native = nativeRequest;
+      if (native == null || native.isQuiescent) {
+        release();
+      } else {
+        completion.completeError(
+          const CoreMethodException(
+            code: 'termination_unconfirmed',
+            message: 'Proxy graph recovery cancellation has not been confirmed',
+          ),
+        );
+        unawaited(native.whenQuiescent.then((_) => release()));
+      }
+    }
   }
 
   Future<bool> refreshSelectionMetadata({
@@ -1603,12 +1735,16 @@ class SetupAction extends _$SetupAction {
     bool silence = false,
     bool force = false,
     Future<void> Function()? preloadInvoke,
+    bool Function()? setupIsCurrent,
+    bool rethrowFailures = false,
   }) async {
     final result = await _scheduleSetup(() {
       return _setupConfig(
         force: force,
         silence: silence,
         preloadInvoke: preloadInvoke,
+        setupIsCurrent: setupIsCurrent,
+        rethrowFailures: rethrowFailures,
         onUpdated: () async {
           await ref.read(proxiesActionProvider.notifier).updateGroups();
           await ref.read(providersProvider.notifier).syncProviders();
@@ -1618,6 +1754,7 @@ class SetupAction extends _$SetupAction {
     if (result != _SetupTaskResult.handoffToCoreRestart) {
       return result;
     }
+    if (!(setupIsCurrent?.call() ?? true)) return _SetupTaskResult.failed;
     // Release the current serial task before restartCore reapplies the profile.
     final restarted = await _restartCoreAfterAuthorization();
     return restarted ? _SetupTaskResult.completed : _SetupTaskResult.failed;
@@ -2115,7 +2252,11 @@ class SetupAction extends _$SetupAction {
     ValueListenable<bool>? cancellation,
     void Function(CoreRequestQuiescence state)? observeQuiescence,
     bool Function()? metadataIsCurrent,
+    bool Function()? setupIsCurrent,
+    bool rethrowFailures = false,
   }) async {
+    bool setupCurrent() => setupIsCurrent?.call() ?? true;
+    if (!setupCurrent()) return _SetupTaskResult.failed;
     final producerOnly =
         metadataOnly ||
         geoType != null ||
@@ -2124,23 +2265,24 @@ class SetupAction extends _$SetupAction {
     if (ClientProduct.current.expectedCoreId == 'meow-rs' && !producerOnly) {
       await _recoverProviderSources();
     }
+    if (!setupCurrent()) return _SetupTaskResult.failed;
     var profile = ref.read(currentProfileProvider);
     if (producerOnly &&
         (profile == null || !(metadataIsCurrent?.call() ?? false)))
       return _SetupTaskResult.failed;
     profile ??= recoverMissingProfile();
-    // A refresh failure is surfaced by safeRun; setup keeps the old profile.
+    Future<Profile?> restoreProfile() => ref
+        .read(profilesActionProvider.notifier)
+        .restoreMissingProfile(profile, isCurrent: setupIsCurrent);
     final nextProfile = producerOnly
         ? null
-        : await globalState.safeRun(
-            () => profile?.checkAndUpdateAndCopy(
-              validate: (path, key) => _core.validateProfile(path, key),
-            ),
-          );
+        : setupIsCurrent != null || rethrowFailures
+        ? await restoreProfile()
+        : await globalState.safeRun(restoreProfile);
     if (nextProfile != null) {
       profile = nextProfile;
-      ref.read(profilesProvider.notifier).put(nextProfile);
     }
+    if (!setupCurrent()) return _SetupTaskResult.failed;
     commonPrint.log('setup ===> ${profile?.realLabel}');
     final patchConfig = ref.read(patchClashConfigProvider);
     final shouldContinueSetup =
@@ -2197,14 +2339,20 @@ class SetupAction extends _$SetupAction {
         businessConfig,
       );
     }
+    if (!setupCurrent()) return _SetupTaskResult.failed;
     final realPatchConfig = _effectivePatchConfig(patchConfig);
     final networkSetting = ref.read(networkSettingProvider);
     SetupState? setupState;
-    final realProfile = await globalState.safeRun(() async {
+    Future<BuiltProfile> buildProfile() async {
       final state = await ref.read(setupStateProvider(profile?.id).future);
       setupState = state;
       return getProfile(setupState: state, patchConfig: realPatchConfig);
-    }, title: 'build profile');
+    }
+
+    final realProfile = rethrowFailures || setupIsCurrent != null
+        ? await buildProfile()
+        : await globalState.safeRun(buildProfile, title: 'build profile');
+    if (!setupCurrent()) return _SetupTaskResult.failed;
     final profileFailed = realProfile == null;
     if (bindSharedSource && profileFailed) return _SetupTaskResult.failed;
     if (bindSharedSource) {
@@ -2241,6 +2389,7 @@ class SetupAction extends _$SetupAction {
         realProfile!.providerSourceWitness,
       );
     }
+    if (!setupCurrent()) return _SetupTaskResult.failed;
     var setupParams = _setupParams.copyWith(
       base: realProfile?.base,
       dataSourceProof: dataSourceProof,
@@ -2366,12 +2515,15 @@ class SetupAction extends _$SetupAction {
         refreshed = await _refreshRecord(
           inputs,
           realProfile,
-          isCurrent: metadataOnly ? metadataIsCurrent : null,
+          isCurrent: metadataOnly ? metadataIsCurrent : setupIsCurrent,
+          rethrowFailures: rethrowFailures,
         );
-      if (metadataOnly && !(metadataIsCurrent?.call() ?? false))
+      if (!setupCurrent() ||
+          metadataOnly && !(metadataIsCurrent?.call() ?? false))
         return _SetupTaskResult.failed;
-      if (!bindSharedSource || refreshed) _appliedInputs = inputs;
-      if ((metadataOnly || bindSharedSource) && !refreshed)
+      if (refreshed || !bindSharedSource && !rethrowFailures)
+        _appliedInputs = inputs;
+      if ((metadataOnly || bindSharedSource || rethrowFailures) && !refreshed)
         return _SetupTaskResult.failed;
       _publishAppliedCounts(realProfile.counts);
       if (preloadInvoke != null) {
@@ -2389,7 +2541,8 @@ class SetupAction extends _$SetupAction {
     final meowRecord = bindSharedSource
         ? await _setupRecord(inputs, realProfile!)
         : null;
-    if (bindSharedSource && meowRecord == null) return _SetupTaskResult.failed;
+    if (!setupCurrent() || bindSharedSource && meowRecord == null)
+      return _SetupTaskResult.failed;
     // Go answers a config it rejects by running its built-in default, which
     // has no proxies, so until this push succeeds no applied config is known.
     if (providerUpdate == null && providerSourceApply == null) {
@@ -2402,6 +2555,7 @@ class SetupAction extends _$SetupAction {
         : realProfile == null
         ? null
         : await _setupRecord(inputs, realProfile);
+    if (rethrowFailures && record == null) return _SetupTaskResult.failed;
     if (system.isAndroid) {
       await ref.read(vpnOptionsProvider.future);
       await preferences.saveShareState(ref.read(sharedStateProvider));
@@ -2412,6 +2566,10 @@ class SetupAction extends _$SetupAction {
     await globalState.loadingRun(
       () async {
         try {
+          if (!setupCurrent()) {
+            setupFailed = true;
+            return;
+          }
           if (providerUpdate != null) checkUpdateCurrent(metadataIsCurrent);
           if (setupParams.base == null) {
             final configFilePath = await appPath.configFilePath;
@@ -2420,6 +2578,10 @@ class SetupAction extends _$SetupAction {
           final profileId = profile?.id;
           if (profileId != null) {
             await appPath.ensureProviderDirs(profileId);
+          }
+          if (!setupCurrent()) {
+            setupFailed = true;
+            return;
           }
           final message = providerSourceApply != null
               ? await (() async {
@@ -2437,6 +2599,10 @@ class SetupAction extends _$SetupAction {
                   cancellation: cancellation,
                   observeQuiescence: observeQuiescence,
                 );
+          if (!setupCurrent()) {
+            setupFailed = true;
+            return;
+          }
           if (message.isNotEmpty) {
             if (providerUpdate == null)
               _publishAppliedCounts(configCountsOf(const {}));
@@ -2446,7 +2612,9 @@ class SetupAction extends _$SetupAction {
           if (providerApplied != null) await providerApplied(record!);
         } catch (e, s) {
           setupFailed = true;
-          if (preloadInvoke != null ||
+          if (!setupCurrent()) return;
+          if (rethrowFailures ||
+              preloadInvoke != null ||
               cancellation != null ||
               providerSourceApply != null) {
             handoffFailure = (e, s);

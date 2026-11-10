@@ -6,6 +6,7 @@ import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/proxies/list.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'tab.dart';
@@ -29,6 +30,8 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
   late final _tabView = ProxiesTabView(key: _proxiesTabKey);
   bool _isTab = false;
   bool _retrying = false;
+  ValueNotifier<bool>? _retryCancellation;
+  ValueListenable<bool>? _pageActivity;
 
   void _updateStyle(
     ProxiesStyleProps Function(ProxiesStyleProps state) update,
@@ -134,13 +137,40 @@ class _ProxiesViewState extends ConsumerState<ProxiesView> {
   }
 
   Future<void> _retryGroups() async {
-    if (_retrying) return;
+    if (_retrying || !(_pageActivity?.value ?? true)) return;
     setState(() => _retrying = true);
+    final cancellation = _retryCancellation = ValueNotifier(false);
     try {
-      await ref.read(proxiesActionProvider.notifier).updateGroups();
+      await ref
+          .read(proxiesActionProvider.notifier)
+          .retryGroups(cancellation: cancellation);
     } finally {
+      _retryCancellation = null;
+      cancellation.dispose();
       if (mounted) setState(() => _retrying = false);
     }
+  }
+
+  void _cancelHiddenRetry() {
+    if (!(_pageActivity?.value ?? true)) _retryCancellation?.value = true;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final activity = PageActivityScope.activityOf(context);
+    if (!identical(activity, _pageActivity)) {
+      _pageActivity?.removeListener(_cancelHiddenRetry);
+      _pageActivity = activity?..addListener(_cancelHiddenRetry);
+    }
+    _cancelHiddenRetry();
+  }
+
+  @override
+  void dispose() {
+    _pageActivity?.removeListener(_cancelHiddenRetry);
+    _retryCancellation?.value = true;
+    super.dispose();
   }
 
   @override

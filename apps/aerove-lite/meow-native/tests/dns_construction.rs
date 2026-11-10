@@ -213,17 +213,182 @@ async fn required_dns_owner_fails_closed_and_retirement_joins_actual_pending_exc
 
 #[tokio::test]
 async fn owned_loader_preserves_typed_bootstrap_failure_and_joins_without_network() {
-    let owner = Owner::new();
-    let scope = OwnedLoadScope::with_context(Arc::new(Context {
-        dns: Some(owner.clone()), physical: "127.0.0.1:53".parse().unwrap(),
+    for nameserver in ["nameserver", "proxy-server-nameserver"] {
+        // A failed owned load closes its scope. Each independent startup needs
+        // its own owner, otherwise the second case only tests cancellation.
+        let owner = Owner::new();
+        let scope = OwnedLoadScope::with_context(Arc::new(Context {
+            dns: Some(owner.clone()), physical: "127.0.0.1:53".parse().unwrap(),
+        }));
+        owner.bind(&scope);
+        let source = format!("dns:\n  enable: true\n  default-nameserver: ['rcode://refused']\n  {nameserver}: ['https://private.invalid/dns-query']\nrules: []\n");
+        let result = tokio::time::timeout(Duration::from_secs(5),
+            meow_config::load_config_from_str_owned(&source, &scope)).await.unwrap();
+        let error = match result { Ok(_) => panic!("negative bootstrap must not create a ready resolver"), Err(error) => error };
+        assert!(error.chain().any(|cause| matches!(cause.downcast_ref::<meow_dns::resolver::BootstrapError>(),
+            Some(meow_dns::resolver::BootstrapError::CannotResolve { .. }))), "{nameserver} discarded the typed bootstrap cause: {error:#}");
+        scope.close().await.unwrap();
+        owner.close().await;
+    }
+}
+
+// Inspect real socket creation, but reject before connect/bind: encrypted
+// bootstrap regression checks never send a packet to an external resolver.
+#[derive(Default)]
+struct RejectBootstrapSockets { udp: AtomicUsize, tcp: AtomicUsize }
+impl meow_common::socket_protect::SocketProtector for RejectBootstrapSockets {
+    fn protect(&self, fd: std::os::fd::RawFd) -> io::Result<()> {
+        let mut kind: libc::c_int = 0;
+        let mut length = std::mem::size_of_val(&kind) as libc::socklen_t;
+        // SAFETY: getsockopt writes at most `length` bytes into a live integer.
+        let result = unsafe { libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE,
+            (&mut kind as *mut libc::c_int).cast(), &mut length) };
+        assert_eq!(result, 0);
+        match kind {
+            libc::SOCK_DGRAM => { self.udp.fetch_add(1, Ordering::SeqCst); }
+            libc::SOCK_STREAM => { self.tcp.fetch_add(1, Ordering::SeqCst); }
+            other => panic!("unexpected bootstrap socket type {other}"),
+        }
+        Err(io::Error::new(io::ErrorKind::PermissionDenied, "test: bootstrap socket rejected before IO"))
+    }
+}
+struct BootstrapContext {
+    dns: Arc<Owner>,
+    source: meow_config::owned_load::DisabledDnsSource,
+    network: meow_common::socket_protect::NetworkScope,
+    offline: bool,
+}
+impl LoadContext for BootstrapContext {
+    fn requires_dns_transport_scope(&self) -> bool { true }
+    fn dns_transport_scope(&self) -> Option<TransportScope> { Some(self.dns.transport()) }
+    fn requires_physical_dns(&self) -> bool { !self.offline }
+    fn offline_validation(&self) -> bool { self.offline }
+    fn disabled_dns_source(&self) -> Result<meow_config::owned_load::DisabledDnsSource, &'static str> { Ok(self.source.clone()) }
+    fn wrap(&self, work: OwnedWork) -> OwnedWork {
+        let network = self.network.clone(); Box::pin(async move { network.scope(work).await })
+    }
+    fn run_blocking(&self, work: Box<dyn FnOnce() + Send>) { self.network.run_blocking(work); }
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn encrypted_default_nameservers_preserve_transport_without_plaintext_downgrade() {
+    for default in ["tls://127.0.0.1:1853#dns.example", "https://127.0.0.1:1443/custom-query#dns.example"] {
+        let sockets = Arc::new(RejectBootstrapSockets::default());
+        let dns = Owner::new();
+        let scope = OwnedLoadScope::with_context(Arc::new(BootstrapContext {
+            dns: dns.clone(), source: meow_config::owned_load::DisabledDnsSource::UnavailableNotConnected,
+            network: meow_common::socket_protect::NetworkScope { protector: Some(sockets.clone()), resolver: None }, offline: false,
+        }));
+        dns.bind(&scope);
+        let yaml = format!("dns:\n enable: true\n use-system-hosts: false\n default-nameserver: ['{default}']\n nameserver: ['https://bootstrap.invalid/query']\nrules: ['MATCH,DIRECT']\n");
+        let result = tokio::time::timeout(Duration::from_secs(5), meow_config::load_config_from_str_owned(&yaml, &scope)).await.unwrap();
+        assert!(result.is_err(), "all sockets are denied before IO");
+        dns.close().await; scope.close().await.unwrap();
+        assert_eq!(sockets.udp.load(Ordering::SeqCst), 0, "{default} must not silently become UDP/53");
+        assert!(sockets.tcp.load(Ordering::SeqCst) > 0, "{default} must construct encrypted TCP transport");
+    }
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn missing_default_nameserver_uses_captured_physical_dns_for_main_proxy_and_policy() {
+    let server = Server::new().await;
+    let dns = Owner::new();
+    let scope = OwnedLoadScope::with_context(Arc::new(Context { dns: Some(dns.clone()), physical: server.address }));
+    dns.bind(&scope);
+    for entry in [
+        "nameserver: ['https://main.bootstrap.invalid/query']",
+        "nameserver: ['rcode://refused']\n proxy-server-nameserver: ['tls://proxy.bootstrap.invalid']",
+        "nameserver: ['rcode://refused']\n nameserver-policy: {'+.internal.invalid': ['https://policy.bootstrap.invalid/query']}",
+    ] {
+        let before = server.aaaa.load(Ordering::SeqCst);
+        let yaml = format!("dns:\n enable: true\n use-system-hosts: false\n {entry}\nrules: ['MATCH,DIRECT']\n");
+        let result = tokio::time::timeout(Duration::from_secs(5), meow_config::load_config_from_str_owned(&yaml, &scope)).await.unwrap();
+        assert!(result.is_ok(), "captured physical DNS must bootstrap {entry}: {:?}", result.err());
+        // Main/proxy bootstrap is dual-stack even when traffic IPv6 is off.
+        if !entry.contains("nameserver-policy") { assert!(server.aaaa.load(Ordering::SeqCst) > before); }
+    }
+    dns.close().await; scope.close().await.unwrap(); server.close().await;
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn disconnected_owned_bootstrap_never_uses_system_dns_and_literal_upstreams_still_build() {
+    let sockets = Arc::new(RejectBootstrapSockets::default());
+    for entry in ["nameserver", "proxy-server-nameserver"] {
+        let dns = Owner::new();
+        let scope = OwnedLoadScope::with_context(Arc::new(BootstrapContext {
+            dns: dns.clone(), source: meow_config::owned_load::DisabledDnsSource::UnavailableNotConnected,
+            network: meow_common::socket_protect::NetworkScope { protector: Some(sockets.clone()), resolver: None }, offline: false,
+        }));
+        dns.bind(&scope);
+        let literal = "dns: {enable: true, use-system-hosts: false, nameserver: ['udp://192.0.2.53']}\nrules: ['MATCH,DIRECT']\n";
+        assert!(meow_config::load_config_from_str_owned(literal, &scope).await.is_ok());
+        let yaml = format!("dns: {{enable: true, use-system-hosts: false, {entry}: ['https://unavailable.bootstrap.invalid/query']}}\nrules: ['MATCH,DIRECT']\n");
+        let error = meow_config::load_config_from_str_owned(&yaml, &scope).await.err().unwrap();
+        assert!(error.chain().any(|cause| cause.downcast_ref::<io::Error>().is_some_and(|cause| cause.kind() == io::ErrorKind::NotConnected)), "{entry}: {error:#}");
+        dns.close().await; scope.close().await.unwrap();
+    }
+    assert_eq!(sockets.udp.load(Ordering::SeqCst) + sockets.tcp.load(Ordering::SeqCst), 0, "no network must not fall back to system/public DNS");
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn configured_bootstrap_and_policy_main_resolver_keep_priority_over_physical_dns() {
+    let physical = Server::new().await;
+    let configured = Server::new().await;
+    let dns = Owner::new();
+    let scope = OwnedLoadScope::with_context(Arc::new(Context { dns: Some(dns.clone()), physical: physical.address }));
+    dns.bind(&scope);
+    for entries in [
+        format!("default-nameserver: ['udp://{}']\n nameserver: ['https://explicit.bootstrap.invalid/query']", configured.address),
+        format!("nameserver: ['udp://{}']\n nameserver-policy: {{'+.internal.invalid': ['https://explicit.policy.invalid/query']}}", configured.address),
+    ] {
+        let before = configured.aaaa.load(Ordering::SeqCst);
+        let yaml = format!("dns:\n enable: true\n use-system-hosts: false\n {entries}\nrules: ['MATCH,DIRECT']\n");
+        assert!(meow_config::load_config_from_str_owned(&yaml, &scope).await.is_ok());
+        assert!(configured.aaaa.load(Ordering::SeqCst) > before, "explicit bootstrap source must retain precedence");
+        assert_eq!(physical.aaaa.load(Ordering::SeqCst), 0, "physical fallback must not override configured resolvers");
+    }
+    dns.close().await; scope.close().await.unwrap(); physical.close().await; configured.close().await;
+}
+
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn owned_offline_validation_defers_implicit_physical_policy_bootstrap_without_io() {
+    let sockets = Arc::new(RejectBootstrapSockets::default());
+    let dns = Owner::new();
+    let scope = OwnedLoadScope::with_context(Arc::new(BootstrapContext {
+        dns: dns.clone(), source: meow_config::owned_load::DisabledDnsSource::UnavailableNotConnected,
+        network: meow_common::socket_protect::NetworkScope { protector: Some(sockets.clone()), resolver: None }, offline: true,
     }));
-    owner.bind(&scope);
-    let source = "dns:\n  enable: true\n  default-nameserver: ['rcode://refused']\n  nameserver: ['https://private.invalid/dns-query']\nrules: []\n";
-    let result = tokio::time::timeout(Duration::from_secs(5),
-        meow_config::load_config_from_str_owned(source, &scope)).await.unwrap();
-    let error = match result { Ok(_) => panic!("negative bootstrap must not create a ready resolver"), Err(error) => error };
-    assert!(error.chain().any(|cause| matches!(cause.downcast_ref::<meow_dns::resolver::BootstrapError>(),
-        Some(meow_dns::resolver::BootstrapError::CannotResolve { .. }))));
+    dns.bind(&scope);
+    let yaml = "dns: {enable: true, use-system-hosts: false, nameserver: ['https://main.bootstrap.invalid/query'], nameserver-policy: {'+.internal.invalid': ['https://policy.bootstrap.invalid/query']}}\nrules: ['MATCH,DIRECT']\n";
+    assert!(meow_config::load_config_from_str_owned(yaml, &scope).await.is_ok());
+    // An explicit unusable bootstrap config remains a static error.
+    let invalid = yaml.replace("enable: true,", "enable: true, default-nameserver: ['rcode://refused'],");
+    assert!(meow_config::load_config_from_str_owned(&invalid, &scope).await.is_err());
+    dns.close().await; scope.close().await.unwrap();
+    assert_eq!(sockets.udp.load(Ordering::SeqCst) + sockets.tcp.load(Ordering::SeqCst), 0);
+    assert_eq!(dns.starts.load(Ordering::SeqCst), 0, "validation must not create background DNS work");
+}
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn captured_bootstrap_cancellation_joins_pending_dns_then_next_owner_recovers() {
+    let pending = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let dns = Owner::new();
+    let scope = OwnedLoadScope::with_context(Arc::new(Context { dns: Some(dns.clone()), physical: pending.local_addr().unwrap() }));
+    dns.bind(&scope);
+    let yaml = "dns: {enable: true, use-system-hosts: false, nameserver: ['https://cancel.bootstrap.invalid/query']}\nrules: ['MATCH,DIRECT']\n";
+    let loading_scope = scope.clone();
+    let loading = tokio::spawn(async move { meow_config::load_config_from_str_owned(yaml, &loading_scope).await });
+    let mut wire = [0; 4096];
+    tokio::time::timeout(Duration::from_secs(5), pending.recv_from(&mut wire)).await.unwrap().unwrap();
+    dns.close().await;
+    assert!(tokio::time::timeout(Duration::from_secs(5), loading).await.unwrap().unwrap().is_err());
     scope.close().await.unwrap();
-    owner.close().await;
+    let server = Server::new().await;
+    let next = Owner::new();
+    let scope = OwnedLoadScope::with_context(Arc::new(Context { dns: Some(next.clone()), physical: server.address }));
+    next.bind(&scope);
+    assert!(meow_config::load_config_from_str_owned(yaml, &scope).await.is_ok());
+    assert!(server.aaaa.load(Ordering::SeqCst) > 0);
+    next.close().await; scope.close().await.unwrap(); server.close().await;
 }

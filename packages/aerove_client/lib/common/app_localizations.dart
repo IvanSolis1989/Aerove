@@ -94,6 +94,12 @@ String userFacingErrorMessage(Object error, AppLocalizations appLocalizations) {
   return networkErrorMessage(error, appLocalizations) ??
       coreLaunchBlockedMessage(error, appLocalizations) ??
       switch (error) {
+        SourceSavedNotAppliedException(:final cause) =>
+          cause == null
+              ? appLocalizations.sourceSavedApplyUnconfirmed
+              : appLocalizations.sourceSavedApplyFailed(
+                  userFacingErrorMessage(cause, appLocalizations),
+                ),
         AgeSecretKeyRequiredException() =>
           appLocalizations.ageSecretKeyRequiredTip,
         CoreMethodException(code: 'rule_set_empty') =>

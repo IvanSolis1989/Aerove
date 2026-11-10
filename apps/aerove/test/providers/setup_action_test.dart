@@ -101,6 +101,8 @@ class TestSetupAction extends SetupAction {
   final List<Completer<void>> pendingCoreCalls = [];
   int trafficResets = 0;
   int applyProfileCalls = 0;
+  bool applyProfileResult = true;
+  Object? stopOnlyError;
   final List<bool> appliedForce = [];
   bool blockCoreCalls = false;
   Object? coreRunningError;
@@ -131,7 +133,9 @@ class TestSetupAction extends SetupAction {
       pendingCoreCalls.add(gate);
       await gate.future;
     }
-    final error = coreRunningError;
+    final error = running
+        ? coreRunningError
+        : stopOnlyError ?? coreRunningError;
     if (error != null) {
       throw error;
     }
@@ -149,6 +153,7 @@ class TestSetupAction extends SetupAction {
   }) async {
     applyProfileCalls++;
     appliedForce.add(force);
+    if (!applyProfileResult) return false;
     await preloadInvoke?.call();
     return true;
   }
@@ -232,6 +237,7 @@ void main() {
   tearDown(() async {
     action.blockCoreCalls = false;
     action.coreRunningError = null;
+    action.stopOnlyError = null;
     action.unansweredCoreCalls.clear();
     for (final gate in action.pendingCoreCalls) {
       if (!gate.isCompleted) {
@@ -749,6 +755,41 @@ void main() {
   });
 
   group('latest-intent arbitration', () {
+    test('failed initial cleanup cannot roll back a newer start', () async {
+      markInitialized();
+      final notifier = container.read(setupActionProvider.notifier);
+      action.applyProfileResult = false;
+      action.blockCoreCalls = true;
+      action.stopOnlyError = StateError('old cleanup failed');
+      final initial = notifier.setRunning(true, initialize: true);
+      await pumpEventQueue();
+      expect(action.coreRunningCalls, [false]);
+      final newer = notifier.setRunning(true);
+      action.blockCoreCalls = false;
+      action.pendingCoreCalls.single.complete();
+      expect(await initial, isFalse);
+      expect(await newer, isTrue);
+      expect(action.coreRunningCalls, [false, true]);
+      expect(container.read(isStartProvider), isTrue);
+      expect(container.read(runningVpnOptionsProvider), isNotNull);
+    });
+
+    test(
+      'superseded successful initialization does not report applied success',
+      () async {
+        final notifier = container.read(setupActionProvider.notifier);
+        action.blockCoreCalls = true;
+        final initial = notifier.setRunning(true, initialize: true);
+        await pumpEventQueue();
+        final stop = notifier.setRunning(false);
+        action.blockCoreCalls = false;
+        action.pendingCoreCalls.single.complete();
+        expect(await initial, isFalse);
+        expect(await stop, isTrue);
+        expect(container.read(isStartProvider), isFalse);
+      },
+    );
+
     test('a superseded stop does not run the post-stop cleanup', () async {
       markInitialized();
       final notifier = container.read(setupActionProvider.notifier);
@@ -2422,6 +2463,98 @@ void main() {
       verify(() => core.getConfig(any())).called(1);
       expect(input.existsSync(), isFalse);
     });
+
+    test(
+      'confirmed application preserves the original native failure',
+      () async {
+        final core = _MockCoreHandlerInterface();
+        final failure = StateError('native source rejected');
+        when(() => core.setupConfig(any())).thenThrow(failure);
+        final scoped = ProviderContainer(
+          overrides: [
+            currentProfileProvider.overrideWithValue(null),
+            setupStateProvider.overrideWith((_, _) => nullProfileSetupState),
+            coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+            setupActionProvider.overrideWith(SetupAction.new),
+          ],
+        );
+        addTearDown(scoped.dispose);
+        await expectLater(
+          scoped
+              .read(setupActionProvider.notifier)
+              .applyProfileConfirmed(force: true),
+          throwsA(same(failure)),
+        );
+        verify(() => core.setupConfig(any())).called(1);
+      },
+    );
+
+    test(
+      'confirmed same-YAML application rejects an unacknowledged metadata refresh',
+      () async {
+        final core = _MockCoreHandlerInterface();
+        when(() => core.setupConfig(any())).thenAnswer((_) async => '');
+        when(
+          () => core.refreshAppliedSetup(any()),
+        ).thenAnswer((_) async => false);
+        when(
+          core.getProxies,
+        ).thenAnswer((_) async => const ProxiesData(proxies: {}, all: []));
+        when(core.getExternalProviders).thenAnswer((_) async => []);
+        final scoped = ProviderContainer(
+          overrides: [
+            currentProfileProvider.overrideWithValue(null),
+            setupStateProvider.overrideWith((_, _) => nullProfileSetupState),
+            coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+            setupActionProvider.overrideWith(SetupAction.new),
+          ],
+        );
+        addTearDown(scoped.dispose);
+        final setup = scoped.read(setupActionProvider.notifier);
+        expect(await setup.applyProfileConfirmed(force: true), isTrue);
+        scoped
+            .read(appSettingProvider.notifier)
+            .update((state) => state.copyWith(testUrl: 'https://new.test/204'));
+        expect(await setup.applyProfileConfirmed(), isFalse);
+        verify(() => core.setupConfig(any())).called(1);
+        verify(() => core.refreshAppliedSetup(any())).called(1);
+      },
+    );
+
+    for (final supersede in [false, true]) {
+      test(
+        'confirmed application requires a current applied receipt, supersede=$supersede',
+        () async {
+          final core = _MockCoreHandlerInterface();
+          var current = true;
+          when(() => core.setupConfig(any())).thenAnswer((_) async {
+            if (supersede) current = false;
+            return '';
+          });
+          when(
+            core.getProxies,
+          ).thenAnswer((_) async => const ProxiesData(proxies: {}, all: []));
+          when(core.getExternalProviders).thenAnswer((_) async => []);
+          final scoped = ProviderContainer(
+            overrides: [
+              currentProfileProvider.overrideWithValue(null),
+              setupStateProvider.overrideWith((_, _) => nullProfileSetupState),
+              coreHandlerProvider.overrideWithValue(
+                CoreController.scoped(core),
+              ),
+              setupActionProvider.overrideWith(SetupAction.new),
+            ],
+          );
+          addTearDown(scoped.dispose);
+          final result = await scoped
+              .read(setupActionProvider.notifier)
+              .applyProfileConfirmed(force: true, isCurrent: () => current);
+          expect(result, !supersede);
+          verify(() => core.setupConfig(any())).called(1);
+          if (supersede) expect(globalState.lastConfigMd5, isNull);
+        },
+      );
+    }
 
     test(
       'a rejected setupConfig without a handoff reports failure, not success',

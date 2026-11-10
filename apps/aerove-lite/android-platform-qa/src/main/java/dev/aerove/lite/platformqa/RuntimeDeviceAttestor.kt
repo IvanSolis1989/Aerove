@@ -87,11 +87,7 @@ internal class RuntimeDeviceAttestor(private val app: LiteApplication) {
         if (expected.has("releasedPort")) {
             val port = expected.getInt("releasedPort")
             check(port in 1024..49151)
-            row.put("releasedPort", port).put("releasedPortBindSucceeded", ServerSocket().use { probe ->
-                probe.reuseAddress = false
-                probe.bind(InetSocketAddress("127.0.0.1", port))
-                true
-            })
+            row.put("releasedPort", port).put("releasedPortBindSucceeded", probeReleasedPort(port))
         }
         if (stage == "listener-bind-failed") {
             // The UI test still owns this blocker. Do not treat unrelated failure as a bind rejection.

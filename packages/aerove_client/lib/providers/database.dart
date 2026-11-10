@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:fl_clash/common/rule_sql_journal.dart';
 
 import 'package:collection/collection.dart';
@@ -404,39 +405,106 @@ class Profiles extends _$Profiles {
     );
   }
 
-  Future<void> putCommitted(
-    Profile profile, {
-    void Function()? publishFile,
-    void Function()? rollbackFile,
-  }) => _put(
-    profile,
-    coalesceUi: false,
-    publishFile: publishFile,
-    rollbackFile: rollbackFile,
-  );
+  Future<T> _withProfileFileOwner<T>(
+    PreparedProfileFile? preparedFile,
+    Future<T> Function() operation,
+  ) async {
+    if (preparedFile == null) return operation();
+    final owner = RuleSqlJournalOwner(
+      database,
+      Directory(await appPath.homeDirPath),
+    );
+    return owner.exclusive(() async {
+      await owner.recover();
+      return operation();
+    });
+  }
 
-  Future<void> _put(
-    Profile profile, {
-    required bool coalesceUi,
-    void Function()? publishFile,
+  Future<void> _profileFileTransaction(
+    int profileId, {
+    PreparedProfileFile? preparedFile,
+    void Function()? beforePublish,
     void Function()? rollbackFile,
+    required Future<void> Function() write,
   }) async {
-    Future<void> persist(Future<void> Function() write) async {
-      if (publishFile == null) return write();
+    if (preparedFile == null) {
       try {
         await database.transaction(() async {
           await write();
-          publishFile();
+          beforePublish?.call();
         });
       } catch (_) {
         rollbackFile?.call();
         rethrow;
       }
+      return;
+    }
+    final original = preparedFile.original;
+    if (original == null) throw StateError('Profile input target is missing');
+    final owner = RuleSqlJournalOwner(
+      database,
+      Directory(await appPath.homeDirPath),
+    );
+    await owner.exclusive(() async {
+      await owner.publishProfile(
+        profileId: profileId,
+        files: [
+          RuleSqlFileChange(preparedFile.target.path, preparedFile.stage.path),
+          RuleSqlFileChange(
+            original.path,
+            await preparedFile.originalStage?.exists() == true
+                ? preparedFile.originalStage!.path
+                : null,
+          ),
+        ],
+        transaction: (publish, finishSql) => database.transaction(() async {
+          await write();
+          beforePublish?.call();
+          await publish();
+          await finishSql();
+        }),
+      );
+    });
+  }
+
+  Future<void> putCommitted(
+    Profile profile, {
+    PreparedProfileFile? preparedFile,
+    void Function()? publishFile,
+    void Function()? rollbackFile,
+  }) => _withProfileFileOwner(
+    preparedFile,
+    () => _put(
+      profile,
+      coalesceUi: false,
+      preparedFile: preparedFile,
+      publishFile: publishFile,
+      rollbackFile: rollbackFile,
+    ),
+  );
+
+  Future<void> _put(
+    Profile profile, {
+    required bool coalesceUi,
+    PreparedProfileFile? preparedFile,
+    void Function()? publishFile,
+    void Function()? rollbackFile,
+  }) async {
+    Future<void> persist(Future<void> Function() write) async {
+      if (publishFile == null && preparedFile == null) return write();
+      await _profileFileTransaction(
+        profile.id,
+        preparedFile: preparedFile,
+        beforePublish: publishFile,
+        rollbackFile: rollbackFile,
+        write: write,
+      );
     }
 
     final newProfile = labeled(profile);
     final previous = state.getProfile(profile.id);
-    if (newProfile == previous && publishFile == null) return;
+    if (newProfile == previous && publishFile == null && preparedFile == null)
+      return;
     if (coalesceUi &&
         previous != null &&
         newProfile.copyWith(
@@ -505,6 +573,26 @@ class Profiles extends _$Profiles {
     Profile updated, {
     required Profile? original,
     required bool Function() isCurrent,
+    PreparedProfileFile? preparedFile,
+    required void Function() publishFile,
+    required void Function() rollbackFile,
+  }) => _withProfileFileOwner(
+    preparedFile,
+    () => _publishUpdate(
+      updated,
+      original: original,
+      isCurrent: isCurrent,
+      preparedFile: preparedFile,
+      publishFile: publishFile,
+      rollbackFile: rollbackFile,
+    ),
+  );
+
+  Future<Profile> _publishUpdate(
+    Profile updated, {
+    required Profile? original,
+    required bool Function() isCurrent,
+    PreparedProfileFile? preparedFile,
     required void Function() publishFile,
     required void Function() rollbackFile,
   }) async {
@@ -580,63 +668,69 @@ class Profiles extends _$Profiles {
         var sourceConflict = false;
         Profile? authoritative;
         try {
-          await database.transaction(() async {
-            checkUpdateCurrent(isCurrent);
-            final stored = await database.profilesDao.get(updated.id);
-            final observed = state.getProfile(updated.id);
-            previous = observed;
-            if (!sameSource(original, stored)) {
-              sourceConflict = true;
-              authoritative = stored;
-              throw const UpdateCancelledException();
-            }
-            if (!sameSource(original, observed))
-              throw const UpdateCancelledException();
-            // Stored values are authoritative. Preserve later state intent, then
-            // apply only proposed metadata fields unchanged since this baseline.
-            final baseline = original;
-            final persisted = stored ?? updated;
-            final current = baseline == null
-                ? persisted
-                : metadata(baseline, persisted, observed ?? persisted);
-            final desired = baseline == null
-                ? updated
-                : metadata(baseline, updated, current);
-            next = labeled(
-              desired.copyWith(
-                type: updated.type,
-                url: updated.url,
-                ageSecretKey: updated.ageSecretKey,
-                subscriptionInfo: updated.subscriptionInfo,
-                lastUpdateDate: updated.lastUpdateDate,
-              ),
-            );
-            if (observed != null && observed.realLabel != next.realLabel) {
-              renamed = true;
-              names = {observed.realLabel: next.realLabel};
-              await database.proxyGroupsDao.renameUse(
-                await database.profilesDao.customIds().get(),
-                oldName: observed.realLabel,
-                newName: next.realLabel,
-              );
-              for (final user in state) {
-                if (user.type != ProfileType.custom) continue;
-                await database.profiles.put(
-                  user
-                      .copyWith(
-                        overrides: user.overrides.renamedProxyProviders(names),
-                      )
-                      .toCompanion(),
-                );
+          await _profileFileTransaction(
+            updated.id,
+            preparedFile: preparedFile,
+            beforePublish: publishFile,
+            rollbackFile: rollbackFile,
+            write: () async {
+              checkUpdateCurrent(isCurrent);
+              final stored = await database.profilesDao.get(updated.id);
+              final observed = state.getProfile(updated.id);
+              previous = observed;
+              if (!sameSource(original, stored)) {
+                sourceConflict = true;
+                authoritative = stored;
+                throw const UpdateCancelledException();
               }
-            }
-            await database.profiles.put(next.toCompanion());
-            next = (await database.profilesDao.get(updated.id))!;
-            checkUpdateCurrent(isCurrent);
-            publishFile();
-          });
+              if (!sameSource(original, observed))
+                throw const UpdateCancelledException();
+              // Stored values are authoritative. Preserve later state intent, then
+              // apply only proposed metadata fields unchanged since this baseline.
+              final baseline = original;
+              final persisted = stored ?? updated;
+              final current = baseline == null
+                  ? persisted
+                  : metadata(baseline, persisted, observed ?? persisted);
+              final desired = baseline == null
+                  ? updated
+                  : metadata(baseline, updated, current);
+              next = labeled(
+                desired.copyWith(
+                  type: updated.type,
+                  url: updated.url,
+                  ageSecretKey: updated.ageSecretKey,
+                  subscriptionInfo: updated.subscriptionInfo,
+                  lastUpdateDate: updated.lastUpdateDate,
+                ),
+              );
+              if (observed != null && observed.realLabel != next.realLabel) {
+                renamed = true;
+                names = {observed.realLabel: next.realLabel};
+                await database.proxyGroupsDao.renameUse(
+                  await database.profilesDao.customIds().get(),
+                  oldName: observed.realLabel,
+                  newName: next.realLabel,
+                );
+                for (final user in state) {
+                  if (user.type != ProfileType.custom) continue;
+                  await database.profiles.put(
+                    user
+                        .copyWith(
+                          overrides: user.overrides.renamedProxyProviders(
+                            names,
+                          ),
+                        )
+                        .toCompanion(),
+                  );
+                }
+              }
+              await database.profiles.put(next.toCompanion());
+              next = (await database.profilesDao.get(updated.id))!;
+              checkUpdateCurrent(isCurrent);
+            },
+          );
         } catch (_) {
-          rollbackFile();
           if (sourceConflict &&
               ref.mounted &&
               sameSource(original, state.getProfile(updated.id))) {

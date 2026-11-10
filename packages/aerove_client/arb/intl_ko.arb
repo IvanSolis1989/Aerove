@@ -1023,5 +1023,15 @@
   "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
   "quotaLegacyUnverified": "이전 수치 · 출처 미확인",
   "quotaCheckedAt": "응답 확인: {time}",
-  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}},
+  "sourceSavedApplyUnconfirmed": "소스는 저장되었지만 적용이 확인되지 않았습니다. 다시 적용해 주세요. 다시 시작해야 할 수 있습니다.",
+  "sourceSavedApplyFailed": "소스는 저장되었지만 적용하지 못했습니다: {detail}",
+  "@sourceSavedApplyFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

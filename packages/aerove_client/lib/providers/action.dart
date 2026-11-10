@@ -7,6 +7,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
+import 'package:dio/dio.dart' show CancelToken;
 import 'package:drift/drift.dart' show Variable;
 import 'package:crypto/crypto.dart';
 

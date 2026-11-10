@@ -1933,7 +1933,30 @@
              let resolver = Arc::new(resolver);
              return Ok(DnsConfig {
                  resolver_slot: meow_dns::new_resolver_slot(Arc::clone(&resolver)),
-@@ -90,7 +125,7 @@
+@@ -74,6 +109,22 @@
+     let proxy_ns_urls =
+         parse_nameserver_entries(dns.proxy_server_nameserver.as_deref().unwrap_or(&[]))?;
+ 
++    // Capture Android's physical DNS exactly once for all bootstrap paths.
++    // Keep SocketAddr intact, including IPv6 scope IDs and non-default ports.
++    // Explicit default-nameserver always wins; non-owned/CLI callers retain
++    // their existing platform behavior.
++    let captured_bootstrap = if default_ns_urls.is_empty() {
++        match crate::owned_load::OwnedLoadScope::current().filter(|scope| scope.requires_physical_dns()) {
++            Some(scope) => Some(match scope.disabled_dns_source().map_err(anyhow::Error::msg)? {
++                DisabledDnsSource::Physical(servers) => servers.into_iter()
++                    .map(|address| Arc::new(DnsClient::udp(address).with_timeout(Duration::from_secs(3))))
++                    .collect::<Vec<_>>(),
++                DisabledDnsSource::UnavailableNotConnected => Vec::new(),
++            }),
++            None => None,
++        }
++    } else { None };
++
+     let mode = match dns.enhanced_mode.as_deref() {
+         Some("fake-ip") => DnsMode::FakeIp,
+         Some("redir-host") => DnsMode::Mapping,
+@@ -90,7 +141,7 @@
      let listen_addr = crate::parse_optional_socket_addr("dns.listen", dns.listen.as_deref())?;
      let mut hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
  
@@ -1942,7 +1965,7 @@
          merge_system_hosts(&mut hosts).await;
      }
  
-@@ -114,7 +149,7 @@
+@@ -114,25 +165,26 @@
              );
          }
          let mut proxy_hosts = build_hosts_trie(raw.hosts.as_ref(), strict)?;
@@ -1951,7 +1974,11 @@
              merge_system_hosts(&mut proxy_hosts).await;
          }
          Some(Arc::new(
-@@ -125,7 +160,7 @@
+-            Resolver::new_with_bootstrap_with_proxies(
++            Resolver::new_with_bootstrap_with_proxies_and_clients(
+                 proxy_ns_urls,
+                 vec![],
+                 default_ns_urls.clone(),
                  DnsMode::Normal,
                  proxy_hosts,
                  use_hosts,
@@ -1960,7 +1987,44 @@
                  None,
                  None,
                  proxy_registry,
-@@ -180,14 +215,14 @@
+                 crate::is_offline_validate(),
++                captured_bootstrap.clone(),
+             )
+             .await
+-            .map_err(|e| anyhow::anyhow!("proxy-server-nameserver: {e}"))?,
++            .map_err(|e| anyhow::Error::new(e).context("proxy-server-nameserver"))?,
+         ))
+     };
+ 
+@@ -141,7 +193,18 @@
+         if nsp_map.is_empty() {
+             None
+         } else {
+-            let bootstrap_clients = build_policy_bootstrap_clients(&default_ns_urls, &main_urls);
++            let mut bootstrap_clients = build_policy_bootstrap_clients(&default_ns_urls, &main_urls);
++            // Preserve explicitly configured main IP resolvers for policy DNS.
++            // Physical DNS fills only the otherwise empty implicit bootstrap.
++            if bootstrap_clients.is_empty() && default_ns_urls.is_empty() {
++                if let Some(captured) = &captured_bootstrap { bootstrap_clients = captured.clone(); }
++                else if crate::is_offline_validate() && crate::owned_load::OwnedLoadScope::current().is_some() {
++                    // Structural-only validation has no physical network snapshot.
++                    // Match the existing offline hostname placeholder: this client
++                    // is never queried because resolve_policy_host defers all IO.
++                    bootstrap_clients.push(Arc::new(DnsClient::udp(SocketAddr::from(([192, 0, 2, 1], 53)))));
++                }
++            }
+             Some(
+                 build_nameserver_policy(
+                     nsp_map,
+@@ -173,21 +236,22 @@
+         )
+     };
+ 
+-    let mut resolver = Resolver::new_with_bootstrap_with_proxies(
++    let mut resolver = Resolver::new_with_bootstrap_with_proxies_and_clients(
+         main_urls,
+         fallback_urls,
+         default_ns_urls,
          mode,
          hosts,
          use_hosts,
@@ -1970,6 +2034,7 @@
          fallback_filter,
          proxy_registry,
          crate::is_offline_validate(),
++        captured_bootstrap,
      )
      .await
 -    .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1977,7 +2042,7 @@
  
      // Fake-IP wiring: only when enhanced-mode == fake-ip. Errors here are
      // fatal (Class A per ADR-0002) — a misconfigured fake-IP range would
-@@ -205,6 +240,37 @@
+@@ -205,6 +269,37 @@
          enabled: true,
          proxy_resolver,
      })
@@ -2015,7 +2080,7 @@
  }
  
  async fn install_fakeip(
-@@ -226,7 +292,7 @@
+@@ -226,7 +321,7 @@
      // The file this generation would bind to, when persisting. Computed
      // before the reuse check so the check can compare store identity, not
      // just store kind.
@@ -2024,7 +2089,7 @@
          // `cache_dir` is `None` for a `--config-string` run — the launch
          // CWD is not the daemon's to write into, so persist under the
          // resolved home (same base geodata defaults use) instead of
-@@ -372,6 +438,57 @@
+@@ -372,6 +467,57 @@
  
  /// Parse nameserver strings into `NameServerEntry`s — every entry must
  /// parse or load fails. No silent warn-and-drop.
@@ -2082,7 +2147,7 @@
  fn parse_nameserver_entries(servers: &[String]) -> Result<Vec<NameServerEntry>, anyhow::Error> {
      servers
          .iter()
-@@ -431,6 +548,23 @@
+@@ -431,6 +577,23 @@
      // Resolution-dependent skips (bootstrap lookup failed, no addresses)
      // stay lenient: those are transient, not config defects.
      strict: bool,
@@ -2106,7 +2171,7 @@
  ) -> Result<NameserverPolicy, anyhow::Error> {
      let mut policy = NameserverPolicy::new();
      let mut warned_unsupported_prefix = false;
-@@ -555,11 +689,13 @@
+@@ -555,11 +718,13 @@
          }
  
          let resolvers =
@@ -2121,7 +2186,7 @@
          for pattern in patterns {
              match pattern {
                  PolicyPattern::Exact(domain) => policy.insert_exact(domain, entry.clone()),
-@@ -857,7 +993,7 @@
+@@ -857,7 +1022,7 @@
      }
  
      // Attempt to load GeoIP MMDB for the geoip gate.
@@ -7456,6 +7521,9 @@
 +use meow_common::transport_tasks::{self, TransportScope, Work};
 @@ -14,0 +16 @@
 +use std::future::Future;
+@@ -44 +46 @@
+-    #[error("default-nameserver entry '{entry}' must be a plain UDP/TCP nameserver (tls:// and https:// are not allowed here because they would create a bootstrap loop)")]
++    #[error("default-nameserver entry '{entry}' must use an IP literal to avoid a DNS bootstrap loop")]
 @@ -123,0 +126 @@
 +    source_entries:HashMap<String,PolicyEntry>,
 @@ -138,4 +141,8 @@
@@ -7578,7 +7646,34 @@
 +        } else {
 +            transport_tasks::spawn(work)
 +        }
-@@ -485,0 +585,50 @@
+@@ -314,26 +412,0 @@
+-    }
+-}
+-
+-fn url_to_plain_socketaddr(url: &NameServerUrl) -> SocketAddr {
+-    match url {
+-        NameServerUrl::Udp { addr, port } | NameServerUrl::Tcp { addr, port } => {
+-            let ip = match addr {
+-                HostOrIp::Ip(ip) => *ip,
+-                HostOrIp::Host(_) => {
+-                    unreachable!("default_ns hostname entries should have been rejected")
+-                }
+-            };
+-            SocketAddr::new(ip, *port)
+-        }
+-        NameServerUrl::Tls { addr, .. } | NameServerUrl::Https { addr, .. } => {
+-            let ip = match addr {
+-                HostOrIp::Ip(ip) => *ip,
+-                HostOrIp::Host(_) => {
+-                    unreachable!("default_ns hostname entries should have been rejected")
+-                }
+-            };
+-            SocketAddr::new(ip, 53)
+-        }
+-        NameServerUrl::RCode { .. } => {
+-            unreachable!("rcode default-nameserver does not have a socket address")
+-        }
+@@ -485,0 +559,50 @@
 +/// Run one upstream exchange in this resolver generation's captured task
 +/// owner. The task owner retains and joins the real spawned task at retirement.
 +async fn run_owned_query<T, F>(scope: Option<TransportScope>, future: F) -> Result<T, ClientError>
@@ -7629,14 +7724,14 @@
 +    result
 +}
 +
-@@ -502,0 +652 @@
+@@ -502,0 +626 @@
 +    scope: Option<TransportScope>,
-@@ -509,0 +660,4 @@
+@@ -509,0 +634,4 @@
 +        let result_client = Arc::clone(client);
 +        let query_client = Arc::clone(client);
 +        let host = host.to_owned();
 +        let query_scope = scope.clone();
-@@ -511,2 +665,10 @@
+@@ -511,2 +639,10 @@
 -            let result = client.lookup_set(host, want, ipv6_enabled).await;
 -            (client, result)
 +            let capture=Arc::new(QueryCapture::default());
@@ -7649,7 +7744,7 @@
 +                let values=capture.values.lock();set.observed_v4=values.0.clone();set.observed_v6=values.1.clone();set
 +            });
 +            (result_client, result)
-@@ -691,0 +854,10 @@
+@@ -691,0 +828,10 @@
 +async fn query_one_owned(
 +    client: Arc<DnsClient>,
 +    name: Name,
@@ -7660,18 +7755,18 @@
 +    run_owned_query(scope, async move { client.query_name(&name, record_type).await }).await.map(|message| (message, source))
 +}
 +
-@@ -696 +868,2 @@
+@@ -696 +842,2 @@
 -) -> Option<Message> {
 +    scope: Option<TransportScope>,
 +) -> Option<(Message, String)> {
-@@ -699 +872,5 @@
+@@ -699 +846,5 @@
 -        1 => clients[0].query_name(name, record_type).await.ok(),
 +        1 => {
 +            query_one_owned(Arc::clone(&clients[0]), name.clone(), record_type, scope)
 +                .await
 +                .ok()
 +        }
-@@ -701,2 +878,12 @@
+@@ -701,2 +852,12 @@
 -            let f1 = clients[0].query_name(name, record_type);
 -            let f2 = clients[1].query_name(name, record_type);
 +            let f1 = query_one_owned(
@@ -7686,7 +7781,7 @@
 +                record_type,
 +                scope,
 +            );
-@@ -714 +901,7 @@
+@@ -714 +875,7 @@
 -                    Box::pin(async move { c.query_name(name, record_type).await.map_err(|_| ()) })
 +                    let scope = scope.clone();
 +                    let name = name.clone();
@@ -7695,29 +7790,73 @@
 +                            .await
 +                            .map_err(|_| ())
 +                    })
-@@ -763 +956 @@
+@@ -763 +930 @@
 -            hosts,
 +            hosts:Arc::new(hosts),
-@@ -772,0 +966,3 @@
+@@ -772,0 +940,3 @@
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
 +            observations: parking_lot::RwLock::new(None),
-@@ -985 +1181 @@
+@@ -845,0 +1016,23 @@
++        Self::new_with_bootstrap_with_proxies_and_clients(
++            main_urls, fallback_urls, default_ns, mode, hosts, use_hosts, ipv6,
++            policy, fallback_filter, proxy_registry, skip_bootstrap, None,
++        ).await
++    }
++
++    /// Owned platforms can supply their captured physical DNS clients when
++    /// default-nameserver is absent. Some(empty) means no connected network,
++    /// never permission to consult process-global or public fallback resolvers.
++    pub async fn new_with_bootstrap_with_proxies_and_clients(
++        main_urls: Vec<NameServerEntry>,
++        fallback_urls: Vec<NameServerEntry>,
++        default_ns: Vec<NameServerEntry>,
++        mode: DnsMode,
++        hosts: DomainTrie<HostEntry>,
++        use_hosts: bool,
++        ipv6: bool,
++        policy: Option<NameserverPolicy>,
++        fallback_filter: Option<FallbackFilter>,
++        proxy_registry: &HashMap<SmolStr, Arc<dyn meow_common::Proxy>>,
++        skip_bootstrap: bool,
++        captured_bootstrap: Option<Vec<Arc<DnsClient>>>,
++    ) -> Result<Self, BootstrapError> {
+@@ -946 +1139,9 @@
+-            let bootstrap_clients: Vec<Arc<DnsClient>> = if default_ns.is_empty() {
++            let bootstrap_clients: Vec<Arc<DnsClient>> = if let Some(clients) = captured_bootstrap.filter(|_| default_ns.is_empty()) {
++                if clients.is_empty() {
++                    return Err(BootstrapError::CannotResolve {
++                        host: hostnames_needing_bootstrap.first().expect("bootstrap host").clone(),
++                        source: Box::new(io::Error::new(io::ErrorKind::NotConnected, "DNS bootstrap unavailable: no captured network")),
++                    });
++                }
++                clients
++            } else if default_ns.is_empty() {
+@@ -961,7 +1162 @@
+-                        let c = match ns {
+-                            NameServerUrl::RCode { code, .. } => DnsClient::rcode(*code),
+-                            NameServerUrl::Tcp { .. } => {
+-                                DnsClient::tcp(url_to_plain_socketaddr(ns))
+-                            }
+-                            _ => DnsClient::udp(url_to_plain_socketaddr(ns)),
+-                        };
++                        let c = Self::build_single_client(ns, &HashMap::new(), None);
+@@ -985 +1180 @@
 -                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true).await;
 +                    query_pool_set(&bootstrap_clients, host, QueryFamilies::BOTH, true, TransportScope::current()).await;
-@@ -1034 +1230 @@
+@@ -1034 +1229 @@
 -            hosts,
 +            hosts:Arc::new(hosts),
-@@ -1037,2 +1233,2 @@
+@@ -1037,2 +1232,2 @@
 -            policy,
 -            fallback_filter,
 +            policy: policy.map(Arc::new),
 +            fallback_filter: fallback_filter.map(Arc::new),
-@@ -1043,0 +1240,3 @@
+@@ -1043,0 +1239,3 @@
 +            transport_scope: TransportScope::current(),
 +            unavailable_error: None,
 +            observations: parking_lot::RwLock::new(None),
-@@ -1053,0 +1253,15 @@
+@@ -1053,0 +1252,15 @@
 +    /// Same DNS sources, immutable hosts/skipper/fake-IP owner, and fresh
 +    /// per-generation cache/inflight/matchers. Clients contain only endpoints,
 +    /// pools and same-session observation/proxy handles; their task/network
@@ -7733,14 +7872,29 @@
 +            observations:parking_lot::RwLock::new(self.observations.read().clone())}
 +    }
 +
-@@ -1055 +1269 @@
+@@ -1055 +1268 @@
 -        self.policy.as_ref()
 +        self.policy.as_deref()
-@@ -1186,0 +1401 @@
+@@ -1075,0 +1289,8 @@
++        Arc::new(Self::build_single_client(url, resolved, proxy))
++    }
++
++    fn build_single_client(
++        url: &NameServerUrl,
++        resolved: &HashMap<String, IpAddr>,
++        proxy: Option<Arc<dyn meow_common::Proxy>>,
++    ) -> DnsClient {
+@@ -1089 +1310 @@
+-                return Arc::new(client);
++                return client;
+@@ -1136 +1357 @@
+-        Arc::new(client)
++        client
+@@ -1186,0 +1408 @@
 +                self.observe_cached(lookup_host, QueryFamilies::IPV4, &cached.v4, cached.source_v4.as_deref(), cached.observed_v4.as_ref());
-@@ -1189,0 +1405 @@
+@@ -1189,0 +1412 @@
 +                self.observe_cached(lookup_host, QueryFamilies::IPV6, &cached.v6, cached.source_v6.as_deref(), cached.observed_v6.as_ref());
-@@ -1197,0 +1414,7 @@
+@@ -1197,0 +1421,7 @@
 +            None
 +        } else if let Some(kind) = self.unavailable_error {
 +            lookup_err = Some(io::Error::new(kind, "DNS unavailable: no captured network"));
@@ -7748,17 +7902,17 @@
 +                self.observe_family(lookup_host, family, None, None, "", "DNS unavailable: no captured network", "", false,
 +                    std::time::Instant::now(), std::time::SystemTime::now(), meow_common::observations::DnsInitiator::current());
 +            } }
-@@ -1464,0 +1688 @@
+@@ -1464,0 +1695 @@
 +        self.observe_cached(host, family, hit, if family == QueryFamilies::IPV4 { cached.source_v4.as_deref() } else { cached.source_v6.as_deref() }, if family==QueryFamilies::IPV4 { cached.observed_v4.as_ref() } else { cached.observed_v6.as_ref() });
-@@ -1494,0 +1719 @@
+@@ -1494,0 +1726 @@
 +            self.observe_cached(host, family, hit, if family == QueryFamilies::IPV4 { cached.source_v4.as_deref() } else { cached.source_v6.as_deref() }, if family==QueryFamilies::IPV4 { cached.observed_v4.as_ref() } else { cached.observed_v6.as_ref() });
-@@ -1668,0 +1894,5 @@
+@@ -1668,0 +1901,5 @@
 +            // This completion belongs to the flight leader. Subscribers return above.
 +            // Capture provenance here; upstream child tasks/retries do not emit events.
 +            let started = std::time::Instant::now();
 +            let time = std::time::SystemTime::now();
 +            let initiator = meow_common::observations::DnsInitiator::current();
-@@ -1669,0 +1900,9 @@
+@@ -1669,0 +1907,9 @@
 +            let error = err.as_ref().map(ToString::to_string).unwrap_or_default();
 +            let failure_rcode = match err.as_ref() { Some(ClientError::Rcode(code)) => format!("{code:?}").to_uppercase(), _ => String::new() };
 +            for family in [QueryFamilies::IPV4, QueryFamilies::IPV6] {
@@ -7768,31 +7922,31 @@
 +                self.observe_family(host, family, answer, observed, set.as_ref().map_or("", |set| set.source.as_str()),
 +                    &error, &failure_rcode, false, started, time, initiator);
 +            }
-@@ -1712 +1951 @@
+@@ -1712 +1958 @@
 -                let (set, err) = query_pool_set(&entry.nameservers, host, want, self.ipv6).await;
 +                let (set, err) = query_pool_set(&entry.nameservers, host, want, self.ipv6, self.transport_scope.clone()).await;
-@@ -1741 +1980 @@
+@@ -1741 +1987 @@
 -            let (set, err) = query_pool_set(&self.main, host, want, self.ipv6).await;
 +            let (set, err) = query_pool_set(&self.main, host, want, self.ipv6, self.transport_scope.clone()).await;
-@@ -1787 +2026 @@
+@@ -1787 +2033 @@
 -            Some(clients) => query_pool_set(clients, host, want, self.ipv6).await,
 +            Some(clients) => query_pool_set(clients, host, want, self.ipv6, self.transport_scope.clone()).await,
-@@ -1811 +2050 @@
+@@ -1811 +2057 @@
 -                    self.cache.merge_family(
 +                    self.cache.merge_family_observed(
-@@ -1817,0 +2057 @@
+@@ -1817,0 +2064 @@
 +                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::None)),
-@@ -1821 +2061 @@
+@@ -1821 +2068 @@
 -                    self.cache.merge_family(
 +                    self.cache.merge_family_observed(
-@@ -1827,0 +2068 @@
+@@ -1827,0 +2075 @@
 +                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::NoData)),
-@@ -1831 +2072 @@
+@@ -1831 +2079 @@
 -                    self.cache.merge_family(
 +                    self.cache.merge_family_observed(
-@@ -1837,0 +2079 @@
+@@ -1837,0 +2086 @@
 +                        (if family == QueryFamilies::IPV4 { set.observed_v4.clone() } else { set.observed_v6.clone() }).filter(|value|value.matches_cache(FamilyNeg::NxDomain)),
-@@ -1864 +2106,25 @@
+@@ -1864 +2113,25 @@
 -    ) -> Option<Message> {
 +    ) -> io::Result<Option<Message>> {
 +        let started = std::time::Instant::now();
@@ -7819,17 +7973,17 @@
 +        if let Some(kind) = self.unavailable_error {
 +            return Err(io::Error::new(kind, "DNS unavailable: no captured network"));
 +        }
-@@ -1867 +2133 @@
+@@ -1867 +2140 @@
 -                return self.try_fallback_generic(query_name, record_type).await;
 +                return Ok(self.try_fallback_generic(query_name, record_type).await);
-@@ -1872,4 +2138,2 @@
+@@ -1872,4 +2145,2 @@
 -                if let Some(l) =
 -                    query_pool_generic(&entry.nameservers, query_name, record_type).await
 -                {
 -                    return Some(l);
 +                if let Some(l) = query_pool_generic(&entry.nameservers, query_name, record_type, self.transport_scope.clone()).await {
 +                    return Ok(Some(l));
-@@ -1879,4 +2143,4 @@
+@@ -1879,4 +2150,4 @@
 -        if let Some(l) = query_pool_generic(&self.main, query_name, record_type).await {
 -            return Some(l);
 -        }
@@ -7838,19 +7992,19 @@
 +            return Ok(Some(l));
 +        }
 +        Ok(self.try_fallback_generic(query_name, record_type).await)
-@@ -1889 +2153 @@
+@@ -1889 +2160 @@
 -    ) -> Option<Message> {
 +    ) -> Option<(Message, String)> {
-@@ -1891 +2155 @@
+@@ -1891 +2162 @@
 -        query_pool_generic(fb, query_name, record_type).await
 +        query_pool_generic(fb, query_name, record_type, self.transport_scope.clone()).await
-@@ -2053 +2317 @@
+@@ -2053 +2324 @@
 -        self.fakeip_skipper = Some(skipper);
 +        self.fakeip_skipper = Some(Arc::new(skipper));
-@@ -2086 +2350 @@
+@@ -2086 +2357 @@
 -            .as_ref()
 +            .as_deref()
-@@ -2148,0 +2413,45 @@
+@@ -2148,0 +2420,45 @@
 +
 +    #[cfg(feature = "encrypted")]
 +    struct SpawnRecursiveEchSource {
@@ -7896,10 +8050,10 @@
 +        assert_eq!(error.to_string(), "echDnsCycle");
 +        assert_eq!(queries.load(Ordering::SeqCst), 1, "cycle must stop before another source query");
 +    }
-@@ -2245 +2554 @@
+@@ -2245 +2561 @@
 -        resolver.policy = Some(policy);
 +        resolver.policy = Some(Arc::new(policy));
-@@ -2298,0 +2608,16 @@
+@@ -2298,0 +2615,16 @@
 +    }
 +
 +    #[tokio::test]
@@ -7916,10 +8070,10 @@
 +        let name = Name::from_ascii("remote.test").unwrap();
 +        let error = resolver.forward_generic("remote.test", &name, RecordType::TXT).await.unwrap_err();
 +        assert_eq!(error.kind(), io::ErrorKind::NotConnected);
-@@ -3686 +4011 @@
+@@ -3686 +4018 @@
 -        resolver.fallback_filter = Some(ff);
 +        resolver.fallback_filter = Some(Arc::new(ff));
-@@ -4039,0 +4365,225 @@
+@@ -4039,0 +4372,225 @@
 +
 +
 +#[cfg(test)]

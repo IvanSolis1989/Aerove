@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/IvanSolis1989/Aerove",
+  "purpose": "Frozen unit-test inputs for HOST_LOCK_RESOLUTION_PROVIDER_INPUTS; not a build receipt or accepted lock.",
+  "files": {
+    "Cargo.toml": {
+      "revision": "281a2f335962ec8d2985f7ee8cf81e10c06551db",
+      "path": "apps/aerove-lite/meow-native/Cargo.toml",
+      "sha256": "2092489392fd24e9770908344f171ddf65c97f7e273bfc814b743202746e8417"
+    },
+    "Cargo.lock": {
+      "revision": "156101c397356f4704d73ab59d03a703748b0ddf",
+      "path": "apps/aerove-lite/meow-native/Cargo.lock",
+      "sha256": "8760f0367ca6596d3ac9ecf6436326b32f9ae7226adc753c58fce26ee916b0bd"
+    },
+    "source.json": {
+      "revision": "281a2f335962ec8d2985f7ee8cf81e10c06551db",
+      "path": "apps/aerove-lite/meow-native/source.json",
+      "sha256": "f8f76d22b27f779f5b5d06a07366cd2597404fc01aa302745230cf9ee8c1220c"
+    },
+    "core-tests.lock": {
+      "revision": "281a2f335962ec8d2985f7ee8cf81e10c06551db",
+      "path": "apps/aerove-lite/meow-native/core-tests.lock",
+      "sha256": "96b509814a2d833c39ac23c1cbee62a38e401f420ec1cf8f72a7738a71df6c58"
+    },
+    "build-policy.json": {
+      "revision": "281a2f335962ec8d2985f7ee8cf81e10c06551db",
+      "path": "apps/aerove-lite/meow-native/build-policy.json",
+      "sha256": "03262b7a69c064b1eccb26715226f247855d21dbd3d80d65df2c4f955448cf4c"
+    },
+    "source-metadata/full-runtime.json": {
+      "revision": "281a2f335962ec8d2985f7ee8cf81e10c06551db",
+      "path": "apps/aerove-lite/meow-native/source-metadata/full-runtime.json",
+      "sha256": "ec903175c96374d1ed7ebc82e1476ccc787af6912ff892090635d731308c8e6d"
+    },
+    "patches/full-runtime.patch": {
+      "revision": "281a2f335962ec8d2985f7ee8cf81e10c06551db",
+      "path": "apps/aerove-lite/meow-native/patches/full-runtime.patch",
+      "sha256": "af3a4459e600c8958e983670ff4ebe97d503ee2608fc5fdab7a60ebd44733309"
+    }
+  },
+  "archiveSha256": "af0ab4af501fd35acff75a494c6d32dee1220925b9aac7bb46eb90d65306adfd",
+  "testPolicyChanges": {
+    "resolveLock": true,
+    "expectedLockBeforeSha256": "8760f0367ca6596d3ac9ecf6436326b32f9ae7226adc753c58fce26ee916b0bd"
+  }
+}

@@ -215,6 +215,25 @@ void main() {
       expect(setupAction.applyCount, 1);
     });
 
+    test('a stale script source cannot replace newer metadata', () async {
+      final profile = Profile.normal();
+      final setupAction = _ApplyRecordingSetupAction();
+      final container = scriptsContainer(profile, setupAction);
+      final stale = script(1, url: 'bad-url');
+      final current = stale.copyWith(url: 'new-url');
+      await container.read(scriptsProvider.future);
+      container.read(scriptsProvider.notifier).put(current);
+
+      await expectLater(
+        container.read(scriptsActionProvider.notifier).updateScript(stale),
+        throwsA(isA<UpdateCancelledException>()),
+      );
+
+      expect(container.read(scriptsProvider).value, [current]);
+      expect(container.read(isUpdatingProvider(stale.updatingKey)), isFalse);
+      expect(setupAction.applyCount, 0);
+    });
+
     test(
       'updateScript releases the updating key when the download fails',
       () async {
@@ -225,6 +244,8 @@ void main() {
         final setupAction = _ApplyRecordingSetupAction();
         final container = scriptsContainer(profile, setupAction);
         final remote = script(1, url: 'bad-url');
+        await container.read(scriptsProvider.future);
+        container.read(scriptsProvider.notifier).put(remote);
 
         await expectLater(
           container.read(scriptsActionProvider.notifier).updateScript(remote),
@@ -232,7 +253,7 @@ void main() {
         );
 
         expect(container.read(isUpdatingProvider(remote.updatingKey)), isFalse);
-        expect(container.read(scriptsProvider).value, isEmpty);
+        expect(container.read(scriptsProvider).value, [remote]);
         expect(setupAction.applyCount, 0);
       },
     );

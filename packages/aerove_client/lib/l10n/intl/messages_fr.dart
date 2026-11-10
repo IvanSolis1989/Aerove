@@ -246,23 +246,26 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m87(label) => "${label} doit être un seul élément";
 
-  static String m88(protocols, removed, adjustments) =>
+  static String m88(detail) =>
+      "La source est enregistrée, mais n’a pas pu être appliquée : ${detail}";
+
+  static String m89(protocols, removed, adjustments) =>
       "${removed} nœuds non pris en charge par ce noyau ont été ignorés (${protocols}). ${adjustments}";
 
-  static String m89(speed) => "Vitesse descendante : ${speed}";
+  static String m90(speed) => "Vitesse descendante : ${speed}";
 
-  static String m90(value) => "Total ${value}";
+  static String m91(value) => "Total ${value}";
 
-  static String m91(speed) => "Vitesse montante : ${speed}";
+  static String m92(speed) => "Vitesse montante : ${speed}";
 
-  static String m92(transport) => "En-têtes ${transport}";
+  static String m93(transport) => "En-têtes ${transport}";
 
-  static String m93(label) => "${label} doit être une URL";
-
-  static String m94(count) =>
-      "${Intl.plural(count, one: 'il y a 1 an', other: 'il y a ${count} ans')}";
+  static String m94(label) => "${label} doit être une URL";
 
   static String m95(count) =>
+      "${Intl.plural(count, one: 'il y a 1 an', other: 'il y a ${count} ans')}";
+
+  static String m96(count) =>
       "${Intl.plural(count, other: 'il y a ${count} a')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
@@ -2004,6 +2007,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "sort": MessageLookupByLibrary.simpleMessage("Trier"),
     "source": MessageLookupByLibrary.simpleMessage("Source"),
     "sourceIp": MessageLookupByLibrary.simpleMessage("IP source"),
+    "sourceSavedApplyFailed": m88,
+    "sourceSavedApplyUnconfirmed": MessageLookupByLibrary.simpleMessage(
+      "La source est enregistrée, mais son application n’est pas confirmée. Réessayez de l’appliquer ; un redémarrage peut être nécessaire.",
+    ),
     "specialProxy": MessageLookupByLibrary.simpleMessage("Proxy spécial"),
     "specialRules": MessageLookupByLibrary.simpleMessage("Règles spéciales"),
     "spectrum": MessageLookupByLibrary.simpleMessage("Spectre"),
@@ -2042,7 +2049,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("Style"),
     "submit": MessageLookupByLibrary.simpleMessage("Valider"),
-    "subscriptionCompatibilitySummary": m88,
+    "subscriptionCompatibilitySummary": m89,
     "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
       "La pile TUN lwIP prise en charge par ce noyau a été appliquée.",
     ),
@@ -2097,12 +2104,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("Envoyé"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Port TProxy"),
     "traffic": MessageLookupByLibrary.simpleMessage("Trafic"),
-    "trafficDownloadSpeed": m89,
-    "trafficTotal": m90,
-    "trafficUploadSpeed": m91,
+    "trafficDownloadSpeed": m90,
+    "trafficTotal": m91,
+    "trafficUploadSpeed": m92,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Trafic utilisé"),
     "transport": MessageLookupByLibrary.simpleMessage("Transport"),
-    "transportHeaders": m92,
+    "transportHeaders": m93,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "TUN n’a pas pu être autorisé et a donc été désactivé.",
@@ -2149,7 +2156,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Bande passante d’envoi",
     ),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m93,
+    "urlTip": m94,
     "useHosts": MessageLookupByLibrary.simpleMessage("Utiliser hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Utiliser les hosts du système",
@@ -2178,8 +2185,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "Écrire dans le système règle aussi l’horloge système ; Android l’ignore.",
     ),
-    "yearsAgo": m94,
-    "yearsAgoShort": m95,
+    "yearsAgo": m95,
+    "yearsAgoShort": m96,
     "yes": MessageLookupByLibrary.simpleMessage("Oui"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Chinois simplifié"),
   };

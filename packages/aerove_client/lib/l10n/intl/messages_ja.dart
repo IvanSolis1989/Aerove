@@ -211,22 +211,24 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m87(label) => "${label}は1項目のみ指定できます";
 
-  static String m88(protocols, removed, adjustments) =>
+  static String m88(detail) => "ソースは保存されましたが、適用できませんでした：${detail}";
+
+  static String m89(protocols, removed, adjustments) =>
       "このコアが対応していないノード ${removed} 件（${protocols}）を除外しました。${adjustments}";
 
-  static String m89(speed) => "ダウンロード速度: ${speed}";
+  static String m90(speed) => "ダウンロード速度: ${speed}";
 
-  static String m90(value) => "累計 ${value}";
+  static String m91(value) => "累計 ${value}";
 
-  static String m91(speed) => "アップロード速度: ${speed}";
+  static String m92(speed) => "アップロード速度: ${speed}";
 
-  static String m92(transport) => "${transport} リクエストヘッダー";
+  static String m93(transport) => "${transport} リクエストヘッダー";
 
-  static String m93(label) => "${label}はURLである必要があります";
-
-  static String m94(count) => "${count} 年前";
+  static String m94(label) => "${label}はURLである必要があります";
 
   static String m95(count) => "${count} 年前";
+
+  static String m96(count) => "${count} 年前";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1606,6 +1608,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "sort": MessageLookupByLibrary.simpleMessage("並べ替え"),
     "source": MessageLookupByLibrary.simpleMessage("ソース"),
     "sourceIp": MessageLookupByLibrary.simpleMessage("送信元IP"),
+    "sourceSavedApplyFailed": m88,
+    "sourceSavedApplyUnconfirmed": MessageLookupByLibrary.simpleMessage(
+      "ソースは保存されましたが、適用は確認できませんでした。再度適用してください。再起動が必要な場合があります。",
+    ),
     "specialProxy": MessageLookupByLibrary.simpleMessage("特殊プロキシ"),
     "specialRules": MessageLookupByLibrary.simpleMessage("特殊ルール"),
     "spectrum": MessageLookupByLibrary.simpleMessage("スペクトル"),
@@ -1638,7 +1644,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("スタイル"),
     "submit": MessageLookupByLibrary.simpleMessage("送信"),
-    "subscriptionCompatibilitySummary": m88,
+    "subscriptionCompatibilitySummary": m89,
     "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
       "現在のコアが対応する lwIP TUN スタックを適用しました。",
     ),
@@ -1681,12 +1687,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("アップロード量"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("TProxyポート"),
     "traffic": MessageLookupByLibrary.simpleMessage("通信量"),
-    "trafficDownloadSpeed": m89,
-    "trafficTotal": m90,
-    "trafficUploadSpeed": m91,
+    "trafficDownloadSpeed": m90,
+    "trafficTotal": m91,
+    "trafficUploadSpeed": m92,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("トラフィック統計"),
     "transport": MessageLookupByLibrary.simpleMessage("トランスポート"),
-    "transportHeaders": m92,
+    "transportHeaders": m93,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "TUN の権限を取得できなかったため、オフにしました。",
@@ -1725,7 +1731,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("アップロード"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("アップロード帯域幅"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m93,
+    "urlTip": m94,
     "useHosts": MessageLookupByLibrary.simpleMessage("Hostsを使用"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("システムのHostsを使用"),
     "usedShort": MessageLookupByLibrary.simpleMessage("使用済み"),
@@ -1748,8 +1754,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "システムに書き込むを有効にするとシステムクロックも設定します。Android では無視されます。",
     ),
-    "yearsAgo": m94,
-    "yearsAgoShort": m95,
+    "yearsAgo": m95,
+    "yearsAgoShort": m96,
     "yes": MessageLookupByLibrary.simpleMessage("はい"),
     "zhCN": MessageLookupByLibrary.simpleMessage("簡体字中国語"),
   };

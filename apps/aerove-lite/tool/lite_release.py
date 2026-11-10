@@ -126,10 +126,13 @@ def _source_shard_count(root, source):
 
 
 FLUTTER_AGGREGATE_STEP = "Verify current Android execution and retain pending release gates"
-FLUTTER_ACCEPTANCE = {
-    "acceptance (fixed 31 native/platform regressions)": ("Real API 33 flutter-platform verification",),
-    "acceptance (Flutter UI and same-session native lifecycle)": ("Real API 33 flutter-full verification",),
-}
+def _flutter_acceptance(platform_test_count):
+    if platform_test_count not in (31, 33):
+        raise PromotionError("Unknown original Flutter platform test contract")
+    return {
+        f"acceptance (fixed {platform_test_count} native/platform regressions)": ("Real API 33 flutter-platform verification",),
+        "acceptance (Flutter UI and same-session native lifecycle)": ("Real API 33 flutter-full verification",),
+    }
 
 
 def _source_acceptance_plan(root, source):
@@ -165,12 +168,13 @@ def _source_acceptance_plan(root, source):
         '        path: ${{ runner.temp }}/lite-current-acceptance/\n',
         '        merge-multiple: false\n',
     )
-    if matrices != [expected] or any(sections["accepted"].count(token) != 1 for token in required):
+    known_matrices = ([expected], [expected.replace("fixed 31", "fixed 33")])
+    if matrices not in known_matrices or any(sections["accepted"].count(token) != 1 for token in required):
         raise PromotionError("Original Flutter aggregate does not enforce exact execution and preserve raw evidence")
     command = '        python3 apps/aerove-lite/tool/emulator_current.py ${{ matrix.phase }} --runtime-directory "$RUNNER_TEMP/lite-runtime-input"\n'
     if sections["acceptance"].count(command) != 1:
         raise PromotionError("Original Flutter phases do not execute the current Android producer")
-    return dict(kind="flutter")
+    return dict(kind="flutter", platform_test_count=31 if matrices == [expected] else 33)
 
 
 def _artifact_prefixes(plan):
@@ -223,7 +227,7 @@ def _candidate_jobs(run, attempt, source=None, root=None):
     if plan["kind"] == "flutter":
         del expected["acceptance (matrix)"]
         expected["accepted"] = ("All exact-source Android execution gates passed", FLUTTER_AGGREGATE_STEP)
-        expected.update(FLUTTER_ACCEPTANCE)
+        expected.update(_flutter_acceptance(plan["platform_test_count"]))
         expected["Shared Flutter client verification and Android host compilation (no APK)"] = (
             "Compile the Flutter host and actual platform acceptance runner",)
     acceptance_names = [job.get("name") for job in jobs if str(job.get("name", "")).startswith("acceptance (")]

@@ -1,7 +1,5 @@
 package dev.aerove.lite.data
 
-import java.net.URI
-
 /** A download borrows only its reachable candidate graph; unavailable providers are dependencies, never DIRECT. */
 internal object ProviderBootstrapGraph {
     private fun fail(path: String, reason: String): Nothing = throw ConfigValidationException(listOf(ConfigIssue(path, reason)))
@@ -33,13 +31,18 @@ internal object ProviderBootstrapGraph {
             // Matches Native first_named_proxy: absence does not imply an explicit DIRECT override.
             (proxy ?: (root["proxies"] as? List<*>)?.firstOrNull()?.let { (it as? Map<*, *>)?.get("name") as? String })?.let(::visit)
             fun server(value: Any?) {
-                val reference = (value as? String)?.let { runCatching { URI(it).rawFragment }.getOrNull() }
-                    ?.split('&')?.firstOrNull { it.startsWith("proxy=") || '=' !in it }?.removePrefix("proxy=")
-                if (!reference.isNullOrEmpty()) visit(reference)
+                val entry = (value as? String)?.trim() ?: return
+                // Match fixed Core NameServerEntry::parse: encrypted fragments
+                // are SNI, while plain fragments are the full (possibly spaced) name.
+                if (entry.startsWith("tls://") || entry.startsWith("https://")) return
+                val reference = entry.substringAfter('#', "").trim()
+                if (reference.isNotEmpty()) visit(reference)
             }
             val dns = root["dns"] as? Map<*, *>
             listOf("nameserver", "fallback", "default-nameserver", "proxy-server-nameserver").forEach { key -> (dns?.get(key) as? List<*>)?.forEach(::server) }
-            (dns?.get("nameserver-policy") as? Map<*, *>)?.values?.forEach(::server)
+            (dns?.get("nameserver-policy") as? Map<*, *>)?.values?.forEach { value ->
+                if (value is List<*>) value.forEach(::server) else server(value)
+            }
         }
     }
 

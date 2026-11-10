@@ -24,7 +24,7 @@ jobs:
       - run: bash tooling/hooks/test.sh
 
   candidate_generation:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dot/fix-360-integrated-20261110' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/dot/fix-360-integrated-20261110' || github.ref == 'refs/heads/fix/362-global-integration') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

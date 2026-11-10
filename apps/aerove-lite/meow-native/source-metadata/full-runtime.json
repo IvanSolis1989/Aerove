@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "patch": "patches/full-runtime.patch",
-  "patchSha256": "faf8b42c04cc098b9d35c029b4e5b857ecb2f1d5e2a25973c79f7b9ca01b4445",
+  "patchSha256": "f13dec662660778b3d4cb0bb567e3fcfe540d21d562701a71482811c6b0578bd",
   "rawFileManifestSha256": "a1948157edb77700f6f9152f3467907fb6a050c66cd153edfe98295bbf56e550",
-  "adaptedFileManifestSha256": "4ba77d87073ef42e296db8b75da3d7e4878f85d11f0e5811656ba73c32aea43b",
+  "adaptedFileManifestSha256": "590d1100a88deaee92c40eaea2da8f0d629d65d217aa0e6f7d1f4cc6d8443596",
   "changes": {
     "crates/meow-anytls/src/client/client.rs": {
       "beforeSha256": "806773111b6ca84adcdad0e24d6db6c5653e72bdba58f4d5e95fd959d3504515",
@@ -99,7 +99,7 @@
     },
     "crates/meow-config/src/dns_parser.rs": {
       "beforeSha256": "841c68fa46bf17687ebaffc3b9034f4a15cbef22078edb2b7b9f6c8f8444e0d3",
-      "afterSha256": "cb8efd644e1bd7dd3437c823ae1734b7073c04e7d66169755675e6c1787ab5bd"
+      "afterSha256": "db18883fec86be12ba1ea70e6620fcf0cf0e2ef7f202be6b0091c756f9d8e0b2"
     },
     "crates/meow-config/src/ech_dns.rs": {
       "beforeSha256": "57d852b1bd4b4f48f94242f183a771968254517d652ef2cedc235e8728d0124e",
@@ -199,7 +199,7 @@
     },
     "crates/meow-dns/src/resolver.rs": {
       "beforeSha256": "9338f2f32638c232212101fbdca887f42822d9ed7e2de968584216c6ac0cb491",
-      "afterSha256": "21c7b2e683c01689fb4447881325f1adaa0eff013efa2c8bb092d168985a6a7a"
+      "afterSha256": "056268581a04af117160f50a22ea3f1eb74d8eae46f2d4434d3fd2ad9613c42b"
     },
     "crates/meow-dns/src/server.rs": {
       "beforeSha256": "8acadfd004d31585a9b4f05483f4e502c00c6fc73c3461409974f5cbfe36090d",
@@ -829,7 +829,7 @@
     "crates/meow-common/tests/transport_scope_compat.rs": "a6b5b364350964e1c4638ad20dc26604b8557bc8d4aa6e17a786d03d7515d18e",
     "crates/meow-config/Cargo.toml": "3d77227af716af7bfda247974fa28744a19f156b97bc87a2a0b35bb3061d6f1e",
     "crates/meow-config/src/auth.rs": "761fdc3332f70687c40b91f34f3a1db19ecaebd7fe4b331fe075017a35784021",
-    "crates/meow-config/src/dns_parser.rs": "cb8efd644e1bd7dd3437c823ae1734b7073c04e7d66169755675e6c1787ab5bd",
+    "crates/meow-config/src/dns_parser.rs": "db18883fec86be12ba1ea70e6620fcf0cf0e2ef7f202be6b0091c756f9d8e0b2",
     "crates/meow-config/src/dropped_providers.rs": "aaf246eabbf6341266cad89bb090c3c2d9acc68be371941ed91e8cc36eb5beb1",
     "crates/meow-config/src/ech_dns.rs": "149f0e788e1806febbe2dcf77288153f588d01559643addf4c9e4c81c79e189d",
     "crates/meow-config/src/external_ui.rs": "e97b5df73a24748862405c7efea5f686ca404f171af460daa2f29432de18453b",
@@ -872,7 +872,7 @@
     "crates/meow-dns/src/fakeip.rs": "6345eca0a98f03e1d77601eccf3a364d52994834a743acd1b9bc3a218b335d77",
     "crates/meow-dns/src/host_resolver_hook.rs": "c4047edc4807c2d7f5ae8f3cdd91a3725caebd882ed9a2ffd3cf9d770abc2c72",
     "crates/meow-dns/src/lib.rs": "a124f31e19bed18eb5da8e8fee0706fa5c056fe9dcd0280a7490ce0b6ba28f3b",
-    "crates/meow-dns/src/resolver.rs": "21c7b2e683c01689fb4447881325f1adaa0eff013efa2c8bb092d168985a6a7a",
+    "crates/meow-dns/src/resolver.rs": "056268581a04af117160f50a22ea3f1eb74d8eae46f2d4434d3fd2ad9613c42b",
     "crates/meow-dns/src/server.rs": "d9545d1f6b0490e18d6451f7bf12641c6f67380352406bc3254b4d4221035ba1",
     "crates/meow-dns/src/upstream.rs": "9a7917ec58c7e6f6a06632168e6985ce08b473ac37e66e5b11d26b214d27276d",
     "crates/meow-dns/tests/cache_soak.rs": "14a255503e89609c01c502168fdc34e541c41b4b9bab5e2918f709758a538d98",

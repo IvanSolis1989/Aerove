@@ -621,10 +621,12 @@ class ClashProvidersAction extends _$ClashProvidersAction {
     ProviderKind kind,
     Set<String> labels, {
     bool force = false,
+    bool confirmApplication = false,
     bool Function()? isCurrent,
   }) => _applyIf(
     (profileId) => _isReferenced(profileId, kind, labels),
     force: force,
+    confirmApplication: confirmApplication,
     isCurrent: isCurrent,
   );
 
@@ -636,13 +638,18 @@ class ClashProvidersAction extends _$ClashProvidersAction {
   Future<void> _applyIf(
     Future<bool> Function(int profileId) isReferenced, {
     bool force = false,
+    bool confirmApplication = false,
     bool Function()? isCurrent,
   }) async {
     checkUpdateCurrent(isCurrent);
     if (!await _currentUses(isReferenced)) {
       return;
     }
-    await _applyCurrent(force: force, isCurrent: isCurrent);
+    await _applyCurrent(
+      force: force,
+      confirmApplication: confirmApplication,
+      isCurrent: isCurrent,
+    );
   }
 
   /// A reapply would close every connection and reset the route, while the
@@ -701,14 +708,25 @@ class ClashProvidersAction extends _$ClashProvidersAction {
 
   Future<void> _applyCurrent({
     required bool force,
+    bool confirmApplication = false,
     bool Function()? isCurrent,
   }) async {
     checkUpdateCurrent(isCurrent);
     final setup = ref.read(setupActionProvider.notifier);
-    if (isCurrent == null) {
+    if (isCurrent == null && !confirmApplication) {
       setup.applyProfileDebounce(silence: true, force: force);
     } else {
-      await setup.applyProfile(silence: true, force: force);
+      final profileId = ref.read(currentProfileIdProvider);
+      await requireSourceApplication(
+        () => setup.applyProfileConfirmed(
+          silence: true,
+          force: force,
+          isCurrent: () =>
+              ref.mounted &&
+              (isCurrent?.call() ?? true) &&
+              ref.read(currentProfileIdProvider) == profileId,
+        ),
+      );
     }
   }
 }

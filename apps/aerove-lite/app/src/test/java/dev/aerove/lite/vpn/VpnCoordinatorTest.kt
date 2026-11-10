@@ -13,6 +13,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -66,6 +68,54 @@ class VpnCoordinatorTest {
         assertEquals(VpnPhase.Stopped, coordinator.state.value.phase)
         assertTrue(session.stopped)
         coordinator.close()
+    }
+
+    @Test fun readinessTimeoutPublishesFailureAndAJoinedRetryCanRun() = runTest {
+        var stopped = 0
+        var opened = 0
+        val coordinator = VpnCoordinator(backgroundScope, TunnelBackend {
+            val timeout = opened++ == 0
+            object : TunnelSession {
+                override val endpoint = CoreEndpoint(1234, "test-secret")
+                override suspend fun awaitReady() { if (timeout) withTimeout(45_000) { awaitCancellation() } }
+                override suspend fun awaitExit(): Unit = awaitCancellation()
+                override suspend fun stop() { stopped++ }
+            }
+        })
+        coordinator.start(VpnPlan("profile", LiteSettings())); runCurrent()
+        advanceTimeBy(45_000); runCurrent()
+        assertEquals(VpnPhase.Failed, coordinator.state.value.phase)
+        assertTrue(coordinator.state.value.error.orEmpty().isNotBlank())
+        assertNull(coordinator.state.value.endpoint)
+        assertEquals(1, stopped)
+        coordinator.start(VpnPlan("retry", LiteSettings())); runCurrent()
+        assertEquals(VpnPhase.Running, coordinator.state.value.phase)
+        assertEquals(2, opened)
+        coordinator.close()
+    }
+
+    @Test fun replacingOrStoppingBeforeReadinessTimeoutDoesNotPublishFailure() = runTest {
+        for (replace in listOf(false, true)) {
+            var stopped = 0
+            var opened = 0
+            val coordinator = VpnCoordinator(backgroundScope, TunnelBackend {
+                val timeout = opened++ == 0
+                object : TunnelSession {
+                    override val endpoint = CoreEndpoint(1234, "test-secret")
+                    override suspend fun awaitReady() { if (timeout) withTimeout(45_000) { awaitCancellation() } }
+                    override suspend fun awaitExit(): Unit = awaitCancellation()
+                    override suspend fun stop() { stopped++ }
+                }
+            })
+            coordinator.start(VpnPlan("profile", LiteSettings())); runCurrent()
+            advanceTimeBy(44_999)
+            if (replace) coordinator.start(VpnPlan("next", LiteSettings())) else coordinator.stop()
+            runCurrent(); advanceTimeBy(2); runCurrent()
+            assertEquals(if (replace) VpnPhase.Running else VpnPhase.Stopped, coordinator.state.value.phase)
+            assertNull(coordinator.state.value.error)
+            assertEquals(1, stopped)
+            coordinator.close()
+        }
     }
 
     @Test

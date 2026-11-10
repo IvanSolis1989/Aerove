@@ -1023,5 +1023,15 @@
   "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
   "quotaLegacyUnverified": "Старые данные; источник не подтверждён",
   "quotaCheckedAt": "Ответ проверен: {time}",
-  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}},
+  "sourceSavedApplyUnconfirmed": "Источник сохранён, но применение не подтверждено. Примените его ещё раз; может потребоваться перезапуск.",
+  "sourceSavedApplyFailed": "Источник сохранён, но применить его не удалось: {detail}",
+  "@sourceSavedApplyFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

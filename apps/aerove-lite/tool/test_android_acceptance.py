@@ -166,7 +166,7 @@ class FixedSelectionTest(unittest.TestCase):
         self.assertEqual(producer.receipt["status"], "cancelled")
         self.assertFalse(producer.receipt["collectionComplete"])
 
-    def test_real_parser_accepts_exact_31_terminal_passes(self):
+    def test_real_parser_accepts_exact_33_terminal_passes(self):
         p = self.root / "platform.log"; p.write_text(log(self.contract["platformSelectors"]))
         self.assertEqual(v.platform_log(p)["selectors"], self.contract["platformSelectors"])
 
@@ -178,19 +178,37 @@ class FixedSelectionTest(unittest.TestCase):
         }
         selectors = self.contract["platformSelectors"]
         self.assertTrue(required.issubset(selectors))
-        original = [case for case in selectors if case not in required]
+        original = [case for case in selectors if case not in required and "ReleasedPortProbeTest#" not in case]
         self.assertEqual(len(original), 28)
         p = self.root / "platform.log"; p.write_text(log(original))
-        with self.assertRaisesRegex(ValueError, "exactly the fixed 31"):
+        with self.assertRaisesRegex(ValueError, "exactly the fixed 33"):
             v.platform_log(p)
         for case in sorted(required):
             p.write_text(log([case] + [other for other in selectors if other != case], skipped=True))
             with self.assertRaisesRegex(ValueError, "Skipped"):
                 v.platform_log(p)
 
+    def test_released_port_cases_are_required_current_platform_execution(self):
+        cases = {
+            "dev.aerove.lite.platformqa.ReleasedPortProbeTest#releasedListenerTimeWaitAllowsProductionCompatibleProbe",
+            "dev.aerove.lite.platformqa.ReleasedPortProbeTest#productionCompatibleProbeRejectsLiveLoopbackAndWildcardListeners",
+        }
+        selectors = self.contract["platformSelectors"]
+        self.assertTrue(cases.issubset(selectors))
+        old = [case for case in selectors if case not in cases]
+        self.assertEqual(len(old), 31)
+        path = self.root / "platform.log"
+        path.write_text(log(old))
+        with self.assertRaisesRegex(ValueError, "exactly the fixed 33"):
+            v.platform_log(path)
+        for case in cases:
+            path.write_text(log([case] + [other for other in selectors if other != case], skipped=True))
+            with self.assertRaisesRegex(ValueError, "Skipped"):
+                v.platform_log(path)
+
     def test_two_discovered_ui_methods_cannot_satisfy_platform(self):
         p = self.root / "platform.log"; p.write_text(log(self.contract["uiSelectors"][:2]))
-        with self.assertRaisesRegex(ValueError, "exactly the fixed 31"):
+        with self.assertRaisesRegex(ValueError, "exactly the fixed 33"):
             v.platform_log(p)
 
     def test_skipped_platform_method_and_missing_terminal_are_rejected(self):
@@ -610,7 +628,7 @@ class RuntimeDeviceReplayTests(unittest.TestCase):
         self.assertEqual(contract["uiSelectors"][:7], [prefix + method for method in original])
         self.assertEqual(contract["uiSelectors"][7:], [prefix + "listenerRebindFailureRecoveryAndNotificationLifecycle",
             prefix + "independentApplicationTcpUdpNativeAttribution"])
-        self.assertEqual(contract["platformCount"], 31)
+        self.assertEqual(contract["platformCount"], 33)
         self.assertFalse(contract["fullAcceptance"])
         self.assertFalse(contract["visualApproved"])
 

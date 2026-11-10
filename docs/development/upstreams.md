@@ -46,7 +46,7 @@ Aerove 独立管理产品需求、版本和发布。FlClash 是保留版权与�
 
 **固定版本 / revision：** 现有锁定依赖 `5.11.1`，官方 tag `dio_v5.11.1`；不推测未记录的提交 SHA。
 
-**用途与采用方式：** 共享订阅更新取消复用 `CancelToken` 与 `IOHttpClientAdapter`，只读参照官方取消、请求中止和响应流释放路径。调用方取消 Future 的完成不等于底层请求已经结束；本项目在现有下载入口持有该请求专用 adapter，并等待 fetch 与响应流清理。未复制上游实现、未新增依赖；普通请求继续复用原路径。
+**用途与采用方式：** 共享订阅更新取消复用 `CancelToken` 与 `IOHttpClientAdapter`，只读参照官方取消、请求中止和响应流释放路径。调用方取消 Future 的完成不等于底层请求已经结束；本项目在现有下载入口持有该请求专用 adapter，并等待 fetch 与响应流清理。未复制上游实现、未新增依赖；发布信息等普通请求继续复用原路径。订阅和脚本下载同时复用固定版本 IO adapter 的响应流，在聚合字节前检查声明长度与实际流量预算；只读核对 `transformers/fused_transformer.dart` 的 `ResponseType.bytes` / `plain` 聚合行为。
 
 **许可证、署名与证据：** MIT，保留现有依赖许可与版权；[固定取消实现](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/cancel_token.dart)、[固定 IO adapter](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/adapters/io_adapter.dart)、[固定请求分发](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/lib/src/dio_mixin.dart)、[原许可证](https://github.com/cfug/dio/blob/dio_v5.11.1/dio/LICENSE)。本项目 socket、文件及 SQL 取消验证不代替 Android 实际验收。
 
@@ -394,6 +394,8 @@ Lite 共享进程内存另复用既有 [ProcessInfo.currentRss](https://api.dart
 
 **用途与采用方式：** TLS、字体、Socket API及 `Isolate.kill` 生命周期只读核验；kill不保证挂起socket立即EOF/FD清理，因此未以隔离区退出替代逐请求取消。另只读核对 DateTime 相等与 UTC/local 转换语义，用于数据库往返测试夹具，不改变生产时间存储。 I4 固定历史环形缓冲另只读参照同固定 SDK [`sdk/lib/collection/queue.dart`](https://github.com/dart-lang/sdk/blob/04bcd1036cdc799ac6564988f159ee454d42c822/sdk/lib/collection/queue.dart) 的 ListQueue 头偏移与环形索引思路；其 API 不支持按逻辑下标替换，未直接采用或复制实现、未新增依赖。Aerove 保留固定容量、共享代际、按实例缓存的不可变快照及冻结副本契约。
 
+下载重定向另只读核对同固定 SDK `sdk/lib/_http/http.dart` 与 `http_impl.dart` 的跳转、敏感请求头和逐请求取消契约。采用本项目显式逐跳策略，拒绝 HTTPS 降级、跨 origin 剥离凭据，保留主动 HTTP 和合法 HTTPS 跳转；未复制 SDK 实现、未新增依赖。
+
 **许可证、署名与证据：** BSD-3-Clause；[Isolate.kill API](https://api.dart.dev/dart-isolate/Isolate/kill.html)、固定Dart SDK版本/source
 
 Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.resolveSymbolicLinks`](https://github.com/dart-lang/sdk/blob/3.10.0/sdk/lib/io/file_system_entity.dart)：只解析由平台提供的可信私有根，保留内部输入路径的链接拒绝与异常传播。使用现有 `dart:io` API，未复制实现或新增依赖；保留 Dart project authors 2013 署名及该版本根 [BSD-3-Clause LICENSE](https://github.com/dart-lang/sdk/blob/3.10.0/LICENSE) 的 2012 署名。此参考版本不代表实际运行时版本。 同一既有 API 也用于 Lite Android 共享 Flutter 启动的可信 support 根，供后续 home 与派生文件复用；标准版和外来文件路径保护保持。
@@ -415,6 +417,8 @@ Lite 私有数据迁移另只读参考 Dart `3.10.0` 的 [`FileSystemEntity.reso
 规则发布的连接门另核对同提交 `runtime/executor/helpers/engines.dart`、`runtime/executor/delegates.dart`、`runtime/api/db_base.dart` 的真实事务终止、rollback finally 释放与 beforeOpen 接线；使用公开 QueryExecutor/TransactionExecutor 包装，完整排空事务及 exclusive 单元，在终态未确认时拒绝后续 SQL。不将逻辑释放标志视为物理连接终止，未复制 Drift 内部实现或新增依赖。该基础不等于 durable journal 或进程崩溃恢复已经实现。
 
 规则发布日志继续复用同版公共 transaction、custom SQL 与 schema migration API：持久数据库身份与条件 INSERT 仲裁、业务写入和终态 token 同事务提交、旧22/新23严格接纳及文件 CAS 恢复。仅参考已固定源码的事务与迁移行为，没有复制内部实现或新增数据库依赖；真实旧版本中断迁移、进程退休及各平台运行资格另行验证。
+
+配置文件发布继续使用同版事务与公开执行器接口，复用仓库内现有文件／SQL 发布日志，不新增数据库依赖或复制上游实现。开发前 GitHub 检索 `transaction commit beforeOpen`（`simolus3/drift`），再核对锁定 `2.35.1` 的 `connection_user.dart`：提交完成后 Future 才成功，提交失败需等待 rollback。配置 YAML、原始输入与元数据通过同一终态 token 恢复，日志只保留文件标识与哈希，不复制订阅地址或解密密钥到元数据。
 
 **许可证、署名与证据：** MIT，Copyright © 2021 Simon Binder；保留安装包原 `LICENSE` 与 Pub 锁。固定映射源码副本 SHA256 `25f2fdcf64585e763f32a07f6c1b6b67be69a902202ed3a9b78ef7db02f174eb`。
 
@@ -601,6 +605,8 @@ Lite 端口释放探针另只读核对 `1.54.0` / tag `tokio-1.54.0` / commit [`
 大规则元数据、独立资源验证与准备预检共用该固定 Core 的严格 MRS matcher 工厂；Lite 三个官方 MRS 宿主上下文现均接线按用户决定执行 250,000 条设备保护准入（USER-DECISIONS 4–9；handoff §83、§216），并执行单条 2,048 字节、每条 128 个逻辑标签、总逻辑标签 500,000 限制。host123（run 40320087571，源 `bd83a3f5`）的 Core 32 命令/179 命中全部 exit 0，Native 42 targets 全部通过；整次 run 唯一失败为两道 rustfmt 门，真实 formatter 输出的三文件修正已进入 pref9，host124原run/job仍因旧consumer表31/32不匹配失败；独立修复已在 `d1c0c47d` 整合，保留原31批准项并追加明确批准项。44项Python测试通过；原sealed receipt（SHA-256 `391719e99f0bd00632139990dc6d9d8779a984d834c8c938cecd28134000323c`）已在修复后consumer下只读重放并接受，receipt/source/run/attempt未修改，Core 32/179、format/compile/feature/source/lock证明与原receipt匹配。该原run回放不改写host124 job失败，也不是新source验收；新source完整App CI仍待运行。411,634 和 345,000 条旧样本现为 Core-only 阳性、App 四入口精确拒绝；另有 100,000 条长文本/300,000 标签 fixture 通过 Core strict matcher 后被 App 四入口按 64 MiB 拒绝。Core 官方 MRS 解压输出上限 256 MiB 是解码字节边界，不替代宿主准入，也不同于历史 `MRS!` 格式的 64 MiB 展开预算；Core 二进制表借用、两个采样索引合计最多 1,000,001 `usize`；这是解析器分配边界，不证明整 FD 逐条流式处理，也不证明 RSS 或 Android 设备内存行为。宿主回归另原样复用[固定 MRS 测试编码器](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/crates/meow-rules/src/mrs_parser.rs)的六个 helper 至 `apps/aerove-lite/meow-native/tests/support/upstream_mrs.rs`，只调整模块导入与两个测试入口可见性；保留 Max Lv 的完整 MIT 通知。测试运行时生成受控 `.test` 域名数据，不把第三方聚合规则作为本仓二进制夹具。生产解析仍由真实 Core 完成；新增精确 zstd 依赖仅用于测试，实际锁解析和 Android 资源验收分别记录。 Lite 路由/provider 来源复核另只读核对同一固定 Core 的 Tunnel、NetworkContext、internal HTTP 与 TLS 接口契约（[固定源码树](https://github.com/meow-rs/meow-rs/tree/727ddcd06f592e2f12c5222c4de6cce328df808c)）；Aerove overlay 的 `dial_tcp_observed` 与所有权 hook 属本项目适配，不宣称为上游 API。
 
 累计快照在同一固定 `727ddcd06f592e2f12c5222c4de6cce328df808c` / MIT 来源的 Statistics owner 增加一次性 counter UUID；通过现有 Native 私有控制端与共享 Core API 读取 all/proxy 两种持续累计 scope。没有复制未发布 Android ledger、没有新增轮询或把可变 coreEpoch 当计数周期；不承诺已退休 session 的最终尾值。
+
+启动 DNS 适配继续维护在 `meow-native/patches/full-runtime.patch`：保留 `proxy-server-nameserver` 的 typed bootstrap cause；Android owned loader 在缺省 bootstrap 时使用捕获的物理 DNS（保留端口与 IPv6 scope ID），断网不查询系统或公共回退。显式默认解析器与 policy 的既有 IP 主解析器优先级不变；IP 字面量 DoH/DoT bootstrap 复用固定 Core 的协议客户端，不降级 UDP/53。离线验证沿用仅结构检查的不可路由占位，真实运行不使用该占位。Kotlin provider 依赖捕获按同版 `NameServerEntry::parse` 区分 plain `#proxy` 与加密 `#SNI`，并保留列表 policy 和完整代理名称。以上为 Aerove 宿主适配，不新增依赖或升级上游版本；宿主回归与完整 Android 验收分别记录。
 
 **许可证、署名与证据：** MIT；[固定 LICENSE](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/LICENSE) 原始 SHA256 `b7a39018faacfd98597da373045fbacf2c3f134fd755e553894a6a9adad38db5`；[固定 Cargo.toml](https://github.com/meow-rs/meow-rs/blob/727ddcd06f592e2f12c5222c4de6cce328df808c/Cargo.toml)。
 

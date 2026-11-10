@@ -1023,5 +1023,15 @@
   "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
   "quotaLegacyUnverified": "以前の値・提供元未確認",
   "quotaCheckedAt": "応答確認：{time}",
-  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}},
+  "sourceSavedApplyUnconfirmed": "ソースは保存されましたが、適用は確認できませんでした。再度適用してください。再起動が必要な場合があります。",
+  "sourceSavedApplyFailed": "ソースは保存されましたが、適用できませんでした：{detail}",
+  "@sourceSavedApplyFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

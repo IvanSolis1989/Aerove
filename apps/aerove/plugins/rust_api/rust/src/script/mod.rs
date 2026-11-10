@@ -17,17 +17,19 @@ pub fn evaluate(script: &str, config: &str) -> Result<String, String> {
 }
 
 fn evaluate_within(script: &str, config: &str, timeout: Duration) -> Result<String, String> {
-    let runtime = Runtime::new().map_err(|e| format!("{e}"))?;
+    let runtime = Runtime::new().map_err(|_| "script engine could not start".to_owned())?;
     runtime.set_memory_limit(MEMORY_LIMIT);
     let deadline = Instant::now() + timeout;
     runtime.set_interrupt_handler(Some(Box::new(move || Instant::now() >= deadline)));
 
-    let context = Context::full(&runtime).map_err(|e| format!("{e}"))?;
+    let context = Context::full(&runtime).map_err(|_| "script engine could not start".to_owned())?;
     context.with(|ctx| {
-        console::install(&ctx).catch(&ctx).map_err(describe)?;
+        console::install(&ctx)
+            .catch(&ctx)
+            .map_err(|_| "script console could not be initialized".to_owned())?;
         ctx.eval::<Value, _>(script.as_bytes())
             .catch(&ctx)
-            .map_err(describe)?;
+            .map_err(|_| "script could not be loaded".to_owned())?;
         // Evaluated as an expression rather than read off `globals()` because a
         // top-level `const main = ...` is a global lexical binding, not a
         // property of globalThis.
@@ -38,7 +40,10 @@ fn evaluate_within(script: &str, config: &str, timeout: Duration) -> Result<Stri
             .json_parse(config)
             .catch(&ctx)
             .map_err(|_| "profile is not valid JSON".to_owned())?;
-        let result: Value = entry.call((parsed,)).catch(&ctx).map_err(describe)?;
+        let result: Value = entry
+            .call((parsed,))
+            .catch(&ctx)
+            .map_err(|_| "script main() failed".to_owned())?;
         let result = match result.as_promise() {
             Some(promise) => promise.finish::<Value>().catch(&ctx).map_err(|error| {
                 match error {
@@ -47,7 +52,7 @@ fn evaluate_within(script: &str, config: &str, timeout: Duration) -> Result<Stri
                     rquickjs::CaughtError::Error(rquickjs::Error::WouldBlock) => {
                         format!("{ENTRY}() returned a Promise that did not settle")
                     }
-                    other => describe(other),
+                    _ => "script main() failed".to_owned(),
                 }
             })?,
             None => result,
@@ -58,23 +63,11 @@ fn evaluate_within(script: &str, config: &str, timeout: Duration) -> Result<Stri
         let json = ctx
             .json_stringify(result)
             .catch(&ctx)
-            .map_err(describe)?
+            .map_err(|_| "script result could not be serialized as JSON".to_owned())?
             .ok_or_else(|| format!("{ENTRY}() returned a value that is not JSON"))?;
-        json.to_string().map_err(|e| format!("{e}"))
+        json.to_string()
+            .map_err(|_| "script result could not be encoded as UTF-8".to_owned())
     })
-}
-
-fn describe(error: rquickjs::CaughtError<'_>) -> String {
-    match error {
-        rquickjs::CaughtError::Exception(exception) => {
-            let message = exception.message().unwrap_or_else(|| exception.to_string());
-            match exception.stack() {
-                Some(stack) if !stack.trim().is_empty() => format!("{message}\n{}", stack.trim()),
-                _ => message,
-            }
-        }
-        other => other.to_string(),
-    }
 }
 
 #[cfg(test)]
@@ -134,7 +127,7 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.contains("bad profile"), "{error}");
+        assert_eq!(error, "script main() failed");
     }
 
     #[test]
@@ -156,22 +149,21 @@ mod tests {
     }
 
     #[test]
-    fn reports_the_message_and_stack_of_a_thrown_error() {
+    fn reports_a_thrown_error_without_its_message_or_stack() {
         let error = run(
             "function main() { throw new Error('bad profile') }",
             json!({}),
         )
         .unwrap_err();
 
-        assert!(error.contains("bad profile"), "{error}");
-        assert!(error.contains("main"), "{error}");
+        assert_eq!(error, "script main() failed");
     }
 
     #[test]
-    fn reports_a_syntax_error_with_its_location() {
+    fn reports_a_syntax_error_without_script_text() {
         let error = run("function main( {", json!({})).unwrap_err();
 
-        assert!(error.contains(":1:"), "{error}");
+        assert_eq!(error, "script could not be loaded");
     }
 
     #[test]
@@ -197,6 +189,78 @@ mod tests {
         .unwrap();
 
         assert_eq!(result, json!({ "mode": "rule" }));
+    }
+
+    #[test]
+    fn console_does_not_inspect_or_serialize_its_arguments() {
+        let result = run(
+            r#"function main(config) {
+                const value = { toJSON() { config.inspected = true; return config; } };
+                for (const level of ['log', 'info', 'warn', 'error', 'debug', 'trace']) {
+                    console[level](value);
+                }
+                return config;
+            }"#,
+            json!({ "inspected": false }),
+        )
+        .unwrap();
+
+        assert_eq!(result, json!({ "inspected": false }));
+    }
+
+    #[test]
+    fn console_never_writes_script_values_to_process_output() {
+        const PROBE: &str = "AEROVE_SCRIPT_CONSOLE_PRIVACY_PROBE";
+        if std::env::var_os(PROBE).is_some() {
+            let config = json!({ "password": "synthetic-console-private-marker" });
+            let result = run(
+                r#"function main(config) {
+                    for (const level of ['log', 'info', 'warn', 'error', 'debug', 'trace']) {
+                        console[level](config, config.password);
+                    }
+                    return config;
+                }"#,
+                config.clone(),
+            )
+            .unwrap();
+            assert_eq!(result, config);
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "script::tests::console_never_writes_script_values_to_process_output",
+                "--nocapture",
+            ])
+            .env(PROBE, "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        for stream in [&output.stdout, &output.stderr] {
+            assert!(
+                !String::from_utf8_lossy(stream).contains("synthetic-console-private-marker"),
+                "console exposed its arguments to process output"
+            );
+        }
+    }
+
+    #[test]
+    fn script_errors_never_expose_configuration_or_script_text() {
+        for script in [
+            "function main(config) { throw new Error(config.password) }",
+            "function main(config) { throw config.password }",
+            "function main(config) { throw config }",
+            "async function main(config) { throw new Error(config.password) }",
+            "function main(config) { const e = new Error(); e.stack = config.password; throw e }",
+            "function main(config) { return { toJSON() { throw new Error(config.password) } } }",
+            "throw new Error('synthetic-exception-private-marker')",
+            "const value = `synthetic-exception-private-marker`; throw value",
+            "synthetic_exception_private_marker !",
+        ] {
+            let error = run(script, json!({ "password": "synthetic-exception-private-marker" }))
+                .unwrap_err();
+            assert!(!error.contains("synthetic"), "unsafe diagnostic: {error}");
+        }
     }
 
     #[test]

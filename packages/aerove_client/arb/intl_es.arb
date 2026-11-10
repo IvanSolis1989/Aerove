@@ -1023,5 +1023,15 @@
   "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
   "quotaLegacyUnverified": "Datos antiguos; origen sin verificar",
   "quotaCheckedAt": "Respuesta comprobada: {time}",
-  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}},
+  "sourceSavedApplyUnconfirmed": "La fuente se guardó, pero no se confirmó su aplicación. Vuelve a aplicarla; puede ser necesario reiniciar.",
+  "sourceSavedApplyFailed": "La fuente se guardó, pero no se pudo aplicar: {detail}",
+  "@sourceSavedApplyFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

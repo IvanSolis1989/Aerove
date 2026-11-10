@@ -1023,5 +1023,15 @@
   "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
   "quotaLegacyUnverified": "Legacy figures; source unverified",
   "quotaCheckedAt": "Response checked: {time}",
-  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}},
+  "sourceSavedApplyUnconfirmed": "Source saved, but application was not confirmed. Apply it again; a restart may be required.",
+  "sourceSavedApplyFailed": "Source saved, but it could not be applied: {detail}",
+  "@sourceSavedApplyFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

@@ -12,6 +12,7 @@ import 'package:fl_clash/common/initial_theme.dart';
 import 'package:fl_clash/common/last_page.dart';
 import 'package:fl_clash/common/launch.dart';
 import 'package:fl_clash/common/migration.dart';
+import 'package:fl_clash/common/rule_sql_journal.dart';
 import 'package:fl_clash/common/tray.dart';
 import 'package:fl_clash/common/window.dart';
 import 'package:fl_clash/common/xclash_defaults.dart';
@@ -109,6 +110,11 @@ class Bootstrap {
   ) async {
     await _claimDataDirectory();
     globalState.packageInfo = await PackageInfo.fromPlatform();
+    final publications = RuleSqlJournalOwner(
+      database,
+      Directory(await appPath.homeDirPath),
+    );
+    await publications.exclusive(publications.recover);
     await runProductDataPrerequisite(ClientProduct.current);
     xclashDefaults = await XClashDefaults.open();
     await xclashDefaults?.prepare(isAndroid: system.isAndroid);

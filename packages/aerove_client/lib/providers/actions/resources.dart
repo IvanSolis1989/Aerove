@@ -73,6 +73,7 @@ class ResourcesAction extends _$ResourcesAction {
       try {
         await task();
       } catch (e) {
+        if (e is UpdateCancelledException) return;
         failures.add(
           UpdatingMessage(
             label: label,

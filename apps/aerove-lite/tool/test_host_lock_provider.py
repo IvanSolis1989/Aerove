@@ -1,8 +1,8 @@
 import copy
 import json
-import shutil
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 import test_ci_artifacts
@@ -15,36 +15,65 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        source = ci.MEOW_ROOT
-        self.policy = json.loads((source / 'build-policy.json').read_text())
-        overlay = json.loads((source / self.policy['overlay']).read_text())
-        for name in ('Cargo.toml', 'Cargo.lock', 'source.json', 'core-tests.lock', 'build-policy.json', self.policy['overlay'], overlay['patch']):
-            target = self.root / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source / name, target)
-        # This private fixture stages the historical approved pending input.
-        lock = self.root / 'Cargo.lock'
-        seed = ci.HOST_LOCK_RESOLUTION_PROVIDER_INPUTS['expectedLockBeforeSha256']
-        if ci.digest(lock) != seed:
-            sections = lock.read_bytes().split(b'\n[[package]]\n')
-            roots = [index for index, section in enumerate(sections)
-                     if section.startswith(b'name = "aerove-meow-core"\n')]
-            self.assertEqual(1, len(roots))
-            section = sections[roots[0]]
-            for edge in (b' "regex",\n', b' "url",\n'):
-                self.assertEqual(1, section.count(edge))
-                section = section.replace(edge, b'', 1)
-            sections[roots[0]] = section
-            restored = b'\n[[package]]\n'.join(sections)
-            self.assertEqual(seed, ci.hashlib.sha256(restored).hexdigest())
-            lock.write_bytes(restored)
-        self.assertEqual(seed, ci.digest(lock))
+        self.stage_frozen_inputs(self.root)
+        self.policy = json.loads((self.root / 'build-policy.json').read_text())
+        seed = ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS['expectedLockBeforeSha256']
+        self.assertEqual(seed, ci.digest(self.root / 'Cargo.lock'))
         self.policy['resolveLock'] = True
         self.policy['expectedLockBeforeSha256'] = seed
         self.write_policy()
         self.env = dict(REQUEST_EVENT='workflow_dispatch', MEOW_HOST_ONLY='true', DIAGNOSTIC_TARGET='none', NATIVE_TEST_FILTER='')
         for key in ('QA84_ONLY', 'QA79_ONLY', 'CLIENT_PREFLIGHT', 'PUBLISH_RELEASE', 'NATIVE_PREFLIGHT', 'NATIVE_TEST_SERIAL', 'NATIVE_UNDERLAY_TESTS', 'NATIVE_TEST_STACKS'):
             self.env[key] = 'false'
+
+    def stage_frozen_inputs(self, destination, *, legacy=False):
+        fixture = Path(__file__).with_name('fixtures') / 'provider-host-lock'
+        prefix = 'legacy31-' if legacy else ''
+        provenance = json.loads((fixture / (prefix + 'provenance.json')).read_text())
+        self.assertEqual(1, provenance['schema'])
+        self.assertEqual(provenance['archiveSha256'], ci.digest(fixture / (prefix + 'inputs.zip')))
+        expected = {'Cargo.toml', 'Cargo.lock', 'source.json', 'core-tests.lock',
+                    'build-policy.json', 'source-metadata/full-runtime.json', 'patches/full-runtime.patch'}
+        self.assertEqual(expected, set(provenance['files']))
+        with zipfile.ZipFile(fixture / (prefix + 'inputs.zip')) as archive:
+            self.assertEqual(sorted(expected), sorted(archive.namelist()))
+            for name in sorted(expected):
+                source = provenance['files'][name]
+                self.assertEqual('apps/aerove-lite/meow-native/' + name, source['path'])
+                revisions = ('156101c397356f4704d73ab59d03a703748b0ddf', '281a2f335962ec8d2985f7ee8cf81e10c06551db') if legacy else (
+                    '281a2f335962ec8d2985f7ee8cf81e10c06551db', '9f2db578c9b5b61dfe9a5a0d1750602d9c0f4336')
+                self.assertEqual(revisions[0] if name == 'Cargo.lock' else revisions[1], source['revision'])
+                raw = archive.read(name)
+                self.assertEqual(source['sha256'], ci.hashlib.sha256(raw).hexdigest())
+                target = destination / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+
+    def test_historical_fixture_is_independent_of_current_source_and_preserves_pending_scope(self):
+        staged = self.root / 'independent'
+        with mock.patch.object(ci, 'MEOW_ROOT', self.root / 'no-current-native-source'):
+            self.stage_frozen_inputs(staged)
+        self.assertEqual(ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS['expectedLockBeforeSha256'], ci.digest(staged / 'Cargo.lock'))
+        self.assertEqual(ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS['manifestSha256'], ci.digest(staged / 'Cargo.toml'))
+        self.assertEqual(ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS['overlaySha256'], ci.digest(staged / self.policy['overlay']))
+        # The setup alters only the two explicit pending-resolution policy fields.
+        historical = json.loads((staged / 'build-policy.json').read_text())
+        expected = dict(historical, resolveLock=True,
+                        expectedLockBeforeSha256=ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS['expectedLockBeforeSha256'])
+        self.assertEqual(expected, self.policy)
+
+    def test_legacy_31_command_tuple_cannot_claim_current_32_command_producer(self):
+        staged = self.root / 'legacy31'
+        self.stage_frozen_inputs(staged, legacy=True)
+        inputs = ci.HOST_LOCK_RESOLUTION_PROVIDER_INPUTS
+        policy = json.loads((staged / 'build-policy.json').read_text())
+        policy.update(resolveLock=True, expectedLockBeforeSha256=inputs['expectedLockBeforeSha256'])
+        (staged / 'build-policy.json').write_text(json.dumps(policy, indent=2) + '\n')
+        self.assertEqual(inputs['expectedLockBeforeSha256'], ci.digest(staged / 'Cargo.lock'))
+        self.assertEqual(inputs['manifestSha256'], ci.digest(staged / 'Cargo.toml'))
+        self.assertEqual(inputs['overlaySha256'], ci.digest(staged / policy['overlay']))
+        with self.assertRaisesRegex(ci.PromotionError, 'changed the authored Core command contract'):
+            ci.host_lock_resolution_plan('host', staged, self.env)
 
     def write_policy(self):
         (self.root / 'build-policy.json').write_bytes((json.dumps(self.policy, indent=2) + '\n').encode())
@@ -53,8 +82,8 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
         with mock.patch.object(ci.subprocess, 'run') as run:
             plan = ci.host_lock_resolution_plan('host', self.root, self.env)
         run.assert_not_called()
-        self.assertEqual((42, 31, 177), (plan['nativeTargetCount'], plan['coreCommandCount'], plan['expectedCoreHits']))
-        self.assertEqual(ci.HOST_LOCK_RESOLUTION_PROVIDER_INPUTS['manifestSha256'], plan['manifestSha256'])
+        self.assertEqual((42, 32, 179), (plan['nativeTargetCount'], plan['coreCommandCount'], plan['expectedCoreHits']))
+        self.assertEqual(ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS['manifestSha256'], plan['manifestSha256'])
         self.assertIs(plan['acceptedLock'], False)
         self.assertIs(plan['android'], False)
         self.assertEqual(['python3', 'apps/aerove-lite/meow-native/build.py', '--resolve-lock'], plan['command'])
@@ -129,7 +158,7 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
                      upstreamLockBeforeSha256=overlay['files']['Cargo.lock'], seedSha256=self.policy['coreTestLockSha256'], resolvedLockSha256=self.policy['coreTestLockSha256'],
                      workspaceMembers=sorted(packages), features=features,
                      bridgeMetadataCommand=['cargo', 'metadata', '--locked', '--format-version', '1'], bridgeMetadataExit=0,
-                     metadataCommand=['cargo', 'metadata', '--manifest-path', '.upstream/meow-rs/Cargo.toml', '--format-version', '1', '--locked'], metadataExit=0,
+                     metadataCommand=['cargo', 'metadata', '--manifest-path', '.upstream/meow-rs/Cargo.toml', '--format-version', '1'], metadataExit=0,
                      commands=commands, compileCheck=dict(command=verifier.CORE_OBSERVABILITY_COMPILE_COMMAND, exit=0, stdoutSha256='3'*64, stderrSha256='4'*64))
         for key, command in [('formatCheck', verifier.CORE_MRS_READER_FORMAT_COMMAND), ('providerFormatCheck', verifier.CORE_PROVIDER_READER_FORMAT_COMMAND)]:
             state[key] = dict(command=command, exit=0, stdoutSha256='5'*64, stderrSha256='6'*64,
@@ -158,7 +187,7 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
                        commandExit=0, command=command, representativeTargets=self.policy['targets'],
                        workflowSourceSha=workflow['sourceRevision'], workflowRun=workflow['workflowRun'], workflowAttempt='1',
                        buildPolicySha256=ci.digest(self.root / 'build-policy.json'), bridgeManifestSha256=self.policy['manifestSha256'],
-                       declaredSourceSpecSha256=ci.HOST_LOCK_RESOLUTION_PROVIDER_INPUTS['sourceSpecSha256'],
+                       declaredSourceSpecSha256=ci.HOST_LOCK_RESOLUTION_HISTORY_INPUTS['sourceSpecSha256'],
                        lockSha256Before=self.policy['expectedLockBeforeSha256'], metadataInputLockSha256=self.policy['expectedLockBeforeSha256'],
                        metadataCommand=['cargo', 'metadata', '--format-version', '1'], metadataExit=0,
                        resolvedLockSha256=resolved, lockSha256After=resolved, lockUnchangedDuringLockedCommand=True,
@@ -174,7 +203,7 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
             result = ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
             self.assertIs(result['archiveOnly'], True)
             self.assertIs(result['acceptedLock'], False)
-            self.assertEqual(31, result['coreCommandCount'])
+            self.assertEqual(32, result['coreCommandCount'])
             variants = []
             for key, value in [('commandExit', 1), ('acceptedLock', False), ('metadataExit', 1), ('featureBoundaryExit', 1), ('toolchain', 'rustc other')]:
                 changed = copy.deepcopy(receipt)
@@ -184,6 +213,9 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
                 changed = copy.deepcopy(receipt)
                 changed['coreTests'][key] = value
                 variants.append((key, changed))
+            changed = copy.deepcopy(receipt)
+            changed['coreTests']['metadataCommand'].append('--locked')
+            variants.append(('wrong-resolution-metadata-command', changed))
             changed = copy.deepcopy(receipt)
             changed['coreTests']['commands'][-1]['expectedPass'] -= 1
             changed['coreTests']['commands'][-1]['passed'] -= 1
@@ -202,7 +234,7 @@ class ProviderHostLockResolutionTests(unittest.TestCase):
                 with self.subTest(mutation=name), self.assertRaises((ci.PromotionError, ValueError)):
                     ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)
             save(receipt)
-            self.assertEqual(31, ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)['coreCommandCount'])
+            self.assertEqual(32, ci.host_lock_resolution_result(plan_path, 'host', self.root, self.env)['coreCommandCount'])
 
 
 if __name__ == '__main__':

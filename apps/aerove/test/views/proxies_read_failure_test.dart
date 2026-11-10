@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:fl_clash/core/controller.dart';
+import 'package:fl_clash/core/method.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
+import 'package:fl_clash/ui/inherited.dart';
 import 'package:fl_clash/views/proxies/proxies.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -17,6 +19,33 @@ import '../helpers/test_profiles.dart';
 
 class _MockCore extends Mock implements CoreController {}
 
+class _FailedInitialSetup extends SetupAction {
+  final List<bool> calls = [];
+  @override
+  Future<bool> applyProfile({
+    bool silence = false,
+    bool force = false,
+    Future<void> Function()? preloadInvoke,
+  }) async {
+    await globalState.safeRun(
+      () => throw StateError('original source failure'),
+    );
+    return false;
+  }
+
+  @override
+  Future<bool> setCoreRunning(bool running) async {
+    calls.add(running);
+    throw const CoreStopException(
+      code: 'stop_graph_restore_failed',
+      message: 'secondary GRAPH_OPEN failure',
+    );
+  }
+
+  @override
+  void resetCoreTraffic() {}
+}
+
 Future<List<Group>> _read(_MockCore core) => core.getProxiesGroups(
   sortType: any(named: 'sortType'),
   delayMap: any(named: 'delayMap'),
@@ -26,6 +55,82 @@ Future<List<Group>> _read(_MockCore core) => core.getProxiesGroups(
 
 void main() {
   setUpAll(() => registerFallbackValue(ProxiesSortType.none));
+  testWidgets(
+    'initial cleanup retains the first visible error and stopped state',
+    (tester) async {
+      final initialStatus = globalState.needInitStatus;
+      addTearDown(() => globalState.needInitStatus = initialStatus);
+      final setup = _FailedInitialSetup();
+      final container = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(TestProfiles.new),
+          setupActionProvider.overrideWith(() => setup),
+        ],
+      );
+      addTearDown(container.dispose);
+      globalState.container = container;
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const TestApp(
+            withStatusManager: true,
+            child: Scaffold(body: SizedBox()),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(
+        await container
+            .read(setupActionProvider.notifier)
+            .setRunning(true, initialize: true),
+        isFalse,
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.textContaining('original source failure'), findsOneWidget);
+      expect(find.textContaining('secondary GRAPH_OPEN'), findsNothing);
+      expect(setup.calls, [false]);
+      expect(container.read(isStartProvider), isFalse);
+      expect(container.read(runningVpnOptionsProvider), isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('an active picker retries from another selected page', (
+    tester,
+  ) async {
+    final core = _MockCore();
+    when(() => _read(core)).thenAnswer((_) async => []);
+    final container = ProviderContainer(
+      overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
+        coreHandlerProvider.overrideWithValue(core),
+      ],
+    );
+    addTearDown(container.dispose);
+    globalState.container = container;
+    container
+        .read(currentPageLabelProvider.notifier)
+        .toPage(PageLabel.profiles);
+    container.read(groupsReadFailedProvider.notifier).value = true;
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const TestApp(
+          child: PageActivityScope(
+            isActive: true,
+            child: ProxiesView(picker: true),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(AppLocalizations.current.retry));
+    await tester.pumpAndSettle();
+    expect(container.read(groupsReadFailedProvider), isFalse);
+    verify(() => _read(core)).called(1);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final type in ProxiesType.values) {
     testWidgets(
       '$type distinguishes failed reads from an empty response and retries',

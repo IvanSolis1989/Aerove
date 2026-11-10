@@ -30,6 +30,8 @@
     "dev.aerove.lite.overrides.SmartConfigMeowScriptAndroidTest#realQuickJsPreservesInputAndScriptFailuresCannotCommitPartialOverrides",
     "dev.aerove.lite.overrides.SmartConfigMeowScriptAndroidTest#realQuickJsRepositoryComposerAndAllPinnedRulePayloadsReachNativeValidation",
     "dev.aerove.lite.platformqa.NativeParserPlatformTest#nativeParserRejectsUnknownConfiguration",
+    "dev.aerove.lite.platformqa.ReleasedPortProbeTest#productionCompatibleProbeRejectsLiveLoopbackAndWildcardListeners",
+    "dev.aerove.lite.platformqa.ReleasedPortProbeTest#releasedListenerTimeWaitAllowsProductionCompatibleProbe",
     "dev.aerove.lite.regexp2.IsolatedClientHelperTest#cancelledRequestCanRebindOnlyAfterConfirmedExit",
     "dev.aerove.lite.regexp2.IsolatedClientHelperTest#exactSemanticsNulAndSharedMemoryRoundTrip",
     "dev.aerove.lite.scan.AlbumQrDecoderTest#readsQrFromRealPngAndClosesItsResources",
@@ -37,7 +39,7 @@
     "dev.aerove.lite.scan.ScanSessionTest#deniedPermissionStaysRecoverableAndAlbumCancellationDoesNotStartCamera",
     "dev.aerove.lite.scan.ScanSessionTest#inactiveRouteNeverStartsCameraAndCloseIsIdempotent"
   ],
-  "platformCount": 31,
+  "platformCount": 33,
   "uiSelectors": [
     "dev.aerove.lite.FlutterProductionUiTest#consentNavigationTheme12",
     "dev.aerove.lite.FlutterProductionUiTest#persistedConsentAfterProcessRestart",
@@ -100,6 +102,6 @@
   },
   "runtimeDeviceAttestorSource": {
     "path": "android-platform-qa/src/main/java/dev/aerove/lite/platformqa/RuntimeDeviceAttestor.kt",
-    "sha256": "ff0e1f7181efc10fbc3cea0ed210cb0a146b78809509db02230004c9d1d48416"
+    "sha256": "904c9c8c9ef1a7de463c97c040421309e55b5ee692bde8f0fae89e18082ee541"
   }
 }

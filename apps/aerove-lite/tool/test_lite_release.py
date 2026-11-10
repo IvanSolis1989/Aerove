@@ -245,9 +245,11 @@ class LitePromotionGateTests(unittest.TestCase):
                 self.check_parallel_jobs(count)
 
     def test_flutter_jobs_require_every_producer_and_both_exact_android_phases(self):
-        with mock.patch.object(release, "_source_acceptance_plan", return_value=dict(kind="flutter")), \
-                mock.patch.object(release.subprocess, "check_output", side_effect=workflow_git_fixture(True)):
-            self.check_parallel_jobs(0)
+        for platform_count in (31, 33):
+            with self.subTest(platform_count=platform_count), mock.patch.object(release, "_source_acceptance_plan",
+                    return_value=dict(kind="flutter", platform_test_count=platform_count)), \
+                    mock.patch.object(release.subprocess, "check_output", side_effect=workflow_git_fixture(True)):
+                self.check_parallel_jobs(0, platform_count)
 
     def test_package_protocol_is_fixed_by_original_reusable_source_not_acceptance_kind(self):
         fixtures = Path(__file__).with_name("fixtures")
@@ -276,7 +278,7 @@ class LitePromotionGateTests(unittest.TestCase):
                     with self.assertRaises(release.PromotionError):
                         release._source_package_step(Path("original"), source)
 
-    def check_parallel_jobs(self, count):
+    def check_parallel_jobs(self, count, platform_count=31):
         actual_aggregate_step = f"Verify the {count} runtime-discovered shard sets form one complete APK test selection"
         self.assertEqual(
             "Verify the 16 runtime-discovered shard sets form one complete APK test selection",
@@ -293,7 +295,7 @@ class LitePromotionGateTests(unittest.TestCase):
         if count == 0:
             del required["acceptance (matrix)"]
             required["accepted"] = ["All exact-source Android execution gates passed", release.FLUTTER_AGGREGATE_STEP]
-            required.update(release.FLUTTER_ACCEPTANCE)
+            required.update(release._flutter_acceptance(platform_count))
             required["Shared Flutter client verification and Android host compilation (no APK)"] = [
                 "Compile the Flutter host and actual platform acceptance runner"]
         for abi in ("arm64-v8a", "x86_64"):
@@ -338,6 +340,12 @@ class LitePromotionGateTests(unittest.TestCase):
                 with self.assertRaises(release.PromotionError):
                     release._candidate_jobs(11, 2, "a" * 40)
                 step["name"] = actual_x86[0]
+                platform = next(job for job in jobs if job["name"].startswith("acceptance (fixed "))
+                original_name = platform["name"]
+                platform["name"] = original_name.replace(str(platform_count), str(33 if platform_count == 31 else 31))
+                with self.assertRaises(release.PromotionError):
+                    release._candidate_jobs(11, 2, "a" * 40)
+                platform["name"] = original_name
             for target in range(len(jobs)):
                 removed = jobs.pop(target)
                 with self.subTest(missing=removed["name"]), self.assertRaises(release.PromotionError):
@@ -420,9 +428,13 @@ class LitePromotionGateTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[3]
         workflow = (root / ".github/workflows/aerove-lite.yaml").read_text(encoding="utf-8")
         with mock.patch.object(release.subprocess, "check_output", return_value=workflow.encode()) as git:
-            self.assertEqual(release._source_acceptance_plan(root, "a" * 40), dict(kind="flutter"))
+            self.assertEqual(release._source_acceptance_plan(root, "a" * 40), dict(kind="flutter", platform_test_count=33))
             git.assert_called_once_with(["git", "show", "a" * 40 + ":.github/workflows/aerove-lite.yaml"], cwd=root)
-        invalid = [workflow.replace("fixed 31 native/platform regressions", "fixed 28 native/platform regressions"),
+        historical = workflow.replace("fixed 33 native/platform regressions", "fixed 31 native/platform regressions")
+        with mock.patch.object(release.subprocess, "check_output", return_value=historical.encode()):
+            self.assertEqual(release._source_acceptance_plan(root, "a" * 40), dict(kind="flutter", platform_test_count=31))
+        invalid = [workflow.replace("fixed 33 native/platform regressions", "fixed 28 native/platform regressions"),
+                   workflow.replace("fixed 33 native/platform regressions", "fixed 32 native/platform regressions"),
                    workflow.replace("- phase: flutter-full", "- phase: flutter-platform"),
                    workflow.replace("--execution-only --output", "--output"),
                    workflow.replace(release.FLUTTER_AGGREGATE_STEP, "Unverified evidence"),

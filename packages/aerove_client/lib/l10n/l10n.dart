@@ -8502,6 +8502,26 @@ class AppLocalizations {
       args: [time],
     );
   }
+
+  /// `Source saved, but application was not confirmed. Apply it again; a restart may be required.`
+  String get sourceSavedApplyUnconfirmed {
+    return Intl.message(
+      'Source saved, but application was not confirmed. Apply it again; a restart may be required.',
+      name: 'sourceSavedApplyUnconfirmed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Source saved, but it could not be applied: {detail}`
+  String sourceSavedApplyFailed(String detail) {
+    return Intl.message(
+      'Source saved, but it could not be applied: $detail',
+      name: 'sourceSavedApplyFailed',
+      desc: '',
+      args: [detail],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {

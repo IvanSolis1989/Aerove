@@ -1407,6 +1407,30 @@ jobs:
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
         assert all(result['complete'] for result in results.values()), results
         PY
+    - name: Execute shared script diagnostic privacy regressions
+      timeout-minutes: 15
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/script-privacy"
+        mkdir -p "$evidence"
+        cargo test --locked --manifest-path apps/aerove/plugins/rust_api/rust/Cargo.toml script::tests -- --test-threads=1 \
+          2>&1 | tee "$evidence/script-tests.log"
+        python3 - <<'PY'
+        import hashlib, json, os, re
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/script-privacy'
+        log = output / 'script-tests.log'
+        text = log.read_text()
+        required = ['console_does_not_inspect_or_serialize_its_arguments',
+            'console_never_writes_script_values_to_process_output',
+            'script_errors_never_expose_configuration_or_script_text']
+        assert all(text.count('script::tests::' + name + ' ... ok') == 1 for name in required), text
+        assert re.search(r'test result: ok\. 18 passed; 0 failed; 0 ignored;', text), text
+        (output / 'results.json').write_text(json.dumps(dict(source=os.environ['GITHUB_SHA'],
+            run=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+            passed=18, required=required, logSha256=hashlib.sha256(log.read_bytes()).hexdigest(),
+            hostOnly=True, androidExecuted=False, appApkBuilt=False, acceptance=False), indent=2) + '\n')
+        PY
     - name: Execute subscription source transactions and affected shared client regressions
       timeout-minutes: 30
       working-directory: apps/aerove
@@ -1415,6 +1439,17 @@ jobs:
         evidence="$RUNNER_TEMP/lite-flutter-host/subscription-behavior"
         mkdir -p "$evidence"
         suites=(
+          common/profile_publication_test.dart
+          common/source_application_test.dart
+          common/app_localizations_test.dart
+          common/subscription_size_limit_test.dart
+          common/download_redirect_test.dart
+          common/request_redirect_test.dart
+          common/request_test.dart
+          models/script_write_safety_test.dart
+          models/profile_save_test.dart
+          providers/setup_action_test.dart
+          providers/meow_proxy_recovery_test.dart
           common/subscription_compatibility_test.dart
           common/subscription_collection_test.dart
           common/clash_provider_core_path_test.dart
@@ -1471,7 +1506,7 @@ jobs:
           label="${suite//\//_}"
           suite_args=()
           suite_env=()
-          if [[ "$suite" == 'providers/meow_rule_publication_commit_test.dart' ]]; then
+          if [[ "$suite" == 'providers/meow_rule_publication_commit_test.dart' || "$suite" == 'providers/meow_proxy_recovery_test.dart' ]]; then
             suite_args+=(--dart-define=AEROVE_TEST_SUITE_PRODUCT=true)
           fi
           if [[ "$suite" == 'views/dashboard/foreground_test.dart' || "$suite" == 'widgets/subscription_usage_fill_test.dart' ]]; then
@@ -1525,7 +1560,7 @@ jobs:
             composition='Standard and explicitly selected Lite test entries; core arguments and MeowCoreHandler fixtures retain their own identities',
             results=results, appApkBuilt=False, acceptance=False)
         (output / 'results.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        assert len(results) == 51 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
+        assert len(results) == 62 and all(r['testExit'] == 0 and r['logExit'] == 0 and r['allCasesPassed'] for r in results.values()), results
         assert all(r.get('pixelReadback', True) for r in results.values()), 'Host shader pixels were not retained'
         PY
     - name: Execute owned Linux process termination and rule journal recovery
@@ -1549,6 +1584,32 @@ jobs:
             run=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'],
             commandCompleted=True, logSha256=hashlib.sha256(log.read_bytes()).hexdigest(),
             summarySha256=hashlib.sha256((output / 'cases/summary.json').read_bytes()).hexdigest(),
+            platform='Linux owned descendant process termination/reopen',
+            androidExecuted=False, powerLossTested=False, appApkBuilt=False, acceptance=False), indent=2) + '\n')
+        PY
+    - name: Execute owned profile publication process termination and recovery
+      timeout-minutes: 30
+      run: |-
+        set -euo pipefail
+        evidence="$RUNNER_TEMP/lite-flutter-host/profile-process-recovery"
+        mkdir -p "$evidence"
+        python3 tooling/test_profile_publication_process.py --flutter "$(command -v flutter)" --app "$GITHUB_WORKSPACE/apps/aerove" \
+          --evidence "$evidence/cases" \
+          2>&1 | tee "$evidence/process-recovery.log"
+        python3 - <<'PY'
+        import hashlib, json, os
+        from pathlib import Path
+        output = Path(os.environ['RUNNER_TEMP']) / 'lite-flutter-host/profile-process-recovery'
+        summary_path = output / 'cases/summary.json'
+        summary = json.loads(summary_path.read_text())
+        expected = {'prepared', 'first-rename', 'both-renames', 'committed', 'cleanup', 'input-deleted', 'recovery-interrupted'}
+        assert summary['process_death_only'] is True and summary['passed'] is True, summary
+        assert len(summary['cases']) == len(expected) and {case['case'] for case in summary['cases']} == expected, summary
+        assert all(case['passed'] is True for case in summary['cases']), summary
+        (output / 'results.json').write_text(json.dumps(dict(source=os.environ['GITHUB_SHA'],
+            run=os.environ['GITHUB_RUN_ID'], attempt=os.environ['GITHUB_RUN_ATTEMPT'],
+            commandCompleted=True, logSha256=hashlib.sha256((output / 'process-recovery.log').read_bytes()).hexdigest(),
+            summarySha256=hashlib.sha256(summary_path.read_bytes()).hexdigest(),
             platform='Linux owned descendant process termination/reopen',
             androidExecuted=False, powerLossTested=False, appApkBuilt=False, acceptance=False), indent=2) + '\n')
         PY
@@ -2237,7 +2298,7 @@ jobs:
       matrix:
         include:
         - phase: flutter-platform
-          label: fixed 31 native/platform regressions
+          label: fixed 33 native/platform regressions
           artifact_suffix: flutter-platform
         - phase: flutter-full
           label: Flutter UI and same-session native lifecycle

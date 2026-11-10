@@ -466,10 +466,11 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
     suspend fun getAppliedSetup(): Map<String, Any?> = gate.withLock {
         val last = store.readLastApplied()
         val live = effects.readRuntime()
-        val running = last != null && matches(live, last) && live?.listening == true
         val identity = store.readAppliedIdentity()
         val revision = if (last != null && matches(live, last) && identity != null && store.isGraphCurrent(identity)) last.revision else null
-        mapOf("init" to effects.isInitialized(), "running" to running, "revision" to revision, "applied" to last?.handoff?.setupRecordJson?.let { map(JSONObject(it)) })
+        val applied = last?.takeIf { revision != null }
+        mapOf("init" to effects.isInitialized(), "running" to (revision != null && live?.listening == true),
+            "revision" to revision, "applied" to applied?.handoff?.setupRecordJson?.let { map(JSONObject(it)) })
     }
 
     suspend fun refreshAppliedSetup(arguments: Map<String, Any?>): Boolean = gate.withLock {

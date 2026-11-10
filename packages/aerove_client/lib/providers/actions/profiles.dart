@@ -53,8 +53,8 @@ class ProfilesAction extends _$ProfilesAction {
           .read(profilesProvider.notifier)
           .putCommitted(
             selected,
-            publishFile: () => prepared.publish(isCurrent: () => ref.mounted),
-            rollbackFile: prepared.rollback,
+            preparedFile: prepared,
+            publishFile: () => checkUpdateCurrent(() => ref.mounted),
           );
       if (ref.mounted && ref.read(currentProfileIdProvider) == null) {
         ref.read(currentProfileIdProvider.notifier).value = selected.id;
@@ -86,6 +86,43 @@ class ProfilesAction extends _$ProfilesAction {
       report,
       associateDefault: associateDefault,
     );
+  }
+
+  Future<Profile?> restoreMissingProfile(
+    Profile? profile, {
+    bool Function()? isCurrent,
+  }) async {
+    if (profile == null || profile.type != ProfileType.url) return null;
+    final target = File(await appPath.getProfilePath(profile.id.toString()));
+    if (await target.exists()) return null;
+    bool sourceCurrent() {
+      if (!ref.mounted || !(isCurrent?.call() ?? true)) return false;
+      final current = ref.read(profilesProvider).getProfile(profile.id);
+      return current != null &&
+          current.type == profile.type &&
+          current.url == profile.url &&
+          current.ageSecretKey == profile.ageSecretKey &&
+          current.lastUpdateDate == profile.lastUpdateDate;
+    }
+
+    final prepared = await profile.prepareUpdate(
+      validate: (path, key) => _core.validateProfile(path, key),
+      isCurrent: sourceCurrent,
+    );
+    try {
+      return await ref
+          .read(profilesProvider.notifier)
+          .publishUpdate(
+            prepared.profile,
+            original: profile,
+            isCurrent: sourceCurrent,
+            preparedFile: prepared.file,
+            publishFile: () => checkUpdateCurrent(sourceCurrent),
+            rollbackFile: () {},
+          );
+    } finally {
+      await prepared.file.dispose();
+    }
   }
 
   bool _autoUpdating = false;
@@ -469,11 +506,9 @@ class ProfilesAction extends _$ProfilesAction {
                   update.profile,
                   original: original,
                   isCurrent: () => intent.isCurrent,
-                  publishFile: () {
-                    intent.beginCommit();
-                    update.file.publish();
-                  },
-                  rollbackFile: update.file.rollback,
+                  preparedFile: update.file,
+                  publishFile: intent.beginCommit,
+                  rollbackFile: () {},
                 ),
           );
       intent.committedProfile = committed;
@@ -484,11 +519,14 @@ class ProfilesAction extends _$ProfilesAction {
       _showCompatibility(compatibility);
       if (profile.id == ref.read(currentProfileIdProvider)) {
         final setup = ref.read(setupActionProvider.notifier);
-        if (isCurrent == null) {
-          setup.applyProfileDebounce(silence: true);
-        } else {
-          await setup.applyProfile(silence: true);
-        }
+        await requireSourceApplication(
+          () => setup.applyProfileConfirmed(
+            silence: true,
+            isCurrent: () =>
+                intent.isCurrent &&
+                ref.read(currentProfileIdProvider) == profile.id,
+          ),
+        );
       } else {
         final latest = ref.read(profilesProvider).getProfile(profile.id);
         if (latest == null) return;
@@ -498,8 +536,8 @@ class ProfilesAction extends _$ProfilesAction {
               ProviderKind.proxy,
               {latest.realLabel},
               force: true,
-              isCurrent: () =>
-                  ref.mounted && identical(_profileUpdates[profile.id], intent),
+              confirmApplication: true,
+              isCurrent: () => intent.isCurrent,
             );
       }
     } catch (_) {

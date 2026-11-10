@@ -7,6 +7,7 @@ import 'package:drift/drift.dart' show Variable;
 import 'package:path/path.dart' as p;
 import 'package:fl_clash/database/database.dart';
 import 'package:fl_clash/core/desktop/process_probe.dart' show isProcessAlive;
+
 import 'function.dart' show SerialTaskScheduler;
 import 'snowflake.dart' show uuidV4;
 import 'native_lite_migration.dart'
@@ -428,6 +429,34 @@ class RuleSqlJournalOwner {
     required List<RuleSqlFileChange> files,
     required Future<List<RuleSqlRowChange>> Function() captureRows,
     required RuleSqlTransaction transaction,
+  }) => _publish(
+    providerId: providerId,
+    expectedIncarnation: expectedIncarnation,
+    files: files,
+    captureRows: captureRows,
+    transaction: transaction,
+  );
+
+  Future<RuleSqlPublicationResult> publishProfile({
+    required int profileId,
+    required List<RuleSqlFileChange> files,
+    required RuleSqlTransaction transaction,
+  }) async => _publish(
+    providerId: profileId,
+    profileId: profileId,
+    expectedIncarnation: await database.ruleSqlIncarnation(),
+    files: files,
+    captureRows: () async => const [],
+    transaction: transaction,
+  );
+
+  Future<RuleSqlPublicationResult> _publish({
+    required int providerId,
+    int? profileId,
+    required String expectedIncarnation,
+    required List<RuleSqlFileChange> files,
+    required Future<List<RuleSqlRowChange>> Function() captureRows,
+    required RuleSqlTransaction transaction,
   }) async {
     _requireOwner();
     if (_businessJournal || _recovering || _externalJournal)
@@ -449,6 +478,7 @@ class RuleSqlJournalOwner {
           expectedIncarnation,
           files,
           await captureRows(),
+          profileId: profileId,
         );
         _live[journal.id] = journal;
         Object? failure;
@@ -632,8 +662,18 @@ class _RuleJournal {
     int providerId,
     String incarnation,
     List<RuleSqlFileChange> changes,
-    List<RuleSqlRowChange> rows,
-  ) async {
+    List<RuleSqlRowChange> rows, {
+    int? profileId,
+  }) async {
+    if (profileId != null &&
+        (profileId != providerId || changes.length != 2 || rows.isNotEmpty))
+      throw StateError('Invalid profile publication scope');
+    final targets = {
+      for (final change in changes)
+        _relative(owner.home, change.path, profileId: profileId),
+    };
+    if (targets.length != changes.length)
+      throw StateError('Duplicate publication target');
     final id = uuidV4;
     final staging = Directory(
       p.join(owner.directory.path, '.preparing-$pid-$id'),
@@ -643,68 +683,97 @@ class _RuleJournal {
       owner.home,
     );
     await staging.create();
-    final records = <Map<String, dynamic>>[];
-    for (final (index, change) in changes.indexed) {
-      final relative = _relative(owner.home, change.path);
-      if (records.any((entry) => entry['path'] == relative))
-        throw StateError('Duplicate rule target in one plan');
-      final before = await _digest(owner.home, change.path);
-      final after = change.after == null
-          ? null
-          : await _digest(owner.home, change.after!);
-      if (change.after != null && after == null)
-        throw StateError('Rule candidate is missing');
-      if (before != null)
-        await _copy(
+    try {
+      final records = <Map<String, dynamic>>[];
+      for (final (index, change) in changes.indexed) {
+        final relative = _relative(
           owner.home,
           change.path,
-          p.join(staging.path, '$index.before'),
-          before,
+          profileId: profileId,
         );
-      if (after != null) {
-        await _copy(
-          owner.home,
-          change.after!,
-          p.join(staging.path, '$index.after'),
-          after,
-        );
-        await _copy(
-          owner.home,
-          change.after!,
-          p.join(staging.path, '$index.apply'),
-          after,
+        if (records.any((entry) => entry['path'] == relative))
+          throw StateError('Duplicate rule target in one plan');
+        final before = await _digest(owner.home, change.path);
+        final after = change.after == null
+            ? null
+            : await _digest(owner.home, change.after!);
+        if (change.after != null && after == null)
+          throw StateError('Rule candidate is missing');
+        if (before != null)
+          await _copy(
+            owner.home,
+            change.path,
+            p.join(staging.path, '$index.before'),
+            before,
+          );
+        if (after != null) {
+          await _copy(
+            owner.home,
+            change.after!,
+            p.join(staging.path, '$index.after'),
+            after,
+          );
+          await _copy(
+            owner.home,
+            change.after!,
+            p.join(staging.path, '$index.apply'),
+            after,
+          );
+        }
+        records.add({'path': relative, 'before': before, 'after': after});
+      }
+      final plan = <String, dynamic>{
+        'schema': 1,
+        'id': id,
+        'pid': owner.database.ruleSqlOwnerPid,
+        'incarnation': incarnation,
+        'host': Platform.localHostname,
+        'databasePath': owner._qualifiedDatabasePath,
+        'providerId': providerId,
+        if (profileId != null) 'profileId': profileId,
+        'files': records,
+        'rows': rows.map((row) => row.toJson()).toList(),
+      };
+      final bytes = utf8.encode(jsonEncode(plan));
+      if (bytes.length > 64 * 1024 * 1024)
+        throw StateError('Rule journal plan exceeds its input budget');
+      await nativeLiteAtomicFile(
+        File(p.join(staging.path, 'plan.json')),
+        bytes,
+        boundary: owner.home,
+      );
+      final journal = _RuleJournal(
+        owner,
+        id,
+        plan,
+        sha256.convert(bytes).toString(),
+      );
+      await journal.checkRowShapes();
+      await staging.rename(journal.directory.path);
+      return journal;
+    } catch (error, stack) {
+      try {
+        final entries = await staging.list(followLinks: false).toList();
+        for (final entry in entries) {
+          if (entry is! File ||
+              !RegExp(
+                r'^(plan\.json(\.pending)?|[0-9]+\.(before|after|apply))$',
+              ).hasMatch(p.basename(entry.path)))
+            throw StateError('Foreign entry in publication preparation');
+          await nativeLitePrivateDestination(entry, owner.home);
+        }
+        for (final entry in entries) {
+          await entry.delete();
+        }
+        await staging.delete();
+      } catch (cleanup) {
+        Error.throwWithStackTrace(
+          RuleSqlPublicationFailure(error, cleanup, staging.path, null),
+          stack,
         );
       }
-      records.add({'path': relative, 'before': before, 'after': after});
+      Error.throwWithStackTrace(error, stack);
     }
-    final plan = <String, dynamic>{
-      'schema': 1,
-      'id': id,
-      'pid': owner.database.ruleSqlOwnerPid,
-      'incarnation': incarnation,
-      'host': Platform.localHostname,
-      'databasePath': owner._qualifiedDatabasePath,
-      'providerId': providerId,
-      'files': records,
-      'rows': rows.map((row) => row.toJson()).toList(),
-    };
-    final bytes = utf8.encode(jsonEncode(plan));
-    if (bytes.length > 64 * 1024 * 1024)
-      throw StateError('Rule journal plan exceeds its input budget');
-    await nativeLiteAtomicFile(
-      File(p.join(staging.path, 'plan.json')),
-      bytes,
-      boundary: owner.home,
-    );
-    final journal = _RuleJournal(
-      owner,
-      id,
-      plan,
-      sha256.convert(bytes).toString(),
-    );
-    await journal.checkRowShapes();
-    await staging.rename(journal.directory.path);
-    return journal;
   }
 
   static Future<_RuleJournal> open(
@@ -726,6 +795,7 @@ class _RuleJournal {
           'pid',
           'incarnation',
           'providerId',
+          'profileId',
           'files',
           'rows',
           'host',
@@ -735,6 +805,9 @@ class _RuleJournal {
         plan['id'] != id ||
         plan['pid'] is! int ||
         plan['providerId'] is! int ||
+        (plan.containsKey('profileId') &&
+            (plan['profileId'] is! int ||
+                plan['profileId'] != plan['providerId'])) ||
         plan['host'] is! String ||
         plan['databasePath'] is! String ||
         !_uuid.hasMatch(plan['incarnation'] as String))
@@ -747,7 +820,11 @@ class _RuleJournal {
     );
     journal._directoryName = directoryName;
     for (final entry in journal.files) {
-      _relative(owner.home, p.join(owner.home.path, entry['path'] as String));
+      _relative(
+        owner.home,
+        p.join(owner.home.path, entry['path'] as String),
+        profileId: plan['profileId'] as int?,
+      );
       for (final key in ['before', 'after'])
         if (entry[key] != null && !_sha.hasMatch(entry[key] as String))
           throw StateError('Invalid rule blob identity');
@@ -817,6 +894,11 @@ class _RuleJournal {
   }
 
   Future<void> checkRowShapes() async {
+    if (plan.containsKey('profileId') &&
+        (files.length != 2 ||
+            files.map((entry) => entry['path']).toSet().length != 2 ||
+            rows.isNotEmpty))
+      throw StateError('Invalid profile publication footprint');
     final identities = <String>{};
     for (final row in rows) {
       final allowed = _columns[row['table']];
@@ -1130,10 +1212,14 @@ final _uuid = RegExp(
 final _sha = RegExp(r'^[0-9a-f]{64}$');
 Map<String, dynamic> _map(Object? value) =>
     Map<String, dynamic>.from(value as Map);
-String _relative(Directory home, String path) {
+String _relative(Directory home, String path, {int? profileId}) {
   final relative = p.relative(path, from: home.path).replaceAll('\\', '/');
-  if (!RegExp(r'^providers/rules/[0-9a-f]{32}(\.mrs)?$').hasMatch(relative))
-    throw StateError('Rule plan target is outside SQL rule cache');
+  final allowed = profileId == null
+      ? RegExp(r'^providers/rules/[0-9a-f]{32}(\.mrs)?$').hasMatch(relative)
+      : relative == 'profiles/$profileId.yaml' ||
+            relative == 'profiles/$profileId.input';
+  if (!allowed)
+    throw StateError('Publication target is outside its source scope');
   return relative;
 }
 

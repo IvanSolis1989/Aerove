@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:collection/collection.dart';
+import 'package:dio/dio.dart' show CancelToken, DioException, DioExceptionType;
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/icons/glyph.dart';
@@ -789,26 +790,96 @@ extension ScriptExt on Script {
 
   Future<String?> get content async => readTextFileTask(await path);
 
-  Future<Script> save(String content, {bool Function()? isCurrent}) async {
+  Future<Script> save(String content, {bool Function()? isCurrent}) =>
+      _withWrite((write) => _saveContent(content, write), isCurrent);
+
+  Future<Script> update({
+    bool Function()? isCurrent,
+    CancelToken? cancelToken,
+  }) => _withWrite(
+    (write) async {
+      final response = await request.getTextResponseForUrl(
+        url!,
+        cancelToken: write.cancelToken,
+        maxBytes: maxScriptBytes,
+      );
+      write.check();
+      return _saveContent(response.data ?? '', write);
+    },
+    isCurrent,
+    cancelToken: cancelToken,
+  );
+
+  Future<Script> _withWrite(
+    Future<Script> Function(_ScriptWrite write) work,
+    bool Function()? isCurrent, {
+    CancelToken? cancelToken,
+  }) async {
     checkUpdateCurrent(isCurrent);
-    final file = File(await path);
-    checkUpdateCurrent(isCurrent);
-    final exists = await file.exists();
-    checkUpdateCurrent(isCurrent);
-    if (!exists) {
-      await file.create(recursive: true);
-      checkUpdateCurrent(isCurrent);
+    if (cancelToken?.isCancelled == true)
+      throw const UpdateCancelledException();
+    final write = _ScriptWrite(id, isCurrent, cancelToken);
+    try {
+      return await work(write);
+    } catch (error) {
+      if (error is DioException &&
+          error.type == DioExceptionType.receiveTimeout)
+        rethrow;
+      if (!write.committed) write.check();
+      rethrow;
+    } finally {
+      write.finish();
     }
-    await file.writeAsString(content);
-    checkUpdateCurrent(isCurrent);
-    return copyWith(lastUpdateTime: DateTime.now());
   }
 
-  Future<Script> update({bool Function()? isCurrent}) async {
-    checkUpdateCurrent(isCurrent);
-    final response = await request.getTextResponseForUrl(url!);
-    checkUpdateCurrent(isCurrent);
-    return save(response.data ?? '', isCurrent: isCurrent);
+  Future<Script> _saveContent(String content, _ScriptWrite write) async {
+    write.check();
+    if (content.length > maxScriptBytes)
+      throw const DownloadSizeException(maxScriptBytes);
+    final file = File(await path);
+    write.check();
+    final stage = File('${file.path}.${snowflake.id}.update');
+    try {
+      await stage.parent.create(recursive: true);
+      write.check();
+      await stage.writeAsString(content, flush: true);
+      if (await stage.length() > maxScriptBytes)
+        throw const DownloadSizeException(maxScriptBytes);
+      write.check();
+      stage.renameSync(file.path);
+      write.committed = true;
+      return copyWith(lastUpdateTime: DateTime.now());
+    } finally {
+      if (!write.committed) await stage.safeDelete();
+    }
+  }
+}
+
+void cancelScriptWrite(int id) => _ScriptWrite.active[id]?.cancel();
+
+class _ScriptWrite {
+  _ScriptWrite(this.id, this.sourceCurrent, CancelToken? cancellation)
+    : cancelToken = cancellation ?? CancelToken() {
+    active[id]?.cancel();
+    active[id] = this;
+  }
+  static final active = <int, _ScriptWrite>{};
+  final int id;
+  final bool Function()? sourceCurrent;
+  final CancelToken cancelToken;
+  bool committed = false;
+  void check() => checkUpdateCurrent(
+    () =>
+        identical(active[id], this) &&
+        !cancelToken.isCancelled &&
+        (sourceCurrent?.call() ?? true),
+  );
+  void cancel() {
+    if (!committed && !cancelToken.isCancelled) cancelToken.cancel();
+  }
+
+  void finish() {
+    if (identical(active[id], this)) active.remove(id);
   }
 }
 

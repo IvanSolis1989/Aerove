@@ -46,6 +46,7 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
     if (res != true || !mounted) {
       return;
     }
+    cancelScriptWrite(script.id);
     ref.read(scriptsProvider.notifier).del(script.id);
     unawaited(_clearEffect(script.id));
   }
@@ -183,10 +184,13 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
     if (ref.read(isUpdatingProvider(script.updatingKey))) {
       return;
     }
-    await globalState.safeRun(
-      () => _scriptsAction.updateScript(script),
-      title: script.label,
-    );
+    await globalState.safeRun(() async {
+      try {
+        await _scriptsAction.updateScript(script);
+      } on UpdateCancelledException {
+        return;
+      }
+    }, title: script.label);
   }
 
   Future<void> _handleCopyUrl(String url) async {
@@ -252,9 +256,14 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
       );
       return;
     }
-    final newScript =
-        await (script?.copyWith(label: label) ?? Script.create(label: label))
-            .save(await content.readText());
+    final Script newScript;
+    try {
+      newScript =
+          await (script?.copyWith(label: label) ?? Script.create(label: label))
+              .save(await content.readText());
+    } on UpdateCancelledException {
+      return;
+    }
     _scriptsAction.putScript(newScript);
     if (mounted) {
       Navigator.of(context).pop();
@@ -323,7 +332,7 @@ class _ScriptsViewState extends ConsumerState<ScriptsView> {
       return;
     }
     final res = await globalState.loadingRun(
-      () => request.getTextResponseForUrl(url),
+      () => request.getTextResponseForUrl(url, maxBytes: maxScriptBytes),
       title: appLocalizations.importUrl,
       tag: LoadingTag.scripts,
     );

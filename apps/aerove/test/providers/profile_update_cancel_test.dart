@@ -31,8 +31,14 @@ class _CommitBarrier extends QueryInterceptor {
   final release = Completer<void>();
   @override
   Future<void> commitTransaction(TransactionExecutor inner) async {
+    final committedPublication =
+        hold &&
+        (await inner.runSelect(
+          "SELECT 1 FROM rule_source_publications WHERE decision = 'COMMITTED'",
+          const [],
+        )).isNotEmpty;
     await inner.send();
-    if (hold) {
+    if (committedPublication) {
       hold = false;
       entered.complete();
       await release.future;

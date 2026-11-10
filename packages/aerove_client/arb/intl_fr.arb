@@ -1023,5 +1023,15 @@
   "@quotaLastReported": {"placeholders": {"time": {"type": "String"}}},
   "quotaLegacyUnverified": "Anciennes valeurs ; source non vérifiée",
   "quotaCheckedAt": "Réponse vérifiée : {time}",
-  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}}
+  "@quotaCheckedAt": {"placeholders": {"time": {"type": "String"}}},
+  "sourceSavedApplyUnconfirmed": "La source est enregistrée, mais son application n’est pas confirmée. Réessayez de l’appliquer ; un redémarrage peut être nécessaire.",
+  "sourceSavedApplyFailed": "La source est enregistrée, mais n’a pas pu être appliquée : {detail}",
+  "@sourceSavedApplyFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  }
+
 }

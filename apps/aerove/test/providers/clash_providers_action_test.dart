@@ -29,6 +29,18 @@ class _RecordingSetupAction extends SetupAction {
 
   int get applies => forced.length;
 
+  Completer<bool>? confirmation;
+
+  @override
+  Future<bool> applyProfileConfirmed({
+    bool silence = false,
+    bool force = false,
+    bool Function()? isCurrent,
+  }) async {
+    forced.add(force);
+    return await confirmation?.future ?? true;
+  }
+
   @override
   void applyProfileDebounce({bool silence = false, bool force = false}) {
     forced.add(force);
@@ -998,6 +1010,38 @@ void main() {
 
       expect(setup.forced, [true]);
     });
+
+    test('source refresh awaits the selected runtime receipt', () async {
+      setup.confirmation = Completer<bool>();
+      var completed = false;
+      final pending = action()
+          .applyIfReferenced(
+            ProviderKind.proxy,
+            {'Home'},
+            force: true,
+            confirmApplication: true,
+          )
+          .then((_) => completed = true);
+      await pumpEventQueue();
+      expect(setup.forced, [true]);
+      expect(completed, isFalse);
+      setup.confirmation!.complete(true);
+      await pending;
+      expect(completed, isTrue);
+    });
+
+    test(
+      'source refresh reports saved but not applied on a false receipt',
+      () async {
+        setup.confirmation = Completer<bool>()..complete(false);
+        await expectLater(
+          action().applyIfReferenced(ProviderKind.proxy, {
+            'Home',
+          }, confirmApplication: true),
+          throwsA(isA<SourceSavedNotAppliedException>()),
+        );
+      },
+    );
 
     test(
       'a group taking in every provider or proxy reapplies only on the named',

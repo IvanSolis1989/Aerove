@@ -242,23 +242,26 @@ class MessageLookup extends MessageLookupByLibrary {
 
   static String m87(label) => "${label} debe ser un solo elemento";
 
-  static String m88(protocols, removed, adjustments) =>
+  static String m88(detail) =>
+      "La fuente se guardó, pero no se pudo aplicar: ${detail}";
+
+  static String m89(protocols, removed, adjustments) =>
       "Se han omitido ${removed} nodos no compatibles con este núcleo (${protocols}). ${adjustments}";
 
-  static String m89(speed) => "Velocidad de descarga: ${speed}";
+  static String m90(speed) => "Velocidad de descarga: ${speed}";
 
-  static String m90(value) => "Total: ${value}";
+  static String m91(value) => "Total: ${value}";
 
-  static String m91(speed) => "Velocidad de subida: ${speed}";
+  static String m92(speed) => "Velocidad de subida: ${speed}";
 
-  static String m92(transport) => "Encabezados ${transport}";
+  static String m93(transport) => "Encabezados ${transport}";
 
-  static String m93(label) => "${label} debe ser una URL";
+  static String m94(label) => "${label} debe ser una URL";
 
-  static String m94(count) =>
+  static String m95(count) =>
       "${Intl.plural(count, one: 'hace 1 año', other: 'hace ${count} años')}";
 
-  static String m95(count) => "${Intl.plural(count, other: 'hace ${count} a')}";
+  static String m96(count) => "${Intl.plural(count, other: 'hace ${count} a')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -2003,6 +2006,10 @@ class MessageLookup extends MessageLookupByLibrary {
     "sort": MessageLookupByLibrary.simpleMessage("Ordenar"),
     "source": MessageLookupByLibrary.simpleMessage("Origen"),
     "sourceIp": MessageLookupByLibrary.simpleMessage("IP de origen"),
+    "sourceSavedApplyFailed": m88,
+    "sourceSavedApplyUnconfirmed": MessageLookupByLibrary.simpleMessage(
+      "La fuente se guardó, pero no se confirmó su aplicación. Vuelve a aplicarla; puede ser necesario reiniciar.",
+    ),
     "specialProxy": MessageLookupByLibrary.simpleMessage("Proxy especial"),
     "specialRules": MessageLookupByLibrary.simpleMessage("Reglas especiales"),
     "spectrum": MessageLookupByLibrary.simpleMessage("Espectro"),
@@ -2043,7 +2050,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "style": MessageLookupByLibrary.simpleMessage("Estilo"),
     "submit": MessageLookupByLibrary.simpleMessage("Enviar"),
-    "subscriptionCompatibilitySummary": m88,
+    "subscriptionCompatibilitySummary": m89,
     "subscriptionCompatibilityTunStack": MessageLookupByLibrary.simpleMessage(
       "Se ha aplicado la pila TUN lwIP compatible con este núcleo.",
     ),
@@ -2096,12 +2103,12 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("Subido"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Puerto TProxy"),
     "traffic": MessageLookupByLibrary.simpleMessage("Tráfico"),
-    "trafficDownloadSpeed": m89,
-    "trafficTotal": m90,
-    "trafficUploadSpeed": m91,
+    "trafficDownloadSpeed": m90,
+    "trafficTotal": m91,
+    "trafficUploadSpeed": m92,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Uso de tráfico"),
     "transport": MessageLookupByLibrary.simpleMessage("Transporte"),
-    "transportHeaders": m92,
+    "transportHeaders": m93,
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
     "tunAuthorizationFailed": MessageLookupByLibrary.simpleMessage(
       "No se pudo autorizar TUN, por lo que se desactivó.",
@@ -2148,7 +2155,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Ancho de banda de subida",
     ),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m93,
+    "urlTip": m94,
     "useHosts": MessageLookupByLibrary.simpleMessage("Usar hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Usar hosts del sistema",
@@ -2177,8 +2184,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "Escribir en el sistema también ajusta el reloj del sistema; Android lo ignora.",
     ),
-    "yearsAgo": m94,
-    "yearsAgoShort": m95,
+    "yearsAgo": m95,
+    "yearsAgoShort": m96,
     "yes": MessageLookupByLibrary.simpleMessage("Sí"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Chino simplificado"),
   };

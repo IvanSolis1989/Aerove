@@ -133,4 +133,49 @@ class ProviderBootstrapGraphTest {
         assertFalse(old.directory.exists())
         assertFalse(File(temporary.root, "profiles").exists()); assertFalse(File(temporary.root, "settings").exists())
     }
+
+    @Test fun listValuedDnsPolicyRetainsOutboundDialerAndFileProvider() {
+        val raw = ConfigYaml.parse("""
+            proxies: [{name: DnsNode, type: http, server: 127.0.0.1, port: 1111, dialer-proxy: Chain}]
+            proxy-groups: [{name: DnsRoute, type: select, proxies: [DnsNode]}, {name: Chain, type: select, use: [ready]}]
+            proxy-providers: {ready: {type: file, path: ready.yaml}, remote: {type: http, url: 'https://example.invalid/provider', path: hint.yaml, proxy: DIRECT}}
+            dns:
+              nameserver: ['rcode://refused']
+              nameserver-policy: {'+.example.invalid': ['udp://127.0.0.1:53#DnsRoute', 'tcp://127.0.0.1:53#DIRECT']}
+            rules: ['MATCH,DIRECT']
+        """.trimIndent())
+        val graph = ProviderBootstrapGraph.capture(raw, "DIRECT")
+        assertEquals(listOf("DnsNode"), (graph["proxies"] as List<*>).map { (it as Map<*, *>)["name"] })
+        assertEquals(setOf("DnsRoute", "Chain"), (graph["proxy-groups"] as List<*>).map { (it as Map<*, *>)["name"] }.toSet())
+        assertEquals(setOf("ready"), (graph["proxy-providers"] as Map<*, *>).keys)
+    }
+
+    @Test fun listValuedDnsPolicyCannotHideUnsealedSelfDependency() {
+        val raw = ConfigYaml.parse("""
+            proxy-groups: [{name: DnsRoute, type: select, use: [remote]}]
+            proxy-providers: {remote: {type: http, url: 'https://example.invalid/provider', path: hint.yaml, proxy: DIRECT}}
+            dns: {nameserver-policy: {'+.example.invalid': ['udp://127.0.0.1:53#DnsRoute']}}
+        """.trimIndent())
+        assertThrows(ConfigValidationException::class.java) {
+            ProviderBootstrapGraph.orderedProviders(raw, raw["proxy-providers"] as Map<*, *>)
+        }
+        assertThrows(ConfigValidationException::class.java) { ProviderBootstrapGraph.capture(raw, "DIRECT") }
+    }
+
+
+    @Test fun plainDnsFragmentsKeepFullNamesWhileEncryptedFragmentsAreSni() {
+        val raw = ConfigYaml.parse("""
+            proxies: [{name: 'DNS Route 01', type: http, server: 127.0.0.1, port: 1111}]
+            proxy-groups: [{name: tls.example, type: select, use: [remote]}]
+            proxy-providers: {remote: {type: http, url: 'https://example.invalid/provider', path: hint.yaml, proxy: DIRECT}}
+            dns:
+              nameserver: ['tls://127.0.0.1#tls.example', 'https://127.0.0.1/query#tls.example']
+              nameserver-policy: {'+.example.invalid': ['127.0.0.1#DNS Route 01']}
+        """.trimIndent())
+        assertEquals(listOf("remote"), ProviderBootstrapGraph.orderedProviders(raw, raw["proxy-providers"] as Map<*, *>).map { it.key })
+        val graph = ProviderBootstrapGraph.capture(raw, "DIRECT")
+        assertEquals(listOf("DNS Route 01"), (graph["proxies"] as List<*>).map { (it as Map<*, *>)["name"] })
+        assertTrue((graph["proxy-groups"] as List<*>).isEmpty())
+    }
+
 }

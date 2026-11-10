@@ -364,7 +364,7 @@ extension ProfileExtension on Profile {
       ),
     );
     final prepared = await updated.prepareFile(
-      decompressUnlabeled(response.data ?? Uint8List(0)),
+      await decompressUnlabeledTask(response.data ?? Uint8List(0)),
       validate: validate,
       originalInputBytes: response.data,
       isCurrent: isCurrent,

@@ -26,7 +26,7 @@ class ProfileUpdateIntent {
     if (!cancelToken.isCancelled) cancelToken.cancel();
   }
 
-  // After synchronous rename admission, cancellation joins the committed item.
+  // After file publication admission, cancellation joins the committed item.
   void beginCommit() {
     checkUpdateCurrent(() => isCurrent);
     _committing = true;

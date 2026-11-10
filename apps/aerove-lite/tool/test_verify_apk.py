@@ -1467,13 +1467,34 @@ class CounterEpochArtifactTests(unittest.TestCase):
         self.assertEqual(module.native_identity(module.MEOW_ROOT)["meow_overlay_sha256"], actual)
         for validator in (producer.validate_selection_owner_source, module.validate_selection_owner_source):
             validator(policy)
-            for invalid in ("0" * 64, "83ce4b54cb8d5bcc0d364503d8b6aa46c5fc3777eb2361fbe38e18361d0d04d3",
+            for invalid in ("0" * 64, "25c41aa12683b0cd752778b34405becf6d098a9468d937892d7da506dd1e198c",
+                            "83ce4b54cb8d5bcc0d364503d8b6aa46c5fc3777eb2361fbe38e18361d0d04d3",
                             "cae49527f4f1b55dffb5b57dd92a0a0916772c4f454f5538e19ef0ed62248911"):
                 with self.subTest(validator=validator.__module__, invalid=invalid), self.assertRaisesRegex(ValueError, "exact approved proof mode/overlay"):
                     validator(dict(policy, overlaySha256=invalid))
             for mode in (None, module.SELECTION_STALE_MODE, "policy-runtime-v1"):
                 with self.subTest(validator=validator.__module__, mode=mode), self.assertRaisesRegex(ValueError, "exact approved proof mode/overlay"):
                     validator(dict(policy, coreTests=mode))
+
+    def test_dns_bootstrap_overlay_rejects_pre_fix_receipt_identity_with_same_proof_mode(self):
+        import copy
+        policy, _, receipt = ApkInspectionTests()._selection_owner_proof()
+        self.assertEqual(module.COUNTER_EPOCH_MODE, policy['coreTests'])
+        module.validate_native_receipt(receipt, root=module.MEOW_ROOT)
+        # Frozen pre-bootstrap-fix source facts. A matching proof mode does not
+        # authorize its old overlay, patch, or adapted source manifest on new code.
+        stale_source = {
+            'overlaySha256': '25c41aa12683b0cd752778b34405becf6d098a9468d937892d7da506dd1e198c',
+            'patchSha256': 'faf8b42c04cc098b9d35c029b4e5b857ecb2f1d5e2a25973c79f7b9ca01b4445',
+            'fileManifestSha256': '4ba77d87073ef42e296db8b75da3d7e4878f85d11f0e5811656ba73c32aea43b',
+        }
+        for key, value in stale_source.items():
+            bad = copy.deepcopy(receipt)
+            bad['source'][key] = value
+            with self.subTest(field=key), self.assertRaisesRegex(ValueError, 'source/lock/overlay identity mismatch'):
+                module.validate_native_receipt(bad, root=module.MEOW_ROOT)
+        with self.assertRaisesRegex(ValueError, 'exact approved proof mode/overlay'):
+            module.validate_selection_owner_source(dict(policy, overlaySha256=stale_source['overlaySha256']))
 
     def test_counter_source_retains_old_proofs_and_rejects_missing_new_owner_evidence(self):
         import copy

@@ -13,6 +13,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -184,9 +186,8 @@ class VpnCoordinator(scope: CoroutineScope, private val backend: TunnelBackend,
                     }
                 } else running.awaitExit()
                 error("The core exited while the VPN was requested")
-            } catch (cancelled: CancellationException) {
-                throw cancelled
             } catch (failure: Exception) {
+                currentCoroutineContext().ensureActive()
                 publish(request, VpnSnapshot(VpnPhase.Failed, error = failure.message ?: failure.javaClass.simpleName,
                     sessionGeneration = request.generation))
             } finally {

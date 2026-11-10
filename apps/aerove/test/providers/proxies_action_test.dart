@@ -99,6 +99,23 @@ void main() {
       container.read(proxiesActionProvider.notifier);
 
   group('updateGroups', () {
+    test(
+      'Standard Retry does not rebuild on an unavailable endpoint',
+      () async {
+        when(core.getProxies).thenThrow(
+          const CoreMethodException(
+            code: 'not_running',
+            message: 'No endpoint',
+          ),
+        );
+        final container = buildContainer();
+        expect(await actionOf(container).retryGroups(), isFalse);
+        expect(container.read(groupsReadFailedProvider), isTrue);
+        verify(core.getProxies).called(3);
+        verifyNoMoreInteractions(core);
+      },
+    );
+
     test('publishes the groups derived from core proxy data', () async {
       when(core.getProxies).thenAnswer(
         (_) async => ProxiesData(

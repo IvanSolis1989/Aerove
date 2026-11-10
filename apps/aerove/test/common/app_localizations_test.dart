@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:fl_clash/common/app_localizations.dart';
+import 'package:fl_clash/common/exception.dart';
 import 'package:fl_clash/common/network_error.dart';
 import 'package:fl_clash/common/webdav.dart';
 import 'package:fl_clash/core/desktop/helper_client.dart';
@@ -186,6 +187,29 @@ void main() {
       'proxy 0: unsupported type',
     );
   });
+
+  test(
+    'saved source failure retains its cause without reporting apply success',
+    () {
+      final cause = dioError(DioExceptionType.receiveTimeout);
+      expect(
+        userFacingErrorMessage(
+          SourceSavedNotAppliedException(cause),
+          appLocalizations,
+        ),
+        appLocalizations.sourceSavedApplyFailed(
+          appLocalizations.networkTimeoutError,
+        ),
+      );
+      expect(
+        userFacingErrorMessage(
+          const SourceSavedNotAppliedException(),
+          appLocalizations,
+        ),
+        appLocalizations.sourceSavedApplyUnconfirmed,
+      );
+    },
+  );
 
   group('policy-blocked Core launch', () {
     const blocked = DesktopCoreFailure(

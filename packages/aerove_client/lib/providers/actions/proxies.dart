@@ -60,6 +60,7 @@ class ProxiesAction extends _$ProxiesAction {
   final Map<(int, int), int> _selectionMetadataRefreshes = {};
   int _groupsRevision = 0;
   int _groupsReadRevision = 0;
+  int _groupsRetryRevision = 0;
   int _selectionMetadataRevision = 0;
 
   @override
@@ -174,19 +175,51 @@ class ProxiesAction extends _$ProxiesAction {
     return ref.read(currentProfileProvider)?.selectedMap[groupName] ?? '';
   }
 
-  Future<bool> updateGroups() async {
-    if (!ref.read(appVisibleProvider)) return false;
+  Future<bool> updateGroups() async => (await _readGroups()).succeeded;
+
+  Future<bool> retryGroups({ValueListenable<bool>? cancellation}) async {
+    final retryRevision = ++_groupsRetryRevision;
+    final revision = _groupsRevision;
+    final owner = _core;
+    bool current() =>
+        ref.mounted &&
+        cancellation?.value != true &&
+        ref.read(appVisibleProvider) &&
+        identical(owner, _core) &&
+        retryRevision == _groupsRetryRevision &&
+        revision == _groupsRevision;
+    if (!current()) return false;
+    final result = await _readGroups(isCurrent: current);
+    if (result.succeeded) return true;
+    if (!current() ||
+        !result.runtimeUnavailable ||
+        ClientProduct.current.expectedCoreId != 'meow-rs')
+      return false;
+    final recovered = await ref
+        .read(setupActionProvider.notifier)
+        .recoverProxyGroups(cancellation: cancellation, isCurrent: current);
+    if (!recovered || !current()) return false;
+    return (await _readGroups(isCurrent: current)).succeeded;
+  }
+
+  Future<({bool succeeded, bool runtimeUnavailable})> _readGroups({
+    bool Function()? isCurrent,
+  }) async {
+    const failed = (succeeded: false, runtimeUnavailable: false);
+    if (!ref.read(appVisibleProvider)) return failed;
     final revision = _groupsRevision;
     final readRevision = ++_groupsReadRevision;
-    bool isCurrent() =>
+    bool current() =>
         ref.mounted &&
         ref.read(appVisibleProvider) &&
         revision == _groupsRevision &&
-        readRevision == _groupsReadRevision;
+        readRevision == _groupsReadRevision &&
+        (isCurrent?.call() ?? true);
+    Object? lastFailure;
     try {
       final groups = await retry<List<Group>?>(
         task: () async {
-          if (!isCurrent()) return null;
+          if (!current()) return null;
           final sortType = ref.read(
             proxiesStyleSettingProvider.select((state) => state.sortType),
           );
@@ -205,6 +238,7 @@ class ProxiesAction extends _$ProxiesAction {
               defaultTestUrl: testUrl,
             );
           } catch (e) {
+            lastFailure = e;
             commonPrint.log(
               'updateGroups error: $e',
               logLevel: coreFailureLogLevel(e),
@@ -212,12 +246,18 @@ class ProxiesAction extends _$ProxiesAction {
             return null;
           }
         },
-        retryIf: (res) => res == null && isCurrent(),
+        retryIf: (res) => res == null && current(),
       );
-      if (isCurrent()) {
+      if (current()) {
         ref.read(groupsProvider.notifier).value = groups ?? [];
         ref.read(groupsReadFailedProvider.notifier).value = groups == null;
-        return groups != null;
+        return (
+          succeeded: groups != null,
+          runtimeUnavailable:
+              groups == null &&
+              lastFailure is CoreMethodException &&
+              (lastFailure as CoreMethodException).code == 'not_running',
+        );
       }
     } catch (e) {
       commonPrint.log(
@@ -225,7 +265,7 @@ class ProxiesAction extends _$ProxiesAction {
         logLevel: coreFailureLogLevel(e),
       );
     }
-    return false;
+    return failed;
   }
 
   void updateCurrentGroupName(String groupName) {
