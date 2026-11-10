@@ -1116,6 +1116,17 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertEqual(0, self.capture.child.returncode, self.logs())
         self.assertFalse(self.capture.state['accepted'])
 
+    def test_restricted_bootstrap_sigsegv_preserves_original_signal(self):
+        self.capture.restricted = True
+        self.capture.trace_exec = True
+        self.capture.state.update(restrictedReadback=True, traceStartupExec=True)
+        self.test_bootstrap_sigsegv_is_observed_and_passed_to_original_parent()
+        logs = self.logs()
+        self.assertNotIn('AEROVE_GDB_COMMAND x/', logs)
+        self.assertNotIn('AEROVE_GDB_COMMAND info registers rip rsp', logs)
+        self.assertIn('AEROVE_GDB_COMMAND info registers rip', logs)
+        self.assertIn('AEROVE_GDB_COMMAND bt 24', logs)
+
     def assert_startup_executes_second_image(self):
         import selectors
         (self.root / 'exec-target.py').write_text(
@@ -1268,3 +1279,93 @@ class SigillCaptureHostTests(unittest.TestCase):
         self.assertIsNotNone(self.child.poll())
         self.assertFalse(self.capture.state['accepted'])
         self.assertFalse(self.capture.state['performanceEvidence'])
+
+
+class Fixed368OwnerHooksTests(unittest.TestCase):
+    """Owner routing fixtures do not replace the adapter's immutable artifact checks."""
+    def setUp(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        self.adapter = SimpleNamespace(enabled=Mock(return_value=True),
+            runtime=Mock(return_value={'original368Probe': True}),
+            validate_owner=Mock(), original_inputs=Mock(return_value={'apk': 'sealed'}),
+            command=Mock(return_value=['diagnostic-only']))
+        self.modules = patch.dict('sys.modules', lite368_diagnostic=self.adapter)
+        self.modules.start()
+        self.addCleanup(self.modules.stop)
+
+    def test_verified_original_runtime_and_inputs_are_delegated(self):
+        proof = current.verify_current_runtime(Path('original'))
+        self.adapter.runtime.assert_called_once_with(Path('original'))
+        self.assertEqual({'apk': 'sealed'}, current.flutter_ui_inputs(Path('original'), proof))
+        self.adapter.validate_owner.assert_called_once_with(proof, 'flutter-ui')
+        self.adapter.original_inputs.assert_called_once_with(Path('original'), proof)
+
+    def test_phase_dispatch_keeps_existing_phases_and_requires_inputs(self):
+        for phase in ('flutter-ui', 'flutter-platform', 'flutter-full'):
+            self.assertEqual(['diagnostic-only'], current.phase_acceptance_command(phase, Path('/out'), {'apk': 'sealed'}))
+            args, inputs, output = self.adapter.command.call_args.args
+            self.assertEqual(phase, args.phase)
+            self.assertEqual(Path('/out/production-ui'), output)
+        for phase in ('matrix', 'remaining', 'original-sample'):
+            with self.assertRaises(ValueError):
+                current.phase_acceptance_command(phase, Path('/out'), {'apk': 'sealed'})
+        with self.assertRaises(ValueError):
+            current.phase_acceptance_command('flutter-ui', Path('/out'))
+        with self.assertRaises(ValueError):
+            current.guard_flutter_phase('flutter-ui', 'sample')
+        self.adapter.validate_owner.side_effect = ValueError('immutable owner mismatch')
+        with self.assertRaisesRegex(ValueError, 'immutable owner mismatch'):
+            current.guard_guest_angle_phase('flutter-full', {'original368Probe': True})
+
+    def test_boot_capture_is_restricted_before_boot_and_preserves_failure_receipt(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as temporary:
+            identity = {'sourceRevision': 'original368'}
+            proof = dict(identity=identity, originalAppIdentity=identity,
+                         harnessIdentity={'sourceRevision': 'diagnostic'}, original368Probe=True)
+            emulator = Mock(pid=123, returncode=-11)
+            emulator.poll.return_value = -11
+            capture = Mock()
+            def boot(*args, **kwargs):
+                capture.start.assert_called_once()
+                raise RuntimeError('fixture bootstrap SIGSEGV')
+            def finish(child, receipt, result):
+                receipt.update(emulatorReturnCode=-11, emulatorSignal=11, unexpectedEmulatorExit=True)
+                return 1
+            env = dict(RUNNER_TEMP=temporary, ANDROID_HOME='/sdk', GITHUB_SHA='diagnostic',
+                       GITHUB_RUN_ID='new-run', AEROVE_GUEST_ANGLE='1', AEROVE_LITE368_BOOT_CRASH='1')
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(current.sys, 'argv', ['owner', 'flutter-ui', '--runtime-directory', 'original']), \
+                    patch.object(current.sys, 'platform', 'linux'), \
+                    patch.object(current, 'verify_current_runtime', return_value=proof), \
+                    patch.object(current, 'flutter_ui_inputs', return_value={'apk': 'sealed'}), \
+                    patch.object(current, 'crash_inventory', return_value={}), \
+                    patch.object(current, 'emulator_environment', return_value={}), \
+                    patch.object(current.subprocess, 'Popen', return_value=emulator) as spawn, \
+                    patch.object(current, 'SigillCapture', return_value=capture) as construct, \
+                    patch.object(current, 'wait_ready', side_effect=boot), \
+                    patch.object(current, 'finish_emulator', side_effect=finish), \
+                    patch.object(current, 'preserve_owned_crash', return_value={}):
+                with self.assertRaisesRegex(RuntimeError, 'fixture bootstrap SIGSEGV'):
+                    current.main()
+            self.assertEqual(1, spawn.call_count)  # No application acceptance process was started.
+            self.assertEqual(dict(fault_signals=('SIGILL', 'SIGSEGV'), trace_exec=True, restricted=True), construct.call_args.kwargs)
+            capture.close.assert_called_once()
+            receipt = json.loads((Path(temporary) / 'lite-diagnostics/flutter-ui/EMULATOR-OWNER.json').read_text())
+            self.assertEqual(identity, receipt['originalAppIdentity'])
+            self.assertEqual(-11, receipt['emulatorReturnCode'])
+            for key in ('accepted', 'aggregateAcceptance', 'promotionAccepted'):
+                self.assertIs(False, receipt[key])
+
+    def test_boot_optin_cannot_enable_on_normal_owner(self):
+        self.adapter.enabled.return_value = False
+        for value in ('1', '0', ''):
+            with patch.dict(os.environ, {'AEROVE_LITE368_BOOT_CRASH': value}, clear=True), \
+                    patch.object(current.sys, 'platform', 'linux'), \
+                    patch.object(current.sys, 'argv', ['owner', 'flutter-ui', '--runtime-directory', 'original']), \
+                    patch.object(current, 'verify_current_runtime', return_value={'identity': {}}), \
+                    patch.object(current.subprocess, 'Popen') as spawn:
+                with self.assertRaisesRegex(ValueError, 'Fixed368 bootstrap capture'):
+                    current.main()
+                spawn.assert_not_called()

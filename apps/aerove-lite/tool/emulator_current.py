@@ -20,6 +20,9 @@ APK_ROOT = Path('apps/aerove-lite/app/build/outputs/apk')
 
 
 def verify_current_runtime(directory):
+    from lite368_diagnostic import enabled as probe368_enabled, runtime as probe368_runtime
+    if probe368_enabled():
+        return probe368_runtime(directory)
     from lite343_anr import enabled as anr343_enabled, runtime as anr343_runtime
     if anr343_enabled():
         return anr343_runtime(directory)
@@ -677,6 +680,13 @@ def original_sample_phase_selector(phase, sample, runtime):
 
 
 def guard_flutter_phase(phase, sample=None, runtime=None):
+    from lite368_diagnostic import enabled as probe368_enabled, validate_owner as probe368_validate
+    if probe368_enabled():
+        if phase not in ('flutter-ui', 'flutter-platform', 'flutter-full') or sample is not None:
+            raise ValueError('Fixed368 diagnosis requires an existing Flutter phase without samples')
+        if runtime is not None:
+            probe368_validate(runtime, phase)
+        return
     from lite343_anr import enabled as anr343_enabled, IDENTITY as ORIGINAL343
     if anr343_enabled():
         if phase not in ('flutter-ui', 'flutter-full') or sample is not None or runtime is not None and (
@@ -741,6 +751,10 @@ def guard_guest_angle_phase(phase, runtime, sample=None):
 
 def flutter_ui_inputs(directory, runtime):
     """Require the inspected BUILD_INFO in the same verified transport before starting an emulator."""
+    from lite368_diagnostic import enabled as probe368_enabled, original_inputs as probe368_inputs
+    if probe368_enabled():
+        guard_flutter_phase('flutter-ui', runtime=runtime)
+        return probe368_inputs(directory, runtime)
     from lite290_surface_probe import enabled as probe290_enabled, original_inputs as probe290_inputs
     if probe290_enabled():
         return probe290_inputs(directory, runtime)
@@ -773,6 +787,13 @@ def flutter_ui_inputs(directory, runtime):
 
 
 def phase_acceptance_command(phase, directory, flutter_inputs=None):
+    from lite368_diagnostic import enabled as probe368_enabled, command as probe368_command
+    if probe368_enabled():
+        guard_flutter_phase(phase)
+        if flutter_inputs is None:
+            raise ValueError('Fixed368 diagnosis requires verified original APK inputs')
+        return probe368_command(argparse.Namespace(phase=phase), flutter_inputs,
+                                Path(directory) / 'production-ui')
     from lite290_surface_probe import enabled as probe290_enabled
     if probe290_enabled():
         if phase != 'flutter-ui' or flutter_inputs is None:
@@ -839,6 +860,12 @@ def main():
         from lite290_surface_probe import enabled as probe290_enabled
         if boot_forensic != '1' or not probe290_enabled() or args.phase != 'flutter-ui':
             raise ValueError('Bootstrap fault capture requires the fixed original290 diagnostic owner')
+    from lite368_diagnostic import enabled as probe368_enabled, validate_owner as probe368_validate
+    boot368 = os.environ.get('AEROVE_LITE368_BOOT_CRASH')
+    if boot368 is not None:
+        if boot368 != '1' or not probe368_enabled() or boot_forensic:
+            raise ValueError('Fixed368 bootstrap capture requires its exclusive immutable diagnosis')
+        probe368_validate(current, args.phase)
     guest_angle = os.environ.get('AEROVE_GUEST_ANGLE') == '1'
     if guest_angle:
         guard_guest_angle_phase(args.phase, current, args.sample)
@@ -857,9 +884,12 @@ def main():
     if guest_angle:
         emulator_command.extend(['-feature', 'GuestAngle,Vulkan'])
     receipt = dict(app=current['identity'], runtime=current, harnessRevision=os.environ['GITHUB_SHA'], harnessRun=os.environ['GITHUB_RUN_ID'], command=emulator_command, ownerPid=os.getpid(), unexpectedEmulatorExit=False, cleanupRequested=False)
-    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') or current.get('original290Probe') or current.get('original343Anr'):
+    if current.get('runtimeTarget') in ('lite201-flutter-ui', 'lite208-flutter-ui') or current.get('original290Probe') or current.get('original343Anr') or current.get('original368Probe'):
         receipt.update(originalAppIdentity=current['originalAppIdentity'], harnessIdentity=current['harnessIdentity'],
                        diagnosticOnly=True, representativeOnly=True, accepted=False, aggregateAcceptance=False, promotionAccepted=False)
+    if current.get('original368Probe'):
+        receipt.update(phase=args.phase, representativeOnly=args.phase == 'flutter-ui',
+                       functionalAcceptance=False, visualApproved=False, performanceAccepted=False, releaseAccepted=False)
     if args.phase == 'flutter-ui':
         receipt.update(phase='flutter-ui', representativeOnly=True, functionalAcceptance=False,
                        visualApproved=False, performanceAccepted=False, releaseAccepted=False)
@@ -898,8 +928,9 @@ def main():
             emulator = subprocess.Popen(emulator_command, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True, env=emulator_environment(os.environ))
             receipt['emulatorPid'] = emulator.pid
             check_cancelled(receipt)
-            if boot_forensic:
-                capture = SigillCapture(emulator, directory, receipt, fault_signals=('SIGILL', 'SIGSEGV'), trace_exec=True)
+            if boot_forensic or boot368:
+                capture = SigillCapture(emulator, directory, receipt, fault_signals=('SIGILL', 'SIGSEGV'),
+                                        trace_exec=True, restricted=bool(boot368))
                 try:
                     capture.start()
                 except Exception as error:
@@ -907,7 +938,7 @@ def main():
                     raise
             def bootstrap_check(value):
                 check_cancelled(value)
-                if boot_forensic:
+                if boot_forensic or boot368:
                     capture.check()
             if guest_angle:
                 wait_ready(emulator, directory, receipt, bootstrap_check, capture_guest_logcat=True,
