@@ -192,7 +192,8 @@ class MeowTunnelBackendTest {
             .put("allowBypass", desired.network.allowBypass).put("systemProxy", desired.network.systemProxy)
             .put("port", 0).put("accessControlProps", JSONObject()).put("bypassDomain", org.json.JSONArray()).put("stack", "")
         val notification = JSONObject().put("stopTip", "stop").put("startTip", "start").put("localNetworkTip", "lan")
-            .put("currentProfileName", "fixture").put("stopText", "stop").put("showStopAction", true).put("onlyStatisticsProxy", false)
+            .put("currentProfileName", "fixture").put("stopText", "stop")
+            .put("showStopAction", desired.backgroundPolicy.showNotificationStopAction).put("onlyStatisticsProxy", desired.backgroundPolicy.onlyStatisticsProxy)
         val handoff = RuntimeHandoff(MEOW_RUNTIME_CORE_SHA, "fixture", "fixture", "a".repeat(64), yaml, runtimeSha256(yaml.toByteArray()),
             record.toString(), settings.toString(), options.toString(), notification.toString())
         val before = store.readCurrent()
