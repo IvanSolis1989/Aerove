@@ -69,15 +69,21 @@ def app_probe(adb, output, receipt, runtime):
             invoke(stage + '-start.txt', ['shell', 'am', 'start', '-W', '-n',
                     'dev.aerove.lite/dev.aerove.lite.FlutterMainActivity'], 180)
             time.sleep(60)
-            invoke(stage + '-capture-wake.txt', ['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'])
-            invoke(stage + '-capture-keyguard.txt', ['shell', 'wm', 'dismiss-keyguard'])
-            time.sleep(5)
-            invoke(stage + '-power.txt', ['shell', 'dumpsys', 'power'])
-            invoke(stage + '-activities.txt', ['shell', 'dumpsys', 'activity', 'activities'])
-            activities = (output / (stage + '-activities.txt')).read_text()
-            if ('isSleeping=true' in activities or 'isKeyguardShowing=true' in activities
-                    or 'isSleeping=false' not in activities or 'isKeyguardShowing=false' not in activities):
-                raise RuntimeError('Screen not awake and unlocked for capture: ' + stage)
+            for attempt in range(1, 4):
+                prefix = stage + '-ready-' + str(attempt)
+                invoke(prefix + '-wake.txt', ['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'])
+                invoke(prefix + '-keyguard.txt', ['shell', 'wm', 'dismiss-keyguard'])
+                time.sleep(15)
+                invoke(prefix + '-power.txt', ['shell', 'dumpsys', 'power'])
+                invoke(prefix + '-activities.txt', ['shell', 'dumpsys', 'activity', 'activities'])
+                activities = (output / (prefix + '-activities.txt')).read_text()
+                if ('isSleeping=true' not in activities and 'isKeyguardShowing=true' not in activities
+                        and 'isSleeping=false' in activities and 'isKeyguardShowing=false' in activities):
+                    receipt[stage + '-screenReadiness'] = dict(awake=True, unlocked=True, attempts=attempt)
+                    break
+            else:
+                invoke(stage + '-locked-screen.png', ['exec-out', 'screencap', '-p'])
+                raise RuntimeError('Screen not awake and unlocked after three readiness checks: ' + stage)
             invoke(stage + '-screen.png', ['exec-out', 'screencap', '-p'])
         receipt['appDiagnosis'] = 'launch_lifecycle_evidence_collected_only'
         from software_functional_probe import run as functional_probe
