@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import time
 
 
@@ -19,7 +20,8 @@ def host_capacity():
 def command(sdk):
     return [str(sdk / 'emulator/emulator'), '-avd', 'tcg_probe', '-port', '5554',
             '-accel', 'off', '-cores', '1', '-memory', '4096', '-no-window',
-            '-gpu', 'swiftshader', '-no-snapshot', '-noaudio', '-no-boot-anim']
+            '-gpu', 'swiftshader', '-feature', '-Vulkan',
+            '-no-snapshot', '-noaudio', '-no-boot-anim']
 
 
 def app_probe(adb, output, receipt, runtime):
@@ -89,7 +91,13 @@ def app_probe(adb, output, receipt, runtime):
         from software_functional_probe import run as functional_probe
         functional_probe(adb, output, receipt)
     finally:
-        invoke('app-logcat.txt', ['logcat', '-d', '-t', '6000'])
+        primary_failure = sys.exc_info()[0] is not None
+        try:
+            invoke('app-logcat.txt', ['logcat', '-d', '-t', '6000'], 30)
+        except BaseException as error:
+            receipt['logcatCollectionError'] = repr(error)
+            if not primary_failure:
+                raise
 
 
 def main():
@@ -98,6 +106,7 @@ def main():
     output = Path(os.environ['RUNNER_TEMP']) / 'software-emulator-probe'
     output.mkdir(parents=True, exist_ok=False)
     receipt = dict(diagnosticOnly=True, accepted=False, functionalAcceptance=False,
+                   visualAcceptance=False, graphicsExperiment='swiftshader-vulkan-disabled',
                    releaseAccepted=False, appInstalled=False, acceleration='off',
                    harnessRevision=os.environ['GITHUB_SHA'],
                    harnessRun=os.environ['GITHUB_RUN_ID'], booted=False,
@@ -158,7 +167,7 @@ def main():
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
-                    process.wait(timeout=15)
+                    process.wait(timeout=35)
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=10)
@@ -175,3 +184,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
