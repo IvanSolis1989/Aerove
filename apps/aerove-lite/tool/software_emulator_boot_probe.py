@@ -7,9 +7,18 @@ import subprocess
 import time
 
 
+def host_capacity():
+    memory = dict(line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())
+    available = int(memory['MemAvailable'].split()[0]) // 1024
+    if available < 7000:
+        raise RuntimeError('At least 7000 MiB host available memory required for isolated 4096 MiB guest')
+    return dict(hostAvailableMiB=available, hostCpuCount=os.cpu_count(), guestMemoryMiB=4096,
+                guestCores=1, image='system-images;android-33;default;x86_64')
+
+
 def command(sdk):
     return [str(sdk / 'emulator/emulator'), '-avd', 'tcg_probe', '-port', '5554',
-            '-accel', 'off', '-cores', '1', '-memory', '2048', '-no-window',
+            '-accel', 'off', '-cores', '1', '-memory', '4096', '-no-window',
             '-gpu', 'swiftshader', '-no-snapshot', '-noaudio', '-no-boot-anim']
 
 
@@ -39,6 +48,10 @@ def app_probe(adb, output, receipt, runtime):
             raise RuntimeError('App diagnostic command failed: ' + name)
 
     try:
+        invoke('guest-memory.txt', ['shell', 'cat', '/proc/meminfo'])
+        invoke('guest-google-packages.txt', ['shell', 'pm', 'list', 'packages', 'com.google.android.gms'])
+        if 'package:' in (output / 'guest-google-packages.txt').read_text():
+            raise RuntimeError('AOSP probe unexpectedly contains Google Play services')
         invoke('app-install.txt', ['install', '--no-streaming',
                 str(Path(runtime) / 'apks/app-release.apk')], 900)
         invoke('installed-package.txt', ['shell', 'pm', 'path', 'dev.aerove.lite'])
@@ -46,6 +59,8 @@ def app_probe(adb, output, receipt, runtime):
             raise RuntimeError('APK install returned without an installed package')
         receipt['appInstalled'] = True
         for stage in ('cold-launch', 'background-return', 'force-stop-relaunch'):
+            invoke(stage + '-wake.txt', ['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'])
+            invoke(stage + '-dismiss-keyguard.txt', ['shell', 'wm', 'dismiss-keyguard'])
             if stage == 'background-return':
                 invoke('home.txt', ['shell', 'input', 'keyevent', 'KEYCODE_HOME'])
                 time.sleep(10)
@@ -54,14 +69,23 @@ def app_probe(adb, output, receipt, runtime):
             invoke(stage + '-start.txt', ['shell', 'am', 'start', '-W', '-n',
                     'dev.aerove.lite/dev.aerove.lite.FlutterMainActivity'], 180)
             time.sleep(60)
-            invoke(stage + '-screen.png', ['exec-out', 'screencap', '-p'])
+            invoke(stage + '-capture-wake.txt', ['shell', 'input', 'keyevent', 'KEYCODE_WAKEUP'])
+            invoke(stage + '-capture-keyguard.txt', ['shell', 'wm', 'dismiss-keyguard'])
+            time.sleep(5)
+            invoke(stage + '-power.txt', ['shell', 'dumpsys', 'power'])
             invoke(stage + '-activities.txt', ['shell', 'dumpsys', 'activity', 'activities'])
+            activities = (output / (stage + '-activities.txt')).read_text()
+            if ('isSleeping=true' in activities or 'isKeyguardShowing=true' in activities
+                    or 'isSleeping=false' not in activities or 'isKeyguardShowing=false' not in activities):
+                raise RuntimeError('Screen not awake and unlocked for capture: ' + stage)
+            invoke(stage + '-screen.png', ['exec-out', 'screencap', '-p'])
         receipt['appDiagnosis'] = 'launch_lifecycle_evidence_collected_only'
     finally:
         invoke('app-logcat.txt', ['logcat', '-d', '-t', '6000'])
 
 
 def main():
+    capacity = host_capacity()
     sdk = Path(os.environ['ANDROID_HOME'])
     output = Path(os.environ['RUNNER_TEMP']) / 'software-emulator-probe'
     output.mkdir(parents=True, exist_ok=False)
@@ -70,6 +94,7 @@ def main():
                    harnessRevision=os.environ['GITHUB_SHA'],
                    harnessRun=os.environ['GITHUB_RUN_ID'], booted=False,
                    command=command(sdk), bootDeadlineSeconds=1200)
+    receipt['hostCapacity'] = capacity
     process = None
     started = time.monotonic()
     adb = [str(sdk / 'platform-tools/adb'), '-s', 'emulator-5554']

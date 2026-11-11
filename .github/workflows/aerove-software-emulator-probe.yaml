@@ -1,4 +1,4 @@
-name: AEROVE software CPU APK diagnosis (not acceptance)
+name: AEROVE AOSP awake-screen diagnosis (not acceptance)
 'on':
   push:
     branches: [test/software-emulator-boot-probe]
@@ -36,8 +36,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --install 'system-images;android-33;google_apis;x86_64'
-          echo no | avdmanager create avd --force -n tcg_probe --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+          sdkmanager --install 'system-images;android-33;default;x86_64'
+          echo no | avdmanager create avd --force -n tcg_probe --package 'system-images;android-33;default;x86_64' --device pixel_6
           archive="$RUNNER_TEMP/emulator-linux_x64-16740729.zip"
           curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
             https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip -o "$archive"
