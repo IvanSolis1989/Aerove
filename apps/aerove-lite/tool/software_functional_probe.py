@@ -101,14 +101,25 @@ class Driver:
         kwargs.setdefault('clickable', True)
         self.tap(self.find(label, **kwargs))
 
-    def input_field(self, value, hint=None):
-        root = self.tree()
-        fields = [n for n in root.iter('node') if n.get('package') == PACKAGE
+    def field_node(self, root, row_label=None):
+        # Flutter omits visual hints; the observed row label owns its EditText.
+        scopes = [root] if row_label is None else [
+            n for n in root.iter('node') if n.get('package') == PACKAGE
+            and self.label(n) == row_label]
+        if len(scopes) != 1:
+            raise RuntimeError('No unique observed field row: ' + str(row_label))
+        fields = [n for n in scopes[0].iter('node') if n.get('package') == PACKAGE
                   and n.get('class') == 'android.widget.EditText'
-                  and (hint is None or hint in (self.label(n), n.get('hint')))]
+                  and n.get('enabled') == 'true' and n.get('password') == 'false']
         if len(fields) != 1:
-            raise RuntimeError('No unique observed text field: ' + str(hint))
-        self.tap(fields[0])
+            raise RuntimeError('No unique observed non-secret text field: ' + str(row_label))
+        return fields[0]
+
+    def input_field(self, value, row_label=None):
+        field = self.field_node(self.tree(), row_label)
+        if field.get('text'):
+            raise RuntimeError('Expected empty text field: ' + str(row_label))
+        self.tap(field)
         time.sleep(3)
         expected = ''
         for offset in range(0, len(value), 16):
@@ -119,11 +130,9 @@ class Driver:
             actual = None
             while time.monotonic() < deadline:
                 root = self.tree()
-                focused = [n for n in root.iter('node') if n.get('package') == PACKAGE
-                           and n.get('class') == 'android.widget.EditText'
-                           and n.get('focused') == 'true']
-                if len(focused) == 1:
-                    actual = focused[0].get('text', '')
+                focused = self.field_node(root, row_label)
+                if focused.get('focused') == 'true':
+                    actual = focused.get('text', '')
                     if actual == expected:
                         break
                 time.sleep(2)
@@ -178,8 +187,8 @@ def run(adb, output, outer):
         driver.click('Link\nObtain a profile from a subscription link or a proxy share link')
         driver.find('Import from link')
         label = 'software-synthetic-profile'
-        driver.input_field(label, 'Optional')
-        driver.input_field('http://10.0.2.2:18080/profile.yaml', 'Required')
+        driver.input_field(label, 'Name')
+        driver.input_field('http://10.0.2.2:18080/profile.yaml', 'Link')
         driver.run(['shell', 'input', 'keyevent', 'KEYCODE_BACK'])
         driver.click('Submit'); driver.click(label, timeout=120)
         driver.capture('profile-imported')
