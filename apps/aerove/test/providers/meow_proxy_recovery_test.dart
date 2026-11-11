@@ -249,7 +249,7 @@ void main() {
     expect(container.read(runningVpnOptionsProvider), isNull);
   });
 
-  test('Lite rejects Start when native setup rejects the new settings', () async {
+  test('Lite rejects Start when native setup fails', () async {
     container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     core.applyFailure = StateError('synthetic setup rejection');
