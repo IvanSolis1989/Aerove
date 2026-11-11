@@ -22,6 +22,12 @@ import org.json.JSONObject
 internal fun meowParkedEffectiveSettings(desired: dev.aerove.lite.LiteSettings) = desired.copy(
     externalController = desired.externalController.copy(enabled = false, secret = ""))
 
+/** Builder-only intent is persisted for the next authorized start, never applied to a private graph. */
+internal fun meowParkedCoreSettings(desired: dev.aerove.lite.LiteSettings) = desired.copy(
+    network = desired.network.copy(vpnEnabled = false, systemProxy = false, allowBypass = false,
+        dnsHijacking = false, bypassDomains = emptyList()),
+    appFilterMode = dev.aerove.lite.AppFilterMode.All, packages = emptySet())
+
 internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
     private val claimOwner: () -> Long, private val ownsOwner: (Long) -> Boolean,
     private val backendFactory: (Long, String, () -> Boolean) -> MeowTunnelBackend,
@@ -254,19 +260,26 @@ internal class MeowParkedGraphOwner(private val store: RuntimeHandoffStore,
         val old = MeowRuntimeSnapshotSettings.decode(previous.runtimeSettingsJson)
         val next = projection.settings
         val setup = MeowServiceSetup(projection.setupParamsJson ?: JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(), defaultUrl)
-        if (old.copy(mode = next.mode, unifiedDelay = next.unifiedDelay, tcpConcurrent = next.tcpConcurrent,
+        if (meowParkedCoreSettings(old.copy(mode = next.mode, unifiedDelay = next.unifiedDelay, tcpConcurrent = next.tcpConcurrent,
                 requests = next.requests, externalController = next.externalController, findProcessMode = next.findProcessMode,
-                backgroundPolicy = next.backgroundPolicy, geoResources = next.geoResources) != next ||
+                backgroundPolicy = next.backgroundPolicy, geoResources = next.geoResources)) != meowParkedCoreSettings(next) ||
             setup.testUrl != defaultUrl && meowMissingGroupTestUrl(ConfigYaml.parse(previous.compiledYaml)))
             throw MeowProtocolFailure("implementation_blocked", "Graph configuration requires setupConfig before it can be applied")
         if (setup.json.getJSONObject("applied").getString("yaml-md5") != JSONObject(previous.setupRecordJson).getString("yaml-md5"))
             throw MeowProtocolFailure("superseded", "Graph YAML identity changed")
         val previousSetup = MeowServiceSetup(JSONObject(previous.runtimeSettingsJson).getJSONObject("flutterSetup").toString(),defaultUrl)
-        if (old.copy(geoResources = next.geoResources) == next && setup.selectedMap == previousSetup.selectedMap &&
+        if (meowParkedCoreSettings(old.copy(geoResources = next.geoResources)) == meowParkedCoreSettings(next) && setup.selectedMap == previousSetup.selectedMap &&
             setup.testUrl == previousSetup.testUrl && setup.skipCertVerify == previousSetup.skipCertVerify) {
             val epoch = CoreApiClient(ControlEndpoint(actual.endpoint.port,actual.endpoint.secret)).use { it.routeSnapshot().coreEpoch.toString() }
             check(requested == intent.get() && ownsOwner(before.proof.serviceOwner)) { "runtime_graph_superseded" }
-            val projection = meowServiceProjection(previous,next,JSONObject(projection.sharedStateJson),projection.updateParamsJson,setup.json.toString(),setup.testUrl)
+            val listeners = checkNotNull(session).readGraphReadiness()
+            val policy = checkNotNull(session).readGraphPolicy()
+            check(epoch == listeners.coreEpoch && policy.coreEpoch == epoch && !listeners.listening &&
+                !listeners.tunReady && !listeners.userListenersReady && listeners.activePorts.isEmpty() &&
+                !policy.controller.enabled && policy.controller.address == null && !policy.controller.authenticated) {
+                "Query graph readiness changed"
+            }
+            val projection = meowServiceProjection(previous,next,JSONObject(projection.sharedStateJson),projection.updateParamsJson,setup.json.toString(),setup.testUrl,policy.controller)
             val identity = store.commitGraphRuntimeProjection(before,projection,before.proof.copy(coreEpoch=epoch))
             synchronized(publications) {
                 check(requested == intent.get() && ownsOwner(before.proof.serviceOwner)) { "runtime_graph_superseded" }

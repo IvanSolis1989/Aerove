@@ -199,6 +199,69 @@ class MeowTunnelBackendTest {
         return store.commit(handoff, store.currentEpoch(), before?.revision)
     }
 
+    @Test fun parkedVpnIntentConvergesWithoutOpeningListenersOrChangingCoreConfiguration() = runBlocking<Unit> {
+        val store = RuntimeHandoffStore(temp.newFolder("vpn-intent-graph"), validateProjection = MeowRuntimeSnapshotSettings::validate)
+        val candidate = parkedCandidate(store, vpnEnabled = true)
+        val server = MockWebServer(); server.start()
+        val f = Fixture(true, profileId = candidate.profileId, revision = candidate.revision,
+            generation = candidate.handoff.compiledSha256, port = server.port)
+        val exit = CountDownLatch(1)
+        f.native.onExit = { check(exit.await(10, TimeUnit.SECONDS)) }; f.native.onStop = { exit.countDown() }
+        val cache = StartupCacheResponses { f.native.policy.epoch() }
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = when (request.requestUrl!!.encodedPath) {
+                "/configs" -> MockResponse().setBody("""{"mode":"rule"}""")
+                "/aerove/route" -> MockResponse().setBody("""{"core-epoch":"${f.native.policy.epoch()}","route-version":"1","picks":{}}""")
+                "/proxies" -> MockResponse().setBody("""{"proxies":{"direct":{"type":"Direct"}}}""")
+                "/aerove/selection-cache" -> cache.respond(request)
+                else -> MockResponse().setResponseCode(404)
+            }
+        }
+        var token = 0L
+        val owner = MeowParkedGraphOwner(store, { ++token }, { it == token }, { _, _, current ->
+            f.admission = current; f.backend
+        }, { _, _ -> })
+        try {
+            var identity = owner.applyStaged(candidate)
+            fun expected() = MeowSetupRuntime(identity.revision, identity.intentEpoch, identity.compiledSha256,
+                identity.proof.coreEpoch, identity.proof.serviceOwner, identity.proof.sessionGeneration, false)
+            val initial = MeowRuntimeSnapshotSettings.decode(candidate.handoff.runtimeSettingsJson)
+            // Match the native decoder's enable-dependent fields, including the filtered-app reset.
+            for (enabled in listOf(false, true, false)) {
+                val next = initial.copy(network = initial.network.copy(vpnEnabled = enabled, systemProxy = enabled,
+                    allowBypass = enabled, dnsHijacking = enabled, bypassDomains = if (enabled) listOf("*.local") else emptyList()),
+                    appFilterMode = if (enabled) dev.aerove.lite.AppFilterMode.Include else dev.aerove.lite.AppFilterMode.All,
+                    packages = if (enabled) setOf("dev.aerove.fixture") else emptySet())
+                val options = JSONObject(candidate.handoff.vpnOptionsJson).put("enable", enabled)
+                    .put("systemProxy", enabled).put("allowBypass", enabled).put("dnsHijacking", enabled)
+                val shared = JSONObject(candidate.handoff.notificationJson).put("vpnOptions", options)
+                identity = owner.applyUpdate(expected(), MeowSetupProjection(next, shared.toString(), null, null))
+                val applied = store.readLastApplied()!!.handoff
+                assertEquals(next, MeowRuntimeSnapshotSettings.decode(applied.runtimeSettingsJson))
+                assertEquals(enabled, JSONObject(applied.vpnOptionsJson).getBoolean("enable"))
+                assertTrue(JSONObject(applied.runtimeSettingsJson).getJSONObject("flutterGraphPolicy").getBoolean("privateOnly"))
+                assertEquals(candidate.handoff.compiledSha256, applied.compiledSha256)
+                assertTrue(store.isGraphCurrent(identity)); assertFalse(store.readCurrent()!!.userRequested)
+                assertFalse(owner.queryGraph()!!.listening); assertEquals(-1, f.native.descriptor); assertEquals(0, f.stages)
+            }
+            // Listener, routing and TUN-engine edits still require a new compiled setup.
+            val before = store.readLastApplied()!!.handoff
+            val current = MeowRuntimeSnapshotSettings.decode(before.runtimeSettingsJson)
+            val unsupported = listOf(current.copy(network = current.network.copy(allowLan = true)),
+                current.copy(network = current.network.copy(ports = current.network.ports.copy(mixed = 43210))),
+                current.copy(network = current.network.copy(mtu = 1400)),
+                current.copy(network = current.network.copy(routeAddress = listOf("10.0.0.0/8"))))
+            for (next in unsupported) {
+                val failure = runCatching { owner.applyUpdate(expected(), MeowSetupProjection(next,
+                    JSONObject(before.notificationJson).put("vpnOptions", JSONObject(before.vpnOptionsJson)).toString(), null, null)) }.exceptionOrNull()
+                assertTrue(failure is MeowProtocolFailure)
+                assertEquals(before.runtimeSettingsJson, store.readLastApplied()!!.handoff.runtimeSettingsJson)
+                assertTrue(owner.identityIsCurrent(identity)); assertEquals(0, f.stages)
+            }
+            cache.assertCompleteRestores(1)
+        } finally { owner.retire(); server.shutdown() }
+    }
+
     @Test fun parkedGraphIsolatesEnabledControllerAndRetainsDesiredPolicyForAuthorizedSuccessor() = runBlocking<Unit> {
         val store = RuntimeHandoffStore(temp.newFolder("controller-graph"))
         val candidate = parkedCandidate(store, controllerEnabled = true, vpnEnabled = true)

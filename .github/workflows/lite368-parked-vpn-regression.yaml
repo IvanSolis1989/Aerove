@@ -1,0 +1,90 @@
+name: Lite368 parked VPN projection regression
+'on':
+  push:
+    branches: [fix/368-parked-projection]
+permissions:
+  contents: read
+concurrency:
+  group: lite368-parked-${{ github.sha }}
+  cancel-in-progress: false
+jobs:
+  kotlin-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - name: Install the repository's pinned compile SDK
+        run: sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: 9.6.0
+          cache-read-only: true
+      - name: Prove regression against the original native owner without producing an APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/lite368-parked"
+          mkdir -p "$evidence"
+          owner=apps/aerove-lite/app/src/main/java/dev/aerove/lite/flutter/MeowParkedGraphOwner.kt
+          cp "$owner" "$evidence/fixed-owner.kt"
+          trap 'cp "$RUNNER_TEMP/lite368-parked/fixed-owner.kt" "$owner"' EXIT
+          git show 022b1d30f60c4f380938ea99a3c1c21d96c7321d:"$owner" > "$owner"
+          set +e
+          gradle --no-daemon -p apps/aerove-lite :app:testDebugUnitTest \
+            --tests 'dev.aerove.lite.vpn.MeowTunnelBackendTest.parkedVpnIntentConvergesWithoutOpeningListenersOrChangingCoreConfiguration' \
+            2>&1 | tee "$evidence/red.log"
+          code=${PIPESTATUS[0]}
+          set -e
+          printf '%s\n' "$code" > "$evidence/red.exit"
+          cp -r apps/aerove-lite/app/build/test-results/testDebugUnitTest "$evidence/red-results"
+          python3 - <<'PY'
+          import os, pathlib, xml.etree.ElementTree as ET
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'lite368-parked'
+          cases = [c for f in (root/'red-results').glob('TEST-*.xml') for c in ET.parse(f).iter('testcase')]
+          assert int((root/'red.exit').read_text()) != 0
+          assert len(cases) == 1 and cases[0].get('name') == 'parkedVpnIntentConvergesWithoutOpeningListenersOrChangingCoreConfiguration'
+          failures = list(cases[0].iter('failure'))
+          assert len(failures) == 1 and 'Graph configuration requires setupConfig' in ET.tostring(failures[0], encoding='unicode')
+          PY
+      - name: Compile and run the fixed owner and protocol regression suites
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/lite368-parked"
+          git diff --exit-code -- apps/aerove-lite/app/src/main/java
+          gradle --no-daemon -p apps/aerove-lite :app:testDebugUnitTest \
+            --tests 'dev.aerove.lite.vpn.MeowTunnelBackendTest' \
+            --tests 'dev.aerove.lite.flutter.MeowSetupProtocolTest' \
+            --tests 'dev.aerove.lite.flutter.RuntimeHandoffStoreTest' \
+            --tests 'dev.aerove.lite.flutter.MeowEngineAttachmentTest' \
+            2>&1 | tee "$evidence/green.log"
+          cp -r apps/aerove-lite/app/build/test-results/testDebugUnitTest "$evidence/green-results"
+          python3 - <<'PY'
+          import json, os, pathlib, xml.etree.ElementTree as ET
+          root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'lite368-parked'
+          cases = [c for f in (root/'green-results').glob('TEST-*.xml') for c in ET.parse(f).iter('testcase')]
+          assert any(c.get('name') == 'parkedVpnIntentConvergesWithoutOpeningListenersOrChangingCoreConfiguration' for c in cases)
+          assert cases and all(not list(c) for c in cases)
+          assert not list(pathlib.Path('apps/aerove-lite').rglob('*.apk')), 'JVM regression must not produce APKs'
+          (root/'RESULT.json').write_text(json.dumps(dict(source=os.environ['GITHUB_SHA'], run=os.environ['GITHUB_RUN_ID'],
+              baseline='022b1d30f60c4f380938ea99a3c1c21d96c7321d', passed=len(cases), redReproduced=True,
+              apkBuilt=False, androidExecuted=False, acceptance=False), indent=2)+'\n')
+          PY
+      - name: Preserve red and green evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Lite368-parked-vpn-${{ github.sha }}
+          path: ${{ runner.temp }}/lite368-parked/
+          if-no-files-found: error
