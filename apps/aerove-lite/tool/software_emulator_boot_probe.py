@@ -26,6 +26,21 @@ def command(sdk):
 
 
 
+
+def debug_command(sdk):
+    debugger = shutil.which('gdb')
+    if not debugger:
+        raise RuntimeError('GDB required for owned-emulator native crash diagnosis')
+    return [debugger, '--batch', '--return-child-result', '-nx',
+            '-ex', 'set pagination off', '-ex', 'set confirm off',
+            '-ex', 'set disable-randomization off',
+            '-ex', 'handle SIGPIPE nostop noprint pass',
+            '-ex', 'handle SIGILL stop print nopass',
+            '-ex', 'handle SIGSEGV stop print nopass',
+            '-ex', 'run', '-ex', 'thread apply all bt 20',
+            '-ex', 'info registers', '-ex', 'x/16i $pc-16',
+            '-ex', 'info sharedlibrary', '-ex', 'quit', '--args'] + command(sdk)
+
 def collect_native_crash_evidence(output, receipt):
     """Preserve only this disposable runner's emulator crash database, bounded."""
     evidence = dict(files=[], errors=[], totalBytes=0, limitBytes=50 * 1024 * 1024)
@@ -138,12 +153,16 @@ def main():
                    harnessRun=os.environ['GITHUB_RUN_ID'], booted=False,
                    command=command(sdk), bootDeadlineSeconds=1200)
     receipt['hostCapacity'] = capacity
+    receipt['debugger'] = 'gdb-owned-child-only'
+    receipt['processReturncodeMeaning'] = 'debugger wrapper, not raw emulator signal'
+    launch_command = debug_command(sdk)
+    receipt['launchCommand'] = launch_command
     process = None
     started = time.monotonic()
     adb = [str(sdk / 'platform-tools/adb'), '-s', 'emulator-5554']
     try:
         with (output / 'emulator.log').open('wb') as log:
-            process = subprocess.Popen(command(sdk), stdout=log, stderr=subprocess.STDOUT,
+            process = subprocess.Popen(launch_command, stdout=log, stderr=subprocess.STDOUT,
                                        stdin=subprocess.DEVNULL, start_new_session=True)
             receipt['ownedPid'] = process.pid
             while time.monotonic() - started < receipt['bootDeadlineSeconds']:
