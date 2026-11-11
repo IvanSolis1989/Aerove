@@ -85,7 +85,29 @@ class Driver:
         if len(fields) != 1:
             raise RuntimeError('No unique observed text field: ' + str(hint))
         self.tap(fields[0])
-        self.run(['shell', 'input', 'text', shlex.quote(value.replace(' ', '%s'))], timeout=180)
+        time.sleep(3)
+        expected = ''
+        for offset in range(0, len(value), 16):
+            chunk = value[offset:offset + 16]
+            self.run(['shell', 'input', 'text', shlex.quote(chunk.replace(' ', '%s'))])
+            expected += chunk
+            deadline = time.monotonic() + 45
+            actual = None
+            while time.monotonic() < deadline:
+                root = self.tree()
+                focused = [n for n in root.iter('node') if n.get('package') == PACKAGE
+                           and n.get('class') == 'android.widget.EditText'
+                           and n.get('focused') == 'true']
+                if len(focused) == 1:
+                    actual = focused[0].get('text', '')
+                    if actual == expected:
+                        break
+                time.sleep(2)
+            else:
+                raise RuntimeError('Input readback mismatch: expected length ' + str(len(expected))
+                                   + ', observed ' + repr(actual))
+        self.receipt.setdefault('inputReadbacks', []).append(
+            dict(stage=self.stage, length=len(value), exact=True))
 
     def capture(self, label):
         self.tree()
