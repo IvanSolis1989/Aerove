@@ -37,24 +37,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sdkmanager --install 'system-images;android-33;default;x86_64'
+          sdkmanager --install 'system-images;android-33;default;x86_64' 'platforms;android-37.1' 'build-tools;37.0.0'
           echo no | avdmanager create avd --force -n tcg_probe --package 'system-images;android-33;default;x86_64' --device pixel_6
-          archive="$RUNNER_TEMP/emulator-linux_x64-16740729.zip"
+          archive="$RUNNER_TEMP/emulator-linux_x64-13823996.zip"
           curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
-            https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip -o "$archive"
-          printf '%s  %s\n' cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd "$archive" | sha256sum --check --strict
+            https://dl.google.com/android/repository/emulator-linux_x64-13823996.zip -o "$archive"
+          printf '%s  %s\n' 5a580b0169e3fd26c99a67b86720f367f78828b1733d748cbe566e001b517024 "$archive" | sha256sum --check --strict
           mkdir "$RUNNER_TEMP/tcg-sdk"
           unzip -q "$archive" -d "$RUNNER_TEMP/tcg-sdk"
           if test -e "$ANDROID_HOME/emulator"; then
             mv "$ANDROID_HOME/emulator" "$RUNNER_TEMP/original-sdk-emulator"
           fi
           mv "$RUNNER_TEMP/tcg-sdk/emulator" "$ANDROID_HOME/emulator"
+          "$ANDROID_HOME/emulator/emulator" -version | tee "$RUNNER_TEMP/pinned-emulator-version.txt"
+          grep -F "36.1.9" "$RUNNER_TEMP/pinned-emulator-version.txt"
+          "$ANDROID_HOME/emulator/emulator" -help-gpu
       - name: Fetch and verify immutable original 368 APK
         timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
           python3 -c "import os,sys; from pathlib import Path; sys.path.insert(0,'apps/aerove-lite/tool'); from lite368_diagnostic import verified_fetch; verified_fetch(Path(os.environ['RUNNER_TEMP'])/'software-original368')"
       - name: Install native debugger from runner package repositories
         timeout-minutes: 5
