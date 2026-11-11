@@ -80,6 +80,8 @@ def app_probe(adb, output, receipt, runtime):
                 raise RuntimeError('Screen not awake and unlocked for capture: ' + stage)
             invoke(stage + '-screen.png', ['exec-out', 'screencap', '-p'])
         receipt['appDiagnosis'] = 'launch_lifecycle_evidence_collected_only'
+        from software_functional_probe import run as functional_probe
+        functional_probe(adb, output, receipt)
     finally:
         invoke('app-logcat.txt', ['logcat', '-d', '-t', '6000'])
 
@@ -136,7 +138,7 @@ def main():
                 if not receipt['packageManagerReady'] or process.poll() is not None:
                     raise RuntimeError('Emulator or package manager not ready for application diagnosis')
                 app_probe(adb, output, receipt, runtime)
-                receipt['result'] = 'app_launch_diagnostic_only'
+                receipt['result'] = 'app_targeted_diagnostic_only'
             if process.poll() is not None:
                 raise RuntimeError('Emulator exited before diagnostic cleanup')
     except BaseException as error:
@@ -157,6 +159,8 @@ def main():
             receipt['emulatorReturncode'] = process.returncode
         receipt['elapsedSeconds'] = round(time.monotonic() - started, 2)
         if process is not None and process.returncode not in (0, -signal.SIGTERM):
+            receipt['applicationResultBeforeCleanup'] = receipt['result']
+            receipt['emulatorCleanupFault'] = bool(receipt.get('cleanupRequested'))
             receipt['result'] = 'failed_emulator_exit'
         (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
         if receipt['result'] == 'failed_emulator_exit':

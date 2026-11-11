@@ -1,10 +1,11 @@
-name: AEROVE AOSP awake-screen diagnosis (not acceptance)
+name: AEROVE AOSP synthetic functional diagnosis (not acceptance)
 'on':
   push:
     branches: [test/software-emulator-boot-probe]
     paths:
       - .github/workflows/aerove-software-emulator-probe.yaml
       - apps/aerove-lite/tool/software_emulator_boot_probe.py
+      - apps/aerove-lite/tool/software_functional_probe.py
 permissions:
   contents: read
   actions: read
@@ -55,7 +56,7 @@ jobs:
         run: |
           sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
           python3 -c "import os,sys; from pathlib import Path; sys.path.insert(0,'apps/aerove-lite/tool'); from lite368_diagnostic import verified_fetch; verified_fetch(Path(os.environ['RUNNER_TEMP'])/'software-original368')"
-      - name: Diagnose original APK launch without KVM
+      - name: Diagnose original APK synthetic functions without KVM
         timeout-minutes: 45
         env:
           AEROVE_SOFTWARE_APK_RUNTIME: ${{ runner.temp }}/software-original368
@@ -67,3 +68,4 @@ jobs:
           name: software-cpu-boot-probe
           path: ${{ runner.temp }}/software-emulator-probe/
           if-no-files-found: warn
+
