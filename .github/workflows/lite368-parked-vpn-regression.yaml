@@ -62,6 +62,7 @@ jobs:
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/lite368-parked"
+          trap 'cp -r apps/aerove-lite/app/build/test-results/testReleaseUnitTest "$evidence/green-results"; cat apps/aerove-lite/app/build/test-results/testReleaseUnitTest/TEST-dev.aerove.lite.vpn.MeowTunnelBackendTest.xml' EXIT
           git diff --exit-code -- apps/aerove-lite/app/src/main/java
           gradle --no-daemon -p apps/aerove-lite :app:testReleaseUnitTest \
             --tests 'dev.aerove.lite.vpn.MeowTunnelBackendTest' \
@@ -70,6 +71,7 @@ jobs:
             --tests 'dev.aerove.lite.flutter.MeowEngineAttachmentTest' \
             2>&1 | tee "$evidence/green.log"
           cp -r apps/aerove-lite/app/build/test-results/testReleaseUnitTest "$evidence/green-results"
+          trap - EXIT
           python3 - <<'PY'
           import json, os, pathlib, xml.etree.ElementTree as ET
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'lite368-parked'
