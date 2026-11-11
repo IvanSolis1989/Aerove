@@ -160,6 +160,55 @@ void main() {
     core = MeowCoreHandler.scoped(service, readSharedState: () async => _state);
   });
 
+  for (final cancellable in [false, true]) {
+    test('atomic setup VPN state: cancellable=$cancellable', () async {
+      await core.start();
+      service.calls.clear();
+      final cancellation = ValueNotifier(false);
+      addTearDown(cancellation.dispose);
+      final desired = _state.copyWith(
+        setupParams: const SetupParams(
+          selectedMap: {'new-group': 'new-node'},
+          testUrl: 'https://example.com/new',
+        ),
+        vpnOptions: const VpnOptions(
+          enable: false,
+          port: 7890,
+          ipv6: false,
+          dnsHijacking: false,
+          accessControlProps: AccessControlProps(),
+          allowBypass: false,
+          systemProxy: false,
+          bypassDomain: [],
+          stack: 'lwip',
+          mtu: 1400,
+          bypassPrivateRoute: false,
+        ),
+      );
+      service.response = (call) async {
+        final payload = jsonDecode(jsonEncode(call.arguments)) as Map;
+        expect(payload['shared-state']['setupParams'], isNull);
+        final vpn = payload['shared-state']['vpnOptions'] as Map;
+        expect(vpn['enable'], isFalse);
+        expect(vpn['mtu'], 1400);
+        expect(vpn['bypassPrivateRoute'], isFalse);
+        expect(payload['selected-map'], {'new-group': 'new-node'});
+        return CoreMethodResponse(id: call.id, result: '');
+      };
+      expect(
+        await CoreController.scoped(core).setupConfig(
+          params: desired.setupParams!,
+          sharedState: desired,
+          cancellation: cancellable ? cancellation : null,
+        ),
+        '',
+      );
+      expect(service.calls, isNot(contains('syncState')));
+      expect(service.calls, isNot(contains('start')));
+      await core.close();
+    });
+  }
+
   test('real Meow setup stages before listener invalidation', () async {
     await core.start();
     final staged = Completer<void>();

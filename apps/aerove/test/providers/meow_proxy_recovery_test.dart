@@ -61,6 +61,7 @@ class _RecoveryCore extends Mock implements CoreController {
   ValueListenable<bool>? setupCancellation;
   _PendingRequest? pendingRequest;
   SetupParams? params;
+  SharedState? receivedState;
 
   @override
   Future<List<Group>> getProxiesGroups({
@@ -81,12 +82,14 @@ class _RecoveryCore extends Mock implements CoreController {
   @override
   Future<String> setupConfig({
     required SetupParams params,
+    SharedState? sharedState,
     Future<void> Function()? preloadInvoke,
     ValueListenable<bool>? cancellation,
     void Function(CoreRequestQuiescence state)? observeQuiescence,
   }) async {
     applies++;
     this.params = params;
+    receivedState = sharedState;
     setupCancellation = cancellation;
     if (pendingRequest case final request?) observeQuiescence?.call(request);
     applied?.complete();
@@ -116,19 +119,21 @@ class _PendingRequest implements CoreRequestQuiescence {
 
 class _BuiltSetup extends SetupAction {
   Object? buildFailure;
-  Object? synchronizationFailure;
-  int synchronizations = 0;
-  Completer<void>? synchronizationGate;
-  Completer<void>? synchronizing;
+  Object? captureFailure;
+  SharedState? desiredState;
+  int captures = 0;
+  Completer<void>? captureGate;
+  Completer<void>? capturing;
 
   @override
-  Future<void> synchronizeSetupState() async {
-    synchronizations++;
-    synchronizing?.complete();
-    await synchronizationGate?.future;
-    if (synchronizationFailure case final failure?) {
+  Future<SharedState?> captureSetupState() async {
+    captures++;
+    capturing?.complete();
+    await captureGate?.future;
+    if (captureFailure case final failure?) {
       Error.throwWithStackTrace(failure, StackTrace.current);
     }
+    return desiredState;
   }
 
   final listenerCalls = <bool>[];
@@ -259,32 +264,53 @@ void main() {
     expect(container.read(runTimeProvider), isNull);
   });
 
-  test('Lite rejects Start when shared VPN state cannot synchronize', () async {
+  test('Lite rejects Start when current state cannot be captured', () async {
     container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
-    setup.synchronizationFailure = StateError('synthetic syncState rejection');
+    setup.captureFailure = StateError('synthetic capture rejection');
     expect(await setup.setRunning(true), isFalse);
-    expect(setup.synchronizations, 1);
+    expect(setup.captures, 1);
     expect(core.applies, 0);
     expect(setup.listenerCalls.where((running) => running), isEmpty);
     expect(container.read(runTimeProvider), isNull);
   });
 
-  test('Stop during Lite state sync prevents listener authorization', () async {
+  test('Stop during state capture prevents listener authorization', () async {
     container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
-    setup.synchronizationGate = Completer<void>();
-    setup.synchronizing = Completer<void>();
+    setup.captureGate = Completer<void>();
+    setup.capturing = Completer<void>();
     final starting = setup.setRunning(true);
-    await setup.synchronizing!.future;
+    await setup.capturing!.future;
     await setup.setRunning(false);
-    setup.synchronizationGate!.complete();
+    setup.captureGate!.complete();
     expect(await starting, isFalse);
     expect(setup.listenerCalls.where((running) => running), isEmpty);
     expect(container.read(runTimeProvider), isNull);
   });
 
   test('Lite stages current inputs before opening a listener', () async {
+    setup.desiredState = const SharedState(
+      stopTip: 'stop',
+      startTip: 'start',
+      localNetworkTip: 'network',
+      currentProfileName: 'profile',
+      stopText: 'stop',
+      onlyStatisticsProxy: false,
+      vpnOptions: VpnOptions(
+        enable: false,
+        port: 7890,
+        ipv6: false,
+        dnsHijacking: false,
+        accessControlProps: AccessControlProps(),
+        allowBypass: false,
+        systemProxy: false,
+        bypassDomain: [],
+        stack: 'lwip',
+        mtu: 1400,
+        bypassPrivateRoute: false,
+      ),
+    );
     container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     core.applyGate = Completer<void>();
@@ -292,7 +318,8 @@ void main() {
     final starting = setup.setRunning(true);
     await core.applied!.future;
     expect(setup.listenerCalls, isEmpty);
-    expect(setup.synchronizations, 1);
+    expect(setup.captures, 1);
+    expect(core.receivedState, same(setup.desiredState));
     core.applyGate!.complete();
     expect(await starting, isTrue);
     expect(core.applies, 1);

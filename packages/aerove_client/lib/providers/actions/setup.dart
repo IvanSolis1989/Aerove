@@ -2243,18 +2243,14 @@ class SetupAction extends _$SetupAction {
   }
 
   @protected
-  Future<void> synchronizeSetupState() async {
-    if (!system.isAndroid) return;
+  Future<SharedState?> captureSetupState() async {
+    if (!system.isAndroid) return null;
     await ref.read(vpnOptionsProvider.future);
     final state = ref.read(sharedStateProvider);
     await preferences.saveShareState(state);
-    if (ClientProduct.current.expectedCoreId == 'meow-rs') {
-      final owner = service;
-      if (owner == null) throw StateError('Android service is unavailable');
-      // New profile selections belong to setupConfig, not the previous graph.
-      final message = await owner.syncState(state.needSyncSharedState);
-      if (message.isNotEmpty) throw MessageException(message);
-    }
+    return ClientProduct.current.expectedCoreId == 'meow-rs'
+        ? state.needSyncSharedState
+        : null;
   }
 
   Future<_SetupTaskResult> _setupConfig({
@@ -2575,7 +2571,7 @@ class SetupAction extends _$SetupAction {
         ? null
         : await _setupRecord(inputs, realProfile);
     if (rethrowFailures && record == null) return _SetupTaskResult.failed;
-    await synchronizeSetupState();
+    final sharedState = await captureSetupState();
     // Recaptured so _start's catch can roll back after safeRun swallows it.
     (Object, StackTrace)? handoffFailure;
     var setupFailed = false;
@@ -2611,6 +2607,7 @@ class SetupAction extends _$SetupAction {
                     applied: record,
                     providerUpdate: providerUpdate,
                   ),
+                  sharedState: producerOnly ? null : sharedState,
                   preloadInvoke: preloadInvoke,
                   cancellation: cancellation,
                   observeQuiescence: observeQuiescence,

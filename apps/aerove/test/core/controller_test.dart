@@ -171,6 +171,24 @@ void main() {
       expect(result, 'ok');
     });
 
+    test('non-staged backends reject a shared setup payload', () async {
+      expect(
+        controller.setupConfig(
+          params: const SetupParams(selectedMap: {}, testUrl: 'http://x.com'),
+          sharedState: const SharedState(
+            stopTip: 'stop',
+            startTip: 'start',
+            localNetworkTip: 'network',
+            currentProfileName: 'profile',
+            stopText: 'stop',
+            onlyStatisticsProxy: false,
+          ),
+        ),
+        throwsStateError,
+      );
+      verifyZeroInteractions(mock);
+    });
+
     test('setupConfig waits for asynchronous preload', () async {
       const params = SetupParams(selectedMap: {}, testUrl: 'http://x.com');
       final preloadCompleter = Completer<void>();

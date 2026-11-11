@@ -1,7 +1,7 @@
 name: Lite stale-start regression (host only)
 on:
   push:
-    branches: [fix/368-reject-stale-start]
+    branches: [fix/368-reject-stale-start, fix/368-integrated-start]
 permissions:
   contents: read
 jobs:
@@ -65,8 +65,8 @@ jobs:
         run: |
           set -euo pipefail
           flutter test --no-pub --concurrency 1 --machine --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart 2>&1 | tee "$RUNNER_TEMP/stale-start/after-lite.jsonl"
-          flutter test --no-pub --concurrency 1 --machine test/providers/setup_action_test.dart test/providers/action_test.dart 2>&1 | tee "$RUNNER_TEMP/stale-start/after-standard.jsonl"
-          dart format --output=none --set-exit-if-changed ../../packages/aerove_client/lib/providers/actions/setup.dart test/providers/meow_proxy_recovery_test.dart
+          flutter test --no-pub --concurrency 1 --machine test/providers/setup_action_test.dart test/providers/action_test.dart test/core/meow_test.dart test/core/controller_test.dart 2>&1 | tee "$RUNNER_TEMP/stale-start/after-standard.jsonl"
+          dart format --output=none --set-exit-if-changed ../../packages/aerove_client/lib/providers/actions/setup.dart test/providers/meow_proxy_recovery_test.dart ../../packages/aerove_client/lib/core/controller.dart test/core/meow_test.dart test/core/controller_test.dart
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

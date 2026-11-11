@@ -239,22 +239,39 @@ class CoreController {
 
   Future<String> setupConfig({
     required SetupParams params,
+    SharedState? sharedState,
     Future<void> Function()? preloadInvoke,
     ValueListenable<bool>? cancellation,
     void Function(CoreRequestQuiescence state)? observeQuiescence,
   }) async {
+    if (sharedState != null && _interface is! StagedCoreSetup) {
+      throw StateError('Shared setup state requires a staged core');
+    }
+    final arguments = {
+      ...params.toJson(),
+      if (sharedState != null)
+        'shared-state': sharedState.needSyncSharedState.toJson(),
+    };
     Future<String> invoke() async {
-      if (cancellation == null) return _interface.setupConfig(params);
+      if (cancellation == null && sharedState == null) {
+        return _interface.setupConfig(params);
+      }
       final owner = _interface;
-      if (owner is! CancellableCoreRequest)
+      if (cancellation != null && owner is! CancellableCoreRequest) {
         throw StateError('Core does not support cancellable setup requests');
-      final result = await (owner as CancellableCoreRequest)
-          .invokeCancellableMethod<String>(
-            method: CoreMethod.setupConfig,
-            arguments: params.toJson(),
-            cancellation: cancellation,
-            observeQuiescence: observeQuiescence,
-          );
+      }
+      final result = cancellation == null
+          ? await owner.invokeMethod<String>(
+              method: CoreMethod.setupConfig,
+              arguments: arguments,
+            )
+          : await (owner as CancellableCoreRequest)
+                .invokeCancellableMethod<String>(
+                  method: CoreMethod.setupConfig,
+                  arguments: arguments,
+                  cancellation: cancellation,
+                  observeQuiescence: observeQuiescence,
+                );
       if (result == null)
         throw const CoreMethodException(
           code: 'no_response',
