@@ -120,11 +120,21 @@ class Driver:
         if field.get('text'):
             raise RuntimeError('Expected empty text field: ' + str(row_label))
         self.tap(field)
-        time.sleep(3)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            field = self.field_node(self.tree(), row_label)
+            if field.get('focused') == 'true' and not field.get('text'):
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError('Text field did not become focused and empty')
         expected = ''
-        for offset in range(0, len(value), 16):
-            chunk = value[offset:offset + 16]
-            self.run(['shell', 'input', 'text', shlex.quote(chunk.replace(' ', '%s'))])
+        for offset in range(0, len(value), 4):
+            chunk = value[offset:offset + 4]
+            # A software CPU can drop burst key events; pace each character.
+            for character in chunk:
+                self.run(['shell', 'input', 'text', shlex.quote(character.replace(' ', '%s'))])
+                time.sleep(0.35)
             expected += chunk
             deadline = time.monotonic() + 45
             actual = None
