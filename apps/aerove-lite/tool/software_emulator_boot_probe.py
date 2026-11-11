@@ -21,16 +21,29 @@ def app_probe(adb, output, receipt, runtime):
                    appCompiled=False, functionalAcceptance=False)
 
     def invoke(name, args, timeout=120):
+        print('Diagnostic step: ' + name, flush=True)
+        step_started = time.monotonic()
         with (output / name).open('wb') as target:
-            result = subprocess.run(adb + args, stdout=target, stderr=subprocess.PIPE,
-                                    timeout=timeout, check=False)
+            try:
+                result = subprocess.run(adb + args, stdout=target, stderr=subprocess.PIPE,
+                                        timeout=timeout, check=False)
+            except subprocess.TimeoutExpired as error:
+                receipt[name] = dict(timedOut=True, timeoutSeconds=timeout,
+                                     elapsedSeconds=round(time.monotonic() - step_started, 2),
+                                     stderr=(error.stderr or b'').decode(errors='replace')[-2000:])
+                raise
         receipt[name] = dict(returncode=result.returncode,
+                             elapsedSeconds=round(time.monotonic() - step_started, 2),
                              stderr=result.stderr.decode(errors='replace')[-2000:])
         if result.returncode:
             raise RuntimeError('App diagnostic command failed: ' + name)
 
     try:
-        invoke('app-install.txt', ['install', str(Path(runtime) / 'apks/app-release.apk')], 300)
+        invoke('app-install.txt', ['install', '--no-streaming',
+                str(Path(runtime) / 'apks/app-release.apk')], 900)
+        invoke('installed-package.txt', ['shell', 'pm', 'path', 'dev.aerove.lite'])
+        if 'package:' not in (output / 'installed-package.txt').read_text():
+            raise RuntimeError('APK install returned without an installed package')
         receipt['appInstalled'] = True
         for stage in ('cold-launch', 'background-return', 'force-stop-relaunch'):
             if stage == 'background-return':
