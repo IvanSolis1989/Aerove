@@ -53,7 +53,7 @@ class Driver:
         x1, y1, x2, y2 = self.box(node)
         self.run(['shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2)])
 
-    def find(self, label, timeout=90, app=True):
+    def find(self, label, timeout=90, app=True, clickable=None):
         deadline = time.monotonic() + timeout
         dismissed = 0
         while time.monotonic() < deadline:
@@ -64,7 +64,8 @@ class Driver:
                 if len(waits) == 1:
                     self.tap(waits[0]); dismissed += 1; time.sleep(5); continue
             hits = [n for n in rows if self.label(n) == label and n.get('enabled') == 'true'
-                    and (not app or n.get('package') == PACKAGE)]
+                    and (not app or n.get('package') == PACKAGE)
+                    and (clickable is None or n.get('clickable') == str(clickable).lower())]
             unique = {n.get('bounds'): n for n in hits}
             if len(unique) == 1:
                 return next(iter(unique.values()))
@@ -75,6 +76,7 @@ class Driver:
 
     def click(self, label, **kwargs):
         print('Functional step: ' + self.stage + ' / ' + label, flush=True)
+        kwargs.setdefault('clickable', True)
         self.tap(self.find(label, **kwargs))
 
     def input_field(self, value, hint=None):
@@ -144,7 +146,8 @@ def run(adb, output, outer):
         driver.input_field(STATEMENT)
         driver.run(['shell', 'input', 'keyevent', 'KEYCODE_BACK'])
         driver.click('Confirm'); driver.click('Got it')
-        driver.find('Dashboard'); driver.capture('consent-complete')
+        # The page heading and navigation button share this accessibility label.
+        driver.find('Dashboard', clickable=True); driver.capture('consent-complete')
         receipt['steps'].append('production-consent-completed')
         driver.stage = 'profile-import'
         driver.click('Profiles'); driver.click('Add profile'); driver.click('Link')
@@ -216,3 +219,4 @@ def run(adb, output, outer):
         receipt['fixtureRequests'] = requests
         outer['functionalProbe'] = receipt
         (output / 'functional-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+
