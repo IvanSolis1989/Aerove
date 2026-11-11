@@ -95,7 +95,7 @@ class _RecoveryCore extends Mock implements CoreController {
       Error.throwWithStackTrace(failure, StackTrace.current);
     }
     if (cancellation?.value != true) available = restoreGraph;
-    expect(preloadInvoke, isNull);
+    await preloadInvoke?.call();
     return '';
   }
 
@@ -115,6 +115,15 @@ class _PendingRequest implements CoreRequestQuiescence {
 }
 
 class _BuiltSetup extends SetupAction {
+  Object? buildFailure;
+  final listenerCalls = <bool>[];
+
+  @override
+  Future<bool> setCoreRunning(bool running) async {
+    listenerCalls.add(running);
+    return true;
+  }
+
   Completer<void>? buildGate;
   Completer<void>? building;
 
@@ -125,6 +134,9 @@ class _BuiltSetup extends SetupAction {
   }) async {
     if (building?.isCompleted == false) building!.complete();
     await buildGate?.future;
+    if (buildFailure case final failure?) {
+      Error.throwWithStackTrace(failure, StackTrace.current);
+    }
     return (
       yaml: 'proxies: []\nproxy-groups: []\nrules: []\n',
       md5: '8cc022da3c0ff14fc6f13fa5db8851ac',
@@ -209,6 +221,52 @@ void main() {
     container.dispose();
     await database.close();
     await home.delete(recursive: true);
+  });
+
+  test('Lite rejects Start when the selected profile cannot build', () async {
+    container.read(initProvider.notifier).value = true;
+    setup.buildFailure = StateError('synthetic script rejection');
+    expect(await setup.setRunning(true), isFalse);
+    expect(core.applies, 0);
+    expect(setup.listenerCalls.where((running) => running), isEmpty);
+    expect(container.read(runTimeProvider), isNull);
+    expect(container.read(runningVpnOptionsProvider), isNull);
+  });
+
+  test('Lite rejects Start when native setup rejects the new settings', () async {
+    container.read(initProvider.notifier).value = true;
+    core.applyFailure = StateError('synthetic setup rejection');
+    expect(await setup.setRunning(true), isFalse);
+    expect(core.applies, 1);
+    expect(setup.listenerCalls.where((running) => running), isEmpty);
+    expect(container.read(runTimeProvider), isNull);
+  });
+
+  test('Lite stages current inputs before opening a listener', () async {
+    container.read(initProvider.notifier).value = true;
+    core.applyGate = Completer<void>();
+    core.applied = Completer<void>();
+    final starting = setup.setRunning(true);
+    await core.applied!.future;
+    expect(setup.listenerCalls, isEmpty);
+    core.applyGate!.complete();
+    expect(await starting, isTrue);
+    expect(core.applies, 1);
+    expect(setup.listenerCalls, [true]);
+    await setup.setRunning(false);
+  });
+
+  test('Stop during Lite setup prevents a stale listener start', () async {
+    container.read(initProvider.notifier).value = true;
+    core.applyGate = Completer<void>();
+    core.applied = Completer<void>();
+    final starting = setup.setRunning(true);
+    await core.applied!.future;
+    await setup.setRunning(false);
+    core.applyGate!.complete();
+    expect(await starting, isFalse);
+    expect(setup.listenerCalls.where((running) => running), isEmpty);
+    expect(container.read(runTimeProvider), isNull);
   });
 
   for (final width in [500.0, 1000.0]) {

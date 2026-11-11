@@ -1,0 +1,74 @@
+name: Lite stale-start regression (host only)
+on:
+  push:
+    branches: [fix/368-reject-stale-start]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/flutter
+        with:
+          flutter-version: 3.47.6
+          cache: true
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.98.1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version: 1.27.1
+      - name: Prepare production test dependencies (no APK)
+        run: |
+          (cd packages/aerove_client && flutter pub get --enforce-lockfile)
+          (cd apps/aerove && flutter pub get --enforce-lockfile)
+          python3 tooling/sqlite_hook_prefetch.py apps/aerove packages/aerove_client
+          (cd apps/aerove && python3 tool/mihomo_source.py prepare)
+      - name: Verify regression fails before the fix
+        working-directory: apps/aerove
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/stale-start"
+          source=../../packages/aerove_client/lib/providers/actions/setup.dart
+          cp "$source" "$RUNNER_TEMP/stale-start/fixed.dart"
+          trap 'cp "$RUNNER_TEMP/stale-start/fixed.dart" "$source"' EXIT
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('../../packages/aerove_client/lib/providers/actions/setup.dart')
+          s = p.read_text()
+          old = "if (request.initialize ||\n        ClientProduct.current.expectedCoreId == 'meow-rs') {"
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, 'if (request.initialize) {'))
+          PY
+          set +e
+          flutter test --no-pub --concurrency 1 --machine --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart --name 'Lite rejects Start' > "$RUNNER_TEMP/stale-start/before.jsonl" 2>&1
+          status=$?
+          set -e
+          test "$status" -ne 0
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          events = []
+          for line in (Path(os.environ['RUNNER_TEMP'])/'stale-start/before.jsonl').read_text().splitlines():
+              try: events.append(json.loads(line))
+              except ValueError: pass
+          failures = [e for e in events if e.get('type') == 'testDone' and e.get('result') == 'failure']
+          assert len(failures) == 2, events
+          PY
+      - name: Verify fixed Lite and unchanged Standard lifecycle tests
+        working-directory: apps/aerove
+        run: |
+          set -euo pipefail
+          flutter test --no-pub --concurrency 1 --machine --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart 2>&1 | tee "$RUNNER_TEMP/stale-start/after-lite.jsonl"
+          flutter test --no-pub --concurrency 1 --machine test/providers/setup_action_test.dart test/providers/action_test.dart 2>&1 | tee "$RUNNER_TEMP/stale-start/after-standard.jsonl"
+          dart format --output=none --set-exit-if-changed ../../packages/aerove_client/lib/providers/actions/setup.dart test/providers/meow_proxy_recovery_test.dart
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: lite-stale-start-host-regression
+          path: ${{ runner.temp }}/stale-start/*.jsonl

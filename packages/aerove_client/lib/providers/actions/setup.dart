@@ -604,7 +604,11 @@ class SetupAction extends _$SetupAction {
   }
 
   Future<bool> _start(_RunRequest request) async {
-    if (request.initialize) {
+    // Lite authorizes the staged native snapshot, not the visible Flutter
+    // settings. A failed profile build or state sync must never start an older
+    // snapshot with a different profile or VPN intent.
+    if (request.initialize ||
+        ClientProduct.current.expectedCoreId == 'meow-rs') {
       return _settleInitialStart(
         request,
         () => applyProfile(
