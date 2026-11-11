@@ -1,4 +1,4 @@
-name: AEROVE software CPU boot probe (not acceptance)
+name: AEROVE software CPU APK diagnosis (not acceptance)
 'on':
   push:
     branches: [test/software-emulator-boot-probe]
@@ -7,6 +7,7 @@ name: AEROVE software CPU boot probe (not acceptance)
       - apps/aerove-lite/tool/software_emulator_boot_probe.py
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: software-emulator-boot-probe
   cancel-in-progress: false
@@ -14,7 +15,7 @@ jobs:
   boot-probe:
     if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/test/software-emulator-boot-probe'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -47,8 +48,17 @@ jobs:
             mv "$ANDROID_HOME/emulator" "$RUNNER_TEMP/original-sdk-emulator"
           fi
           mv "$RUNNER_TEMP/tcg-sdk/emulator" "$ANDROID_HOME/emulator"
-      - name: Observe Android boot without KVM (no app installed)
-        timeout-minutes: 23
+      - name: Fetch and verify immutable original 368 APK
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
+          python3 -c "import os,sys; from pathlib import Path; sys.path.insert(0,'apps/aerove-lite/tool'); from lite368_diagnostic import verified_fetch; verified_fetch(Path(os.environ['RUNNER_TEMP'])/'software-original368')"
+      - name: Diagnose original APK launch without KVM
+        timeout-minutes: 35
+        env:
+          AEROVE_SOFTWARE_APK_RUNTIME: ${{ runner.temp }}/software-original368
         run: python3 apps/aerove-lite/tool/software_emulator_boot_probe.py
       - name: Preserve software probe evidence, never acceptance
         if: always()

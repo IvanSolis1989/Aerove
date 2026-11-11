@@ -13,6 +13,41 @@ def command(sdk):
             '-gpu', 'swiftshader', '-no-snapshot', '-noaudio', '-no-boot-anim']
 
 
+def app_probe(adb, output, receipt, runtime):
+    from lite368_diagnostic import verified_runtime, verify_signatures, IDENTITY
+    proof = verified_runtime(Path(runtime), installed=False)
+    verify_signatures(Path(runtime), Path(os.environ['ANDROID_HOME']) / 'build-tools/37.0.0/apksigner')
+    receipt.update(originalAppIdentity=IDENTITY, harnessIdentity=proof['harnessIdentity'],
+                   appCompiled=False, functionalAcceptance=False)
+
+    def invoke(name, args, timeout=120):
+        with (output / name).open('wb') as target:
+            result = subprocess.run(adb + args, stdout=target, stderr=subprocess.PIPE,
+                                    timeout=timeout, check=False)
+        receipt[name] = dict(returncode=result.returncode,
+                             stderr=result.stderr.decode(errors='replace')[-2000:])
+        if result.returncode:
+            raise RuntimeError('App diagnostic command failed: ' + name)
+
+    try:
+        invoke('app-install.txt', ['install', str(Path(runtime) / 'apks/app-release.apk')], 300)
+        receipt['appInstalled'] = True
+        for stage in ('cold-launch', 'background-return', 'force-stop-relaunch'):
+            if stage == 'background-return':
+                invoke('home.txt', ['shell', 'input', 'keyevent', 'KEYCODE_HOME'])
+                time.sleep(10)
+            elif stage == 'force-stop-relaunch':
+                invoke('force-stop.txt', ['shell', 'am', 'force-stop', 'dev.aerove.lite'])
+            invoke(stage + '-start.txt', ['shell', 'am', 'start', '-W', '-n',
+                    'dev.aerove.lite/dev.aerove.lite.FlutterMainActivity'], 180)
+            time.sleep(60)
+            invoke(stage + '-screen.png', ['exec-out', 'screencap', '-p'])
+            invoke(stage + '-activities.txt', ['shell', 'dumpsys', 'activity', 'activities'])
+        receipt['appDiagnosis'] = 'launch_lifecycle_evidence_collected_only'
+    finally:
+        invoke('app-logcat.txt', ['logcat', '-d', '-t', '6000'])
+
+
 def main():
     sdk = Path(os.environ['ANDROID_HOME'])
     output = Path(os.environ['RUNNER_TEMP']) / 'software-emulator-probe'
@@ -55,12 +90,25 @@ def main():
                 if result.returncode:
                     raise RuntimeError('Boot evidence collection failed: ' + name)
             receipt['result'] = 'android_boot_observed_only'
+            runtime = os.environ.get('AEROVE_SOFTWARE_APK_RUNTIME')
+            if runtime:
+                ready = subprocess.run(adb + ['shell', 'pm', 'path', 'android'],
+                                       capture_output=True, timeout=180, check=False)
+                receipt['packageManagerReady'] = ready.returncode == 0 and b'package:' in ready.stdout
+                if not receipt['packageManagerReady'] or process.poll() is not None:
+                    raise RuntimeError('Emulator or package manager not ready for application diagnosis')
+                app_probe(adb, output, receipt, runtime)
+                receipt['result'] = 'app_launch_diagnostic_only'
+            if process.poll() is not None:
+                raise RuntimeError('Emulator exited before diagnostic cleanup')
     except BaseException as error:
         receipt['result'] = 'failed'
         receipt['error'] = repr(error)
         raise
     finally:
         if process is not None:
+            receipt['returncodeBeforeCleanup'] = process.poll()
+            receipt['cleanupRequested'] = process.poll() is None
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
@@ -70,7 +118,11 @@ def main():
                     process.wait(timeout=10)
             receipt['emulatorReturncode'] = process.returncode
         receipt['elapsedSeconds'] = round(time.monotonic() - started, 2)
+        if process is not None and process.returncode not in (0, -signal.SIGTERM):
+            receipt['result'] = 'failed_emulator_exit'
         (output / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+        if receipt['result'] == 'failed_emulator_exit':
+            raise RuntimeError('Abnormal emulator exit: ' + str(process.returncode))
 
 
 if __name__ == '__main__':
