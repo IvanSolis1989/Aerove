@@ -32,6 +32,11 @@ jobs:
           packages: platform-tools
           cmdline-tools-version: '16111833'
           log-accepted-android-sdk-licenses: false
+      - name: Install debugger and emulator runtime libraries
+        timeout-minutes: 5
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes gdb libpulse0
       - name: Prepare isolated API 33 software-only emulator
         timeout-minutes: 10
         shell: bash
@@ -49,7 +54,7 @@ jobs:
             mv "$ANDROID_HOME/emulator" "$RUNNER_TEMP/original-sdk-emulator"
           fi
           mv "$RUNNER_TEMP/tcg-sdk/emulator" "$ANDROID_HOME/emulator"
-          "$ANDROID_HOME/emulator/emulator" -version | tee "$RUNNER_TEMP/pinned-emulator-version.txt"
+          "$ANDROID_HOME/emulator/emulator" -no-window -version | tee "$RUNNER_TEMP/pinned-emulator-version.txt"
           grep -F "36.1.9" "$RUNNER_TEMP/pinned-emulator-version.txt"
           "$ANDROID_HOME/emulator/emulator" -help-gpu
       - name: Fetch and verify immutable original 368 APK
@@ -58,11 +63,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 -c "import os,sys; from pathlib import Path; sys.path.insert(0,'apps/aerove-lite/tool'); from lite368_diagnostic import verified_fetch; verified_fetch(Path(os.environ['RUNNER_TEMP'])/'software-original368')"
-      - name: Install native debugger from runner package repositories
-        timeout-minutes: 5
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes gdb
       - name: Diagnose original APK synthetic functions without KVM
         # Software CPU consent/readback alone took 25 minutes in run 42985922542.
         timeout-minutes: 75
