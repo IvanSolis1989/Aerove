@@ -71,7 +71,8 @@ class Driver:
         self.tap(confirms[0])
         return True
 
-    def find(self, label, timeout=90, app=True, clickable=None, launch_recovery=False):
+    def find(self, label, timeout=90, app=True, clickable=None, launch_recovery=False,
+             first_line=False):
         deadline = time.monotonic() + timeout
         dismissed = 0
         while time.monotonic() < deadline:
@@ -85,7 +86,9 @@ class Driver:
                 waits = [n for n in rows if self.label(n) == 'Wait' and n.get('package') == 'android']
                 if len(waits) == 1:
                     self.tap(waits[0]); dismissed += 1; time.sleep(5); continue
-            hits = [n for n in rows if self.label(n) == label and n.get('enabled') == 'true'
+            hits = [n for n in rows
+                    if (self.label(n).split('\n', 1)[0] if first_line else self.label(n)) == label
+                    and n.get('enabled') == 'true'
                     and (not app or n.get('package') == PACKAGE)
                     and (clickable is None or n.get('clickable') == str(clickable).lower())]
             unique = {n.get('bounds'): n for n in hits}
@@ -200,11 +203,13 @@ def run(adb, output, outer):
         driver.input_field(label, 'Name')
         driver.input_field('http://10.0.2.2:18080/profile.yaml', 'Link')
         driver.run(['shell', 'input', 'keyevent', 'KEYCODE_BACK'])
-        driver.click('Submit'); driver.click(label, timeout=120)
+        driver.click('Submit')
+        # Imported profiles are auto-selected; their non-clickable label includes metadata.
+        driver.find(label, timeout=120, first_line=True)
         driver.capture('profile-imported')
         if not any(row['path'] == '/profile.yaml' for row in requests):
             raise RuntimeError('No actual local synthetic profile download observed')
-        receipt['steps'].append('synthetic-profile-downloaded-and-clicked')
+        receipt['steps'].append('synthetic-profile-downloaded-and-listed')
         driver.click('Dashboard')
         driver.stage = 'proxy-only-state'
         vpn = driver.find('VPN')
