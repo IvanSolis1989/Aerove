@@ -239,6 +239,7 @@ void main() {
   });
 
   test('Lite rejects Start when the selected profile cannot build', () async {
+    container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     setup.buildFailure = StateError('synthetic script rejection');
     expect(await setup.setRunning(true), isFalse);
@@ -249,6 +250,7 @@ void main() {
   });
 
   test('Lite rejects Start when native setup rejects the new settings', () async {
+    container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     core.applyFailure = StateError('synthetic setup rejection');
     expect(await setup.setRunning(true), isFalse);
@@ -258,6 +260,7 @@ void main() {
   });
 
   test('Lite rejects Start when shared VPN state cannot synchronize', () async {
+    container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     setup.synchronizationFailure = StateError('synthetic syncState rejection');
     expect(await setup.setRunning(true), isFalse);
@@ -268,6 +271,7 @@ void main() {
   });
 
   test('Stop during Lite state sync prevents listener authorization', () async {
+    container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     setup.synchronizationGate = Completer<void>();
     setup.synchronizing = Completer<void>();
@@ -281,6 +285,7 @@ void main() {
   });
 
   test('Lite stages current inputs before opening a listener', () async {
+    container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     core.applyGate = Completer<void>();
     core.applied = Completer<void>();
@@ -296,6 +301,7 @@ void main() {
   });
 
   test('Stop during Lite setup prevents a stale listener start', () async {
+    container.read(setupActionProvider.notifier);
     container.read(initProvider.notifier).value = true;
     core.applyGate = Completer<void>();
     core.applied = Completer<void>();

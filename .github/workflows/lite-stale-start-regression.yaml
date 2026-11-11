@@ -57,7 +57,7 @@ jobs:
           for line in (Path(os.environ['RUNNER_TEMP'])/'stale-start/before.jsonl').read_text().splitlines():
               try: events.append(json.loads(line))
               except ValueError: pass
-          failures = [e for e in events if e.get('type') == 'testDone' and e.get('result') == 'failure']
+          failures = [e for e in events if isinstance(e, dict) and e.get('type') == 'testDone' and e.get('result') == 'failure']
           assert len(failures) == 2, events
           PY
       - name: Verify fixed Lite and unchanged Standard lifecycle tests
