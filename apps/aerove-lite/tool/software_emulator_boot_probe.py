@@ -20,7 +20,7 @@ def host_capacity():
 def command(sdk):
     return [str(sdk / 'emulator/emulator'), '-avd', 'tcg_probe', '-port', '5554',
             '-accel', 'off', '-cores', '1', '-memory', '4096', '-no-window',
-            '-gpu', 'lavapipe', '-feature', '-Vulkan',
+            '-gpu', 'swangle', '-feature', '-Vulkan',
             '-no-snapshot', '-noaudio', '-no-boot-anim']
 
 
@@ -106,7 +106,7 @@ def main():
     output = Path(os.environ['RUNNER_TEMP']) / 'software-emulator-probe'
     output.mkdir(parents=True, exist_ok=False)
     receipt = dict(diagnosticOnly=True, accepted=False, functionalAcceptance=False,
-                   visualAcceptance=False, graphicsExperiment='lavapipe-vulkan-disabled',
+                   visualAcceptance=False, graphicsExperiment='swangle-vulkan-disabled',
                    releaseAccepted=False, appInstalled=False, acceleration='off',
                    harnessRevision=os.environ['GITHUB_SHA'],
                    harnessRun=os.environ['GITHUB_RUN_ID'], booted=False,
