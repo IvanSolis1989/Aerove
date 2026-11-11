@@ -15,6 +15,8 @@ PACKAGE = 'dev.aerove.lite'
 STATEMENT = ('The Software itself does not provide any proxy server, node, subscription, '
              'or network access service, and has no partnership, agency, or guarantee '
              'relationship with any provider of such services.')
+LAUNCH_WARNING = ('The app exited unexpectedly while it was starting up last time. '
+                  'Automatic setup was skipped for this launch; you can start it manually to retry.')
 
 
 class Driver:
@@ -53,12 +55,32 @@ class Driver:
         x1, y1, x2, y2 = self.box(node)
         self.run(['shell', 'input', 'tap', str((x1+x2)//2), str((y1+y2)//2)])
 
-    def find(self, label, timeout=90, app=True, clickable=None):
+    def acknowledge_launch_warning(self, rows):
+        labels = {self.label(n) for n in rows if n.get('package') == PACKAGE}
+        if not {'Launch did not finish', LAUNCH_WARNING}.issubset(labels):
+            return False
+        confirms = [n for n in rows if self.label(n) == 'Confirm'
+                    and n.get('package') == PACKAGE and n.get('enabled') == 'true'
+                    and n.get('clickable') == 'true']
+        if len(confirms) != 1 or self.receipt.get('startupRecoveryWarning'):
+            raise RuntimeError('Repeated or ambiguous startup recovery warning')
+        (self.output / 'functional-startup-recovery-warning.png').write_bytes(
+            self.run(['exec-out', 'screencap', '-p']))
+        self.receipt['startupRecoveryWarning'] = dict(
+            observed=True, message=LAUNCH_WARNING, acknowledged=True, cleanLaunch=False)
+        self.tap(confirms[0])
+        return True
+
+    def find(self, label, timeout=90, app=True, clickable=None, launch_recovery=False):
         deadline = time.monotonic() + timeout
         dismissed = 0
         while time.monotonic() < deadline:
             root = self.tree()
             rows = list(root.iter('node'))
+            # Only the post-consent dashboard wait may acknowledge this known dialog.
+            if launch_recovery and self.acknowledge_launch_warning(rows):
+                time.sleep(3)
+                continue
             if any("isn't responding" in self.label(n) for n in rows) and dismissed < 2:
                 waits = [n for n in rows if self.label(n) == 'Wait' and n.get('package') == 'android']
                 if len(waits) == 1:
@@ -147,7 +169,8 @@ def run(adb, output, outer):
         driver.run(['shell', 'input', 'keyevent', 'KEYCODE_BACK'])
         driver.click('Confirm'); driver.click('Got it')
         # The page heading and navigation button share this accessibility label.
-        driver.find('Dashboard', clickable=True); driver.capture('consent-complete')
+        driver.find('Dashboard', clickable=True, launch_recovery=True)
+        driver.capture('consent-complete')
         receipt['steps'].append('production-consent-completed')
         driver.stage = 'profile-import'
         driver.click('Profiles'); driver.click('Add profile')
