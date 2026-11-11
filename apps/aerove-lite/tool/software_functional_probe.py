@@ -150,7 +150,9 @@ def run(adb, output, outer):
         driver.find('Dashboard', clickable=True); driver.capture('consent-complete')
         receipt['steps'].append('production-consent-completed')
         driver.stage = 'profile-import'
-        driver.click('Profiles'); driver.click('Add profile'); driver.click('Link')
+        driver.click('Profiles'); driver.click('Add profile')
+        # Flutter merges the entry title and subtitle into one observed label.
+        driver.click('Link\nObtain a profile from a subscription link or a proxy share link')
         driver.find('Import from link')
         label = 'software-synthetic-profile'
         driver.input_field(label, 'Optional')
