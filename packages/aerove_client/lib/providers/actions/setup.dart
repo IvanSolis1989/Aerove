@@ -2251,7 +2251,8 @@ class SetupAction extends _$SetupAction {
     if (ClientProduct.current.expectedCoreId == 'meow-rs') {
       final owner = service;
       if (owner == null) throw StateError('Android service is unavailable');
-      final message = await owner.syncState(state);
+      // New profile selections belong to setupConfig, not the previous graph.
+      final message = await owner.syncState(state.needSyncSharedState);
       if (message.isNotEmpty) throw MessageException(message);
     }
   }
