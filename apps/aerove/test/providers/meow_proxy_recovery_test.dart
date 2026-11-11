@@ -116,6 +116,21 @@ class _PendingRequest implements CoreRequestQuiescence {
 
 class _BuiltSetup extends SetupAction {
   Object? buildFailure;
+  Object? synchronizationFailure;
+  int synchronizations = 0;
+  Completer<void>? synchronizationGate;
+  Completer<void>? synchronizing;
+
+  @override
+  Future<void> synchronizeSetupState() async {
+    synchronizations++;
+    synchronizing?.complete();
+    await synchronizationGate?.future;
+    if (synchronizationFailure case final failure?) {
+      Error.throwWithStackTrace(failure, StackTrace.current);
+    }
+  }
+
   final listenerCalls = <bool>[];
 
   @override
@@ -242,6 +257,29 @@ void main() {
     expect(container.read(runTimeProvider), isNull);
   });
 
+  test('Lite rejects Start when shared VPN state cannot synchronize', () async {
+    container.read(initProvider.notifier).value = true;
+    setup.synchronizationFailure = StateError('synthetic syncState rejection');
+    expect(await setup.setRunning(true), isFalse);
+    expect(setup.synchronizations, 1);
+    expect(core.applies, 0);
+    expect(setup.listenerCalls.where((running) => running), isEmpty);
+    expect(container.read(runTimeProvider), isNull);
+  });
+
+  test('Stop during Lite state sync prevents listener authorization', () async {
+    container.read(initProvider.notifier).value = true;
+    setup.synchronizationGate = Completer<void>();
+    setup.synchronizing = Completer<void>();
+    final starting = setup.setRunning(true);
+    await setup.synchronizing!.future;
+    await setup.setRunning(false);
+    setup.synchronizationGate!.complete();
+    expect(await starting, isFalse);
+    expect(setup.listenerCalls.where((running) => running), isEmpty);
+    expect(container.read(runTimeProvider), isNull);
+  });
+
   test('Lite stages current inputs before opening a listener', () async {
     container.read(initProvider.notifier).value = true;
     core.applyGate = Completer<void>();
@@ -249,6 +287,7 @@ void main() {
     final starting = setup.setRunning(true);
     await core.applied!.future;
     expect(setup.listenerCalls, isEmpty);
+    expect(setup.synchronizations, 1);
     core.applyGate!.complete();
     expect(await starting, isTrue);
     expect(core.applies, 1);

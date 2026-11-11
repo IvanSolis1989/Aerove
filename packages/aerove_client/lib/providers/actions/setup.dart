@@ -2242,6 +2242,20 @@ class SetupAction extends _$SetupAction {
     return fallback;
   }
 
+  @protected
+  Future<void> synchronizeSetupState() async {
+    if (!system.isAndroid) return;
+    await ref.read(vpnOptionsProvider.future);
+    final state = ref.read(sharedStateProvider);
+    await preferences.saveShareState(state);
+    if (ClientProduct.current.expectedCoreId == 'meow-rs') {
+      final owner = service;
+      if (owner == null) throw StateError('Android service is unavailable');
+      final message = await owner.syncState(state);
+      if (message.isNotEmpty) throw MessageException(message);
+    }
+  }
+
   Future<_SetupTaskResult> _setupConfig({
     bool force = false,
     bool silence = false,
@@ -2560,10 +2574,7 @@ class SetupAction extends _$SetupAction {
         ? null
         : await _setupRecord(inputs, realProfile);
     if (rethrowFailures && record == null) return _SetupTaskResult.failed;
-    if (system.isAndroid) {
-      await ref.read(vpnOptionsProvider.future);
-      await preferences.saveShareState(ref.read(sharedStateProvider));
-    }
+    await synchronizeSetupState();
     // Recaptured so _start's catch can roll back after safeRun swallows it.
     (Object, StackTrace)? handoffFailure;
     var setupFailed = false;

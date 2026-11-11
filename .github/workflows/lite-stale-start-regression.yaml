@@ -46,7 +46,7 @@ jobs:
           p.write_text(s.replace(old, 'if (request.initialize) {'))
           PY
           set +e
-          flutter test --no-pub --concurrency 1 --machine --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart --name 'Lite rejects Start' > "$RUNNER_TEMP/stale-start/before.jsonl" 2>&1
+          flutter test --no-pub --concurrency 1 --machine --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart --name 'Lite rejects Start when (the selected profile|native setup)' > "$RUNNER_TEMP/stale-start/before.jsonl" 2>&1
           status=$?
           set -e
           test "$status" -ne 0
