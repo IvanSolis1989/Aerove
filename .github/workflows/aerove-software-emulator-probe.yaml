@@ -16,7 +16,7 @@ jobs:
   boot-probe:
     if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/test/software-emulator-boot-probe'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -57,7 +57,8 @@ jobs:
           sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0'
           python3 -c "import os,sys; from pathlib import Path; sys.path.insert(0,'apps/aerove-lite/tool'); from lite368_diagnostic import verified_fetch; verified_fetch(Path(os.environ['RUNNER_TEMP'])/'software-original368')"
       - name: Diagnose original APK synthetic functions without KVM
-        timeout-minutes: 45
+        # Software CPU consent/readback alone took 25 minutes in run 42985922542.
+        timeout-minutes: 75
         env:
           AEROVE_SOFTWARE_APK_RUNTIME: ${{ runner.temp }}/software-original368
         run: python3 apps/aerove-lite/tool/software_emulator_boot_probe.py
