@@ -104,16 +104,20 @@ class Driver:
         kwargs.setdefault('clickable', True)
         self.tap(self.find(label, **kwargs))
 
-    def field_node(self, root, row_label=None):
+    def field_node(self, root, row_label=None, allow_absent=False):
         # Flutter omits visual hints; the observed row label owns its EditText.
         scopes = [root] if row_label is None else [
             n for n in root.iter('node') if n.get('package') == PACKAGE
             and self.label(n) == row_label]
+        if not scopes and allow_absent:
+            return None
         if len(scopes) != 1:
             raise RuntimeError('No unique observed field row: ' + str(row_label))
         fields = [n for n in scopes[0].iter('node') if n.get('package') == PACKAGE
                   and n.get('class') == 'android.widget.EditText'
                   and n.get('enabled') == 'true' and n.get('password') == 'false']
+        if not fields and allow_absent:
+            return None
         if len(fields) != 1:
             raise RuntimeError('No unique observed non-secret text field: ' + str(row_label))
         return fields[0]
@@ -125,8 +129,9 @@ class Driver:
         self.tap(field)
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
-            field = self.field_node(self.tree(), row_label)
-            if field.get('focused') == 'true' and not field.get('text'):
+            # Keyboard animation can temporarily remove Flutter semantics.
+            field = self.field_node(self.tree(), row_label, allow_absent=True)
+            if field is not None and field.get('focused') == 'true' and not field.get('text'):
                 break
             time.sleep(2)
         else:
@@ -143,8 +148,8 @@ class Driver:
             actual = None
             while time.monotonic() < deadline:
                 root = self.tree()
-                focused = self.field_node(root, row_label)
-                if focused.get('focused') == 'true':
+                focused = self.field_node(root, row_label, allow_absent=True)
+                if focused is not None and focused.get('focused') == 'true':
                     actual = focused.get('text', '')
                     if actual == expected:
                         break
