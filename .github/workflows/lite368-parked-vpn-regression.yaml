@@ -42,13 +42,13 @@ jobs:
           trap 'cp "$RUNNER_TEMP/lite368-parked/fixed-owner.kt" "$owner"' EXIT
           git show 022b1d30f60c4f380938ea99a3c1c21d96c7321d:"$owner" > "$owner"
           set +e
-          gradle --no-daemon -p apps/aerove-lite :app:testDebugUnitTest \
+          gradle --no-daemon -p apps/aerove-lite :app:testReleaseUnitTest \
             --tests 'dev.aerove.lite.vpn.MeowTunnelBackendTest.parkedVpnIntentConvergesWithoutOpeningListenersOrChangingCoreConfiguration' \
             2>&1 | tee "$evidence/red.log"
           code=${PIPESTATUS[0]}
           set -e
           printf '%s\n' "$code" > "$evidence/red.exit"
-          cp -r apps/aerove-lite/app/build/test-results/testDebugUnitTest "$evidence/red-results"
+          cp -r apps/aerove-lite/app/build/test-results/testReleaseUnitTest "$evidence/red-results"
           python3 - <<'PY'
           import os, pathlib, xml.etree.ElementTree as ET
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'lite368-parked'
@@ -63,13 +63,13 @@ jobs:
           set -euo pipefail
           evidence="$RUNNER_TEMP/lite368-parked"
           git diff --exit-code -- apps/aerove-lite/app/src/main/java
-          gradle --no-daemon -p apps/aerove-lite :app:testDebugUnitTest \
+          gradle --no-daemon -p apps/aerove-lite :app:testReleaseUnitTest \
             --tests 'dev.aerove.lite.vpn.MeowTunnelBackendTest' \
             --tests 'dev.aerove.lite.flutter.MeowSetupProtocolTest' \
             --tests 'dev.aerove.lite.flutter.RuntimeHandoffStoreTest' \
             --tests 'dev.aerove.lite.flutter.MeowEngineAttachmentTest' \
             2>&1 | tee "$evidence/green.log"
-          cp -r apps/aerove-lite/app/build/test-results/testDebugUnitTest "$evidence/green-results"
+          cp -r apps/aerove-lite/app/build/test-results/testReleaseUnitTest "$evidence/green-results"
           python3 - <<'PY'
           import json, os, pathlib, xml.etree.ElementTree as ET
           root = pathlib.Path(os.environ['RUNNER_TEMP']) / 'lite368-parked'
