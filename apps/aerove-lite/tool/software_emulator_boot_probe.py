@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -23,6 +24,31 @@ def command(sdk):
             '-gpu', 'swangle', '-feature', '-Vulkan',
             '-no-snapshot', '-noaudio', '-no-boot-anim']
 
+
+
+def collect_native_crash_evidence(output, receipt):
+    """Preserve only this disposable runner's emulator crash database, bounded."""
+    evidence = dict(files=[], errors=[], totalBytes=0, limitBytes=50 * 1024 * 1024)
+    receipt['nativeCrashEvidence'] = evidence
+    try:
+        (output / 'host-cpuinfo.txt').write_text(Path('/proc/cpuinfo').read_text())
+        for database in sorted(Path('/tmp/android-runner').glob('emu-crash-*.db')):
+            candidates = sorted(database.rglob('*')) if database.is_dir() else [database]
+            for source in candidates:
+                if source.is_symlink() or not source.is_file():
+                    continue
+                size = source.stat().st_size
+                if evidence['totalBytes'] + size > evidence['limitBytes']:
+                    evidence['errors'].append('Crash evidence exceeds bounded size budget')
+                    continue
+                relative = source.relative_to(Path('/tmp/android-runner'))
+                target = output / 'native-crash' / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+                evidence['totalBytes'] += size
+                evidence['files'].append(dict(path=str(relative), bytes=size))
+    except Exception as error:
+        evidence['errors'].append(repr(error))
 
 def app_probe(adb, output, receipt, runtime):
     from lite368_diagnostic import verified_runtime, verify_signatures, IDENTITY
@@ -172,6 +198,7 @@ def main():
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=10)
             receipt['emulatorReturncode'] = process.returncode
+        collect_native_crash_evidence(output, receipt)
         receipt['elapsedSeconds'] = round(time.monotonic() - started, 2)
         if process is not None and process.returncode not in (0, -signal.SIGTERM):
             receipt['applicationResultBeforeCleanup'] = receipt['result']
