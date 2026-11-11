@@ -1,0 +1,59 @@
+name: AEROVE software CPU boot probe (not acceptance)
+'on':
+  push:
+    branches: [test/software-emulator-boot-probe]
+    paths:
+      - .github/workflows/aerove-software-emulator-probe.yaml
+      - apps/aerove-lite/tool/software_emulator_boot_probe.py
+permissions:
+  contents: read
+concurrency:
+  group: software-emulator-boot-probe
+  cancel-in-progress: false
+jobs:
+  boot-probe:
+    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/test/software-emulator-boot-probe'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check repository workspace layout
+        run: python3 tooling/workspace.py check
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          cmdline-tools-version: '16111833'
+          log-accepted-android-sdk-licenses: false
+      - name: Prepare isolated API 33 software-only emulator
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'system-images;android-33;google_apis;x86_64'
+          archive="$RUNNER_TEMP/emulator-linux_x64-16740729.zip"
+          curl --fail --location --silent --show-error --connect-timeout 20 --max-time 240 \
+            https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip -o "$archive"
+          printf '%s  %s\n' cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd "$archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/tcg-sdk"
+          unzip -q "$archive" -d "$RUNNER_TEMP/tcg-sdk"
+          if test -e "$ANDROID_HOME/emulator"; then
+            mv "$ANDROID_HOME/emulator" "$RUNNER_TEMP/original-sdk-emulator"
+          fi
+          mv "$RUNNER_TEMP/tcg-sdk/emulator" "$ANDROID_HOME/emulator"
+          echo no | avdmanager create avd --force -n tcg_probe --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+      - name: Observe Android boot without KVM (no app installed)
+        timeout-minutes: 23
+        run: python3 apps/aerove-lite/tool/software_emulator_boot_probe.py
+      - name: Preserve software probe evidence, never acceptance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: software-cpu-boot-probe
+          path: ${{ runner.temp }}/software-emulator-probe/
+          if-no-files-found: warn
