@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+          submodules: recursive
       - uses: ./.github/actions/flutter
         with:
           flutter-version: '3.47.6'
