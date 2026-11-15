@@ -1,0 +1,59 @@
+name: FLClash sync focused client checks
+on:
+  push:
+    branches: [ci/flclash-rs1-client-20261115]
+permissions:
+  contents: read
+jobs:
+  client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/flutter
+        with:
+          flutter-version: '3.47.6'
+          channel: stable
+          cache: true
+          cache-read-only: true
+      - name: Prepare focused client-only tests
+        id: prepare
+        run: |
+          cp apps/aerove/pubspec.yaml "$RUNNER_TEMP/standard-pubspec.yaml"
+          cp packages/aerove_client/pubspec.yaml "$RUNNER_TEMP/shared-pubspec.yaml"
+          sed -i 's/build_assets: true/build_assets: false/g' apps/aerove/pubspec.yaml packages/aerove_client/pubspec.yaml
+          (cd packages/aerove_client && flutter pub get)
+          (cd apps/aerove && flutter pub get)
+          (cd packages/aerove_client && dart run intl_utils:generate)
+          (cd packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)
+      - uses: ./.github/actions/aerove-test-font
+        with:
+          system-fonts: 'false'
+      - name: Analyze shared client
+        working-directory: packages/aerove_client
+        run: flutter analyze --no-pub --no-fatal-infos
+      - name: Analyze Standard host
+        if: ${{ !cancelled() && steps.prepare.outcome != 'failure' }}
+        working-directory: apps/aerove
+        run: flutter analyze --no-pub --no-fatal-infos
+      - name: Focused regressions
+        if: ${{ !cancelled() }}
+        working-directory: apps/aerove
+        run: flutter test --no-pub test/plugins/app_test.dart test/views/access_test.dart test/widgets/profile_focus_test.dart test/pages/home_test.dart
+      - name: Restore build manifests and record generation
+        if: always()
+        run: |
+          if test -f "$RUNNER_TEMP/standard-pubspec.yaml"; then cp "$RUNNER_TEMP/standard-pubspec.yaml" apps/aerove/pubspec.yaml; fi
+          if test -f "$RUNNER_TEMP/shared-pubspec.yaml"; then cp "$RUNNER_TEMP/shared-pubspec.yaml" packages/aerove_client/pubspec.yaml; fi
+          git diff --binary > "$RUNNER_TEMP/generated.patch"
+          python3 tooling/workspace.py check
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: flclash-sync-generation
+          path: ${{ runner.temp }}/generated.patch

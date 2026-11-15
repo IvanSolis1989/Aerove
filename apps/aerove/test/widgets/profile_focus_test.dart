@@ -46,6 +46,7 @@ Future<ProviderContainer> pumpProfiles(
   int? currentProfileId,
   ValueListenable<bool>? isActive,
   bool picker = false,
+  bool firstFrameOnly = false,
   List<Override> overrides = const [],
 }) async {
   tester.view.physicalSize = const Size(900, 800);
@@ -91,7 +92,9 @@ Future<ProviderContainer> pumpProfiles(
       ),
     ),
   );
-  await tester.pump();
+  if (!firstFrameOnly) {
+    await tester.pump();
+  }
   return container;
 }
 
@@ -116,9 +119,8 @@ void main() {
             child: TestApp(
               includeNavigatorKey: false,
               child: MediaQuery(
-                data: MediaQueryData.fromView(
-                  tester.view,
-                ).copyWith(disableAnimations: true),
+                data: MediaQueryData.fromView(tester.view)
+                    .copyWith(disableAnimations: true),
                 child: LiquidGlassScope(
                   enabled: true,
                   child: LiquidGlassHost(
@@ -395,16 +397,42 @@ void main() {
       expect(rect.bottom, lessThanOrEqualTo(viewport.bottom));
     }
 
-    testWidgets('on first build', (tester) async {
+    testWidgets('in its first frame, which a tab switch snapshots', (
+      tester,
+    ) async {
       await pumpProfiles(
         tester,
         profiles: profiles,
         currentProfileId: selected.id,
+        firstFrameOnly: true,
       );
-      await tester.pumpAndSettle();
 
       expectRevealed(tester);
+
+      await tester.pumpAndSettle();
+      expectRevealed(tester);
     });
+
+    testWidgets(
+      'reveals when an initially inactive page first becomes active',
+      (tester) async {
+        final isActive = ValueNotifier(false);
+        addTearDown(isActive.dispose);
+        await pumpProfiles(
+          tester,
+          profiles: profiles,
+          currentProfileId: selected.id,
+          isActive: isActive,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text(selected.label), findsNothing);
+
+        isActive.value = true;
+        await tester.pumpAndSettle();
+
+        expectRevealed(tester);
+      },
+    );
 
     testWidgets('not in a picker, whose bar is left empty', (tester) async {
       await pumpProfiles(

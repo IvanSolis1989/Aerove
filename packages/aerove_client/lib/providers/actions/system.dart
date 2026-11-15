@@ -26,6 +26,14 @@ class SystemAction extends _$SystemAction {
     return ref.read(packagesProvider);
   }
 
+  Future<List<String>> getChinaPackageNames() async {
+    final platformApp = app;
+    if (platformApp == null) {
+      throw StateError('Application package scanning is unavailable');
+    }
+    return platformApp.getChinaPackageNames();
+  }
+
   Future<bool> isInstalledAppsPermissionGranted() async {
     return await app?.isInstalledAppsPermissionGranted() ?? true;
   }

@@ -37,6 +37,19 @@ class DashboardView extends ConsumerStatefulWidget {
 class _DashboardViewState extends ConsumerState<DashboardView> {
   var _editing = false;
   final _cardKeys = <DashboardWidget, GlobalKey>{};
+  late final ScrollController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = sheetScrollController(context);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   void _setEditing(bool editing) {
     setState(() => _editing = editing);
@@ -96,6 +109,7 @@ class _DashboardViewState extends ConsumerState<DashboardView> {
                     gap: gap,
                   )
                 : _MobileDashboard(
+                    controller: _controller,
                     platform: platform,
                     gap: gap,
                     editing: editing,
@@ -276,6 +290,7 @@ class _DesktopDashboard extends StatelessWidget {
 
 class _MobileDashboard extends ConsumerWidget {
   const _MobileDashboard({
+    required this.controller,
     required this.platform,
     required this.gap,
     required this.editing,
@@ -283,6 +298,7 @@ class _MobileDashboard extends ConsumerWidget {
     required this.onDone,
   });
 
+  final ScrollController controller;
   final SupportPlatform platform;
   final double gap;
   final bool editing;
@@ -304,6 +320,7 @@ class _MobileDashboard extends ConsumerWidget {
       builder: (context, constraints) {
         final side = dashboardMobileSideOf(constraints.maxWidth);
         return CustomScrollView(
+          controller: controller,
           scrollCacheExtent: editing
               ? ScrollCacheExtent.viewport(
                   DashboardWidget.values.length.toDouble(),
