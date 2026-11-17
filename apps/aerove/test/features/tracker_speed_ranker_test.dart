@@ -88,4 +88,78 @@ void main() {
 
     expect(ranked.single.downloadSpeed, 1000);
   });
+
+  test('keeps opaque string identities distinct', () {
+    final ranked = TrackerSpeedRanker().rank([
+      _tracker('01', download: 1),
+      _tracker('1', download: 2),
+      _tracker('mihomo:uuid-甲', download: 3),
+    ], t0);
+
+    expect(ids(ranked), ['mihomo:uuid-甲', '1', '01']);
+  });
+
+  test('clamps counter resets and resumes from the reset counters', () {
+    final ranker = TrackerSpeedRanker();
+    ranker.rank([_tracker('a', upload: 1000, download: 1000)], t0);
+    final reset = ranker.rank([_tracker('a', upload: 10, download: 20)], at(1));
+    final resumed = ranker.rank([
+      _tracker('a', upload: 110, download: 220),
+    ], at(2));
+
+    expect(reset.single.uploadSpeed, 0);
+    expect(reset.single.downloadSpeed, 0);
+    expect(resumed.single.uploadSpeed, 100);
+    expect(resumed.single.downloadSpeed, 200);
+  });
+
+  test('forgets a closed connection before the same id returns', () {
+    final ranker = TrackerSpeedRanker();
+    ranker.rank([_tracker('a')], t0);
+    ranker.rank([_tracker('a', download: 1000)], at(1));
+    expect(ranker.rank([], at(2)), isEmpty);
+    final reopened = ranker.rank([_tracker('a', download: 9000)], at(3));
+
+    expect(reopened.single.downloadSpeed, 0);
+  });
+
+  test('does not replace the sample on a backwards clock', () {
+    final ranker = TrackerSpeedRanker();
+    ranker.rank([_tracker('a')], t0);
+    ranker.rank([_tracker('a', download: 1000)], at(1));
+    final backwards = ranker.rank([_tracker('a', download: 2000)], at(-1));
+    final resumed = ranker.rank([_tracker('a', download: 3000)], at(2));
+
+    expect(backwards.single.downloadSpeed, 1000);
+    expect(resumed.single.downloadSpeed, 2000);
+  });
+
+  test('accepts a sample exactly at the minimum interval', () {
+    final ranker = TrackerSpeedRanker();
+    ranker.rank([_tracker('a')], t0);
+    final ranked = ranker.rank([_tracker('a', download: 1000)], at(0.5));
+
+    expect(ranked.single.downloadSpeed, 2000);
+  });
+
+  test('breaks idle ties by newest start then opaque id', () {
+    final ranked = TrackerSpeedRanker().rank([
+      _tracker('old', start: at(-1)),
+      _tracker('b', start: t0),
+      _tracker('a', start: t0),
+    ], t0);
+
+    expect(ids(ranked), ['a', 'b', 'old']);
+  });
+
+  test('does not mutate the caller snapshot or its speeds', () {
+    final input = [_tracker('a', download: 1), _tracker('b', download: 2)];
+    final originalSpeeds = input.map((item) => item.downloadSpeed).toList();
+    final ranked = TrackerSpeedRanker().rank(input, t0);
+
+    expect(ids(input), ['a', 'b']);
+    expect(input.map((item) => item.downloadSpeed), originalSpeeds);
+    expect(ids(ranked), ['b', 'a']);
+  });
+
 }
