@@ -22,6 +22,23 @@ void main() {
     App().clearPackageIconCache();
   });
 
+  test(
+    'rejects a missing package scan instead of treating it as empty',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async => null);
+
+      await expectLater(App().getChinaPackageNames(), throwsStateError);
+    },
+  );
+
+  test('accepts a successful empty package scan', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async => '[]');
+
+    expect(await App().getChinaPackageNames(), isEmpty);
+  });
+
   test('requests every package icon from Android only once', () async {
     var iconCallCount = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

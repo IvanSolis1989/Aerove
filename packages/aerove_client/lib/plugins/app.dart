@@ -96,8 +96,11 @@ class App {
     final packageNamesString = await methodChannel.invokeMethod<String>(
       'getChinaPackageNames',
     );
-    final List<dynamic> packageNamesRaw =
-        await packageNamesString?.decodeJson<List<dynamic>>() ?? [];
+    if (packageNamesString == null) {
+      throw StateError('Application package scan returned no result');
+    }
+    final packageNamesRaw = await packageNamesString
+        .decodeJson<List<dynamic>>();
     return packageNamesRaw.map((e) => e.toString()).toList();
   }
 
