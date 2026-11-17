@@ -44,16 +44,16 @@ jobs:
         run: flutter analyze --no-pub --no-fatal-infos
       - name: Standard ranking and connection view regressions
         working-directory: apps/aerove
-        run: flutter test --no-pub --concurrency 1 test/features/tracker_speed_ranker_test.dart test/views/connections_test.dart
+        run: flutter test --no-pub --concurrency 1 test/features/tracker_speed_ranker_test.dart test/features/tracker_speed_ranker_ab_test.dart test/views/connections_test.dart
       - name: Lite ranking and connection view regressions
         working-directory: apps/aerove
-        run: flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/features/tracker_speed_ranker_test.dart test/views/connections_test.dart
+        run: flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/features/tracker_speed_ranker_test.dart test/features/tracker_speed_ranker_ab_test.dart test/views/connections_test.dart
       - name: Measure production ranker baseline three times
         working-directory: apps/aerove
         run: |
           set -euo pipefail
           for round in 1 2 3; do
-            flutter test --no-pub --concurrency 1 --reporter expanded --dart-define=AEROVE_RANKING_BENCHMARK=true test/features/tracker_speed_ranker_benchmark_test.dart | tee "$RUNNER_TEMP/ranking-baseline-$round.log"
+            flutter test --no-pub --concurrency 1 --reporter expanded --dart-define=AEROVE_RANKING_BENCHMARK=true test/features/tracker_speed_ranker_ab_test.dart | tee "$RUNNER_TEMP/ranking-baseline-$round.log"
           done
       - name: Verify generated provider output
         if: ${{ !cancelled() && steps.prepare.outcome == 'success' }}
