@@ -15,10 +15,10 @@ impl SocketProtector for Protect {
         self.0.fetch_add(1, Ordering::Relaxed); Ok(())
     }
 }
-async fn free_ports() -> [SocketAddr; 2] {
+async fn reserve_ports() -> [TcpListener; 2] {
     let private = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let mixed = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    [private.local_addr().unwrap(), mixed.local_addr().unwrap()]
+    [private, mixed]
 }
 fn plan(ports: [SocketAddr; 2], upstream: SocketAddr, kind: &str, roots: &Roots) -> String {
     let udp = if kind == "socks5" { ", udp: true" } else { "" };
@@ -61,8 +61,13 @@ async fn socks_connect(address: SocketAddr, target: SocketAddr) -> TcpStream {
 async fn full_factory_http_and_socks_tcp_keepalive_stop_join_and_ports_rebind() {
     let _serial = LOCK.lock().await;
     for kind in ["http","socks5"] {
-        let roots = Roots::new(); let ports = free_ports().await;
+        let roots = Roots::new();
+        // Hold fixture endpoints before choosing the two runtime-owned sockets.
         let target = TcpListener::bind("127.0.0.1:0").await.unwrap(); let target_address = target.local_addr().unwrap();
+        let peer = TcpListener::bind("127.0.0.1:0").await.unwrap(); let peer_address = peer.local_addr().unwrap();
+        let reserved = reserve_ports().await;
+        let ports = reserved.each_ref().map(|listener| listener.local_addr().unwrap());
+        assert!(ports[0] != ports[1] && !ports.contains(&target_address) && !ports.contains(&peer_address));
         let server = tokio::spawn(async move {
             let (mut stream,_) = target.accept().await.unwrap();
             for path in ["/first","/second"] {
@@ -71,7 +76,6 @@ async fn full_factory_http_and_socks_tcp_keepalive_stop_join_and_ports_rebind() 
             }
             assert_eq!(stream.read_u8().await.unwrap_err().kind(),io::ErrorKind::UnexpectedEof);
         });
-        let peer = TcpListener::bind("127.0.0.1:0").await.unwrap(); let peer_address = peer.local_addr().unwrap();
         let protocol = kind.to_owned();
         let proxy = tokio::spawn(async move {
             let (mut stream,_) = peer.accept().await.unwrap();
@@ -88,7 +92,9 @@ async fn full_factory_http_and_socks_tcp_keepalive_stop_join_and_ports_rebind() 
         });
         let calls = Arc::new(AtomicUsize::new(0)); let cancel = CancellationToken::new();
         let network = NetworkContext::protected(Arc::new(Protect(calls.clone())),None,cancel).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
-        let session = Registry::start_owned(plan(ports,peer_address,kind,&roots),None,network,None).unwrap();
+        let runtime_plan = plan(ports,peer_address,kind,&roots);
+        drop(reserved);
+        let session = Registry::start_owned(runtime_plan,None,network,None).unwrap();
         let readiness = timeout(Duration::from_secs(5),session.ready()).await;
         {
             use std::io::Write as _;
@@ -130,8 +136,11 @@ async fn full_factory_http_and_socks_tcp_keepalive_stop_join_and_ports_rebind() 
 #[tokio::test]
 async fn socks_udp_associate_persistent_replies_park_joins_control_and_same_core_resumes() {
     let _serial = LOCK.lock().await;
-    let roots = Roots::new(); let ports = free_ports().await;
+    let roots = Roots::new();
     let remote = TcpListener::bind("127.0.0.1:0").await.unwrap(); let remote_address = remote.local_addr().unwrap();
+    let reserved = reserve_ports().await;
+    let ports = reserved.each_ref().map(|listener| listener.local_addr().unwrap());
+    assert!(ports[0] != ports[1] && !ports.contains(&remote_address));
     let relay = UdpSocket::bind("127.0.0.1:0").await.unwrap(); let relay_address = relay.local_addr().unwrap();
     let target = UdpSocket::bind("127.0.0.1:0").await.unwrap(); let target_address = target.local_addr().unwrap();
     let replies = tokio::spawn(async move {
@@ -154,7 +163,9 @@ async fn socks_udp_associate_persistent_replies_park_joins_control_and_same_core
     });
     let calls = Arc::new(AtomicUsize::new(0));
     let network = NetworkContext::protected(Arc::new(Protect(calls.clone())),None,CancellationToken::new()).with_physical_dns(vec!["127.0.0.1:53".parse().unwrap()]);
-    let session = Registry::start_owned(plan(ports,remote_address,"socks5",&roots),None,network,None).unwrap();
+    let runtime_plan = plan(ports,remote_address,"socks5",&roots);
+    drop(reserved);
+    let session = Registry::start_owned(runtime_plan,None,network,None).unwrap();
     timeout(Duration::from_secs(5),session.ready()).await.unwrap().unwrap(); let owner = session.owned_runtime().unwrap(); let epoch = owner.route_stamp();
     let mut control = TcpStream::connect(ports[1]).await.unwrap(); control.write_all(&[5,1,0]).await.unwrap(); let mut hello = [0;2]; control.read_exact(&mut hello).await.unwrap(); assert_eq!(hello,[5,0]);
     control.write_all(&[5,3,0,1,127,0,0,1,0,0]).await.unwrap(); let mut bound = [0;10]; control.read_exact(&mut bound).await.unwrap(); assert_eq!(&bound[..4],&[5,0,0,1]);
