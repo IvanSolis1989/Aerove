@@ -85,6 +85,105 @@ class MeowEngineAttachmentTest {
         } finally { assertTrue(engine.closeAndJoin()); server.shutdown() }
     }
 
+    @Test fun embeddedFlutterWirePublishesReadableProxyGroupsBeforeListeningAndAfterResume() = runBlocking<Unit> {
+        val home = home()
+        val store = RuntimeHandoffStore(home, validateProjection = MeowRuntimeSnapshotSettings::validate)
+        File(home, "config.yaml").writeText("""
+            mode: rule
+            tun: {enable: true, stack: lwip}
+            proxy-groups: [{name: Fixture, type: select, proxies: [DIRECT]}]
+            rules: ['MATCH,Fixture']
+        """.trimIndent())
+        val vpn = MutableStateFlow(VpnSnapshot())
+        val server = MockWebServer()
+        server.start(java.net.InetAddress.getLoopbackAddress(), 0)
+        val secret = "x".repeat(32)
+        val queries = java.util.concurrent.atomic.AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                check(request.getHeader("Authorization") == "Bearer $secret")
+                return when (request.requestUrl?.encodedPath) {
+                    "/aerove/route" -> route()
+                    "/proxies" -> {
+                        queries.incrementAndGet()
+                        MockResponse().setBody("""{"proxies":{"Fixture":{"name":"Fixture","type":"Selector","now":"DIRECT","all":["DIRECT"]},"DIRECT":{"name":"DIRECT","type":"Direct"}}}""")
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+        val endpoint = CoreEndpoint(server.port, secret)
+        var published: MeowQueryGraph? = null
+        val listening = mutableListOf<Boolean>()
+        val owner = object : MeowFlutterRuntime by UnavailableOwner {
+            override fun queryGraph() = published
+            override fun identityIsCurrent(identity: RuntimeAppliedIdentity) =
+                published?.identity == identity && store.isGraphCandidate(identity.revision, identity.intentEpoch)
+            override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot): RuntimeAppliedIdentity =
+                meowApplyStagedGraph(snapshot, store, replaceRequested = { error("Unexpected VPN owner") }, parked = { candidate ->
+                    store.commitGraphApplied(candidate.revision, candidate.intentEpoch, RuntimeAppliedProof(9, 3, "5"), candidate.handoff)
+                    checkNotNull(store.readAppliedIdentity()).also { published = MeowQueryGraph(it, endpoint, false) }
+                })
+            override suspend fun setListening(expected: MeowSetupRuntime, enabled: Boolean): RuntimeAppliedIdentity {
+                val prior = checkNotNull(published)
+                assertEquals(prior.identity.revision, expected.revision)
+                assertEquals(prior.identity.proof.coreEpoch, expected.coreEpoch)
+                assertEquals(prior.listening, expected.listening)
+                listening += enabled
+                published = prior.copy(listening = enabled)
+                return prior.identity
+            }
+        }
+        val engine = attachment(home, store, vpn, this, owner)
+        val validator = dev.aerove.lite.data.NativeConfigValidator { null }
+        try {
+            assertEquals(true, rpc(engine, "initClash", mapOf("home-dir" to home.path, "version" to 1)).get("result"))
+            assertEquals("not_running", rpc(engine, "getProxies").getJSONObject("error").getString("code"))
+            MeowConfigProtocol(home, validator, { emptySet() }).use { config ->
+                // Use the production inbound decoder and actual setup parser/attachment effects; only JNI is substituted.
+                val setup = MeowSetupProtocol(home, store, config, engine, verifiedFeatures = { emptySet() }, validator = validator)
+                val dispatcher = MeowProtocolDispatcher(home, mapOf("setupConfig" to MeowProtocolMethod { setup.setupConfig(meowObject(it)) }))
+                try {
+                    val envelope = """{"id":"setup-real-shape","method":"setupConfig","arguments":{
+                        "selected-map":{"Fixture":"DIRECT"},"test-url":"","skip-cert-verify":false,
+                        "applied":{"digest":"owned-fixture","yaml-md5":"${"a".repeat(32)}","groups":1,"proxies":1,"rules":1},
+                        "shared-state":{"setupParams":null,"vpnOptions":{
+                          "enable":true,"port":7890,"ipv6":false,"dnsHijacking":false,"allowBypass":false,
+                          "systemProxy":false,"bypassDomain":[],"stack":"lwip","congestionController":"builtin",
+                          "routeAddress":[],"rawRouteAddress":[],"rawRouteExcludeAddress":[],"bypassPrivateRoute":false,"mtu":1400,
+                          "accessControlProps":{"enable":false,"mode":"rejectSelected","acceptList":[],"rejectList":[],"sort":"none","isFilterSystemApp":true,"isFilterNonInternetApp":true}},
+                        "stopTip":"stop","startTip":"start","localNetworkTip":"network","currentProfileName":"Fixture",
+                        "stopText":"stop","onlyStatisticsProxy":true,"showStopAction":false}
+                    }}""".trimIndent()
+                    val result = JSONObject(dispatcher.invoke(envelope).toString(Charsets.UTF_8))
+                    assertEquals(result.toString(), "", result.getString("result"))
+                } finally {
+                    assertTrue(dispatcher.closeAndJoin())
+                }
+            }
+            val identity = checkNotNull(store.readAppliedIdentity())
+            suspend fun assertGroups() {
+                val result = rpc(engine, "getProxies").getJSONObject("result")
+                assertEquals("Fixture", result.getJSONArray("all").getString(0))
+                assertEquals("DIRECT", result.getJSONObject("proxies").getJSONObject("Fixture").getString("now"))
+            }
+            assertGroups()
+            assertFalse(checkNotNull(engine.readRuntime()).listening)
+            for (enabled in listOf(true, false, true)) {
+                assertTrue(engine.setListening(enabled))
+                assertEquals(enabled, checkNotNull(engine.readRuntime()).listening)
+                assertEquals(identity, store.readAppliedIdentity())
+                assertGroups()
+            }
+            assertEquals(listOf(true, false, true), listening)
+            assertEquals(4, queries.get())
+            assertEquals(VpnSnapshot(), vpn.value)
+        } finally {
+            assertTrue(engine.closeAndJoin())
+            server.shutdown()
+        }
+    }
+
     @Test fun ruleSetPreviewValidatesTheSharedPathWithoutRequiringARunningCore() = runBlocking<Unit> {
         val home = home()
         val store = RuntimeHandoffStore(home)

@@ -520,6 +520,92 @@ class MeowSetupProtocolTest {
         }
     }
 
+    @Test fun embeddedFlutterSetupStagesVpnAndNotificationsWithoutSeparateSync() = runBlocking<Unit> {
+        val home = home(); val store = RuntimeHandoffStore(home); val effects = Effects()
+        File(home, "config.yaml").writeText("mode: rule\ntun: {enable: true, stack: lwip}\nrules: ['MATCH,DIRECT']\n")
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects, verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            assertEquals("", api.setupConfig(embeddedSetup("Atomic profile", 1400, true)))
+            assertNull("No separate applyUpdate may publish the prospective state", effects.projection)
+            assertEmbeddedHandoff(checkNotNull(store.readCurrent()), "Atomic profile", 1400, true)
+        }
+    }
+
+    @Test fun embeddedSetupRejectsMalformedWireAndDoesNotPublishFailedGraphState() = runBlocking<Unit> {
+        val home = home(); val store = RuntimeHandoffStore(home); val effects = Effects()
+        File(home, "config.yaml").writeText("mode: rule\ntun: {enable: true, stack: lwip}\nrules: ['MATCH,DIRECT']\n")
+        var applyCount = 0L
+        val apply: suspend (MeowRuntimeSnapshot) -> Unit = { candidate ->
+            val proof = RuntimeAppliedProof(1, ++applyCount, applyCount.toString())
+            val committed = store.commitGraphApplied(candidate.revision, candidate.intentEpoch, proof, candidate.handoff)
+            effects.runtime = MeowSetupRuntime(committed.revision, committed.intentEpoch, committed.handoff.compiledSha256,
+                proof.coreEpoch, proof.serviceOwner, proof.sessionGeneration, false)
+        }
+        effects.onStaged = apply
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects, verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.setupConfig(embeddedSetup("Accepted", 1400, false))
+            val accepted = checkNotNull(store.readLastApplied())
+            val appliedIdentity = checkNotNull(store.readAppliedIdentity())
+            val initialRuntime = checkNotNull(effects.runtime)
+            assertEquals(accepted.revision, api.getAppliedSetup()["revision"])
+            fun malformed(state: Any?) = setup() + ("shared-state" to state)
+            expect("bad_argument", "$.shared-state") { api.setupConfig(malformed(null)) }
+            expect("bad_argument", "$.shared-state.vpnOptions") { api.setupConfig(malformed(shared() + ("vpnOptions" to null))) }
+            expect("bad_argument", "$.shared-state.setupParams") { api.setupConfig(malformed(shared() + ("setupParams" to setup()))) }
+            expect("bad_argument", "$.unexpected") { api.setupConfig(malformed(shared() + ("unexpected" to true))) }
+            expect("bad_argument", "$.unexpected") { api.setupConfig(malformed(shared() + ("unexpected" to null))) }
+            expect("bad_argument", "$.setupParams.unexpected") {
+                api.setupConfig(embeddedSetup("Rejected", 1500, true) + ("unexpected" to true))
+            }
+            assertEquals(accepted.revision, store.readCurrent()?.revision)
+            assertEquals(1L, applyCount)
+            effects.onStaged = { throw MeowConfigProtocolException("graph_failed", "synthetic readiness failure") }
+            expect("graph_failed", null) { api.setupConfig(embeddedSetup("Rejected", 1500, true)) }
+            assertEmbeddedHandoff(checkNotNull(store.readCurrent()), "Rejected", 1500, true)
+            assertEquals(appliedIdentity, store.readAppliedIdentity())
+            assertEquals(initialRuntime, effects.runtime)
+            assertNull("Existing authority fences a graph after an unapplied successor", api.getAppliedSetup()["revision"])
+            assertEmbeddedHandoff(checkNotNull(store.readLastApplied()), "Accepted", 1400, false)
+            assertNull(effects.projection)
+            effects.onStaged = apply
+            // The older wire path still stages from the last successful state, not from the failed embedded attempt.
+            api.setupConfig(setup())
+            assertEmbeddedHandoff(checkNotNull(store.readLastApplied()), "Accepted", 1400, false)
+            api.setupConfig(embeddedSetup("Retried", 1500, true))
+            val retried = checkNotNull(store.readLastApplied())
+            assertEmbeddedHandoff(retried, "Retried", 1500, true)
+            assertEquals(retried.revision, store.readAppliedIdentity()?.revision)
+            assertEquals(retried.revision, api.getAppliedSetup()["revision"])
+            assertEquals(3L, applyCount)
+        }
+    }
+
+    private fun embeddedSetup(profile: String, mtu: Int, allowBypass: Boolean): Map<String, Any?> {
+        val state = shared(true)
+        val options = (state["vpnOptions"] as Map<*, *>).entries.associate { it.key as String to it.value }
+        state["vpnOptions"] = options + mapOf("mtu" to mtu, "allowBypass" to allowBypass)
+        state["currentProfileName"] = profile
+        return setup() + ("shared-state" to state)
+    }
+
+    private fun assertEmbeddedHandoff(snapshot: MeowRuntimeSnapshot, profile: String, mtu: Int, allowBypass: Boolean) {
+        val handoff = snapshot.handoff
+        val options = JSONObject(handoff.vpnOptionsJson)
+        assertTrue(options.getBoolean("enable"))
+        assertEquals(mtu, options.getInt("mtu"))
+        assertEquals(allowBypass, options.getBoolean("allowBypass"))
+        val notification = JSONObject(handoff.notificationJson)
+        assertEquals(profile, notification.getString("currentProfileName"))
+        assertTrue(notification.getBoolean("onlyStatisticsProxy"))
+        assertFalse(notification.getBoolean("showStopAction"))
+        val settings = JSONObject(handoff.runtimeSettingsJson)
+        val persisted = settings.getJSONObject("flutterSetup")
+        assertFalse(persisted.has("shared-state"))
+        assertEquals("local", persisted.getJSONObject("selected-map").getString("Pick"))
+        assertEquals(allowBypass, MeowRuntimeSnapshotSettings.decode(handoff.runtimeSettingsJson).network.allowBypass)
+    }
+
     @Test fun setupWaitsForGraphOwnerAndOwnerFailureLeavesCandidateUnapplied() = runBlocking<Unit> {
         val home = home(); File(home, "config.yaml").writeText("rules: ['MATCH,DIRECT']\n")
         val store = RuntimeHandoffStore(home)

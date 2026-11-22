@@ -85,10 +85,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         val previousSetup = setup ?: previousRuntime?.optJSONObject("flutterSetup")
         exact(row, setOf("setupParams", "vpnOptions", "stopTip", "startTip", "localNetworkTip", "currentProfileName", "stopText", "onlyStatisticsProxy", "showStopAction"), "$", setOf("setupParams", "vpnOptions", "showStopAction"))
         listOf("stopTip", "startTip", "localNetworkTip", "currentProfileName", "stopText").forEach { text(row, it, "$.$it") }
-        val onlyProxy = flag(row, "onlyStatisticsProxy", "$.onlyStatisticsProxy")
-        val showStop = if (row.has("showStopAction")) flag(row, "showStopAction", "$.showStopAction") else true
-        var next = baseline.copy(backgroundPolicy = baseline.backgroundPolicy.copy(onlyStatisticsProxy = onlyProxy, showNotificationStopAction = showStop))
-        if (!row.isNull("vpnOptions")) next = vpn(objectAt(row, "vpnOptions", "$.vpnOptions"), next)
+        var next = sharedSettings(row, baseline)
         val nextSetup = if (row.isNull("setupParams")) previousSetup else setupParams(objectAt(row, "setupParams", "$.setupParams"))
         if (sourceVerifier != null && nextSetup != null && previousSetup != null) {
             listOf("applied", "base", "data-source-proof").forEach { key ->
@@ -147,14 +144,15 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         ""
     }
 
-    private fun decodeUpdate(row: JSONObject, active: MeowSetupRuntime?): LiteSettings {
+    private fun decodeUpdate(row: JSONObject, active: MeowSetupRuntime?,
+        baseline: LiteSettings = settings, state: JSONObject? = shared): LiteSettings {
         exact(row, updateKeys, "$")
         val tun = objectAt(row, "tun", "$.tun")
         exact(tun, setOf("enable", "stack"), "$.tun")
         val tunEnabled = flag(tun, "enable", "$.tun.enable")
         val stack = text(tun, "stack", "$.tun.stack")
         if (stack != "lwip") blocked("$.tun.stack", "Meow uses lwIP; Mihomo TUN stacks cannot be substituted")
-        if (tunEnabled && shared?.optJSONObject("vpnOptions")?.optBoolean("enable") != true)
+        if (tunEnabled && state?.optJSONObject("vpnOptions")?.optBoolean("enable") != true)
             bad("$.tun.enable", "Android TUN requires enabled SharedState VPN options; the service owns its FD and routes")
         val ipv6 = flag(row, "ipv6", "$.ipv6")
         val log = text(row, "log-level", "$.log-level")
@@ -178,16 +176,16 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             val kind = GeoResourceKind.entries.firstOrNull { it.wire == key } ?: blocked("$.geox-url.$key", "No equivalent native geo-resource format")
             urls[kind] = text(geo, key, "$.geox-url.$key")
         }
-        val next = settings.copy(mode = when (text(row, "mode", "$.mode")) {
+        val next = baseline.copy(mode = when (text(row, "mode", "$.mode")) {
             "rule" -> ProxyMode.Rule; "global" -> ProxyMode.Global; "direct" -> ProxyMode.Direct; else -> bad("$.mode", "Unknown mode") },
             ipv6 = ipv6, findProcessMode = FindProcessMode.entries.firstOrNull { it.wireName == text(row, "find-process-mode", "$.find-process-mode") }
                 ?: bad("$.find-process-mode", "Unknown process mode"),
             unifiedDelay = flag(row, "unified-delay", "$.unified-delay"), tcpConcurrent = flag(row, "tcp-concurrent", "$.tcp-concurrent"),
-            network = settings.network.copy(allowLan = flag(row, "allow-lan", "$.allow-lan"),
-                ports = settings.network.ports.copy(mixed = integer(row, "mixed-port", "$.mixed-port", 0, 65535)), authentication = auth),
+            network = baseline.network.copy(allowLan = flag(row, "allow-lan", "$.allow-lan"),
+                ports = baseline.network.ports.copy(mixed = integer(row, "mixed-port", "$.mixed-port", 0, 65535)), authentication = auth),
             externalController = ExternalControllerPreferences(controller.isNotEmpty(), secret),
-            requests = settings.requests.copy(checkCertificate = !flag(row, "skip-cert-verify", "$.skip-cert-verify")),
-            geoResources = settings.geoResources.copy(autoUpdate = flag(row, "geo-auto-update", "$.geo-auto-update"),
+            requests = baseline.requests.copy(checkCertificate = !flag(row, "skip-cert-verify", "$.skip-cert-verify")),
+            geoResources = baseline.geoResources.copy(autoUpdate = flag(row, "geo-auto-update", "$.geo-auto-update"),
                 intervalHours = integer(row, "geo-update-interval", "$.geo-update-interval", 1, Int.MAX_VALUE), urls = urls))
         validateSettings(next)
         return next
@@ -203,13 +201,22 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
     private suspend fun stage(arguments: Map<String, Any?>, providerPermit: ProviderSourcePermit? = null, publication: JSONObject? = null, trace: MeowSetupTrace = MeowSetupTrace()): String = gate.withLock {
         val providerTransactionId = providerPermit?.transactionId
         if (!effects.isInitialized()) throw MeowConfigProtocolException("not_initialized", "Meow offline protocol is not initialized")
-        val request = json(arguments)
+        val request = json(arguments, preserveNulls = arguments.containsKey("shared-state"))
         val providerUpdate = request.optJSONObject("provider-update")
         if (request.has("provider-update") && providerUpdate == null) bad("$.provider-update", "Expected object")
         request.remove("provider-update")
+        // Full Flutter setup carries the prospective state in the same request. Do not
+        // publish that state separately to the current graph before the staged apply.
+        val embedded = if (request.has("shared-state")) {
+            val row = objectAt(request, "shared-state", "$.shared-state")
+            if (!row.isNull("setupParams")) bad("$.shared-state.setupParams", "Setup parameters must use the outer request")
+            objectAt(row, "vpnOptions", "$.shared-state.vpnOptions")
+            validatedSharedState(row).also { request.remove("shared-state") }
+        } else null
         val params = setupParams(request)
-        val state = shared ?: bad("$.sharedState", "syncState must precede setupConfig")
+        val state = embedded ?: shared ?: bad("$.sharedState", "syncState must precede setupConfig")
         if (state.isNull("vpnOptions")) bad("$.vpnOptions", "A complete runtime VPN projection is required")
+        val baseline = embedded?.let { sharedSettings(it, settings) } ?: settings
         val applied = objectAt(params, "applied", "$.applied")
         record(applied)
         val expectedEpoch = store.currentEpoch()
@@ -283,7 +290,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             val sourceContext = kotlinx.coroutines.currentCoroutineContext()
             trace.phase = MeowSetupPhase.COMPILE
             val setupUpdate = updateFromYaml(input, params)
-            val decoded = decodeUpdate(setupUpdate, null)
+            val decoded = decodeUpdate(setupUpdate, null, baseline, state)
             val inputRoot = ConfigYaml.parse(input)
             if (providerTransactionId != null) {
                 val plan = checkNotNull(pendingSource).getJSONObject("plan")
@@ -614,17 +621,20 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
     companion object {
         private val updateKeys = setOf("tun", "mixed-port", "allow-lan", "find-process-mode", "mode", "log-level", "ipv6", "tcp-concurrent", "external-controller", "secret", "unified-delay", "authentication", "geo-auto-update", "geo-update-interval", "geox-url", "skip-cert-verify")
 
-        internal fun validatedSharedState(arguments: Map<String, Any?>): String {
-            val row = json(arguments)
+        internal fun validatedSharedState(arguments: Map<String, Any?>): String = validatedSharedState(json(arguments)).toString()
+
+        private fun validatedSharedState(row: JSONObject): JSONObject {
             exact(row, setOf("setupParams", "vpnOptions", "stopTip", "startTip", "localNetworkTip", "currentProfileName", "stopText", "onlyStatisticsProxy", "showStopAction"), "$", setOf("setupParams", "vpnOptions", "showStopAction"))
             listOf("stopTip", "startTip", "localNetworkTip", "currentProfileName", "stopText").forEach { text(row, it, "$.$it") }
-            val baseline = LiteSettings()
+            sharedSettings(row, LiteSettings())
+            if (!row.isNull("setupParams")) setupParams(objectAt(row, "setupParams", "$.setupParams"))
+            return row
+        }
+        private fun sharedSettings(row: JSONObject, baseline: LiteSettings): LiteSettings {
             val next = baseline.copy(backgroundPolicy = baseline.backgroundPolicy.copy(
                 onlyStatisticsProxy = flag(row, "onlyStatisticsProxy", "$.onlyStatisticsProxy"),
                 showNotificationStopAction = if (row.has("showStopAction")) flag(row, "showStopAction", "$.showStopAction") else true))
-            if (!row.isNull("vpnOptions")) vpn(objectAt(row, "vpnOptions", "$.vpnOptions"), next)
-            if (!row.isNull("setupParams")) setupParams(objectAt(row, "setupParams", "$.setupParams"))
-            return row.toString()
+            return if (row.isNull("vpnOptions")) next else vpn(objectAt(row, "vpnOptions", "$.vpnOptions"), next)
         }
         private fun vpn(row: JSONObject, previous: LiteSettings): LiteSettings {
             exact(row, setOf("enable", "port", "ipv6", "dnsHijacking", "accessControlProps", "allowBypass", "systemProxy", "bypassDomain", "stack", "routeAddress", "mtu", "congestionController", "routeAuto", "routeDefaultsPerFamily", "routeExcludeAddress", "inet4Address", "inet6Address", "dnsHijackTargets", "rawRouteAddress", "rawRouteExcludeAddress", "bypassPrivateRoute"), "$.vpnOptions", setOf("routeAddress", "mtu", "congestionController", "routeAuto", "routeDefaultsPerFamily", "routeExcludeAddress", "inet4Address", "inet6Address", "dnsHijackTargets", "rawRouteAddress", "rawRouteExcludeAddress", "bypassPrivateRoute"))
@@ -684,7 +694,16 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             return row
         }
 
-        private fun json(value: Map<String, Any?>) = JSONObject(value).also { if (it.toString().toByteArray().size > 128 * 1024) bad("$", "Projection exceeds byte budget") }
+        private fun wireValue(value: Any?): Any = when (value) {
+            null -> JSONObject.NULL
+            is Map<*, *> -> value.mapValues { wireValue(it.value) }
+            is Iterable<*> -> value.map(::wireValue)
+            else -> value
+        }
+        private fun json(value: Map<String, Any?>, preserveNulls: Boolean = false) =
+            JSONObject(if (preserveNulls) value.mapValues { wireValue(it.value) } else value).also {
+                if (it.toString().toByteArray().size > 128 * 1024) bad("$", "Projection exceeds byte budget")
+            }
         private fun map(value: JSONObject): Map<String, Any?> = value.keys().asSequence().associateWith { key -> when (val child = value.get(key)) { JSONObject.NULL -> null; is JSONObject -> map(child); else -> child } }
         private fun exact(row: JSONObject, allowed: Set<String>, path: String, optional: Set<String> = emptySet()) {
             row.keys().forEach { if (it !in allowed) bad("$path.$it", "Unknown field") }
