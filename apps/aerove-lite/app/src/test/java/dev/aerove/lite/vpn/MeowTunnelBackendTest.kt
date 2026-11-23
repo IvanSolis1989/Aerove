@@ -58,10 +58,10 @@ class MeowTunnelBackendTest {
     }
     private inner class Fixture(parked: Boolean = false, tunMode: Boolean = false, profileId: String = "profile",
         revision: String = "source-revision", generation: String = "resource-generation", port: Int = 49152,
-        settingsOverride: LiteSettings? = null, startupGated: Boolean = false) {
+        settingsOverride: LiteSettings? = null, startupGated: Boolean = false, yamlOverride: String? = null) {
         val settings = settingsOverride ?: LiteSettings(network = NetworkSettings(vpnEnabled = tunMode))
         val plan = VpnPlan(profileId,settings)
-        val yaml = "proxies: [{name: direct, type: direct}]\nrules: ['MATCH,direct']"
+        val yaml = yamlOverride ?: "proxies: [{name: direct, type: direct}]\nrules: ['MATCH,direct']"
         val bundle = File(temp.root,"resources/bundles/profile/resource-generation").apply{mkdirs()}
         val prepared = PreparedProfile(profileId,yaml,yaml,revision,generation,
             if (profileId.startsWith("flutter:")) null else bundle,null)
@@ -179,9 +179,11 @@ class MeowTunnelBackendTest {
         }
     }
 
-    private suspend fun parkedCandidate(store: RuntimeHandoffStore, controllerEnabled: Boolean = false, vpnEnabled: Boolean = false, sourceProof: JSONObject? = null): MeowRuntimeSnapshot {
-        val yaml = "proxies: [{name: direct, type: direct}]\nrules: ['MATCH,direct']"
-        val record = JSONObject().put("digest", "fixture").put("yaml-md5", "b".repeat(32)).put("groups", 0).put("proxies", 1).put("rules", 1)
+    private suspend fun parkedCandidate(store: RuntimeHandoffStore, controllerEnabled: Boolean = false, vpnEnabled: Boolean = false, sourceProof: JSONObject? = null, testGroup: String? = null): MeowRuntimeSnapshot {
+        val yaml = if (testGroup == null) "proxies: [{name: direct, type: direct}]\nrules: ['MATCH,direct']"
+            else "proxy-groups: [{name: $testGroup, type: select, proxies: [DIRECT]}]\nrules: ['MATCH,$testGroup']"
+        val record = JSONObject().put("digest", "fixture").put("yaml-md5", "b".repeat(32))
+            .put("groups", if (testGroup == null) 0 else 1).put("proxies", if (testGroup == null) 1 else 0).put("rules", 1)
         val setup = JSONObject().put("test-url", "https://example.test/probe").put("skip-cert-verify", false)
             .put("selected-map", JSONObject()).put("applied", record)
             .apply { sourceProof?.let { put("data-source-proof", it) } }
@@ -192,7 +194,8 @@ class MeowTunnelBackendTest {
             .put("allowBypass", desired.network.allowBypass).put("systemProxy", desired.network.systemProxy)
             .put("port", 0).put("accessControlProps", JSONObject()).put("bypassDomain", org.json.JSONArray()).put("stack", "")
         val notification = JSONObject().put("stopTip", "stop").put("startTip", "start").put("localNetworkTip", "lan")
-            .put("currentProfileName", "fixture").put("stopText", "stop").put("showStopAction", true).put("onlyStatisticsProxy", false)
+            .put("currentProfileName", "fixture").put("stopText", "stop")
+            .put("showStopAction", desired.backgroundPolicy.showNotificationStopAction).put("onlyStatisticsProxy", desired.backgroundPolicy.onlyStatisticsProxy)
         val handoff = RuntimeHandoff(MEOW_RUNTIME_CORE_SHA, "fixture", "fixture", "a".repeat(64), yaml, runtimeSha256(yaml.toByteArray()),
             record.toString(), settings.toString(), options.toString(), notification.toString())
         val before = store.readCurrent()
@@ -256,6 +259,120 @@ class MeowTunnelBackendTest {
             assertFalse(f.native.policy.enabled); assertTrue(MeowRuntimeSnapshotSettings.decode(store.readLastApplied()!!.handoff.runtimeSettingsJson).externalController.enabled)
             owner.retire(); assertEquals(2, f.released)
         } finally { owner.retire(); server.shutdown() }
+    }
+
+    @Test fun confirmedStopReopenRejectsStaleLeaseAndRequiresFreshProofBeforeProxyGroupsReturn() = runBlocking<Unit> {
+        val home = temp.newFolder("stopped-query-reopen").canonicalFile
+        val store = RuntimeHandoffStore(home, validateProjection = MeowRuntimeSnapshotSettings::validate)
+        val initial = parkedCandidate(store, vpnEnabled = true, testGroup = "Fixture")
+        val server = MockWebServer()
+        server.start(java.net.InetAddress.getLoopbackAddress(), 0)
+        val parked = Fixture(parked = true, profileId = initial.profileId, revision = initial.revision,
+            generation = initial.handoff.compiledSha256, port = server.port, yamlOverride = initial.handoff.compiledYaml)
+        val cache = StartupCacheResponses { parked.native.policy.epoch() }
+        val reads = java.util.concurrent.atomic.AtomicInteger()
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.getHeader("Authorization") != "Bearer 0123456789abcdef0123456789abcdef")
+                    return MockResponse().setResponseCode(401)
+                return when (request.requestUrl!!.encodedPath) {
+                    "/configs" -> MockResponse().setBody("""{"mode":"rule"}""")
+                    "/aerove/route" -> MockResponse().setBody(
+                        """{"core-epoch":"${parked.native.policy.epoch()}","route-version":"1","picks":{}}""")
+                    "/aerove/selection-cache" -> cache.respond(request)
+                    "/proxies" -> {
+                        reads.incrementAndGet()
+                        MockResponse().setBody("""{"proxies":{"Fixture":{"name":"Fixture","type":"Selector","now":"DIRECT","all":["DIRECT"]},"DIRECT":{"name":"DIRECT","type":"Direct"}}}""")
+                    }
+                    else -> MockResponse().setResponseCode(404)
+                }
+            }
+        }
+        var token = 0L
+        val owner = MeowParkedGraphOwner(store, { ++token }, { it == token }, { _, _, current ->
+            parked.admission = current
+            val exit = CountDownLatch(1)
+            parked.native.onExit = { check(exit.await(10, TimeUnit.SECONDS)) }
+            parked.native.onStop = { exit.countDown() }
+            MeowTunnelBackend({ parked.lease }, parked.native)
+        }, { _, _ -> })
+        val vpn = kotlinx.coroutines.flow.MutableStateFlow(VpnSnapshot())
+        val engine = MeowEngineAttachment(home, store, vpn, this,
+            NativePreparedConfigValidator { _, _ -> error("Prepared validation is outside this test") }, {},
+            { _, _ -> error("No telemetry requested") }, { throw AssertionError("Unexpected runtime warning", it) }, owner)
+        suspend fun proxies(): JSONObject = JSONObject(engine.dispatcher.invoke(
+            """{"id":"parked-query","method":"getProxies","arguments":null}""").toString(Charsets.UTF_8))
+        suspend fun requireGroup() {
+            val answer = proxies()
+            assertFalse(answer.toString(), answer.has("error"))
+            assertTrue(answer.getJSONObject("result").getJSONObject("proxies").has("Fixture"))
+        }
+        try {
+            val before = owner.applyStaged(initial)
+            requireGroup()
+            owner.retire()
+            val requested = store.beginStart(initial.revision, initial.intentEpoch)
+            val desired = MeowRuntimeSnapshotSettings.decode(requested.handoff.runtimeSettingsJson)
+            val active = Fixture(tunMode = true, profileId = requested.profileId, revision = requested.revision,
+                generation = requested.handoff.compiledSha256, settingsOverride = desired, yamlOverride = requested.handoff.compiledYaml)
+            val session = active.backend.open(active.plan)
+            try {
+                session.awaitReady()
+                assertTrue(session.listenerReadback!!.tunReady)
+                store.commitAppliedWithProjection(requested.revision, requested.intentEpoch,
+                    RuntimeAppliedProof(50, 1, active.native.policy.epoch()), requested.handoff)
+            } finally { session.stop() }
+            assertEquals(1, active.released)
+            val stoppedEpoch = store.invalidate(requested.intentEpoch)
+            val stopped = checkNotNull(store.readCurrent())
+            assertEquals(stoppedEpoch, stopped.intentEpoch)
+            assertFalse(stopped.userRequested)
+            suspend fun assertRejectedReopen() {
+                val failure = runCatching {
+                    restoreQueryGraphAfterConfirmedStop { owner.applyStaged(stopped) }
+                }.exceptionOrNull() as MeowProtocolFailure
+                assertEquals("stop_graph_restore_failed", failure.code)
+                assertEquals("Meow startup intent was superseded", failure.cause?.message)
+                assertNull(owner.queryGraph())
+                assertFalse(owner.identityIsCurrent(before))
+                assertTrue(proxies().has("error"))
+                assertEquals(1, reads.get())
+                assertEquals(stopped.revision, store.readCurrent()?.revision)
+                assertEquals(stoppedEpoch, store.readCurrent()?.intentEpoch)
+            }
+            // Inject the two distinct lease checks, without inferring either from device logs.
+            parked.current = false
+            assertRejectedReopen()
+            assertEquals(1, parked.native.starts)
+            assertEquals(1, parked.native.stops)
+            assertEquals(2, parked.released)
+
+            parked.current = true
+            parked.native.onStart = { parked.current = false }
+            assertRejectedReopen()
+            assertEquals(2, parked.native.starts)
+            assertEquals(2, parked.native.stops)
+            assertEquals(3, parked.released)
+
+            parked.current = true
+            parked.native.onStart = {}
+            val restored = owner.applyStaged(stopped)
+            assertEquals(stopped.revision, restored.revision)
+            assertEquals(stoppedEpoch, restored.intentEpoch)
+            assertEquals(before.proof.sessionGeneration + 3, restored.proof.sessionGeneration)
+            assertNotEquals(before.proof.serviceOwner, restored.proof.serviceOwner)
+            assertTrue(store.isGraphCurrent(restored))
+            requireGroup()
+            assertEquals(2, reads.get())
+            assertFalse(engine.readRuntime()!!.listening)
+            assertFalse(store.readCurrent()!!.userRequested)
+            assertEquals(VpnSnapshot(), vpn.value)
+            assertEquals(-1, parked.native.descriptor)
+            cache.assertCompleteRestores(2)
+        } finally {
+            assertTrue(engine.closeAndJoin())
+            try { owner.retire() } finally { server.shutdown() }
+        }
     }
 
     @Test fun graphOwnerLoadsPrivateProxyAndFailedJoinBlocksSuccessorWithoutReleasingLease() = runBlocking<Unit> {

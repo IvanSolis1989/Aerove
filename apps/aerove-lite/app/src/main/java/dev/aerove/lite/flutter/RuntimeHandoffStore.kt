@@ -190,12 +190,22 @@ class RuntimeHandoffStore(privateDirectory: File, private val expectedCoreSha: S
     suspend fun readCurrent(): MeowRuntimeSnapshot? = storage.transaction { load().second }
     suspend fun readLastApplied(): MeowRuntimeSnapshot? = storage.transaction { load(); lastApplied }
 
+    /** Receipt and snapshot from one verified read, not evidence a native owner is still live. */
+    internal suspend fun readAppliedSetupReceipt(): Pair<MeowRuntimeSnapshot, RuntimeAppliedIdentity>? = storage.transaction {
+        load()
+        val applied = lastApplied ?: return@transaction null
+        applied to appliedIdentity(applied)
+    }
+
     /** A verified historical receipt; callers still need a live owner check before runtime effects. */
     suspend fun readAppliedIdentity(): RuntimeAppliedIdentity? = storage.transaction {
         load()
-        val applied = lastApplied ?: return@transaction null
+        lastApplied?.let(::appliedIdentity)
+    }
+
+    private fun appliedIdentity(applied: MeowRuntimeSnapshot): RuntimeAppliedIdentity {
         val proof = checkNotNull(appliedProof) { "runtime_apply_proof_missing" }
-        RuntimeAppliedIdentity(applied.revision, applied.intentEpoch, applied.handoff.compiledSha256,
+        return RuntimeAppliedIdentity(applied.revision, applied.intentEpoch, applied.handoff.compiledSha256,
             RuntimeAppliedProof(proof.getLong("serviceOwner"), proof.getLong("sessionGeneration"), proof.getString("coreEpoch")),
             applied.handoff.setupRecordJson)
     }

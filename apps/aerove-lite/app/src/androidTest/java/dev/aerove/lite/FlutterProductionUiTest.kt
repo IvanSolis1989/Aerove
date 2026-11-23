@@ -25,6 +25,7 @@ open class FlutterProductionUiTest {
     protected val arguments = InstrumentationRegistry.getArguments()
     private val actions = JSONArray()
     private val frames = JSONArray()
+    private val screenshotRetries = JSONArray()
     protected var stage = "initialization"
     private val token = requireNotNull(arguments.getString("qaToken")) {
         "A unique host-owned qaToken is required"
@@ -32,7 +33,8 @@ open class FlutterProductionUiTest {
     protected val root = File(requireNotNull(context.getExternalFilesDir(null)), "flutter-production-qa/$token")
     protected val receipt = JSONObject().put("schema", 1).put("producer", javaClass.name)
         .put("screenshotMethod", "UiAutomation.takeScreenshot/Bitmap.compress(PNG)")
-        .put("actions", actions).put("frames", frames).put("fixture", "fresh-empty-app-data")
+        .put("actions", actions).put("frames", frames).put("screenshotRetries", screenshotRetries)
+        .put("fixture", "fresh-empty-app-data")
         .put("performanceAccepted", false).put("visualApproved", false)
 
     @Test
@@ -1281,13 +1283,49 @@ open class FlutterProductionUiTest {
             }
         }
         val hierarchy = tree()
+        val activeRoot = ui.rootInActiveWindow
         if (label != "failure") {
-            check(ui.rootInActiveWindow?.packageName?.toString() == expectedPackage) {
+            check(activeRoot?.packageName?.toString() == expectedPackage) {
                 "Production app lost the active window at $stage"
             }
         }
         File(root, "$label-hierarchy.json").writeText(hierarchy.toString(2) + "\n")
-        val bitmap = requireNotNull(ui.takeScreenshot()) { "SurfaceFlinger screenshot failed" }
+        // Only the observed failing Dashboard checkpoints can retry; consent and other evidence
+        // continue to use a single real display capture.
+        val retryWindow = activeRoot?.windowId?.takeIf {
+            it >= 0 && isSoftFrostScreenshotRetryCheckpoint(label, expectedPackage == PACKAGE,
+                configuration?.optBoolean("matrix") == true)
+        }
+        val bitmap = requireNotNull(if (retryWindow == null) ui.takeScreenshot() else {
+            val initialHierarchy = hierarchy.toString()
+            fun verifySameScene() {
+                checkInterrupted()
+                val current = ui.rootInActiveWindow
+                check(current != null && current.windowId == retryWindow && current.packageName?.toString() == expectedPackage &&
+                    tree().toString() == initialHierarchy) {
+                    "Original active window or accessibility scene changed during screenshot retry at $stage"
+                }
+            }
+            captureWithOneSameSceneRetry(
+                take = { ui.takeScreenshot() },
+                beforeRetry = {
+                    screenshotRetries.put(JSONObject().put("stage", stage).put("label", label)
+                        .put("outcome", "first-null").put("elapsedRealtimeMs", SystemClock.elapsedRealtime()))
+                    checkInterrupted()
+                    SystemClock.sleep(250)
+                    verifySameScene()
+                },
+                afterRetry = { retried ->
+                    screenshotRetries.put(JSONObject().put("stage", stage).put("label", label)
+                        .put("outcome", if (retried == null) "retry-null" else "retry-bitmap")
+                        .put("elapsedRealtimeMs", SystemClock.elapsedRealtime()))
+                    verifySameScene()
+                    if (retried != null) screenshotRetries.put(JSONObject().put("stage", stage).put("label", label)
+                        .put("outcome", "retry-same-scene").put("elapsedRealtimeMs", SystemClock.elapsedRealtime()))
+                },
+                discard = Bitmap::recycle,
+            )
+        }) { "SurfaceFlinger screenshot failed" }
         val image = File(root, "$label.png")
         try {
             check(bitmap.width > 0 && bitmap.height > 0)
@@ -1323,4 +1361,26 @@ open class FlutterProductionUiTest {
         private const val LAUNCHER = "dev.aerove.lite.FlutterMainActivity"
         private const val STATEMENT = "The Software itself does not provide any proxy server, node, subscription, or network access service, and has no partnership, agency, or guarantee relationship with any provider of such services."
     }
+}
+
+internal fun isSoftFrostScreenshotRetryCheckpoint(label: String, productWindow: Boolean, themeMatrix: Boolean) =
+    productWindow && themeMatrix &&
+        (label == "matrix-soft-frost-classic-monochrome-light" || label == "matrix-soft-frost-classic-monochrome-dark")
+
+internal fun <T : Any> captureWithOneSameSceneRetry(
+    take: () -> T?,
+    beforeRetry: () -> Unit,
+    afterRetry: (T?) -> Unit,
+    discard: (T) -> Unit,
+): T? {
+    take()?.let { return it }
+    beforeRetry()
+    val retried = take()
+    try {
+        afterRetry(retried)
+    } catch (failure: Throwable) {
+        retried?.let(discard)
+        throw failure
+    }
+    return retried
 }

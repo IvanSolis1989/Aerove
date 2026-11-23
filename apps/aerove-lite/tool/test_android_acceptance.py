@@ -550,6 +550,10 @@ class FixedSelectionTest(unittest.TestCase):
             self.assertEqual(result["productionBuildCount"],1)
             self.assertFalse(result["copiedProductionClasses"])
             self.assertFalse(result["androidExecuted"])
+        changed_driver = self.root / "other-driver.kt"
+        changed_driver.write_bytes(driver.read_bytes() + b"\n// A different, unpinned QA driver\n")
+        with self.assertRaisesRegex(ValueError, "precise coordinated Flutter UI candidate"):
+            seal.seal(info,app,test,signature,manifest,graph,mapping,defined,changed_driver)
         for changed in (
             dict(defined=defined.replace("C d 2 2 200 dev.aerove.lite.OwnedFinalPlanCaptureTest\n", "")),
             dict(signature=signature.replace("a"*64,"b"*64)),

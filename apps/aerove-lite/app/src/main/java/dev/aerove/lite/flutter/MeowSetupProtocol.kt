@@ -63,6 +63,9 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
     private val gate = Mutex()
     private var settings = LiteSettings()
     private var shared: JSONObject? = null
+    private data class SharedGeneration(val revision: String, val intentEpoch: Long)
+    private fun MeowRuntimeSnapshot.sharedGeneration() = SharedGeneration(revision, intentEpoch)
+    private var sharedGeneration: SharedGeneration? = null
     private var update: JSONObject? = null
     private var setup: JSONObject? = null
     private var geoOrigin: dev.aerove.lite.data.MeowGeoOrigin? = null
@@ -72,17 +75,22 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
     }
 
     internal suspend fun syncState(snapshot: MeowSharedStateSnapshot): String = gate.withLock {
-        applySharedState(snapshot.copyRow())
+        applySharedState(snapshot.copyRequest(), snapshot.copyRow())
     }
 
-    private suspend fun applySharedState(row: JSONObject): String {
+    private suspend fun applySharedState(request: JSONObject, cached: JSONObject = request): String {
         check(store.readProviderSourceTransaction()?.optString("decision") != "UNDECIDED") { "provider_source_recovery_required" }
-        val previousReceipt = if (shared == null) store.readLastApplied() else null
+        val applied = store.readAppliedSetupReceipt()
+        // A setup may have durably committed before its coroutine could update this attachment.
+        // On crossing that revision, only the caller's explicitly supplied fields can override it.
+        val previousReceipt = applied?.first?.takeIf { shared == null || it.sharedGeneration() != sharedGeneration }
+        val row = if (previousReceipt == null && shared == null) cached else request
         val previousRuntime = previousReceipt?.handoff?.runtimeSettingsJson?.let(::JSONObject)
         val baseline = previousReceipt?.handoff?.runtimeSettingsJson?.let(MeowRuntimeSnapshotSettings::decode) ?: settings
-        val retainedGeoOrigin = previousRuntime?.optJSONObject("flutterGeoOrigin")?.let(dev.aerove.lite.data.MeowGeoOrigin::stored) ?: geoOrigin
-        val previousUpdate = update ?: previousRuntime?.optJSONObject("flutterUpdate")
-        val previousSetup = setup ?: previousRuntime?.optJSONObject("flutterSetup")
+        val retainedGeoOrigin = if (previousRuntime == null) geoOrigin
+            else previousRuntime.optJSONObject("flutterGeoOrigin")?.let(dev.aerove.lite.data.MeowGeoOrigin::stored)
+        val previousUpdate = if (previousRuntime == null) update else previousRuntime.optJSONObject("flutterUpdate")
+        val previousSetup = if (previousRuntime == null) setup else previousRuntime.optJSONObject("flutterSetup")
         exact(row, setOf("setupParams", "vpnOptions", "stopTip", "startTip", "localNetworkTip", "currentProfileName", "stopText", "onlyStatisticsProxy", "showStopAction"), "$", setOf("setupParams", "vpnOptions", "showStopAction"))
         listOf("stopTip", "startTip", "localNetworkTip", "currentProfileName", "stopText").forEach { text(row, it, "$.$it") }
         var next = sharedSettings(row, baseline)
@@ -93,18 +101,31 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             }
         }
         if (row.isNull("vpnOptions")) {
-            val retained = shared?.optJSONObject("vpnOptions") ?: previousReceipt?.handoff?.vpnOptionsJson?.let(::JSONObject)
+            val retained = if (previousReceipt == null) shared?.optJSONObject("vpnOptions")
+                else JSONObject(previousReceipt.handoff.vpnOptionsJson)
             if (retained != null) row.put("vpnOptions", JSONObject(retained.toString()))
         }
-        val appliedSource = store.readLastApplied()?.handoff?.compiledYaml
+        val appliedSource = applied?.first?.handoff?.compiledYaml
         val reconciled = if (appliedSource != null && !row.isNull("vpnOptions")) meowReconcileFlutterTun(appliedSource, next, row) else null
         next = reconciled?.settings ?: next
         val effectiveRow = reconciled?.shared ?: row
         validateSettings(next)
         effects.requireBuilderCompatible(next, effectiveRow.optJSONObject("vpnOptions")?.toString() ?: previousReceipt?.handoff?.vpnOptionsJson ?: "{}")
         val projection = MeowSetupProjection(next, effectiveRow.toString(), previousUpdate?.toString(), nextSetup?.toString())
-        effects.applyUpdate(effects.readRuntime(), projection)
-        settings = next; shared = effectiveRow; setup = nextSetup; update = previousUpdate; geoOrigin = retainedGeoOrigin
+        val runtime = effects.readRuntime()
+        val liveMatches = runtime == null || applied?.let { (snapshot, identity) ->
+            matches(runtime, snapshot) && runtime.serviceOwner == identity.proof.serviceOwner &&
+                runtime.sessionGeneration == identity.proof.sessionGeneration && runtime.coreEpoch == identity.proof.coreEpoch
+        } != false
+        val confirmed = store.readAppliedSetupReceipt()
+        if (!liveMatches || confirmed?.second != applied?.second ||
+            confirmed?.first?.handoff?.runtimeSettingsJson != applied?.first?.handoff?.runtimeSettingsJson ||
+            confirmed?.first?.handoff?.vpnOptionsJson != applied?.first?.handoff?.vpnOptionsJson) {
+            throw MeowConfigProtocolException("superseded", "Applied state changed before shared settings synchronization")
+        }
+        effects.applyUpdate(runtime, projection)
+        settings = next; shared = effectiveRow; sharedGeneration = applied?.first?.sharedGeneration()
+        setup = nextSetup; update = previousUpdate; geoOrigin = retainedGeoOrigin
         return ""
     }
 
@@ -385,7 +406,8 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             val staged = store.commitForSetup(handoff, expectedEpoch, before?.revision, effects::hasRequestedIntent, ::checkSource, providerPermit)
             trace.phase = MeowSetupPhase.APPLY_STAGED
             effects.applyStaged(staged)
-            setup = params; settings = projected; shared = effectiveState; update = setupUpdate; geoOrigin = inputGeoOrigin
+            setup = params; settings = projected; shared = effectiveState; sharedGeneration = staged.sharedGeneration()
+            update = setupUpdate; geoOrigin = inputGeoOrigin
             trace.phase = MeowSetupPhase.RELEASE_RESOURCES
             ""
         } finally {
@@ -724,17 +746,19 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
 }
 
 /** Internal replay value: every originating request passes the original wire decoder and budget. */
-internal class MeowSharedStateSnapshot private constructor(private val json: String) {
+internal class MeowSharedStateSnapshot private constructor(private val raw: String, private val json: String) {
+    internal fun copyRequest() = JSONObject(raw)
     internal fun copyRow() = JSONObject(json)
     companion object {
         internal fun fromRequest(arguments: Map<String, Any?>, previous: MeowSharedStateSnapshot?): MeowSharedStateSnapshot {
-            val row = JSONObject(MeowSetupProtocol.validatedSharedState(arguments))
+            val raw = MeowSetupProtocol.validatedSharedState(arguments)
+            val row = JSONObject(raw)
             previous?.copyRow()?.let { retained ->
                 listOf("vpnOptions", "setupParams").forEach { key ->
                     if (row.isNull(key)) retained.optJSONObject(key)?.let { row.put(key, JSONObject(it.toString())) }
                 }
             }
-            return MeowSharedStateSnapshot(row.toString())
+            return MeowSharedStateSnapshot(raw, row.toString())
         }
     }
 }

@@ -352,6 +352,92 @@ class MeowSetupProtocolTest {
             pending.withLatest { assertNull(it) }
         }
     }
+    @Test fun freshPartialSyncRetainsDurableBWhenBWasCancelledBeforeLocalPublication() = runBlocking<Unit> {
+        val home = home(); val store = RuntimeHandoffStore(home); val effects = Effects()
+        File(home, "config.yaml").writeText("mode: rule\nrules: ['MATCH,DIRECT']\n")
+        val pending = MeowServiceSharedState(Mutex()) { true }
+        val bCommitted = CompletableDeferred<Unit>()
+        var applications = 0L
+        effects.onStaged = { snapshot ->
+            val generation = ++applications
+            store.commitGraphApplied(snapshot.revision, snapshot.intentEpoch,
+                RuntimeAppliedProof(1, generation, generation.toString()), snapshot.handoff)
+            if (generation == 2L) {
+                bCommitted.complete(Unit)
+                awaitCancellation()
+            }
+        }
+        fun state(mtu: Int) = shared(true).apply {
+            this["vpnOptions"] = (this["vpnOptions"] as Map<*, *>).entries.associate { it.key as String to it.value } + ("mtu" to mtu)
+        }
+        fun envelope(name: String, mtu: Int) = setup().apply {
+            this["applied"] = record(name)
+            this["shared-state"] = state(mtu)
+        }
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects,
+                verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            pending.syncState(pending.nextRevision(), state(1400)) { api.syncState(it) }
+            api.setupConfig(envelope("a", 1400))
+            val a = store.readAppliedIdentity()!!
+            val request = launch { api.setupConfig(envelope("b", 1500)) }
+            try { withTimeout(5000) { bCommitted.await() } } finally {
+                request.cancel(); withTimeout(5000) { request.join() }
+            }
+            assertTrue(request.isCancelled)
+            val b = store.readAppliedIdentity()!!
+            assertNotEquals(a, b)
+            assertTrue(store.isGraphCurrent(b))
+            val reopened = RuntimeHandoffStore(home).readLastApplied()!!
+            assertEquals(1500, JSONObject(reopened.handoff.vpnOptionsJson).getInt("mtu"))
+            val partial = shared().apply {
+                this["vpnOptions"] = null
+                this["setupParams"] = null
+                this["currentProfileName"] = "fresh notification"
+            }
+            // Different live owner, generation or native epoch must not receive B's projection.
+            val liveB = MeowSetupRuntime(b.revision, b.intentEpoch, b.compiledSha256, b.proof.coreEpoch,
+                b.proof.serviceOwner, b.proof.sessionGeneration, false)
+            effects.projection = null
+            for (stale in listOf(liveB.copy(serviceOwner = b.proof.serviceOwner + 1),
+                liveB.copy(sessionGeneration = b.proof.sessionGeneration + 1),
+                liveB.copy(coreEpoch = (b.proof.coreEpoch.toULong() + 1uL).toString()))) {
+                effects.runtime = stale
+                expect("superseded", null) { pending.syncState(pending.nextRevision(), partial) { api.syncState(it) } }
+                assertNull(effects.projection)
+                assertEquals(b, store.readAppliedIdentity())
+            }
+            effects.runtime = null // The real owner may release its graph when the apply is cancelled.
+            repeat(2) {
+                pending.syncState(pending.nextRevision(), partial) { api.syncState(it) }
+                val projection = effects.projection!!
+                assertEquals(1500, JSONObject(projection.sharedStateJson).getJSONObject("vpnOptions").getInt("mtu"))
+                assertEquals("b", JSONObject(projection.setupParamsJson!!).getJSONObject("applied").getString("digest"))
+                assertEquals("fresh notification", JSONObject(projection.sharedStateJson).getString("currentProfileName"))
+                assertEquals(b, store.readAppliedIdentity())
+            }
+
+            val next = pending.nextRevision()
+            pending.syncState(next, state(1600)) { api.syncState(it) }
+            pending.syncState(pending.nextRevision(), partial) { api.syncState(it) }
+            assertEquals(1600, effects.projection!!.settings.network.mtu)
+            assertEquals(b, store.readAppliedIdentity())
+
+            // A replacement proof published after the atomic read also fences the old operation.
+            effects.projection = null
+            effects.onBuilderCompatible = { _, _ ->
+                store.commitGraphRuntimeProjection(b, reopened.handoff,
+                    b.proof.copy(coreEpoch = (b.proof.coreEpoch.toULong() + 1uL).toString()))
+            }
+            expect("superseded", null) { pending.syncState(pending.nextRevision(), partial) { api.syncState(it) } }
+            assertNull(effects.projection)
+            val changed = store.readAppliedIdentity()!!
+            assertEquals(b.revision, changed.revision)
+            assertNotEquals(b.proof, changed.proof)
+            assertTrue(store.isGraphCurrent(changed))
+        }
+    }
+
     @Test fun nullableOrOmittedOptionsRetainAcceptedStateAcrossPreinitAndReinit() = runBlocking<Unit> {
         val home = home(); val pending = MeowServiceSharedState(Mutex()) { true }
         val options = ((shared(true)["vpnOptions"] as Map<*, *>).entries.associate { it.key as String to it.value } + ("mtu" to 1280)).toMutableMap()
