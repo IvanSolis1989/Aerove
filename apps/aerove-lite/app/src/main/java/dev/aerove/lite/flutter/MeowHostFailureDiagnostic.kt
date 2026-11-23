@@ -15,11 +15,27 @@ internal fun meowHostFailureDiagnostic(code: String, method: String, failure: Th
     return "transport_failure code=$safeCode method=$safeMethod causes=$causes".take(2048)
 }
 
+/** Use exact checks emitted by MeowTunnelBackend.open, never arbitrary exception text. */
+private fun stopOpenFailureCode(failure: Throwable): String? {
+    if (failure !is IllegalStateException) return null
+    return when (failure.message) {
+        "Meow returned an invalid handle" -> "open_invalid_handle"
+        "Invalid Meow FD/protect plan" -> "open_fd_protect_mismatch"
+        "Meow runtime mode differs from Builder" -> "open_builder_mode_mismatch"
+        "Meow applied configuration differs from submitted engine YAML" -> "open_engine_yaml_mismatch"
+        "Meow applied configuration profile mismatch" -> "open_applied_profile_mismatch"
+        "Meow prepared lineage mismatch" -> "open_prepared_lineage_mismatch"
+        "Meow startup intent was superseded" -> "open_owner_superseded"
+        else -> null
+    }
+}
+
 /** Shareable code locations only: never include exception messages, paths or request data. */
 internal fun meowFailureLocation(method: String, failure: Throwable): String {
     val token = Regex("[A-Za-z_$][A-Za-z0-9_.$]{0,159}")
     fun safe(value: String) = value.takeIf { token.matches(it) } ?: "unknown"
-    val causes = generateSequence(failure) { it.cause }.take(3).joinToString(" <- ") { cause ->
+    val causes = generateSequence(failure) { it.cause }.take(3).toList()
+    val locations = causes.joinToString(" <- ") { cause ->
         val frame = cause.stackTrace.firstOrNull { it.className.startsWith("dev.aerove.lite.") }
         val location = frame?.let { "@${safe(it.className)}.${safe(it.methodName)}:${it.lineNumber}" }.orEmpty()
         val evidence = cause.suppressed.filterIsInstance<dev.aerove.lite.core.MeowStartupFailureEvidence>().firstOrNull()
@@ -38,5 +54,7 @@ internal fun meowFailureLocation(method: String, failure: Throwable): String {
     val knownHost = setOf("service.init", "service.shutdown", "service.syncState", "service.getRunTime",
         "service.setUiTelemetryActive", "service.start", "service.stop", "service.park", "core.invokeMethod", "core.cancel")
     val safeMethod = method.takeIf { it in MeowProtocolDispatcher.METHODS || it in knownHost } ?: "unknown"
-    return "$safeMethod: $causes".take(1024)
+    val openCode = if (safeMethod == "service.stop") causes.firstNotNullOfOrNull(::stopOpenFailureCode) else null
+    val prefix = openCode?.let { "{$it} " }.orEmpty()
+    return "$safeMethod: $prefix$locations".take(1024)
 }

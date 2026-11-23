@@ -531,6 +531,64 @@ class MeowSetupProtocolTest {
         }
     }
 
+    @Test fun stagedTunHintCannotReenableDisabledAndroidVpnOrBlockEnabledBuilder() = runBlocking<Unit> {
+        val home = home(); val store = RuntimeHandoffStore(home); val effects = Effects()
+        val file = File(home, "config.yaml").apply {
+            writeText("mode: rule\ntun: {enable: true, stack: lwip, mtu: 1400}\nrules: ['MATCH,DIRECT']\n")
+        }
+        val original = file.readBytes()
+        val builders = mutableListOf<Pair<Boolean, Int>>()
+        effects.onBuilderCompatible = { settings, vpnOptions ->
+            val builder = meowFlutterBuilderSettings(settings, vpnOptions)
+            builders.add(builder.network.vpnEnabled to builder.network.mtu)
+        }
+        var applied = 0L
+        effects.onStaged = { candidate ->
+            val proof = RuntimeAppliedProof(1, ++applied, applied.toString())
+            val graph = store.commitGraphApplied(candidate.revision, candidate.intentEpoch, proof, candidate.handoff)
+            effects.runtime = MeowSetupRuntime(graph.revision, graph.intentEpoch, graph.handoff.compiledSha256,
+                proof.coreEpoch, proof.serviceOwner, proof.sessionGeneration, false)
+        }
+        fun stage(enabled: Boolean): Map<String, Any?> {
+            val state = shared(enabled)
+            val options = (state.getValue("vpnOptions") as Map<*, *>).entries.associate { it.key as String to it.value }
+            state["vpnOptions"] = options + mapOf("stack" to "lwip", "congestionController" to "builtin")
+            return setup() + ("shared-state" to state)
+        }
+        fun liveHint(enabled: Boolean) = update().apply {
+            put("tun", mapOf("enable" to enabled, "stack" to "lwip"))
+        }
+        suspend fun assertApplied(enabled: Boolean, hint: Boolean) {
+            val graph = checkNotNull(store.readLastApplied())
+            val runtime = JSONObject(graph.handoff.runtimeSettingsJson)
+            assertEquals(enabled, JSONObject(graph.handoff.vpnOptionsJson).getBoolean("enable"))
+            assertEquals(enabled, MeowRuntimeSnapshotSettings.decode(graph.handoff.runtimeSettingsJson).network.vpnEnabled)
+            assertEquals(hint, runtime.getJSONObject("flutterUpdate").getJSONObject("tun").getBoolean("enable"))
+            assertEquals(graph.revision, store.readAppliedIdentity()?.revision)
+            assertTrue(builders.isNotEmpty())
+            assertTrue(builders.all { it == (enabled to 1400) })
+            builders.clear()
+        }
+        config(home).use { config ->
+            val api = MeowSetupProtocol(home, store, config, effects, verifiedFeatures = { emptySet() }, validator = NativeConfigValidator { null })
+            api.syncState(shared(true))
+            api.updateConfig(liveHint(true))
+            builders.clear()
+            assertEquals("", api.setupConfig(stage(true)))
+            assertApplied(enabled = true, hint = true)
+            assertEquals("", api.setupConfig(stage(false)))
+            assertApplied(enabled = false, hint = false)
+            val disabled = store.readAppliedIdentity()
+            expect("bad_argument", "$.tun.enable") { api.updateConfig(liveHint(true)) }
+            assertEquals(disabled, store.readAppliedIdentity())
+            // The Android service, not a desktop Core hint, restores enabled Builder mode.
+            assertEquals("", api.setupConfig(stage(true)))
+            assertApplied(enabled = true, hint = false)
+            assertEquals(3L, applied)
+            assertArrayEquals(original, file.readBytes())
+        }
+    }
+
     @Test fun embeddedSetupRejectsMalformedWireAndDoesNotPublishFailedGraphState() = runBlocking<Unit> {
         val home = home(); val store = RuntimeHandoffStore(home); val effects = Effects()
         File(home, "config.yaml").writeText("mode: rule\ntun: {enable: true, stack: lwip}\nrules: ['MATCH,DIRECT']\n")
@@ -655,6 +713,9 @@ class MeowSetupProtocolTest {
         var onApply: suspend () -> Unit = {}
         var refreshCalls = 0
         var onStaged: suspend (MeowRuntimeSnapshot) -> Unit = {}
+        var onBuilderCompatible: suspend (dev.aerove.lite.LiteSettings, String) -> Unit = { _, _ -> }
+        override suspend fun requireBuilderCompatible(settings: dev.aerove.lite.LiteSettings, vpnOptionsJson: String) =
+            onBuilderCompatible(settings, vpnOptionsJson)
         override suspend fun applyStaged(snapshot: MeowRuntimeSnapshot) = onStaged(snapshot)
         override suspend fun readRuntime() = runtime
         override suspend fun applyUpdate(expected: MeowSetupRuntime?, projection: MeowSetupProjection) { onApply(); this.projection = projection }

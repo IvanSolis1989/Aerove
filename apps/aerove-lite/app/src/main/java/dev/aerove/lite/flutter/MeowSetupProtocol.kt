@@ -289,7 +289,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             }
             val sourceContext = kotlinx.coroutines.currentCoroutineContext()
             trace.phase = MeowSetupPhase.COMPILE
-            val setupUpdate = updateFromYaml(input, params)
+            val setupUpdate = updateFromYaml(input, params, flag(state.getJSONObject("vpnOptions"), "enable", "$.vpnOptions.enable"))
             val decoded = decodeUpdate(setupUpdate, null, baseline, state)
             val inputRoot = ConfigYaml.parse(input)
             if (providerTransactionId != null) {
@@ -432,7 +432,8 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         val producerFile="geo/${resources.resourceLeaseId}/producer.yaml"
         val oldProducer=metadata.getJSONObject("flutterProducer").getString("file")
         metadata.put("flutterSetup",producer.setupParams)
-            .put("flutterUpdate",updateFromYaml(producer.body,producer.setupParams))
+            .put("flutterUpdate",updateFromYaml(producer.body,producer.setupParams,
+                flag(JSONObject(previous.vpnOptionsJson), "enable", "$.vpnOptions.enable")))
             .put("flutterProducer",JSONObject().put("file",producerFile).put("sha256",producer.sha256).put("bytes",producer.body.toByteArray().size))
             .put("flutterDefinitionSha256",producer.definitionSha256).put("flutterGeoAssets",resources.records)
         val preserved=previous.resources.filter { !it.relativePath.startsWith("geo/") && it.relativePath != oldProducer }
@@ -514,7 +515,7 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
         matches(effects.readRuntime(), readback) && map(JSONObject(readback.handoff.setupRecordJson)) == map(next)
     }
 
-    private fun updateFromYaml(yaml: String, params: JSONObject): JSONObject {
+    private fun updateFromYaml(yaml: String, params: JSONObject, vpnEnabled: Boolean): JSONObject {
         val root = ConfigYaml.parse(yaml)
         val baseline = update?.let { JSONObject(it.toString()) } ?: JSONObject()
             .put("tun", JSONObject().put("enable", settings.network.vpnEnabled).put("stack", "lwip"))
@@ -525,6 +526,9 @@ class MeowSetupProtocol(homeDir: File, private val store: RuntimeHandoffStore, p
             .put("secret", settings.externalController.secret).put("unified-delay", settings.unifiedDelay)
             .put("authentication", JSONArray(settings.network.authentication.credentials)).put("geo-auto-update", settings.geoResources.autoUpdate)
             .put("geo-update-interval", settings.geoResources.intervalHours).put("geox-url", JSONObject())
+        // The retained Core hint cannot enable Android TUN when the prospective service opts out.
+        // Preserve false with enabled VPN: the service, not the Core hint, owns Builder mode.
+        if (!vpnEnabled) baseline.getJSONObject("tun").put("enable", false)
         (updateKeys - setOf("tun", "skip-cert-verify")).forEach { key -> if (root.containsKey(key)) baseline.put(key, JSONObject.wrap(root[key])) }
         if (root.containsKey("geodata") || GeoResourceKind.entries.any { root.containsKey("${it.sourceKey}-download-url") }) {
             val geo = dev.aerove.lite.data.MeowGeoPolicy.read(root, settings.geoResources)

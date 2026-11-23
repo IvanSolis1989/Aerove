@@ -62,4 +62,32 @@ class MeowHostFailureDiagnosticTest {
         }
     }
 
+    @Test fun stopOpenChecksPrefixTheObfuscatedStackWithFixedCodesOnly() {
+        val codes = mapOf(
+            "Meow returned an invalid handle" to "open_invalid_handle",
+            "Invalid Meow FD/protect plan" to "open_fd_protect_mismatch",
+            "Meow runtime mode differs from Builder" to "open_builder_mode_mismatch",
+            "Meow applied configuration differs from submitted engine YAML" to "open_engine_yaml_mismatch",
+            "Meow applied configuration profile mismatch" to "open_applied_profile_mismatch",
+            "Meow prepared lineage mismatch" to "open_prepared_lineage_mismatch",
+            "Meow startup intent was superseded" to "open_owner_superseded",
+        )
+        val privateValue = "https://private.invalid/token"
+        for ((message, code) in codes) {
+            val original = IllegalStateException(message).also {
+                it.stackTrace = arrayOf(StackTraceElement("dev.aerove.lite.vpn.c0", "invokeSuspend", privateValue, 527))
+            }
+            val failure = IllegalStateException(privateValue, original).also { it.stackTrace = emptyArray() }
+            val diagnostic = meowFailureLocation("service.stop", failure)
+            assertTrue(diagnostic, diagnostic.startsWith("service.stop: {$code} IllegalStateException"))
+            assertTrue(diagnostic, diagnostic.contains("@dev.aerove.lite.vpn.c0.invokeSuspend:527"))
+            assertFalse(diagnostic.contains(privateValue))
+            assertFalse(meowFailureLocation("service.start", original).contains(code))
+            assertFalse(meowFailureLocation("service.stop", IllegalArgumentException(message)).contains(code))
+            val nearMatch = meowFailureLocation("service.stop", IllegalStateException("$message $privateValue"))
+            assertFalse(nearMatch.contains(code))
+            assertFalse(nearMatch.contains(privateValue))
+            assertTrue(diagnostic.length <= 1024)
+        }
+    }
 }
