@@ -1,0 +1,84 @@
+name: AEROVE Emulator Boot A-B Diagnostic
+on:
+  push:
+    branches: [diagnostics/aerove-emulator-boot-ab-20261124]
+    paths:
+      - .github/workflows/aerove-boot-ab.yaml
+      - tools/diagnostics/aerove-boot-ab/**
+permissions:
+  contents: read
+concurrency:
+  group: aerove-boot-ab-20261124
+  cancel-in-progress: false
+jobs:
+  boot:
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'IvanSolis1989/Aerove' &&
+      github.actor == 'IvanSolis1989' &&
+      github.ref == 'refs/heads/diagnostics/aerove-emulator-boot-ab-20261124' &&
+      github.run_attempt == 1 &&
+      (github.event.created || github.event.before == 'd1b2db996af6142fbb299059c4de1b50df7dac38')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: d1b2db996af6142fbb299059c4de1b50df7dac38
+          path: boot-ab-original
+          persist-credentials: false
+      - name: Boot two pinned emulator versions, without APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          private="$(mktemp -d "$RUNNER_TEMP/aerove-boot-ab.XXXXXX")"
+          result="$private/receipts"
+          source="$GITHUB_WORKSPACE/tools/diagnostics/aerove-boot-ab"
+          driver_status=0
+          trap 'rm -rf -- "$private"' EXIT
+          # Subshell preserves fail-fast. Raw host/device/process evidence never enters Actions output.
+          set +e
+          (
+            set -euo pipefail
+            test "$(uname -m)" = 'x86_64'
+            test -c /dev/kvm
+            command -v setfacl >/dev/null
+            sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+            test -r /dev/kvm && test -w /dev/kvm
+            sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Official SDK required}}"
+            sdk="$(realpath "$sdk")"
+            tools="$sdk/cmdline-tools/latest/bin"
+            test -x "$tools/sdkmanager"
+            test -x "$tools/avdmanager"
+            test -x "$sdk/platform-tools/adb"
+            export JAVA_HOME="${JAVA_HOME_17_X64:?Hosted JDK 17 required}"
+            # Use only the runner's existing SDK license state, and do not accept new terms.
+            "$tools/sdkmanager" --sdk_root="$sdk" --install 'system-images;android-33;google_apis;x86_64' --channel=0 </dev/null
+            mkdir "$private/archives"
+            fetch() {
+              curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+                --connect-timeout 20 --max-time 360 --output "$2" "$1"
+            }
+            for build in 16740729 16970787; do
+              name="emulator-linux_x64-$build.zip"
+              fetch "https://dl.google.com/android/repository/$name" "$private/archives/$name"
+            done
+            fetch 'https://dl.google.com/android/repository/sys-img/google_apis/x86_64-33_r17.zip' "$private/guest.zip"
+            image="$sdk/system-images/android-33/google_apis/x86_64"
+            pin="$(python3 -I "$source/pin_guest.py" "$private/guest.zip" "$image")"
+            rm -- "$private/guest.zip"
+            python3 -I "$source/boot_ab.py" --seed AEROVE-373-host-pin-a --rounds 4 \
+              --repo "$GITHUB_WORKSPACE/boot-ab-original" --archives "$private/archives" \
+              --sdk "$sdk" --avdmanager "$tools/avdmanager" --out "$result" \
+              --expected-image-tree-sha256 "$pin" --dedicated-empty-host
+          ) >"$private/runner.stdout" 2>"$private/runner.stderr"
+          driver_status=$?
+          set -e
+          completed=()
+          if [ "$driver_status" -eq 0 ]; then completed=(--completed-process); fi
+          python3 -I "$source/public_summary.py" --receipt "$result/experiment.json" "${completed[@]}" >> "$GITHUB_STEP_SUMMARY"
+          exit "$driver_status"

@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "sourceRevision": "d1b2db996af6142fbb299059c4de1b50df7dac38",
+  "sourceTree": "04dd07698f78b6b3fcf21bf5325f2f68a1483be5",
+  "officialArchive": "https://developer.android.com/frame/studio/emulator_archive_f8ceead2eefbfe19d1c1dbc70f526c6358ade1347e96012eee332fcbd148b9b9.frame",
+  "systemImagePackage": "system-images;android-33;google_apis;x86_64",
+  "systemImageRevision": 17,
+  "arms": {
+    "A": {"version": "37.2.13.0", "build": 16740729, "filename": "emulator-linux_x64-16740729.zip", "bytes": 349658551, "sha256": "cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd"},
+    "B": {"version": "37.3.10.0", "build": 16970787, "filename": "emulator-linux_x64-16970787.zip", "bytes": 350068887, "sha256": "a4405349d8a9c52136ab7861e5331dc40e85574bd91cb8889a298a2ff4c52e26"}
+  },
+  "commandSuffix": ["-port", "5554", "-avd", "test", "-no-window", "-gpu", "swangle", "-no-snapshot", "-noaudio", "-no-boot-anim", "-feature", "GuestAngle,Vulkan"],
+  "acceptance": false
+}
