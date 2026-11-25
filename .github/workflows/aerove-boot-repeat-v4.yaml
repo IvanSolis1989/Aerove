@@ -1,0 +1,109 @@
+name: AEROVE Original Environment Cold-Boot Repeat V4
+on:
+  push:
+    branches: [diagnostics/aerove-boot-repeat-v4-20261125]
+    paths:
+      - .github/workflows/aerove-boot-repeat-v4.yaml
+      - tools/diagnostics/aerove-boot-repeat/**
+permissions:
+  contents: read
+concurrency:
+  group: aerove-boot-repeat-v4-20261125
+  cancel-in-progress: false
+jobs:
+  boot:
+    if: >-
+      github.event_name == 'push' &&
+      github.repository == 'IvanSolis1989/Aerove' &&
+      github.actor == 'IvanSolis1989' &&
+      github.ref == 'refs/heads/diagnostics/aerove-boot-repeat-v4-20261125' &&
+      github.run_attempt == 1 && github.event.created
+    runs-on: ubuntu-24.04
+    timeout-minutes: 34
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          accept-android-sdk-licenses: false
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - name: Match SDK and compare two sequential cold boots
+        shell: nice -n 19 bash --noprofile --norc -eo pipefail {0}
+        run: |
+          set -euo pipefail
+          umask 077
+          private="$(mktemp -d "$RUNNER_TEMP/aerove-original-boot.XXXXXX")"
+          trap 'rm -rf -- "$private"' EXIT
+          set +e
+          (
+            set -euo pipefail
+            printf 'host-kvm\n' >"$private/phase"
+            test "$(uname -m)" = x86_64
+            test -c /dev/kvm
+            sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+            test -r /dev/kvm && test -w /dev/kvm
+            printf 'guest-image\n' >"$private/phase"
+            timeout --signal=TERM --kill-after=10s 180s sdkmanager --install 'system-images;android-33;google_apis;x86_64' --channel=0 </dev/null
+            image="$ANDROID_HOME/system-images/android-33/google_apis/x86_64/source.properties"
+            grep -Eq '^AndroidVersion.ApiLevel[[:space:]]*=[[:space:]]*33[[:space:]]*$' "$image"
+            grep -Eq '^SystemImage.Abi[[:space:]]*=[[:space:]]*x86_64[[:space:]]*$' "$image"
+            grep -Eq '^SystemImage.TagId[[:space:]]*=[[:space:]]*google_apis[[:space:]]*$' "$image"
+            rev="$(sed -nE 's/^Pkg\.Revision[[:space:]]*=[[:space:]]*([0-9]{1,3})[[:space:]]*$/\1/p' "$image")"
+            [[ "$rev" =~ ^[0-9]{1,3}$ ]]
+            export AEROVE_BOOT_GUEST_ID="r$rev"
+            avd_home="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+            for n in 1 2; do
+              name=test
+              if test "$n" = 2; then name=test_repeat; fi
+              printf 'avd-%s-create\n' "$n" >"$private/phase"
+              avd="$avd_home/$name.avd/config.ini"
+              test ! -e "$avd"
+              printf 'no\n' | avdmanager create avd --force -n "$name" --package 'system-images;android-33;google_apis;x86_64' --device pixel_6
+              printf 'avd-%s-config\n' "$n" >"$private/phase"
+              test -f "$avd"
+              test ! -L "$avd"
+              sed -i '/^[[:space:]]*disk\.dataPartition\.size[[:space:]]*=/d' "$avd"
+              printf 'hw.cpu.ncore=2\ndisk.dataPartition.size=4G\n' >> "$avd"
+            done
+            printf 'emulator\n' >"$private/phase"
+            url='https://dl.google.com/android/repository/emulator-linux_x64-16740729.zip'
+            archive="$private/emulator.zip"
+            curl --fail --location --silent --show-error --proto '=https' --proto-redir '=https' --connect-timeout 20 --max-time 240 -o "$archive" "$url"
+            test "$(stat -c '%s' "$archive")" = '349658551'
+            printf '%s  %s\n' 'cbc7c3cfb83220b8a0f9c513fdab557712e74d339ec19ddffa43f23350ae9bdd' "$archive" | sha256sum --check --strict
+            unzip -q "$archive" -d "$private/extracted"
+            test -x "$private/extracted/emulator/emulator"
+            if test -e "$ANDROID_HOME/emulator"; then mv "$ANDROID_HOME/emulator" "$private/previous-emulator"; fi
+            mv "$private/extracted/emulator" "$ANDROID_HOME/emulator"
+            "$ANDROID_HOME/emulator/emulator" -no-window -version 2>&1 | grep -E '37\.2\.13\.0.*16740729'
+            "$ANDROID_HOME/emulator/emulator" -accel-check
+            failures=0
+            for n in 1 2; do
+              arm="$private/cold-$n"
+              mkdir -p "$arm"
+              name=test
+              if test "$n" = 2; then name=test_repeat; fi
+              printf 'avd-%s-launch\n' "$n" >"$private/phase"
+              printf '\n## Cold launch %s (same host and SDK)\n' "$n" >>"$private/public-summary"
+              python3 -I tools/diagnostics/aerove-boot-repeat/probe.py "$GITHUB_WORKSPACE" "$arm" "$name" >>"$private/public-summary" || failures=$((failures+1))
+              if ! test -f "$arm/owned-cleanup-ok"; then
+                printf '\nThe owned process was not verified cleaned up; no subsequent launch.\n' >>"$private/public-summary"
+                exit 1
+              fi
+            done
+            test "$failures" = 0
+          ) >"$private/setup-and-probe.stdout" 2>"$private/setup-and-probe.stderr"
+          status=$?
+          set -e
+          phase="$(cat "$private/phase" 2>/dev/null || true)"
+          case "$phase" in host-kvm|guest-image|emulator|avd-[12]-create|avd-[12]-config|avd-[12]-launch) ;; *) phase=unclassified ;; esac
+          printf 'Cold boot diagnostic final checkpoint: %s\n' "$phase" | tee -a "$GITHUB_STEP_SUMMARY"
+          if test -f "$private/public-summary"; then tee -a "$GITHUB_STEP_SUMMARY" <"$private/public-summary"; fi
+          exit "$status"

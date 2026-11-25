@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from probe import status, failure_bucket, BOOT, ANGLE, KEYGUARD
+from probe import status, failure_bucket, host_signature, PORT_BY_AVD, BOOT, ANGLE, KEYGUARD
 
 def row(args, code, value=""):
     return dict(arguments=args, returnCode=code, stdout=value, stderr="SECRET_DO_NOT_PUBLISH")
@@ -50,7 +50,7 @@ class FailureBuckets(unittest.TestCase):
         self.assertEqual(failure_bucket({}, True, -11, True, True), "interrupted")
 
 class OwnerIntegration(unittest.TestCase):
-    def run_probe(self, early):
+    def run_probe(self, early, name='test'):
         with tempfile.TemporaryDirectory() as tmp:
             private = Path(tmp) / "private"
             private.mkdir()
@@ -59,6 +59,7 @@ class OwnerIntegration(unittest.TestCase):
             for script in (adb, emulator):
                 script.parent.mkdir(parents=True)
             adb.write_text("""#!/bin/sh
+if [ "$1" = -s ] && [ "$2" != "$EXPECTED_SERIAL" ]; then exit 55; fi
 if [ "$1" = devices ]; then echo 'List of devices attached'; exit; fi
 case "$*" in
   *'getprop sys.boot_completed') echo 1;;
@@ -74,13 +75,15 @@ interactiveState=INTERACTIVE_STATE_AWAKE';;
   *'logcat'*) echo PRIVATE_SENTINEL;;
 esac
 """)
-            emulator.write_text("#!/bin/sh\n" + ("echo PRIVATE_SENTINEL >&2; exit 27\n" if early else "exec sleep 20\n"))
+            emulator.write_text('#!/bin/sh\n[ "$1" = -port ] && [ "$2" = "$EXPECTED_PORT" ] && [ "$3" = -avd ] && [ "$4" = "$EXPECTED_NAME" ] || exit 56\n' + ("echo PRIVATE_SENTINEL >&2; exit 27\n" if early else "exec sleep 20\n"))
             for script in (adb, emulator):
                 script.chmod(0o755)
             probe = Path(__file__).resolve().with_name("probe.py")
             repo = probe.parents[3]
-            env = dict(os.environ, ANDROID_HOME=str(sdk), PATH=f"{adb.parent}:{os.environ['PATH']}")
-            result = subprocess.run([sys.executable, "-I", str(probe), str(repo), str(private)],
+            port = str(PORT_BY_AVD[name])
+            env = dict(os.environ, ANDROID_HOME=str(sdk), EXPECTED_SERIAL="emulator-"+port,
+                       EXPECTED_PORT=port, EXPECTED_NAME=name, PATH=f"{adb.parent}:{os.environ['PATH']}")
+            result = subprocess.run([sys.executable, "-I", str(probe), str(repo), str(private), name],
                                   timeout=8, capture_output=True, text=True, env=env)
             self.assertTrue((private / "owned-cleanup-ok").is_file(), result.stderr)
             return result
@@ -91,6 +94,21 @@ esac
         self.assertIn("keyguard-ready", result.stdout)
         self.assertIn("cleanup: `false`", result.stdout)
         self.assertNotIn("PRIVATE_SENTINEL", result.stdout)
+
+    def test_second_arm_uses_independent_exact_ports(self):
+        result = self.run_probe(False, "test_repeat")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("keyguard-ready", result.stdout)
+
+    def test_host_signature_is_allowlisted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stderr"
+            path.write_text("private-marker\nERROR: Port 5556 is already in use")
+            self.assertEqual(host_signature(path), "socket-conflict")
+            path.write_text("private-marker\nUnknown AVD name\nerror while loading shared libraries: libExample")
+            self.assertEqual(host_signature(path), "multiple-signatures")
+            path.write_text("private-marker")
+            self.assertEqual(host_signature(path), "no-known-signature")
 
     def test_helper_early_child_exit(self):
         result = self.run_probe(True)
