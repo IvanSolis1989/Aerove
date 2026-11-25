@@ -72,14 +72,18 @@ def guest_target(owner):
 def proceed_from_theme(owner, info, summary):
     token = "qa-" + uuid4().hex
     # Keep the genuine failed instrumentation and its log; never treat a nonzero test status as pass.
+    summary["pendingCheckpoint"] = "theme-instrumentation"
     owner.adb_command("first-theme", *owner.base_args(THEME, token, info), timeout=600, check=False)
     command = owner.receipt["commands"][-1]
     need(command["label"] == "first-theme" and command["exit"] == 0 and not command.get("interruptedOrTimedOut"),
          "Theme transport was incomplete")
+    summary["pendingCheckpoint"] = "theme-receipt-pull"
     directory = owner.pull(THEME, token)
     log_path = owner.args.output / "first-theme.out"
+    summary["pendingCheckpoint"] = "theme-receipt-binding"
     row, digest = bound_receipt(directory, token, info)
     if row.get("scenarioPassed") is True:
+        summary["pendingCheckpoint"] = "theme-pass-evidence"
         records = parse_log(log_path)
         need(len(records) == 1 and records[0]["className"] == row["producer"] and
              records[0]["testName"] == THEME and records[0]["status"] == "passed" and
@@ -90,15 +94,20 @@ def proceed_from_theme(owner, info, summary):
         prior = dict(pid=row["pid"], token=token, receiptSha256=digest,
                      finished=row["finishedElapsedRealtimeMs"], themeStillFailed=False)
     else:
+        summary["pendingCheckpoint"] = "theme-failure-evidence"
         prior = failed_theme(directory, log_path, token, info)
+    summary["pendingCheckpoint"] = "theme-renderer-and-crash-check"
     log = owner.adb_command("first-renderer", "logcat", "-d", "-v", "threadtime", timeout=45).decode(errors="replace")
     renderer(log, prior["pid"])
     owner.check_process_log(log, prior["pid"])
     summary.update(stage="consent-ready-for-restart", themeFailed=prior["themeStillFailed"])
+    summary["pendingCheckpoint"] = "original-process-exit"
     owner.adb_command("stop-first-process", "shell", "am", "force-stop", PACKAGE)
     before = owner.adb_command("first-process-gone", "shell", "pidof", PACKAGE, check=False)
     need(not before.strip() and owner.receipt["commands"][-1]["exit"] == 1, "Force-stop did not clear the original process")
+    summary["pendingCheckpoint"] = "restart-test"
     restart, validated, _ = owner.ui(RESTART, info)
+    summary["pendingCheckpoint"] = "restart-evidence"
     persisted_restart(owner.args.output / RESTART, restart["qaToken"], info, prior, validated)
     summary.update(stage="persisted-consent-proved", consentPersisted=True)
 
@@ -162,18 +171,24 @@ def run(args):
         guest_target(owner)
         summary["stage"] = "consent-theme"
         proceed_from_theme(owner, info, summary)
+        summary["pendingCheckpoint"] = "owned-fixture-start"
         owner.fixture_start()
         identifier = str(uuid4())
         summary["stage"] = "vpn-sequence"
+        summary["pendingCheckpoint"] = "vpn-instrumentation"
         row, receipt, checkpoints = owner.ui(VPN, info, dict(fixtureUrl="http://10.0.2.2:18080",
             profileUrl="http://10.0.2.2:18080/flutter-profile/" + identifier + ".yaml?mixedPort=18081",
             profileLabel="FlutterAcceptance-" + identifier[:8], mixedProxyPort="18081"))
+        summary["pendingCheckpoint"] = "vpn-checkpoints"
         need(receipt.get("stage") == "functional-stopped" and
              [item.get("stage") for item in checkpoints] == STAGES[VPN], "Functional lifecycle was not observed")
+        summary["pendingCheckpoint"] = "vpn-wire-evidence"
         verify_wire(args.output, receipt, identifier)
+        summary["pendingCheckpoint"] = "final-apk-binding"
         owner.installed_hash("final-app", PACKAGE, APP)
         owner.installed_hash("final-runner", TEST_PACKAGE, PLATFORM)
         summary.update(stage="vpn-sequence-proved", vpnSequenceProved=True)
+        summary.pop("pendingCheckpoint", None)
     except Exception as error:
         summary["failureClass"] = type(error).__name__
         (args.output / "private-error.txt").write_text(repr(error), encoding="utf-8")

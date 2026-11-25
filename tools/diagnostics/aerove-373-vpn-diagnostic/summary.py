@@ -9,6 +9,10 @@ PREFLIGHT = frozenset(("host-kvm", "guest-image", "avd", "emulator", "apksigner"
 STAGES = frozenset(("original-binding", "original-install", "consent-theme", "consent-ready-for-restart",
                     "persisted-consent-proved", "vpn-sequence", "vpn-sequence-proved"))
 
+CHECKPOINTS = frozenset(["theme-instrumentation","theme-receipt-pull","theme-receipt-binding","theme-pass-evidence","theme-failure-evidence","theme-renderer-and-crash-check","original-process-exit","restart-test","restart-evidence","owned-fixture-start","vpn-instrumentation","vpn-checkpoints","vpn-wire-evidence","final-apk-binding"])
+FAILURES = frozenset(("TimeoutExpired", "TimeoutError", "ValueError", "CalledProcessError",
+                      "RuntimeError", "FileNotFoundError", "InterruptedError", "OSError"))
+
 
 def read(path):
     if not path.is_file():
@@ -33,6 +37,12 @@ def summarize(root, code):
     print("- Owned emulator PID recorded: " + str(type(owner.get("emulatorPid")) is int and owner["emulatorPid"] > 1).lower())
     print("- Android boot ready: " + str(bootstrap.get("ready") is True).lower())
     print("- Furthest verified diagnostic stage: " + safe_stage)
+    checkpoint = result.get("pendingCheckpoint")
+    failure = result.get("failureClass")
+    if checkpoint in CHECKPOINTS:
+        print("- Diagnostic checkpoint not completed: " + checkpoint)
+    if failure is not None:
+        print("- Diagnostic failure category: " + (failure if failure in FAILURES else "unclassified"))
     if type(result.get("themeFailed")) is bool:
         print("- Theme test failed: " + str(result["themeFailed"]).lower())
     print("- New process did not request consent again: " + str(result.get("consentPersisted") is True).lower())
