@@ -44,7 +44,8 @@ def unpack(archive, directory):
     return verify(directory, IDENTITY, runtime=True)
 
 
-def fetch(directory):
+def fetch(directory, phase):
+    phase("artifact-metadata")
     need(os.environ["GITHUB_REPOSITORY"] == REPO and os.environ["GITHUB_EVENT_NAME"] == "push",
          "Only the isolated push workflow can fetch the original runtime")
     rows = _gh_json(f"repos/{REPO}/actions/runs/{IDENTITY['workflowRun']}/artifacts?per_page=100")["artifacts"]
@@ -58,7 +59,9 @@ def fetch(directory):
          and origin.get("head_sha") == IDENTITY["sourceRevision"], "Original runtime metadata differs")
     archive = directory.with_suffix(".zip")
     need(not archive.exists() and not directory.exists(), "Original artifact staging must be new")
+    phase("artifact-download")
     _gh_binary(f"repos/{REPO}/actions/artifacts/{ARTIFACT}/zip", archive)
+    phase("artifact-verification")
     unpack(archive, directory)
 
 

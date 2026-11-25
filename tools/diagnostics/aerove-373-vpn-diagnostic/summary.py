@@ -3,7 +3,9 @@ import json
 from pathlib import Path
 import sys
 
-PREFLIGHT = frozenset(("host-kvm", "guest-image", "avd", "emulator", "apksigner", "diagnostic"))
+PREFLIGHT = frozenset(("host-kvm", "guest-image", "avd", "emulator", "apksigner", "owner-import",
+                       "owner-environment", "adb-inventory", "artifact-metadata",
+                       "artifact-download", "artifact-verification", "artifact-staging", "emulator-owner"))
 STAGES = frozenset(("original-binding", "original-install", "consent-theme", "consent-ready-for-restart",
                     "persisted-consent-proved", "vpn-sequence", "vpn-sequence-proved"))
 
@@ -28,6 +30,7 @@ def summarize(root, code):
     print("### AEROVE #373 original signed runtime, VPN diagnostic only\n")
     print("- Release and visual acceptance: not granted")
     print("- Preflight step: " + (phase if phase in PREFLIGHT else "unclassified"))
+    print("- Owned emulator PID recorded: " + str(type(owner.get("emulatorPid")) is int and owner["emulatorPid"] > 1).lower())
     print("- Android boot ready: " + str(bootstrap.get("ready") is True).lower())
     print("- Furthest verified diagnostic stage: " + safe_stage)
     if type(result.get("themeFailed")) is bool:
