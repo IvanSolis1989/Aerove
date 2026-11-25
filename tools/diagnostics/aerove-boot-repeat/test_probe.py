@@ -4,7 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from probe import status, failure_bucket, host_signature, PORT_BY_AVD, BOOT, ANGLE, KEYGUARD
+from probe import status, failure_bucket, wait_for_empty_adb, host_signature, PORT_BY_AVD, BOOT, ANGLE, KEYGUARD
 
 def row(args, code, value=""):
     return dict(arguments=args, returnCode=code, stdout=value, stderr="SECRET_DO_NOT_PUBLISH")
@@ -48,6 +48,27 @@ class FailureBuckets(unittest.TestCase):
         self.assertEqual(failure_bucket({"errorType": "DO_NOT_PUBLISH"}, False, None, False, False),
                          "unclassified")
         self.assertEqual(failure_bucket({}, True, -11, True, True), "interrupted")
+
+class InventoryDrain(unittest.TestCase):
+    def check(self, states, expected, sleeps, previous="emulator-5554"):
+        rows = iter(states)
+        pauses = []
+        def read():
+            return "List of devices attached\n" + next(rows)
+        self.assertEqual(wait_for_empty_adb(None, previous, read, pauses.append), expected)
+        self.assertEqual(pauses, [1]*sleeps)
+
+    def test_owned_offline_can_drain(self):
+        self.check(["emulator-5554\toffline\n", ""], "none", 1)
+
+    def test_connected_or_unknown_target_fails_immediately(self):
+        for row in ("emulator-5554\tdevice", "other\toffline", "emulator-5554\toffline\nother\tdevice"):
+            with self.subTest(row=row):
+                self.check([row], "adb-unexpected-target", 0)
+        self.check(["emulator-5554\toffline"], "adb-unexpected-target", 0, None)
+
+    def test_offline_wait_is_bounded(self):
+        self.check(["emulator-5554\toffline"]*7, "adb-previous-offline-not-drained", 6)
 
 class OwnerIntegration(unittest.TestCase):
     def run_probe(self, early, name='test'):

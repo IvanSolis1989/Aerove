@@ -72,6 +72,27 @@ def own_ports_available(port, socket_factory=socket.socket):
     return True
 
 
+def wait_for_empty_adb(adb, previous_serial, read=None, pause=time.sleep):
+    """Do not touch another target; tolerate only our previous serial's offline drain."""
+    if read is None:
+        read = lambda: subprocess.run([adb, "devices"], check=True, capture_output=True,
+                                      text=True, timeout=3).stdout
+    for attempt in range(7):
+        try:
+            rows = [row.strip() for row in read().splitlines() if row.strip()]
+        except (OSError, subprocess.SubprocessError):
+            return "adb-inventory-command-failed"
+        if not rows or rows[0] != "List of devices attached":
+            return "adb-inventory-invalid"
+        if rows == ["List of devices attached"]:
+            return "none"
+        if not previous_serial or len(rows) != 2 or rows[1].split() != [previous_serial, "offline"]:
+            return "adb-unexpected-target"
+        if attempt < 6:
+            pause(1)
+    return "adb-previous-offline-not-drained"
+
+
 def host_signature(path):
     """Map owned host stderr to fixed categories without printing any raw line."""
     try:
@@ -108,7 +129,7 @@ def main(root, private, avd_name='test'):
     report, exited, code, adb_hash = {}, False, None, None
     signals = []
     ports_clear = None
-    prelaunch_port_blocked = False
+    prelaunch_category = 'not-observed'
     def cancel(sig, _):
         signals.append(sig)
     def check_cancelled(_):
@@ -125,11 +146,11 @@ def main(root, private, avd_name='test'):
             raise ValueError("Unexpected adb executable")
         with expected_adb.open('rb') as stream:
             adb_hash = hashlib.file_digest(stream, 'sha256').hexdigest()
-        targets = subprocess.run([adb, "devices"], check=True, capture_output=True, text=True, timeout=15).stdout
-        if targets.strip() != "List of devices attached":
-            raise ValueError("Non-empty or invalid ADB inventory")
+        prelaunch_category = wait_for_empty_adb(adb, "emulator-5554" if avd_name == "test_repeat" else None)
+        if prelaunch_category != "none":
+            raise ValueError("Unexpected ADB inventory before owned cold boot")
         if not own_ports_available(port):
-            prelaunch_port_blocked = True
+            prelaunch_category = 'prelaunch-port-not-clear'
             raise OSError("Cold boot loopback port pair unavailable")
         executable = sdk / "emulator/emulator"
         command = [str(executable), "-port", str(port), "-avd", avd_name, "-no-window", "-gpu", "swangle",
@@ -172,8 +193,8 @@ def main(root, private, avd_name='test'):
         if exited and type(code) is int and -64 <= code <= 255:
             print(f"- Pre-cleanup exit status: `{code}`")
         print(f"- Boot outcome class: `{failure_bucket(report, exited, code, milestone == 'keyguard-ready', bool(signals))}`")
-        if prelaunch_port_blocked:
-            print("- Early host diagnostic category: `prelaunch-port-not-clear`")
+        if prelaunch_category not in ("none", "not-observed"):
+            print(f"- Early host diagnostic category: `{prelaunch_category}`")
         elif exited:
             signature = host_signature(private / "stderr")
             print(f"- Early host diagnostic category: `{signature}`")
