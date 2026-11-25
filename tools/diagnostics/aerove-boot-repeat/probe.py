@@ -50,7 +50,9 @@ def failure_bucket(report, exited, code, ready, interrupted):
     return "unclassified"
 
 
-def main(root, private):
+def main(root, private, avd_name='test'):
+    if avd_name not in ('test', 'test_repeat'):
+        raise ValueError('Unexpected cold boot target')
     sys.path.insert(0, str(root / "apps/aerove-lite/tool"))
     from emulator_bootstrap import wait_ready
     from emulator_qa79 import emulator_environment, stop_owned
@@ -77,7 +79,7 @@ def main(root, private):
         if targets.strip() != "List of devices attached":
             raise ValueError("Non-empty or invalid ADB inventory")
         executable = sdk / "emulator/emulator"
-        command = [str(executable), "-port", "5554", "-avd", "test", "-no-window", "-gpu", "swangle",
+        command = [str(executable), "-port", "5554", "-avd", avd_name, "-no-window", "-gpu", "swangle",
                    "-no-snapshot", "-noaudio", "-no-boot-anim", "-feature", "GuestAngle,Vulkan"]
         with (private / "stdout").open("wb") as out, (private / "stderr").open("wb") as err:
             check_cancelled(None)
@@ -124,4 +126,4 @@ def main(root, private):
     return result
 
 if __name__ == "__main__":
-    raise SystemExit(main(Path(sys.argv[1]), Path(sys.argv[2])))
+    raise SystemExit(main(Path(sys.argv[1]), Path(sys.argv[2]), *sys.argv[3:]))
