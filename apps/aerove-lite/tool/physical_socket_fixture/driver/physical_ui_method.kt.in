@@ -1,0 +1,58 @@
+    /** Installed only into an isolated, explicitly opted-in test overlay. */
+    @Test
+    fun physicalOnlyOrdinaryAppTcp() = scenario {
+        check(requiredArg("physicalLabOnly") == "true")
+        functionalReceipt("isolated-physical-lab-only")
+        val expected = dev.aerove.lite.platformqa.PhysicalRunInput.parse(requiredArg("physicalRunB64"))
+        for (key in listOf("source", "tree", "apkSha256"))
+            check(expected.identity.getString(key) == requiredArg(key))
+        fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+            ui.executeShellCommand(command)).bufferedReader().use { reader ->
+            buildString {
+                repeat(256) {
+                    val character = reader.read()
+                    if (character < 0) return@buildString
+                    append(character.toChar())
+                }
+                check(reader.read() == -1)
+            }.trim()
+        }
+        fun verifyDevice() {
+            check(shell("getprop ro.kernel.qemu") in setOf("", "0"))
+            check(shell("getprop ro.serialno") == expected.identity.getString("deviceSerial"))
+            check(shell("cat /proc/sys/kernel/random/boot_id") == expected.identity.getString("bootId"))
+        }
+        val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        verifyDevice()
+        val runnerBefore = dev.aerove.lite.platformqa.readInstalledPhysicalRunner(instrumentation, expected)
+        launch(); requireLabel("Dashboard"); checkNoVpn()
+        functionalNetworkSettings(allowChanges = true)
+        deviceGeneralToggle("Find process", true)
+        navigate("Profiles"); val label = profileLabel(); requireLabel(label); click(label)
+        awaitCondition("selected preloaded isolated lab profile") { findLabel(label)?.let(::selected) == true }
+        navigate("Dashboard")
+        val app = context.applicationContext as dev.aerove.lite.LiteApplication
+        val result = kotlinx.coroutines.runBlocking {
+            dev.aerove.lite.platformqa.ProductionPhysicalVpnBridge(app).run(expected.pin, expected.challenges, label, expected.identity.getString("profileSourceSha256"),
+                startViaProductionUi = { startRealVpn() },
+                stopViaProductionUi = {
+                    navigate("Dashboard")
+                    when (app.vpn.value.phase) {
+                        dev.aerove.lite.VpnPhase.Stopping -> Unit // The bridge awaits the join.
+                        dev.aerove.lite.VpnPhase.Stopped, dev.aerove.lite.VpnPhase.Failed -> checkNoVpn()
+                        else -> {
+                            // A later readback failure may reenter cleanup; never click Start.
+                            if (findLabel("Stop") != null) stopRealVpn()
+                            else check(app.vpn.value.phase in setOf(dev.aerove.lite.VpnPhase.Stopping,
+                                dev.aerove.lite.VpnPhase.Stopped, dev.aerove.lite.VpnPhase.Failed))
+                        }
+                    }
+                })
+        }
+        verifyDevice()
+        val runnerAfter = dev.aerove.lite.platformqa.readInstalledPhysicalRunner(instrumentation, expected)
+        verifyDevice()
+        dev.aerove.lite.platformqa.writePhysicalRun(root, expected, context.applicationInfo.uid, result, runnerBefore, runnerAfter)
+        receipt.put("physicalDiagnosticCollected", true).put("releaseAccepted", false)
+        stage = "physical-diagnostic-collected"
+    }
