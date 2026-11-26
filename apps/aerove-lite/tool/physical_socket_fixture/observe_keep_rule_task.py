@@ -82,8 +82,8 @@ def observe(command, timeout, logfile):
                 time.sleep(0.2)
             code = proc.wait()
         finally:
-            # Every subprocess belongs to this owned diagnostic group. Do not leave
-            # detached Gradle/trace children running if the measured parent exited.
+            # Signal the owned launcher group only. A native Gradle daemon can
+            # detach into its own session; this neither samples nor kills it.
             if proc.poll() is None:
                 forward(proc.pid, signal.SIGKILL)
                 proc.wait()

@@ -21,13 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 2
+          fetch-depth: 3
           persist-credentials: false
       - name: Check exact parent and diagnostic-only source delta
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$BASE"
+          test "$(git rev-parse HEAD^)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
+          test "$(git rev-parse HEAD^^)" = "$BASE"
           test "$(git rev-parse "$BASE^{tree}")" = 04dd07698f78b6b3fcf21bf5325f2f68a1483be5
           git diff --name-only -z "$BASE" HEAD | python3 -c '
           import re, sys
@@ -114,8 +115,19 @@ jobs:
           flags=(gradle --no-daemon --console=plain --max-workers=2 -p android -Ptarget-platform=android-arm64 \
             -PliteAbi=arm64-v8a "-PsourceSha=$BASE" "-PnativeMigration.fixtureDir=$RUNNER_TEMP/373-inputs/migration/retained-export")
           "${flags[@]}" --dry-run :app:assembleRelease :platform-qa:assembleRelease > "$temp/graph.txt"
-          python3 tool/physical_socket_fixture/observe_keep_rule_task.py --timeout-sec 420 \
-            --log "$temp/keep.log" --receipt "$temp/keep.json" -- "${flags[@]}" :app:generateReleasePlatformTestAppKeepRules
+          keep_home="$temp/keep-home"
+          install -d -m 700 "$keep_home" "$GRADLE_USER_HOME/caches"
+          ln -s "$GRADLE_USER_HOME/caches" "$keep_home/caches"
+          started=$SECONDS
+          keep_rc=0
+          GRADLE_USER_HOME="$keep_home" python3 tool/physical_socket_fixture/observe_keep_rule_task.py --timeout-sec 420 \
+            --log "$temp/keep.log" --receipt "$temp/keep.json" -- "${flags[@]}" --stacktrace :app:generateReleasePlatformTestAppKeepRules || keep_rc=$?
+          python3 tool/physical_socket_fixture/keep_failure_summary.py "$temp/keep.log" "$keep_home" \
+            "$keep_rc" "$((SECONDS-started))" >> "$GITHUB_STEP_SUMMARY"
+          if (( keep_rc != 0 )); then
+            echo 'Keep-rule generation did not complete; see allowlisted diagnostics.'
+            exit "$keep_rc"
+          fi
           started=$SECONDS
           rc=0
           timeout --signal=TERM --kill-after=15s 15m "${flags[@]}" :app:assembleRelease :platform-qa:assembleRelease > "$temp/assemble.log" 2>&1 || rc=$?
