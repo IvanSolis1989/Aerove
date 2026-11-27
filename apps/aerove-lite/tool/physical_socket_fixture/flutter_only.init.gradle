@@ -1,4 +1,12 @@
+// Init scripts also attach to included builds. Only the exact Flutter
+// Android build is required to have :app and the release task.
+def targetPath = System.getenv('AEROVE_FLUTTER_PROJECT_DIR')
+if (!targetPath || !new File(targetPath).isAbsolute()) {
+    throw new GradleException('AEROVE Flutter probe requires an absolute project directory')
+}
+def targetRoot = new File(targetPath).canonicalFile
 gradle.projectsEvaluated {
+    if (gradle.rootProject.projectDir.canonicalFile != targetRoot) return
     def app = gradle.rootProject.findProject(':app')
     if (app == null) throw new GradleException('Missing expected Flutter app project')
     app.tasks.named('compileFlutterBuildRelease').configure {
