@@ -23,6 +23,59 @@ REQUIRED = (
 )
 ORDERED_ABI = REQUIRED[1:6]
 
+PLUGIN_IDS = tuple(name.encode("ascii") for name in (
+    "aerove.lite-app-common", "com.android.application", "com.android.test",
+    "dev.flutter.flutter-gradle-plugin", "dev.flutter.flutter-plugin-loader",
+    "org.gradle.kotlin.kotlin-dsl", "org.jetbrains.compose",
+    "org.jetbrains.kotlin.android", "org.jetbrains.kotlin.jvm",
+    "org.jetbrains.kotlin.plugin.compose", "org.jetbrains.kotlin.plugin.serialization",
+))
+PLUGIN_FAILURE = re.compile(
+    rb"Plugin \[id: '([^'\r\n]{1,240})'[^\r\n]{0,180}\] was not found", re.M)
+BUILD_ROLE = {
+    "lite_build_logic": rb"/apps/aerove-lite/build-logic/(?:settings|build)\.gradle(?:\.kts)?['\"]",
+    "lite_android_app": rb"/apps/aerove-lite/android/app/build\.gradle(?:\.kts)?['\"]",
+    "lite_android_root": rb"/apps/aerove-lite/android/(?:settings|build)\.gradle(?:\.kts)?['\"]",
+    "lite_platform_qa": rb"/apps/aerove-lite/android-platform-qa/build\.gradle(?:\.kts)?['\"]",
+    "flutter_gradle_tools": rb"/packages/flutter_tools/gradle/(?:settings|build)\.gradle(?:\.kts)?['\"]",
+}
+REPOSITORY_HOST = {
+    "maven_central": rb"https://repo\.(?:maven\.apache|maven2)\.org/",
+    "gradle_plugin_portal": rb"https://plugins\.gradle\.org/",
+    "google_maven": rb"https://(?:dl\.google\.com/dl/android/maven2/|maven\.google\.com/)",
+}
+HTTP_CODE = re.compile(rb"(?:status code |HTTP(?: Error)? ?|HTTP/[0-9.]+ )(401|403|404|429|500|502|503|504)\b", re.I)
+
+
+def plugin_evidence(data):
+    # The failure line binds the public ID to the failed request. Transport
+    # evidence from --info is separate and does not establish what caused it.
+    header = re.search(rb"(?m)^\* What went wrong:[ \t]*\r?$", data)
+    if not header:
+        return None
+    leading = data[max(0, header.start() - 4096):header.start()]
+    where = re.findall(rb"(?m)^\* Where:[ \t]*\r?\n([^\r\n]{1,1600})", leading)
+    location = where[-1] if where else b""
+    fatal = data[header.end():header.end() + 16384]
+    fatal = re.split(rb"(?m)^\* (?:Try|Exception is|Get more help|Where|What went wrong):", fatal, 1)[0]
+    match = PLUGIN_FAILURE.search(fatal)
+    if not match:
+        return None
+    plugin_id = match[1]
+    role = next((role for role, rule in BUILD_ROLE.items() if re.search(rule, location)), None)
+    statuses = set()
+    for row in data.splitlines()[-3000:]:
+        row = row[:4096]
+        codes = HTTP_CODE.findall(row)
+        if not codes:
+            continue
+        for host, rule in REPOSITORY_HOST.items():
+            if re.search(rule, row):
+                statuses.update((host, int(code)) for code in codes)
+    return dict(pluginId=plugin_id.decode("ascii") if plugin_id in PLUGIN_IDS else "other",
+                buildRole=role, observedRepositoryHttp=[dict(repository=host, status=code)
+                                                        for host, code in sorted(statuses)])
+
 
 def inspect(phase, log, code, seconds, project, flutter_phases, keep_phases):
     with log.open("rb") as stream:
@@ -34,6 +87,8 @@ def inspect(phase, log, code, seconds, project, flutter_phases, keep_phases):
                   firstGradleFailure=first_gradle_failure(tail) if code else None,
                   logTailCapped=bool(offset), pairVerified=False,
                   deviceValidated=False, releaseAccepted=False)
+    if code:
+        result["pluginEvidence"] = plugin_evidence(tail)
     if phase == "plan":
         tasks = GRAPH_TASK.findall(tail)
         unique = not offset and all(tasks.count(task) == 1 for task in REQUIRED)

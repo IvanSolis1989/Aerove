@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from packaging_probe import inspect, REQUIRED
+from packaging_probe import inspect, plugin_evidence, REQUIRED
 
 
 class PackagingProbeTest(unittest.TestCase):
@@ -44,6 +44,21 @@ class PackagingProbeTest(unittest.TestCase):
         self.assertEqual(result["keepRulePhases"], [])
         for secret in ("private.invalid", "SECRET", "TOKEN"):
             self.assertNotIn(secret, json.dumps(result))
+
+    def test_plugin_evidence_exposes_only_pinned_labels(self):
+        raw = (
+            b"Failed to GET resource. HTTP 429 https://plugins.gradle.org/m2/SECRET\n"
+            b"Received status code 403 from https://private.invalid/SECRET\n"
+            b"* Where:\nBuild file '/PRIVATE_ROOT/apps/aerove-lite/build-logic/build.gradle.kts' line: 1\n"
+            b"* What went wrong:\nPlugin [id: 'org.gradle.kotlin.kotlin-dsl', version: 'PRIVATE_VERSION']"
+            b" was not found in any of the following sources:\n* Try:\n"
+        )
+        result = plugin_evidence(raw)
+        self.assertEqual(result, {"pluginId": "org.gradle.kotlin.kotlin-dsl", "buildRole": "lite_build_logic",
+                                  "observedRepositoryHttp": [{"repository": "gradle_plugin_portal", "status": 429}]})
+        for secret in ("PRIVATE_ROOT", "PRIVATE_VERSION", "SECRET", "private.invalid"):
+            self.assertNotIn(secret, json.dumps(result))
+        self.assertEqual(plugin_evidence(raw.replace(b"org.gradle.kotlin.kotlin-dsl", b"secret.id"))["pluginId"], "other")
 
     def test_missing_assembly_evidence_does_not_pass(self):
         self.log.write_bytes(b"BUILD SUCCESSFUL\n")
