@@ -21,17 +21,18 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 6
+          fetch-depth: 7
           persist-credentials: false
       - name: Check exact parent and diagnostic-only source delta
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
-          test "$(git rev-parse HEAD^^)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
-          test "$(git rev-parse HEAD~3)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
-          test "$(git rev-parse HEAD~4)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
-          test "$(git rev-parse HEAD~5)" = "$BASE"
+          test "$(git rev-parse HEAD^)" = 34a05b9771be2c8751b7732f6cc1b8f7b099a710
+          test "$(git rev-parse HEAD^^)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
+          test "$(git rev-parse HEAD~3)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
+          test "$(git rev-parse HEAD~4)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
+          test "$(git rev-parse HEAD~5)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
+          test "$(git rev-parse HEAD~6)" = "$BASE"
           test "$(git rev-parse "$BASE^{tree}")" = 04dd07698f78b6b3fcf21bf5325f2f68a1483be5
           git diff --name-only -z "$BASE" HEAD | python3 -c '
           import re, sys
@@ -42,6 +43,8 @@ jobs:
           '
           df -h "$GITHUB_WORKSPACE"
           free -m
+      - name: Check bounded Gradle failure disclosure
+        run: python3 apps/aerove-lite/tool/physical_socket_fixture/test_flutter_only_report.py
       - uses: ./.github/actions/flutter
         with:
           flutter-version: '3.47.6'
