@@ -13,7 +13,7 @@ jobs:
   probe:
     if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/dot/aerove-physical-pair-probe-20261126' && github.event_name == 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     env:
       FLUTTER_VERSION: '3.47.6'
       BASE: d1b2db996af6142fbb299059c4de1b50df7dac38
@@ -21,19 +21,20 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 8
+          fetch-depth: 9
           persist-credentials: false
       - name: Check exact parent and diagnostic-only source delta
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 49f7e8657b3cd50c5ca0ad969d63c66d76b67492
-          test "$(git rev-parse HEAD^^)" = 34a05b9771be2c8751b7732f6cc1b8f7b099a710
-          test "$(git rev-parse HEAD~3)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
-          test "$(git rev-parse HEAD~4)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
-          test "$(git rev-parse HEAD~5)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
-          test "$(git rev-parse HEAD~6)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
-          test "$(git rev-parse HEAD~7)" = "$BASE"
+          test "$(git rev-parse HEAD^)" = 91b416ec9372f894bb9b85bac2b0b76a86ef57b4
+          test "$(git rev-parse HEAD^^)" = 49f7e8657b3cd50c5ca0ad969d63c66d76b67492
+          test "$(git rev-parse HEAD~3)" = 34a05b9771be2c8751b7732f6cc1b8f7b099a710
+          test "$(git rev-parse HEAD~4)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
+          test "$(git rev-parse HEAD~5)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
+          test "$(git rev-parse HEAD~6)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
+          test "$(git rev-parse HEAD~7)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
+          test "$(git rev-parse HEAD~8)" = "$BASE"
           test "$(git rev-parse "$BASE^{tree}")" = 04dd07698f78b6b3fcf21bf5325f2f68a1483be5
           git diff --name-only -z "$BASE" HEAD | python3 -c '
           import re, sys
@@ -45,7 +46,9 @@ jobs:
           df -h "$GITHUB_WORKSPACE"
           free -m
       - name: Check bounded Gradle failure disclosure
-        run: python3 apps/aerove-lite/tool/physical_socket_fixture/test_flutter_only_report.py
+        run: |
+          python3 apps/aerove-lite/tool/physical_socket_fixture/test_flutter_only_report.py
+          python3 apps/aerove-lite/tool/physical_socket_fixture/test_packaging_probe.py
       - uses: ./.github/actions/flutter
         with:
           flutter-version: '3.47.6'
@@ -92,6 +95,7 @@ jobs:
           fixture=apps/aerove-lite/tool/physical_socket_fixture
           python3 "$fixture/prepare_physical_overlay.py" --source . --out "$RUNNER_TEMP/physical-overlay"
           cp -a "$RUNNER_TEMP/physical-overlay/." .
+          python3 "$fixture/keep_boundary.py" stage .
           app=apps/aerove-lite
           mkdir -p "$app/app/src/main/jniLibs" "$app/meow-native/build"
           cp -a "$RUNNER_TEMP/373-inputs/core/jniLibs/." "$app/app/src/main/jniLibs/"
@@ -107,15 +111,14 @@ jobs:
           mkdir -p "$target_config"
           test ! -e "$target_config/config.toml" && test ! -e "$target_config/config"
           printf '[env]\nBINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = { value = "--sysroot=%s -resource-dir=%s -isystem %s/include", force = true }\n' "$sysroot" "$resource" "$resource" > "$target_config/config.toml"
-      - name: Isolate the Flutter ARM64 build task (no signing or packaging)
+      - name: Verify ARM64 paired packaging without publishing
         shell: bash
         working-directory: apps/aerove-lite
         run: |
           set -euo pipefail
           umask 077
-          temp=$(mktemp -d "$RUNNER_TEMP/flutter-only.XXXXXX")
+          temp=$(mktemp -d "$RUNNER_TEMP/arm64-pair.XXXXXX")
           trap 'rm -rf -- "$temp"' EXIT
-          unset AEROVE_LITE_KEYSTORE_PATH AEROVE_LITE_KEYSTORE_PASSWORD
           fixture="$PWD/tool/physical_socket_fixture"
           kotlin_init="$GRADLE_USER_HOME/init.d/aerove-pinned-kotlin.gradle"
           test -f "$kotlin_init" && test ! -L "$kotlin_init"
@@ -124,18 +127,34 @@ jobs:
           ln -s "$GRADLE_USER_HOME/caches" "$fresh/caches"
           test -d "$GRADLE_USER_HOME/aerove-pinned-maven" && test ! -L "$GRADLE_USER_HOME/aerove-pinned-maven"
           ln -s "$GRADLE_USER_HOME/aerove-pinned-maven" "$fresh/aerove-pinned-maven"
+          export GRADLE_USER_HOME="$fresh"
           export AEROVE_FLUTTER_PROJECT_DIR="$PWD/android"
-          export AEROVE_FLUTTER_PHASES="$temp/phases"
+          export AEROVE_FLUTTER_PHASES="$temp/flutter-phases"
+          export AEROVE_KEEP_BOUNDARY="$temp/keep-phases"
           : > "$AEROVE_FLUTTER_PHASES"
-          started=$SECONDS
+          : > "$AEROVE_KEEP_BOUNDARY"
+          export AEROVE_LITE_KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+          export AEROVE_LITE_KEYSTORE_PATH="$temp/build-key.p12"
+          printf '::add-mask::%s\n' "$AEROVE_LITE_KEYSTORE_PASSWORD"
+          keytool -genkeypair -alias aerove-lite -keyalg RSA -keysize 2048 -validity 1 \
+            -dname 'CN=Ephemeral AEROVE build probe' -keystore "$AEROVE_LITE_KEYSTORE_PATH" \
+            -storetype PKCS12 -storepass:env AEROVE_LITE_KEYSTORE_PASSWORD >/dev/null 2>&1
+          flags=(gradle --no-daemon --console=plain --max-workers=2 --stacktrace
+            --init-script "$kotlin_init" --init-script "$fixture/flutter_only.init.gradle"
+            -p android -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a "-PsourceSha=$BASE"
+            "-PnativeMigration.fixtureDir=$RUNNER_TEMP/373-inputs/migration/retained-export"
+            :app:assembleRelease :platform-qa:assembleRelease)
           rc=0
-          GRADLE_USER_HOME="$fresh" timeout --signal=TERM --kill-after=15s 12m gradle --no-daemon --console=plain \
-            --max-workers=2 --stacktrace --info --init-script "$kotlin_init" --init-script "$fixture/flutter_only.init.gradle" \
-            -p android -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a "-PsourceSha=$BASE" \
-            "-PnativeMigration.fixtureDir=$RUNNER_TEMP/373-inputs/migration/retained-export" :app:compileFlutterBuildRelease \
-            > "$temp/flutter.log" 2>&1 || rc=$?
-          receipt_rc=0
-          python3 "$fixture/flutter_only_report.py" "$temp/flutter.log" "$AEROVE_FLUTTER_PHASES" "$PWD" \
-            "$rc" "$((SECONDS-started))" | tee -a "$GITHUB_STEP_SUMMARY" || receipt_rc=$?
+          started=$SECONDS
+          timeout --signal=TERM --kill-after=15s 5m "${flags[@]}" --dry-run > "$temp/graph.log" 2>&1 || rc=$?
+          python3 "$fixture/packaging_probe.py" plan "$temp/graph.log" "$rc" "$((SECONDS-started))" "$PWD" \
+            "$AEROVE_FLUTTER_PHASES" "$AEROVE_KEEP_BOUNDARY" | tee -a "$GITHUB_STEP_SUMMARY"
           if (( rc != 0 )); then exit "$rc"; fi
-          exit "$receipt_rc"
+          started=$SECONDS
+          timeout --signal=TERM --kill-after=15s 20m "${flags[@]}" > "$temp/pair.log" 2>&1 || rc=$?
+          python3 "$fixture/packaging_probe.py" assembly "$temp/pair.log" "$rc" "$((SECONDS-started))" "$PWD" \
+            "$AEROVE_FLUTTER_PHASES" "$AEROVE_KEEP_BOUNDARY" | tee -a "$GITHUB_STEP_SUMMARY"
+          if (( rc != 0 )); then exit "$rc"; fi
+          python3 "$fixture/ephemeral_pair_receipt.py" --app-dir "$PWD" \
+            --graph "$temp/graph.log" --tools "$ANDROID_SDK_ROOT/build-tools/37.0.0" \
+            --analyzer "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" | tee -a "$GITHUB_STEP_SUMMARY"
