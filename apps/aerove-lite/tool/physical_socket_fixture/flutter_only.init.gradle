@@ -1,0 +1,9 @@
+gradle.projectsEvaluated {
+    def app = gradle.rootProject.findProject(':app')
+    if (app == null) throw new GradleException('Missing expected Flutter app project')
+    app.tasks.named('compileFlutterBuildRelease').configure {
+        def phases = new File(System.getenv('AEROVE_FLUTTER_PHASES'))
+        doFirst { phases.append('flutter_task_started\n', 'US-ASCII') }
+        doLast { phases.append('flutter_task_completed\n', 'US-ASCII') }
+    }
+}
