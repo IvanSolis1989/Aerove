@@ -21,21 +21,22 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 10
+          fetch-depth: 11
           persist-credentials: false
       - name: Check exact parent and diagnostic-only source delta
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 8acf44be6d6a4c606fb3432f2d05fc4715639d1e
-          test "$(git rev-parse HEAD^^)" = 91b416ec9372f894bb9b85bac2b0b76a86ef57b4
-          test "$(git rev-parse HEAD~3)" = 49f7e8657b3cd50c5ca0ad969d63c66d76b67492
-          test "$(git rev-parse HEAD~4)" = 34a05b9771be2c8751b7732f6cc1b8f7b099a710
-          test "$(git rev-parse HEAD~5)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
-          test "$(git rev-parse HEAD~6)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
-          test "$(git rev-parse HEAD~7)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
-          test "$(git rev-parse HEAD~8)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
-          test "$(git rev-parse HEAD~9)" = "$BASE"
+          test "$(git rev-parse HEAD^)" = 50684be7c6f27cfb73c6510db6e9d1c6adc3f39a
+          test "$(git rev-parse HEAD^^)" = 8acf44be6d6a4c606fb3432f2d05fc4715639d1e
+          test "$(git rev-parse HEAD~3)" = 91b416ec9372f894bb9b85bac2b0b76a86ef57b4
+          test "$(git rev-parse HEAD~4)" = 49f7e8657b3cd50c5ca0ad969d63c66d76b67492
+          test "$(git rev-parse HEAD~5)" = 34a05b9771be2c8751b7732f6cc1b8f7b099a710
+          test "$(git rev-parse HEAD~6)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
+          test "$(git rev-parse HEAD~7)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
+          test "$(git rev-parse HEAD~8)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
+          test "$(git rev-parse HEAD~9)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
+          test "$(git rev-parse HEAD~10)" = "$BASE"
           test "$(git rev-parse "$BASE^{tree}")" = 04dd07698f78b6b3fcf21bf5325f2f68a1483be5
           git diff --name-only -z "$BASE" HEAD | python3 -c '
           import re, sys
@@ -50,6 +51,7 @@ jobs:
         run: |
           python3 apps/aerove-lite/tool/physical_socket_fixture/test_flutter_only_report.py
           python3 apps/aerove-lite/tool/physical_socket_fixture/test_packaging_probe.py
+          python3 apps/aerove-lite/tool/physical_socket_fixture/test_diagnostic_native_origin.py
       - uses: ./.github/actions/flutter
         with:
           flutter-version: '3.47.6'
@@ -97,6 +99,7 @@ jobs:
           python3 "$fixture/prepare_physical_overlay.py" --source . --out "$RUNNER_TEMP/physical-overlay"
           cp -a "$RUNNER_TEMP/physical-overlay/." .
           python3 "$fixture/keep_boundary.py" stage .
+          python3 "$fixture/diagnostic_native_origin.py" . "$RUNNER_TEMP/373-inputs"
           app=apps/aerove-lite
           mkdir -p "$app/app/src/main/jniLibs" "$app/meow-native/build"
           cp -a "$RUNNER_TEMP/373-inputs/core/jniLibs/." "$app/app/src/main/jniLibs/"
@@ -142,7 +145,7 @@ jobs:
             -storetype PKCS12 -storepass:env AEROVE_LITE_KEYSTORE_PASSWORD >/dev/null 2>&1
           flags=(gradle --no-daemon --console=plain --max-workers=2 --stacktrace
             --init-script "$kotlin_init" --init-script "$fixture/flutter_only.init.gradle"
-            -p android -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a "-PsourceSha=$BASE"
+            -p android -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a "-PsourceSha=$GITHUB_SHA"
             "-PnativeMigration.fixtureDir=$RUNNER_TEMP/373-inputs/migration/retained-export"
             :app:assembleRelease :platform-qa:assembleRelease)
           rc=0

@@ -76,6 +76,42 @@ def plugin_evidence(data):
                 buildRole=role, observedRepositoryHttp=[dict(repository=host, status=code)
                                                         for host, code in sorted(statuses)])
 
+FAILED_TASK = re.compile(rb"(?m)^(?:Execution failed for task '([^'\r\n]{1,240})'\.|> Task ([^\s]{1,240}) FAILED)\r?$")
+FAILURE_TASKS = frozenset(REQUIRED) | frozenset(
+    b":" + module + b":" + task
+    for module in (b"app", b"platform-qa")
+    for task in (
+        b"verifyNativeCore", b"verifyClientHelper", b"prepareCandidateIdentity", b"preparePlatformSources",
+        b"prepareNativeMigrationFixtureAssets", b"mergeReleaseAssets", b"mergeReleaseNativeLibs",
+        b"mergeReleaseResources", b"processReleaseResources", b"processReleaseMainManifest",
+        b"compileReleaseJavaWithJavac", b"bundleReleaseClassesToCompileJar",
+        b"checkReleaseAarMetadata", b"checkReleaseDuplicateClasses", b"validateSigningRelease",
+        b"stripReleaseDebugSymbols", b"optimizeReleaseResources", b"shrinkReleaseRes",
+    )
+)
+DOMAIN_ERRORS = {
+    "candidate_checkout_mismatch": rb"Candidate source does not match checkout",
+    "native_workflow_mismatch": rb"Meow receipt source/run/attempt mismatch",
+    "native_source_mismatch": rb"Meow receipt source/lock/overlay identity mismatch",
+    "native_binary_mismatch": rb"Meow receipt output/NDK/ABI mismatch|Meow ELF ABI/16KiB alignment invalid",
+    "native_missing_jni_exports": rb"Missing Meow JNI exports",
+    "kotlin_compiler": rb"(?m)^e: (?:file:|Compilation error)",
+    "java_compiler": rb"(?m)^(?:[^\r\n]{1,450}\.java:\d+: )?error: (?:cannot find symbol|package [a-zA-Z.]+ does not exist)",
+    "android_resources": rb"Android resource linking failed|AAPT2 error",
+    "r8_missing_class": rb"Missing classes detected while running R8",
+    "java_heap": rb"java\.lang\.OutOfMemoryError|Java heap space",
+}
+
+
+def failed_task_evidence(data):
+    rows = FAILED_TASK.findall(data)
+    if not rows:
+        return None
+    # Prefer Gradle's explicit exception line to a task console row.
+    task = next((a for a, _ in rows if a), rows[0][1])
+    role = next((s.decode("ascii") for s in (b"app", b"platform-qa") if task.startswith(b":" + s + b":")), "other")
+    return dict(role=role, name=task.decode("ascii") if task in FAILURE_TASKS else None)
+
 
 def inspect(phase, log, code, seconds, project, flutter_phases, keep_phases):
     with log.open("rb") as stream:
@@ -89,6 +125,8 @@ def inspect(phase, log, code, seconds, project, flutter_phases, keep_phases):
                   deviceValidated=False, releaseAccepted=False)
     if code:
         result["pluginEvidence"] = plugin_evidence(tail)
+        result["failedTask"] = failed_task_evidence(tail)
+        result["domainErrors"] = [key for key, pattern in DOMAIN_ERRORS.items() if re.search(pattern, tail)]
     if phase == "plan":
         tasks = GRAPH_TASK.findall(tail)
         unique = not offset and all(tasks.count(task) == 1 for task in REQUIRED)
