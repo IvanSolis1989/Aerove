@@ -97,7 +97,8 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     final hasProfile = ref.watch(
       profilesProvider.select((state) => state.isNotEmpty),
     );
-    final isStart = ref.watch(isStartProvider);
+    final starting = ref.watch(listenerStartPendingProvider);
+    final isStart = ref.watch(isStartProvider) && !starting;
     final suspended = isStart && ref.watch(suspendProvider);
     final entry = ref.watch(
       outboundIpProbeProvider.select((state) => state.entryOf(routedOutbound)),
@@ -122,7 +123,9 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     final loading = ipInfo == null ? !failed : qualityLoading;
     final metrics = _OutboundMetrics.of(density);
     final appLocalizations = context.appLocalizations;
-    final (chipLabel, chipTone) = suspended
+    final (chipLabel, chipTone) = starting
+        ? (appLocalizations.connecting, DashboardChipTone.idle)
+        : suspended
         ? (appLocalizations.suspended, DashboardChipTone.warn)
         : isStart
         ? (appLocalizations.running, DashboardChipTone.ok)
@@ -208,8 +211,9 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                 text: false,
                 child: _StartToggle(
                   size: metrics.buttonSize,
-                  enabled: hasProfile,
+                  enabled: hasProfile || starting,
                   running: isStart,
+                  starting: starting,
                   suspended: suspended,
                 ),
               ),
@@ -1162,12 +1166,14 @@ class _StartToggle extends ConsumerStatefulWidget {
     required this.size,
     required this.enabled,
     required this.running,
+    required this.starting,
     required this.suspended,
   });
 
   final double size;
   final bool enabled;
   final bool running;
+  final bool starting;
   final bool suspended;
 
   @override
@@ -1246,9 +1252,10 @@ class _StartToggleState extends ConsumerState<_StartToggle>
     final ink = enabled && !glass
         ? colorScheme.onPrimary
         : colorScheme.onSurfaceVariant;
+    final canStop = widget.running || widget.starting;
     final tooltip = widget.suspended
         ? appLocalizations.suspended
-        : widget.running
+        : canStop
         ? appLocalizations.stop
         : appLocalizations.start;
     final stateDuration = highContrast
@@ -1360,7 +1367,7 @@ class _StartToggleState extends ConsumerState<_StartToggle>
                           fill: 1,
                         )
                       : TweenAnimationBuilder<double>(
-                          tween: Tween(end: widget.running ? 1 : 0),
+                          tween: Tween(end: canStop ? 1 : 0),
                           duration: highContrast
                               ? Duration.zero
                               : context.motionDuration(_morphDuration),

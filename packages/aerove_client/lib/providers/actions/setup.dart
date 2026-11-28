@@ -8,6 +8,16 @@ class _ProviderSourceLease {
 
 enum _SetupTaskResult { completed, handoffToCoreRestart, failed }
 
+final listenerStartPendingProvider =
+    NotifierProvider<ListenerStartPending, bool>(ListenerStartPending.new);
+
+class ListenerStartPending extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void _publish(bool value) => state = value;
+}
+
 // getRunTime waits out a service transition in flight, which can outlast the
 // splash; past this the button catches up in initStatus instead.
 const _runTimePrefillTimeout = Duration(milliseconds: 300);
@@ -453,10 +463,13 @@ class SetupAction extends _$SetupAction {
 
   Future<void> _adoptRunOnly(ServiceRunTime? adopt) async {
     final request = _claim(true, initialize: true);
-    await _settleInitialStart(request, () async {
-      await _startCoreRunning(request, adopt: adopt);
-      return true;
-    });
+    await _trackStart(
+      request,
+      () => _settleInitialStart(request, () async {
+        await _startCoreRunning(request, adopt: adopt);
+        return true;
+      }),
+    );
   }
 
   Future<AppliedSetup?> _readAppliedSetup() async {
@@ -479,12 +492,15 @@ class SetupAction extends _$SetupAction {
   }) async {
     if (running) {
       final request = _claim(true, initialize: true);
-      await _settleInitialStart(
+      await _trackStart(
         request,
-        () => _adoptOrApply(
-          record,
-          push: push,
-          preloadInvoke: () => _startCoreRunning(request, adopt: adopt),
+        () => _settleInitialStart(
+          request,
+          () => _adoptOrApply(
+            record,
+            push: push,
+            preloadInvoke: () => _startCoreRunning(request, adopt: adopt),
+          ),
         ),
       );
     } else {
@@ -546,7 +562,9 @@ class SetupAction extends _$SetupAction {
           );
         }),
       );
-    return running ? _start(request) : _stop(request);
+    return running
+        ? _trackStart(request, () => _start(request))
+        : _stop(request);
   }
 
   _RunRequest _claim(bool running, {required bool initialize}) {
@@ -562,11 +580,27 @@ class SetupAction extends _$SetupAction {
     _latestRunRequest = request;
     _pendingListenerOptions?.complete(null);
     _pendingListenerOptions = null;
+    final pending = running &&
+        (_startTime == null || ref.read(listenerStartPendingProvider));
+    ref.read(listenerStartPendingProvider.notifier)._publish(pending);
     _setLocalRunning(running);
     if (initialize) {
       globalState.needInitStatus = false;
     }
     return request;
+  }
+
+  Future<bool> _trackStart(
+    _RunRequest request,
+    Future<bool> Function() start,
+  ) async {
+    try {
+      return await start();
+    } finally {
+      if (ref.mounted && _isCurrent(request)) {
+        ref.read(listenerStartPendingProvider.notifier)._publish(false);
+      }
+    }
   }
 
   Future<bool> _settleInitialStart(

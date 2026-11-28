@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 5
+          fetch-depth: 6
           persist-credentials: false
           submodules: recursive
       - uses: ./.github/actions/flutter
@@ -85,6 +85,11 @@ jobs:
         working-directory: apps/aerove
         run: |
           flutter test --no-pub --concurrency 1 test/providers/setup_action_test.dart test/providers/action_test.dart test/core/controller_test.dart
+      - name: Dashboard pending start interaction
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 test/views/dashboard/current_outbound_test.dart
       - name: Lite startup and recovery regressions
         if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
         working-directory: apps/aerove

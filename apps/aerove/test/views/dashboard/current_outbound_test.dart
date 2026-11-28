@@ -57,6 +57,31 @@ class _RecordingSetupAction extends SetupAction {
   }
 }
 
+class _StagedSetupAction extends SetupAction {
+  final profileReady = Completer<bool>();
+  final transitions = <bool>[];
+
+  @override
+  Future<bool> applyProfile({
+    bool silence = false,
+    bool force = false,
+    Future<void> Function()? preloadInvoke,
+  }) async {
+    if (!await profileReady.future) return false;
+    await preloadInvoke?.call();
+    return true;
+  }
+
+  @override
+  Future<bool> setCoreRunning(bool running) async {
+    transitions.add(running);
+    return true;
+  }
+
+  @override
+  void resetCoreTraffic() {}
+}
+
 class _Ips extends OutboundIpProbe {
   @override
   RoutedProbeState<String, IpInfo> build() => const RoutedProbeState({
@@ -812,13 +837,18 @@ void main() {
     ProviderContainer containerWith({
       List<Profile> profiles = const [_profile],
       bool suspended = false,
+      _StagedSetupAction? staged,
     }) => ProviderContainer(
       overrides: [
-        initProvider.overrideWithBuild((_, _) => true),
+        initProvider.overrideWithBuild((_, _) => staged == null),
+        if (staged != null)
+          vpnRouteAddressProvider.overrideWith((_) async => const <String>[]),
         profilesProvider.overrideWithValue(profiles),
         outboundIpProbeProvider.overrideWith(_Ips.new),
         ipQualityProvider.overrideWith((_, _) async => _residential),
-        setupActionProvider.overrideWith(_RecordingSetupAction.new),
+        setupActionProvider.overrideWith(
+          () => staged ?? _RecordingSetupAction(),
+        ),
         suspendProvider.overrideWithValue(suspended),
       ],
     );
@@ -892,6 +922,42 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byTooltip('Stop'), findsOneWidget);
     });
+
+    for (final cancel in [false, true]) {
+      testWidgets(
+        'a staged start ${cancel ? 'can be stopped' : 'waits for confirmation'}',
+        (tester) async {
+          final action = _StagedSetupAction();
+          container = containerWith(staged: action);
+          final previousInitStatus = globalState.needInitStatus;
+          addTearDown(() => globalState.needInitStatus = previousInitStatus);
+          await pumpCard(tester, motion: false);
+          final labels = tester
+              .element(find.byType(CurrentOutboundCard))
+              .appLocalizations;
+
+          await tester.tap(startButton());
+          await tester.pump();
+          expect(find.text(labels.connecting), findsOneWidget);
+          expect(find.text(labels.running), findsNothing);
+          expect(find.byTooltip(labels.stop), findsOneWidget);
+          expect(action.transitions, isEmpty);
+
+          if (cancel) {
+            await tester.tap(startButton());
+            await tester.pump();
+          }
+          action.profileReady.complete(true);
+          await tester.pumpAndSettle();
+          expect(find.text(labels.connecting), findsNothing);
+          expect(action.transitions, [!cancel]);
+          expect(
+            find.text(cancel ? labels.notRunning : labels.running),
+            findsOneWidget,
+          );
+        },
+      );
+    }
 
     testWidgets('a suspended tunnel swaps in the Wi-Fi off glyph and says so', (
       tester,
