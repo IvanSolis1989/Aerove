@@ -7,6 +7,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:flutter/foundation.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import 'action.dart' show listenerStartPendingProvider;
 import 'app.dart';
 import 'core.dart';
 import 'state.dart';
@@ -23,6 +24,7 @@ class RouteState {
     this.routeVersion = 0,
     this.hostEpoch = 0,
     this.proxied = false,
+    this.transitioning = false,
     this.synced = false,
     this.live = false,
     this.resumes = 0,
@@ -32,6 +34,7 @@ class RouteState {
   final int routeVersion;
   final int hostEpoch;
   final bool proxied;
+  final bool transitioning;
   final bool synced;
   final bool live;
   final int resumes;
@@ -41,6 +44,7 @@ class RouteState {
     int? routeVersion,
     int? hostEpoch,
     bool? proxied,
+    bool? transitioning,
     bool? synced,
     bool? live,
     int? resumes,
@@ -50,6 +54,7 @@ class RouteState {
       routeVersion: routeVersion ?? this.routeVersion,
       hostEpoch: hostEpoch ?? this.hostEpoch,
       proxied: proxied ?? this.proxied,
+      transitioning: transitioning ?? this.transitioning,
       synced: synced ?? this.synced,
       live: live ?? this.live,
       resumes: resumes ?? this.resumes,
@@ -57,7 +62,10 @@ class RouteState {
   }
 
   bool isFresh(RouteStamp stamp) =>
-      synced && !hasMovedSince(stamp) && stamp.routeVersion == routeVersion;
+      synced &&
+      !transitioning &&
+      !hasMovedSince(stamp) &&
+      stamp.routeVersion == routeVersion;
 
   bool hasMovedSince(RouteStamp stamp) =>
       stamp.coreEpoch != coreEpoch ||
@@ -74,6 +82,7 @@ class RouteState {
       other.routeVersion == routeVersion &&
       other.hostEpoch == hostEpoch &&
       other.proxied == proxied &&
+      other.transitioning == transitioning &&
       other.synced == synced &&
       other.live == live &&
       other.resumes == resumes;
@@ -84,6 +93,7 @@ class RouteState {
     routeVersion,
     hostEpoch,
     proxied,
+    transitioning,
     synced,
     live,
     resumes,
@@ -156,6 +166,7 @@ class RouteTracker extends _$RouteTracker {
   RouteState build() {
     ref.onDispose(_cancelRetry);
     ref.listen(isStartProvider, (_, _) => _scheduleSyncProxied());
+    ref.listen(listenerStartPendingProvider, (_, _) => _scheduleSyncProxied());
     ref.listen(suspendProvider, (_, _) => _scheduleSyncProxied());
     ref.listen(initProvider, (_, _) => _subscribe());
     ref.listen(appVisibleProvider, (_, visible) {
@@ -172,10 +183,13 @@ class RouteTracker extends _$RouteTracker {
         _dropSync();
       }
     });
-    return RouteState(proxied: _proxied);
+    return RouteState(proxied: _proxied, transitioning: _transitioning);
   }
 
-  bool get _proxied => ref.read(isStartProvider) && !ref.read(suspendProvider);
+  bool get _transitioning => ref.read(listenerStartPendingProvider);
+
+  bool get _proxied =>
+      !_transitioning && ref.read(isStartProvider) && !ref.read(suspendProvider);
 
   bool get _ready =>
       _watchers > 0 &&
@@ -231,9 +245,15 @@ class RouteTracker extends _$RouteTracker {
   }
 
   void _syncProxied() {
+    final transitioning = _transitioning;
     final proxied = _proxied;
-    if (proxied != state.proxied) {
-      state = state.copyWith(proxied: proxied);
+    if (proxied != state.proxied || transitioning != state.transitioning) {
+      final entering = transitioning && !state.transitioning;
+      state = state.copyWith(
+        proxied: proxied,
+        transitioning: transitioning,
+        hostEpoch: entering ? state.hostEpoch + 1 : state.hostEpoch,
+      );
     }
   }
 

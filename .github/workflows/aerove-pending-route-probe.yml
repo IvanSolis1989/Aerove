@@ -1,0 +1,56 @@
+name: AEROVE pending route probe regression
+on:
+  push:
+    branches: [dot/aerove-pending-route-probe-20261128]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+      - uses: ./.github/actions/flutter
+        with:
+          flutter-version: '3.47.6'
+          channel: stable
+          cache: true
+          cache-read-only: true
+      - name: Prepare client-only dependencies, without native app packaging
+        id: prepare
+        run: |
+          sed -i 's/build_assets: true/build_assets: false/g' apps/aerove/pubspec.yaml packages/aerove_client/pubspec.yaml
+          (cd packages/aerove_client && flutter pub get)
+          (cd apps/aerove && flutter pub get)
+          (cd packages/aerove_client && dart run intl_utils:generate)
+          (cd packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)
+      - uses: ./.github/actions/aerove-test-font
+        id: fixture_font
+        with:
+          system-fonts: 'false'
+      - name: Standard lifecycle regressions
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 test/providers/setup_action_test.dart test/providers/action_test.dart test/core/controller_test.dart
+      - name: Route projection and probe regression
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 test/providers/route_state_test.dart test/providers/routed_probe_test.dart
+      - name: Dashboard pending start interaction
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 test/views/dashboard/current_outbound_test.dart
+      - name: Lite startup and recovery regressions
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart test/core/meow_test.dart

@@ -5,6 +5,7 @@ import 'package:fl_clash/core/controller.dart';
 import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/route_state.dart';
@@ -15,6 +16,10 @@ import 'package:mocktail/mocktail.dart';
 import 'package:riverpod/riverpod.dart';
 
 class _MockCore extends Mock implements CoreHandlerInterface {}
+
+class _PendingStart extends ListenerStartPending {
+  void set(bool pending) => state = pending;
+}
 
 class _Probe extends Notifier<RoutedProbeState<String, String>>
     with RoutedProbe<String, String> {
@@ -118,6 +123,56 @@ void main() {
   void moveRoute(ProviderContainer container, int routeVersion) => trackerOf(
     container,
   ).applySnapshot(RouteSnapshot(coreEpoch: 1, routeVersion: routeVersion));
+
+  for (final confirmed in [false, true]) {
+    test('route probes wait for a pending start (confirmed: $confirmed)', () async {
+      final pending = _PendingStart();
+      final container = ProviderContainer(
+        overrides: [
+          listenerStartPendingProvider.overrideWith(() => pending),
+          appVisibleProvider.overrideWithBuild((_, _) => true),
+          initProvider.overrideWithBuild((_, _) => false),
+          runTimeProvider.overrideWithBuild((_, _) => null),
+          suspendProvider.overrideWithValue(false),
+        ],
+      );
+      addTearDown(container.dispose);
+      moveRoute(container, 1);
+      final probe = container.read(_probeProvider.notifier);
+      probe.watch('a');
+      await pumpEventQueue();
+      expect(probe.calls, ['a']);
+      final oldRoute = probe.routes.single;
+
+      pending.set(true);
+      container.read(runTimeProvider.notifier).value = 1;
+      await pumpEventQueue();
+      final waiting = container.read(routeTrackerProvider);
+      expect(waiting.transitioning, isTrue);
+      expect(waiting.proxied, isFalse);
+      expect(waiting.hostEpoch, greaterThan(oldRoute.hostEpoch));
+
+      probe.refresh(['b']);
+      probe.answer({'a': _ok('old.example:443')});
+      await pumpEventQueue();
+      expect(probe.calls, ['a']);
+      expect(container.read(_probeProvider).entryOf('a').phase, isNot(ProbePhase.fresh));
+
+      if (!confirmed) container.read(runTimeProvider.notifier).value = null;
+      pending.set(false);
+      await pumpEventQueue();
+      expect(probe.calls.skip(1), unorderedEquals(['a', 'b']));
+      for (final route in probe.routes.skip(1)) {
+        expect(route.transitioning, isFalse);
+        expect(route.proxied, confirmed);
+      }
+      for (final target in probe.calls.skip(1)) {
+        probe.answer({target: _ok('new.example:443')});
+      }
+      await pumpEventQueue();
+      expect(container.read(_probeProvider).entryOf('a').stamp?.proxied, confirmed);
+    });
+  }
 
   test('probes a watched target and keeps the answer while fresh', () async {
     final container = build();

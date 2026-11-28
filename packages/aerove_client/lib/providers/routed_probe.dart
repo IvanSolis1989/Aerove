@@ -7,6 +7,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:flutter/foundation.dart';
 import 'package:riverpod/riverpod.dart';
 
+import 'action.dart' show listenerStartPendingProvider;
 import 'app.dart';
 import 'core.dart';
 import 'route_state.dart';
@@ -235,9 +236,15 @@ mixin RoutedProbe<K, V>
     scheduleMicrotask(_launch);
   }
 
+  bool get _routePending =>
+      _route.transitioning || ref.read(listenerStartPendingProvider);
+
   void _launch() {
     _scheduled = false;
-    if (!ref.mounted || !_route.live || !ref.read(appVisibleProvider)) {
+    if (!ref.mounted ||
+        !_route.live ||
+        _routePending ||
+        !ref.read(appVisibleProvider)) {
       return;
     }
     final route = _route;
@@ -313,6 +320,11 @@ mixin RoutedProbe<K, V>
     _inFlight.remove(target);
     final current = _route;
     final entries = Map<K, ProbeEntry<V>>.of(state.entries);
+    if (_routePending) {
+      _invalidate(target, entries);
+      state = RoutedProbeState(entries);
+      return;
+    }
     final answer = answers[target] ?? const ProbeAnswer();
     final stamp = _stampOf(answer, route);
     if (!current.synced || current.hasMovedSince(stamp)) {
@@ -444,7 +456,10 @@ mixin RoutedProbe<K, V>
       _reverify = true;
       return;
     }
-    if (!ref.mounted || !_route.live || !ref.read(appVisibleProvider)) {
+    if (!ref.mounted ||
+        !_route.live ||
+        _routePending ||
+        !ref.read(appVisibleProvider)) {
       return;
     }
     final stamps = <K, RouteStamp>{};
@@ -480,6 +495,7 @@ mixin RoutedProbe<K, V>
     if (!ref.mounted) {
       return;
     }
+    if (_routePending) return;
     final current = _route;
     final entries = Map<K, ProbeEntry<V>>.of(state.entries);
     for (final (index, MapEntry(key: target, value: stamp))
