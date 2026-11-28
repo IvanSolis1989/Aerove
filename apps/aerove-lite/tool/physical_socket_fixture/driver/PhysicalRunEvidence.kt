@@ -36,6 +36,10 @@ internal class PhysicalRunInput private constructor(
             val pin = PhysicalSocketDriver.Pin(digest("apkSha256"), digest("apkSignerSha256"),
                 digest("fixtureApkSha256"), digest("fixtureSignerSha256"))
             digest("profileSourceSha256")
+            if (row.has("expectedProxyGroup")) {
+                require(row.get("expectedProxyGroup") == "AEROVE-LAB-READBACK")
+                ids.put("expectedProxyGroup", "AEROVE-LAB-READBACK")
+            }
             digest("runnerApkSha256")
             require(row.getString("runnerComponent") == PHYSICAL_RUNNER_COMPONENT)
             ids.put("runnerComponent", PHYSICAL_RUNNER_COMPONENT)
@@ -96,7 +100,10 @@ internal fun readInstalledPhysicalRunner(instrumentation: Instrumentation, expec
 }
 
 internal fun writePhysicalRun(root: File, expected: PhysicalRunInput, aeroveUid: Int, result: PhysicalVpnScenario.Result,
-    runnerBefore: JSONObject, runnerAfter: JSONObject) {
+    runnerBefore: JSONObject, runnerAfter: JSONObject, observedProxyGroup: String? = null) {
+    val expectedGroup = if (expected.identity.has("expectedProxyGroup"))
+        expected.identity.getString("expectedProxyGroup") else null
+    check(observedProxyGroup == expectedGroup) { "Missing requested proxy-group observation" }
     for (row in listOf(runnerBefore, runnerAfter)) {
         check(row.getString("component") == expected.identity.getString("runnerComponent") &&
             row.getString("apkSha256") == expected.identity.getString("runnerApkSha256") &&
@@ -117,6 +124,12 @@ internal fun writePhysicalRun(root: File, expected: PhysicalRunInput, aeroveUid:
         .put("aeroveUid", aeroveUid).put("fixturePackage", "dev.aerove.fixture.socketowner")
         .put("runnerBefore", runnerBefore).put("runnerAfter", runnerAfter)
         .put("stages", result.records).put("releaseAccepted", false)
+    if (observedProxyGroup != null) {
+        envelope.put("proxyGroupReadback", JSONObject()
+            .put("name", observedProxyGroup)
+            .put("runId", expected.identity.getString("runId"))
+            .put("profileSourceSha256", expected.identity.getString("profileSourceSha256")))
+    }
     val publication = File(root, "physical-evidence")
     val staging = File(root, ".physical-evidence.partial")
     check(!publication.exists() && staging.mkdir())

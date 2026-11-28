@@ -20,7 +20,9 @@ internal class ProductionPhysicalVpnBridge(private val app: LiteApplication) {
 
     suspend fun run(pin: PhysicalSocketDriver.Pin, challenges: List<PhysicalSocketDriver.Challenge>,
         profileLabel: String, profileDigest: String,
-        startViaProductionUi: suspend () -> Unit, stopViaProductionUi: suspend () -> Unit
+        startViaProductionUi: suspend () -> Unit, stopViaProductionUi: suspend () -> Unit,
+        expectedProxyGroup: String? = null,
+        observeProxyGroupInUi: suspend (String) -> Unit = { error("Proxy UI observation not supplied") }
     ): PhysicalVpnScenario.Result = withContext(Dispatchers.IO) {
         PhysicalVpnScenario(app.applicationInfo.uid, vpn::visibleVpn,
             startFromUi = startViaProductionUi,
@@ -37,7 +39,22 @@ internal class ProductionPhysicalVpnBridge(private val app: LiteApplication) {
             awaitRunningCore = {
                 app.vpn.first { it.phase == VpnPhase.Running && it.endpoint != null && it.listening && !it.suspended }
                 app.flutterRuntimeIdentity.first { it != null && app.flutterRuntimeIdentityIsCurrent(it) }
-                readActive(profileLabel, profileDigest)
+                val runtime = readActive(profileLabel, profileDigest)
+                if (expectedProxyGroup != null) {
+                    val endpoint = checkNotNull(app.vpn.value.endpoint)
+                    val group = CoreApiClient(ControlEndpoint(endpoint.port, endpoint.secret)).use {
+                        it.groups().singleOrNull { group -> group.name == expectedProxyGroup }
+                    }
+                    check(group != null && group.nodes.map { it.name }.sorted() == listOf("DIRECT", "REJECT")) {
+                        "Active controller did not return the expected isolated proxy group and members"
+                    }
+                    check(app.vpn.value.endpoint === endpoint && readActive(profileLabel, profileDigest) == runtime)
+                    observeProxyGroupInUi(expectedProxyGroup)
+                    check(app.vpn.value.endpoint === endpoint && readActive(profileLabel, profileDigest) == runtime) {
+                        "Core or applied profile changed during proxy group UI readback"
+                    }
+                }
+                runtime
             },
             currentCore = { readActive(profileLabel, profileDigest) },
             snapshotForCore = { stamp ->

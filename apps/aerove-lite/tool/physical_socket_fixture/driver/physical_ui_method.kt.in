@@ -30,6 +30,15 @@
         deviceGeneralToggle("Find process", true)
         navigate("Profiles"); val label = profileLabel(); requireLabel(label); click(label)
         awaitCondition("selected preloaded isolated lab profile") { findLabel(label)?.let(::selected) == true }
+        check(arguments.getString("expectedProxyGroup") == null) { "Group must be pinned in physicalRunB64" }
+        check(expected.identity.getString("runId") == requiredArg("qaToken"))
+        val expectedProxyGroup = if (expected.identity.has("expectedProxyGroup"))
+            expected.identity.getString("expectedProxyGroup") else null
+        var observedProxyGroup: String? = null
+        if (expectedProxyGroup != null) {
+            check(expectedProxyGroup == "AEROVE-LAB-READBACK" && label != expectedProxyGroup)
+            receipt.put("proxyGroupReadbackVerified", false)
+        }
         navigate("Dashboard")
         val app = context.applicationContext as dev.aerove.lite.LiteApplication
         val result = kotlinx.coroutines.runBlocking {
@@ -47,12 +56,23 @@
                                 dev.aerove.lite.VpnPhase.Stopped, dev.aerove.lite.VpnPhase.Failed))
                         }
                     }
+                },
+                expectedProxyGroup = expectedProxyGroup,
+                observeProxyGroupInUi = { groupName ->
+                    stage = "physical-proxy-group-readback"
+                    navigate("Proxies")
+                    val group = requireLabel(groupName)
+                    action("verified-isolated-proxy-group", group, groupName)
+                    capture("physical-proxy-group-readback")
+                    navigate("Dashboard")
+                    observedProxyGroup = groupName
                 })
         }
         verifyDevice()
         val runnerAfter = dev.aerove.lite.platformqa.readInstalledPhysicalRunner(instrumentation, expected)
         verifyDevice()
-        dev.aerove.lite.platformqa.writePhysicalRun(root, expected, context.applicationInfo.uid, result, runnerBefore, runnerAfter)
+        dev.aerove.lite.platformqa.writePhysicalRun(root, expected, context.applicationInfo.uid, result, runnerBefore, runnerAfter, observedProxyGroup)
+        if (expectedProxyGroup != null) receipt.put("proxyGroupReadbackVerified", true)
         receipt.put("physicalDiagnosticCollected", true).put("releaseAccepted", false)
         stage = "physical-diagnostic-collected"
     }
