@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 4
+          fetch-depth: 5
           persist-credentials: false
           submodules: recursive
       - uses: ./.github/actions/flutter
@@ -24,6 +24,7 @@ jobs:
           cache: true
           cache-read-only: true
       - name: Prepare client-only dependencies, without native app packaging
+        id: prepare
         run: |
           sed -i 's/build_assets: true/build_assets: false/g' apps/aerove/pubspec.yaml packages/aerove_client/pubspec.yaml
           (cd packages/aerove_client && flutter pub get)
@@ -31,6 +32,7 @@ jobs:
           (cd packages/aerove_client && dart run intl_utils:generate)
           (cd packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)
       - uses: ./.github/actions/aerove-test-font
+        id: fixture_font
         with:
           system-fonts: 'false'
       - name: Reproduce both failures on their exact previous sources
@@ -84,6 +86,7 @@ jobs:
         run: |
           flutter test --no-pub --concurrency 1 test/providers/setup_action_test.dart test/providers/action_test.dart test/core/controller_test.dart
       - name: Lite startup and recovery regressions
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
         working-directory: apps/aerove
         run: |
           flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart test/core/meow_test.dart

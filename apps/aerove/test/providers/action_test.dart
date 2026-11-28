@@ -734,8 +734,10 @@ void main() {
             container.read(setupActionProvider.notifier) as _RaceSetupAction;
         action.startCompleter = startCompleter;
 
+        final entered = Completer<void>();
+        action.firstStartEntered = entered;
         final firstStart = action.setRunning(true);
-        await Future<void>.delayed(Duration.zero);
+        await entered.future;
         final stop = action.setRunning(false);
         final latestStart = action.setRunning(true);
 
@@ -1123,6 +1125,7 @@ class _RaceSetupAction extends SetupAction {
   int resetCoreTrafficCount = 0;
   int parkCalls = 0;
   final transitions = <bool>[];
+  Completer<void>? firstStartEntered;
   Completer<bool>? startCompleter;
   Completer<bool>? stopCompleter;
   Completer<bool>? parkCompleter;
@@ -1141,6 +1144,10 @@ class _RaceSetupAction extends SetupAction {
   @override
   Future<bool> setCoreRunning(bool running) async {
     transitions.add(running);
+    final entered = firstStartEntered;
+    if (running && entered != null && !entered.isCompleted) {
+      entered.complete();
+    }
     return running
         ? await startCompleter?.future ?? true
         : await stopCompleter?.future ?? true;

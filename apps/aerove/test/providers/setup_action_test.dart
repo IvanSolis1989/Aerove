@@ -99,6 +99,7 @@ class TestSetupAction extends SetupAction {
 
   final List<bool> coreRunningCalls = [];
   final List<Completer<void>> pendingCoreCalls = [];
+  Completer<void>? firstStartEntered;
   int trafficResets = 0;
   int applyProfileCalls = 0;
   bool applyProfileResult = true;
@@ -128,6 +129,10 @@ class TestSetupAction extends SetupAction {
   @override
   Future<bool> setCoreRunning(bool running) async {
     coreRunningCalls.add(running);
+    final entered = firstStartEntered;
+    if (running && entered != null && !entered.isCompleted) {
+      entered.complete();
+    }
     if (blockCoreCalls) {
       final gate = Completer<void>();
       pendingCoreCalls.add(gate);
@@ -918,8 +923,10 @@ void main() {
         action.blockCoreCalls = true;
         action.unansweredCoreCalls.add(true);
 
+        final entered = Completer<void>();
+        action.firstStartEntered = entered;
         final starting = notifier.setRunning(true);
-        await Future<void>.delayed(Duration.zero);
+        await entered.future;
         final stopping = notifier.setRunning(false);
         await Future<void>.delayed(Duration.zero);
 
