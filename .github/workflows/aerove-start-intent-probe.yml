@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 2
+          fetch-depth: 4
           persist-credentials: false
           submodules: recursive
       - uses: ./.github/actions/flutter
@@ -33,7 +33,7 @@ jobs:
       - uses: ./.github/actions/aerove-test-font
         with:
           system-fonts: 'false'
-      - name: Prove stop used to remain behind the stale start
+      - name: Reproduce both failures on their exact previous sources
         working-directory: apps/aerove
         run: |
           source=packages/aerove_client/lib/providers/actions/setup.dart
@@ -42,33 +42,43 @@ jobs:
           report="$RUNNER_TEMP/aerove-stop-before.jsonl"
           cp "$target" "$fixed"
           trap 'cp "$fixed" "$target"' EXIT
-          git show "b01d521857f1778a4db071dd7151a59bdb9940ee:$source" > "$target"
-          if flutter test --no-pub --machine test/providers/setup_action_test.dart \
-              --name 'stop supersedes a start waiting for VPN routes$' > "$report" 2>&1; then
-            cat "$report"
-            exit 1
-          fi
-          python3 - "$report" <<'PY'
+          verify_old() {
+            local base="$1" name="$2" reason="$3"
+            git show "$base:$source" > "$target"
+            if flutter test --no-pub --machine test/providers/setup_action_test.dart \
+                --name "$name\$" > "$report" 2>&1; then
+              cat "$report"
+              return 1
+            fi
+            python3 - "$report" "$name" "$reason" <<'PY'
           import json
           import sys
           from pathlib import Path
 
+          report, name, reason = sys.argv[1:]
           events = []
-          for line in Path(sys.argv[1]).read_text().splitlines():
+          for line in Path(report).read_text().splitlines():
               try:
-                  events.append(json.loads(line))
+                  value = json.loads(line)
               except ValueError:
                   print(line)
+                  continue
+              if isinstance(value, dict):
+                  events.append(value)
           ids = {e["test"]["id"] for e in events if e.get("type") == "testStart"
-                 and e["test"]["name"].endswith("stop supersedes a start waiting for VPN routes")}
+                 and e["test"]["name"].endswith(name)}
           assert len(ids) == 1, events
           assert any(e.get("type") == "error" and e.get("testID") in ids
-                     and "stop remained behind stale start" in e.get("error", "")
-                     for e in events), events
+                     and reason in e.get("error", "") for e in events), events
           assert any(e.get("type") == "testDone" and e.get("testID") in ids
                      and e.get("result") in {"failure", "error"} for e in events), events
-          print("Previous provider reproduced stop blocked by stale start.")
+          print(f"Previous source reproduced: {reason}.")
           PY
+          }
+          verify_old 4f2d7097896887c9b0e149683830d071d19ee55f \
+            'stop does not wait for new VPN routes' 'stop waited for new VPN routes'
+          verify_old b01d521857f1778a4db071dd7151a59bdb9940ee \
+            'stop supersedes a start waiting for VPN routes' 'stop remained behind stale start'
       - name: Standard lifecycle regressions
         working-directory: apps/aerove
         run: |
