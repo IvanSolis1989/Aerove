@@ -21,22 +21,23 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 11
+          fetch-depth: 12
           persist-credentials: false
       - name: Check exact parent and diagnostic-only source delta
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = 50684be7c6f27cfb73c6510db6e9d1c6adc3f39a
-          test "$(git rev-parse HEAD^^)" = 8acf44be6d6a4c606fb3432f2d05fc4715639d1e
-          test "$(git rev-parse HEAD~3)" = 91b416ec9372f894bb9b85bac2b0b76a86ef57b4
-          test "$(git rev-parse HEAD~4)" = 49f7e8657b3cd50c5ca0ad969d63c66d76b67492
-          test "$(git rev-parse HEAD~5)" = 34a05b9771be2c8751b7732f6cc1b8f7b099a710
-          test "$(git rev-parse HEAD~6)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
-          test "$(git rev-parse HEAD~7)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
-          test "$(git rev-parse HEAD~8)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
-          test "$(git rev-parse HEAD~9)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
-          test "$(git rev-parse HEAD~10)" = "$BASE"
+          test "$(git rev-parse HEAD^)" = 16299fcd05e53e1b844e10641254d8ca1eb08ec5
+          test "$(git rev-parse HEAD^^)" = 50684be7c6f27cfb73c6510db6e9d1c6adc3f39a
+          test "$(git rev-parse HEAD~3)" = 8acf44be6d6a4c606fb3432f2d05fc4715639d1e
+          test "$(git rev-parse HEAD~4)" = 91b416ec9372f894bb9b85bac2b0b76a86ef57b4
+          test "$(git rev-parse HEAD~5)" = 49f7e8657b3cd50c5ca0ad969d63c66d76b67492
+          test "$(git rev-parse HEAD~6)" = 34a05b9771be2c8751b7732f6cc1b8f7b099a710
+          test "$(git rev-parse HEAD~7)" = 6cf64ae87ea9b3e975e9f444efde20e36a677fa7
+          test "$(git rev-parse HEAD~8)" = 8e9b4b02a958763659a9f8e88c4942ea21575a9a
+          test "$(git rev-parse HEAD~9)" = 9ed581978bd2afdbc0ec58cf1320e3310db659e8
+          test "$(git rev-parse HEAD~10)" = 8a5f5cef5207c97b93891fd1cd53fa0afd76cc17
+          test "$(git rev-parse HEAD~11)" = "$BASE"
           test "$(git rev-parse "$BASE^{tree}")" = 04dd07698f78b6b3fcf21bf5325f2f68a1483be5
           git diff --name-only -z "$BASE" HEAD | python3 -c '
           import re, sys
@@ -115,7 +116,7 @@ jobs:
           mkdir -p "$target_config"
           test ! -e "$target_config/config.toml" && test ! -e "$target_config/config"
           printf '[env]\nBINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = { value = "--sysroot=%s -resource-dir=%s -isystem %s/include", force = true }\n' "$sysroot" "$resource" "$resource" > "$target_config/config.toml"
-      - name: Verify ARM64 paired packaging without publishing
+      - name: Verify ARM64 app, runner and fixture without publishing
         shell: bash
         working-directory: apps/aerove-lite
         run: |
@@ -159,6 +160,11 @@ jobs:
           python3 "$fixture/packaging_probe.py" assembly "$temp/pair.log" "$rc" "$((SECONDS-started))" "$PWD" \
             "$AEROVE_FLUTTER_PHASES" "$AEROVE_KEEP_BOUNDARY" | tee -a "$GITHUB_STEP_SUMMARY"
           if (( rc != 0 )); then exit "$rc"; fi
-          python3 "$fixture/ephemeral_pair_receipt.py" --app-dir "$PWD" \
+          install -d -m 700 "$temp/separate-uid-fixture"
+          env -u AEROVE_LITE_KEYSTORE_PASSWORD -u AEROVE_LITE_KEYSTORE_PATH \
+            bash "$fixture/build_ephemeral_fixture.sh" "$ANDROID_SDK_ROOT/platforms/android-37.1/android.jar" \
+            "$ANDROID_SDK_ROOT/build-tools/37.0.0" "$temp/separate-uid-fixture"
+          python3 "$fixture/ephemeral_triple_receipt.py" --app-dir "$PWD" \
             --graph "$temp/graph.log" --tools "$ANDROID_SDK_ROOT/build-tools/37.0.0" \
-            --analyzer "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" | tee -a "$GITHUB_STEP_SUMMARY"
+            --analyzer "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" \
+            --fixture-dir "$temp/separate-uid-fixture" | tee -a "$GITHUB_STEP_SUMMARY"

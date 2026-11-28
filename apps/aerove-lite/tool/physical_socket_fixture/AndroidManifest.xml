@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.aerove.fixture.socketowner">
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="33" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <queries><package android:name="dev.aerove.lite" /></queries>
+    <application android:label="AEROVE physical socket test fixture" android:allowBackup="false" android:testOnly="true">
+        <service android:name=".PhysicalSocketService" android:exported="true" />
+    </application>
+</manifest>

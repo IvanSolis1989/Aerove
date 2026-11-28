@@ -36,7 +36,7 @@ def tool(bin_dir, command, *args):
 
 def signer(text):
     count = re.findall(r"^Number of signers:\s*(\d+)\s*$", text, re.M)
-    certificates = set(re.findall(r"^\s*(?:Signer #\d+|V[23](?:\.1)? Signer):? certificate SHA-256 digest: ([a-f0-9]{64})\s*$", text, re.M))
+    certificates = set(re.findall(r"^\s*(?:Signer #\d+|V[23](?:\.[01])? Signer):? certificate SHA-256 digest: ([a-f0-9]{64})\s*$", text, re.M))
     signed = re.search(r"^Verified using v(?:2|3) scheme [^\n]*: true\s*$", text, re.M)
     require(count == ["1"] and signed and len(certificates) == 1, "Expected exactly one strong APK signer")
     return certificates.pop()
