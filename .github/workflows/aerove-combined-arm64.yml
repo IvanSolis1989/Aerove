@@ -1,0 +1,152 @@
+name: AEROVE combined recovery ARM64 build verification
+'on':
+  push:
+    branches:
+      - dot/aerove-combined-arm64-20261128
+    paths:
+      - '.github/workflows/aerove-combined-arm64.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  probe:
+    if: github.repository == 'IvanSolis1989/Aerove' && github.ref == 'refs/heads/dot/aerove-combined-arm64-20261128' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      FLUTTER_VERSION: '3.47.6'
+      NDK_VERSION: '28.2.13676358'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify exact host-tested source and build-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = 8005dbcafff2ffe1d61b1dee2755ec6117544fa9
+          test "$(git rev-parse 'HEAD^^{tree}')" = 0fc33865dad1eb3b6442ec453bc7b9f1b1f0583e
+          test "$(git diff --no-renames --name-status HEAD^ HEAD | tr '\t' ' ')" = 'A .github/workflows/aerove-combined-arm64.yml'
+          printf 'Host-tested source: %s\nHost-tested tree: %s\nBuild commit: %s\n' '8005dbcafff2ffe1d61b1dee2755ec6117544fa9' '0fc33865dad1eb3b6442ec453bc7b9f1b1f0583e' "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Check bounded Gradle failure disclosure
+        run: |
+          python3 apps/aerove-lite/tool/physical_socket_fixture/test_flutter_only_report.py
+          python3 apps/aerove-lite/tool/physical_socket_fixture/test_packaging_probe.py
+          python3 apps/aerove-lite/tool/physical_socket_fixture/test_diagnostic_native_origin.py
+      - uses: ./.github/actions/flutter
+        with:
+          flutter-version: '3.47.6'
+          cache: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+          cmdline-tools-version: '16111833'
+      - name: Set up pinned ARM64 Android and Rust
+        shell: bash
+        run: |
+          set -eu
+          sdkmanager 'platforms;android-37.1' 'build-tools;37.0.0' "ndk;$NDK_VERSION"
+          rustup toolchain install 1.99.0 --profile minimal --target aarch64-linux-android
+          (cd apps/aerove/plugins/rust_api/rust && rustup override set 1.99.0)
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a
+        with:
+          gradle-version: 9.6.0
+          cache-disabled: true
+      - name: Verify Flutter probe against an offline composite build
+        run: bash apps/aerove-lite/tool/physical_socket_fixture/test_flutter_probe_scope.sh gradle
+      - name: Fetch only exact historical build inputs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir "$RUNNER_TEMP/373-zips" "$RUNNER_TEMP/373-inputs"
+          for id in 14793710109 14793311404 14792767188 14794000243; do
+            gh api "repos/IvanSolis1989/Aerove/actions/artifacts/$id/zip" > "$RUNNER_TEMP/373-zips/$id.zip"
+          done
+          python3 apps/aerove-lite/tool/physical_socket_fixture/stage_original373.py "$RUNNER_TEMP/373-zips" "$RUNNER_TEMP/373-inputs"
+      - name: Stage overlay and locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture=apps/aerove-lite/tool/physical_socket_fixture
+          python3 "$fixture/prepare_physical_overlay.py" --source . --out "$RUNNER_TEMP/physical-overlay"
+          cp -a "$RUNNER_TEMP/physical-overlay/." .
+          python3 "$fixture/keep_boundary.py" stage .
+          python3 "$fixture/diagnostic_native_origin.py" . "$RUNNER_TEMP/373-inputs"
+          app=apps/aerove-lite
+          mkdir -p "$app/app/src/main/jniLibs" "$app/meow-native/build"
+          cp -a "$RUNNER_TEMP/373-inputs/core/jniLibs/." "$app/app/src/main/jniLibs/"
+          cp -a "$RUNNER_TEMP/373-inputs/helper/jniLibs/." "$app/app/src/main/jniLibs/"
+          cp "$RUNNER_TEMP/373-inputs/core/provenance.json" "$app/meow-native/build/arm64-v8a-receipt.json"
+          python3 "$fixture/kotlin_mirror_prefetch.py" "$GRADLE_USER_HOME"
+          (cd "$app" && flutter pub get --enforce-lockfile)
+          python3 tooling/sqlite_hook_prefetch.py "$app" --target android-arm64
+          resource=$("$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang" --print-resource-dir)
+          test -f "$resource/include/stdbool.h"
+          sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          target_config="$GITHUB_WORKSPACE/apps/aerove/plugins/rust_api/rust/.cargo"
+          mkdir -p "$target_config"
+          test ! -e "$target_config/config.toml" && test ! -e "$target_config/config"
+          printf '[env]\nBINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = { value = "--sysroot=%s -resource-dir=%s -isystem %s/include", force = true }\n' "$sysroot" "$resource" "$resource" > "$target_config/config.toml"
+      - name: Verify ARM64 app, runner and fixture without publishing
+        shell: bash
+        working-directory: apps/aerove-lite
+        run: |
+          set -euo pipefail
+          umask 077
+          temp=$(mktemp -d "$RUNNER_TEMP/arm64-pair.XXXXXX")
+          trap 'rm -rf -- "$temp"' EXIT
+          fixture="$PWD/tool/physical_socket_fixture"
+          kotlin_init="$GRADLE_USER_HOME/init.d/aerove-pinned-kotlin.gradle"
+          test -f "$kotlin_init" && test ! -L "$kotlin_init"
+          fresh="$temp/gradle-home"
+          install -d -m 700 "$fresh" "$GRADLE_USER_HOME/caches"
+          ln -s "$GRADLE_USER_HOME/caches" "$fresh/caches"
+          test -d "$GRADLE_USER_HOME/aerove-pinned-maven" && test ! -L "$GRADLE_USER_HOME/aerove-pinned-maven"
+          ln -s "$GRADLE_USER_HOME/aerove-pinned-maven" "$fresh/aerove-pinned-maven"
+          export GRADLE_USER_HOME="$fresh"
+          export AEROVE_FLUTTER_PROJECT_DIR="$PWD/android"
+          export AEROVE_FLUTTER_PHASES="$temp/flutter-phases"
+          export AEROVE_KEEP_BOUNDARY="$temp/keep-phases"
+          : > "$AEROVE_FLUTTER_PHASES"
+          : > "$AEROVE_KEEP_BOUNDARY"
+          export AEROVE_LITE_KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+          export AEROVE_LITE_KEYSTORE_PATH="$temp/build-key.p12"
+          printf '::add-mask::%s\n' "$AEROVE_LITE_KEYSTORE_PASSWORD"
+          keytool -genkeypair -alias aerove-lite -keyalg RSA -keysize 2048 -validity 1 \
+            -dname 'CN=Ephemeral AEROVE build probe' -keystore "$AEROVE_LITE_KEYSTORE_PATH" \
+            -storetype PKCS12 -storepass:env AEROVE_LITE_KEYSTORE_PASSWORD >/dev/null 2>&1
+          flags=(gradle --no-daemon --console=plain --max-workers=2 --stacktrace
+            --init-script "$kotlin_init" --init-script "$fixture/flutter_only.init.gradle"
+            -p android -Ptarget-platform=android-arm64 -PliteAbi=arm64-v8a "-PsourceSha=$GITHUB_SHA"
+            "-PnativeMigration.fixtureDir=$RUNNER_TEMP/373-inputs/migration/retained-export"
+            :app:assembleRelease :platform-qa:assembleRelease)
+          rc=0
+          started=$SECONDS
+          timeout --signal=TERM --kill-after=15s 5m "${flags[@]}" --info --dry-run > "$temp/graph.log" 2>&1 || rc=$?
+          python3 "$fixture/packaging_probe.py" plan "$temp/graph.log" "$rc" "$((SECONDS-started))" "$PWD" \
+            "$AEROVE_FLUTTER_PHASES" "$AEROVE_KEEP_BOUNDARY" | tee -a "$GITHUB_STEP_SUMMARY"
+          if (( rc != 0 )); then exit "$rc"; fi
+          started=$SECONDS
+          timeout --signal=TERM --kill-after=15s 20m "${flags[@]}" > "$temp/pair.log" 2>&1 || rc=$?
+          python3 "$fixture/packaging_probe.py" assembly "$temp/pair.log" "$rc" "$((SECONDS-started))" "$PWD" \
+            "$AEROVE_FLUTTER_PHASES" "$AEROVE_KEEP_BOUNDARY" | tee -a "$GITHUB_STEP_SUMMARY"
+          if (( rc != 0 )); then exit "$rc"; fi
+          install -d -m 700 "$temp/separate-uid-fixture"
+          env -u AEROVE_LITE_KEYSTORE_PASSWORD -u AEROVE_LITE_KEYSTORE_PATH \
+            bash "$fixture/build_ephemeral_fixture.sh" "$ANDROID_SDK_ROOT/platforms/android-37.1/android.jar" \
+            "$ANDROID_SDK_ROOT/build-tools/37.0.0" "$temp/separate-uid-fixture"
+          python3 "$fixture/ephemeral_triple_receipt.py" --app-dir "$PWD" \
+            --graph "$temp/graph.log" --tools "$ANDROID_SDK_ROOT/build-tools/37.0.0" \
+            --analyzer "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/apkanalyzer" \
+            --fixture-dir "$temp/separate-uid-fixture" | tee -a "$GITHUB_STEP_SUMMARY"
