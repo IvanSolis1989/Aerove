@@ -715,6 +715,52 @@ void main() {
       expect(container.read(runningVpnOptionsProvider), isNull);
     });
 
+    test('stop does not wait for new VPN routes', () async {
+      final scopedAction = TestSetupAction();
+      Completer<List<String>>? pendingRoutes;
+      final scoped = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(TestProfiles.new),
+          coreHandlerProvider.overrideWithValue(
+            CoreController.scoped(_MockCoreHandlerInterface()),
+          ),
+          setupActionProvider.overrideWith(() => scopedAction),
+          commonActionProvider.overrideWith(TestCommonAction.new),
+          vpnRouteAddressProvider.overrideWith(
+            (_) => pendingRoutes?.future ?? Future.value(const <String>[]),
+          ),
+        ],
+      );
+      addTearDown(scoped.dispose);
+      globalState.container = scoped;
+      scoped.read(initProvider.notifier).value = true;
+      final setup = scoped.read(setupActionProvider.notifier);
+      expect(await setup.setRunning(true, initialize: true), isTrue);
+      expect(scoped.read(runningVpnOptionsProvider), isNotNull);
+
+      final routes = Completer<List<String>>();
+      pendingRoutes = routes;
+      scoped.invalidate(vpnRouteAddressProvider);
+      final loading = scoped.read(vpnOptionsProvider.future);
+      final stopping = setup.setRunning(false);
+      try {
+        expect(
+          await stopping.timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => throw StateError('stop waited for new VPN routes'),
+          ),
+          isTrue,
+        );
+        expect(scopedAction.coreRunningCalls, [true, false]);
+        expect(scoped.read(runningVpnOptionsProvider), isNull);
+      } finally {
+        routes.complete(const <String>[]);
+        await loading;
+        await stopping;
+        globalState.container = container;
+      }
+    });
+
     test('a start the core rejects keeps nothing', () async {
       markInitialized();
       action.coreRunningError = StateError('listener refused');

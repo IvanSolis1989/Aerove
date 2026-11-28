@@ -1,0 +1,79 @@
+name: AEROVE stop while VPN routes load
+on:
+  push:
+    branches: [dot/aerove-stop-without-route-wait-20261128]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+          submodules: recursive
+      - uses: ./.github/actions/flutter
+        with:
+          flutter-version: '3.47.6'
+          channel: stable
+          cache: true
+          cache-read-only: true
+      - name: Prepare client-only dependencies, without native app packaging
+        run: |
+          sed -i 's/build_assets: true/build_assets: false/g' apps/aerove/pubspec.yaml packages/aerove_client/pubspec.yaml
+          (cd packages/aerove_client && flutter pub get)
+          (cd apps/aerove && flutter pub get)
+          (cd packages/aerove_client && dart run intl_utils:generate)
+          (cd packages/aerove_client && dart run build_runner build --delete-conflicting-outputs)
+      - uses: ./.github/actions/aerove-test-font
+        with:
+          system-fonts: 'false'
+      - name: Prove the unchanged provider waits for the unfinished routes
+        working-directory: apps/aerove
+        run: |
+          source=packages/aerove_client/lib/providers/actions/setup.dart
+          target="../../$source"
+          fixed="$RUNNER_TEMP/aerove-fixed-setup.dart"
+          report="$RUNNER_TEMP/aerove-stop-before.jsonl"
+          cp "$target" "$fixed"
+          trap 'cp "$fixed" "$target"' EXIT
+          git show "4f2d7097896887c9b0e149683830d071d19ee55f:$source" > "$target"
+          if flutter test --no-pub --machine test/providers/setup_action_test.dart \
+              --name 'stop does not wait for new VPN routes$' > "$report" 2>&1; then
+            cat "$report"
+            exit 1
+          fi
+          python3 - "$report" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          events = []
+          for line in Path(sys.argv[1]).read_text().splitlines():
+              try:
+                  events.append(json.loads(line))
+              except ValueError:
+                  print(line)
+          ids = {e["test"]["id"] for e in events if e.get("type") == "testStart"
+                 and e["test"]["name"].endswith("stop does not wait for new VPN routes")}
+          assert len(ids) == 1, events
+          assert any(e.get("type") == "error" and e.get("testID") in ids
+                     and "stop waited for new VPN routes" in e.get("error", "")
+                     for e in events), events
+          assert any(e.get("type") == "testDone" and e.get("testID") in ids
+                     and e.get("result") in {"failure", "error"} for e in events), events
+          print("Unchanged provider failed for the expected route-wait reason.")
+          PY
+      - name: Standard lifecycle regressions
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 test/providers/setup_action_test.dart test/providers/action_test.dart test/core/controller_test.dart
+      - name: Lite startup and recovery regressions
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 --dart-define=AEROVE_TEST_SUITE_PRODUCT=true test/providers/meow_proxy_recovery_test.dart test/core/meow_test.dart
