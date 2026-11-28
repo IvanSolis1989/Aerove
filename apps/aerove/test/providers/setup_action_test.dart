@@ -761,6 +761,56 @@ void main() {
       }
     });
 
+    test('stop supersedes a start waiting for VPN routes', () async {
+      final scopedAction = TestSetupAction();
+      final waitingOnRoutes = Completer<void>();
+      final routes = Completer<List<String>>();
+      final scoped = ProviderContainer(
+        overrides: [
+          profilesProvider.overrideWith(TestProfiles.new),
+          coreHandlerProvider.overrideWithValue(
+            CoreController.scoped(_MockCoreHandlerInterface()),
+          ),
+          setupActionProvider.overrideWith(() => scopedAction),
+          commonActionProvider.overrideWith(TestCommonAction.new),
+          vpnRouteAddressProvider.overrideWith((_) {
+            if (!waitingOnRoutes.isCompleted) waitingOnRoutes.complete();
+            return routes.future;
+          }),
+        ],
+      );
+      addTearDown(scoped.dispose);
+      globalState.container = scoped;
+      scoped.read(initProvider.notifier).value = true;
+      final setup = scoped.read(setupActionProvider.notifier);
+      final starting = setup.setRunning(true, initialize: true);
+      await waitingOnRoutes.future;
+      await pumpEventQueue();
+      expect(scopedAction.coreRunningCalls, isEmpty);
+
+      final stopping = setup.setRunning(false);
+      try {
+        expect(
+          await stopping.timeout(
+            const Duration(seconds: 2),
+            onTimeout: () => throw StateError('stop remained behind stale start'),
+          ),
+          isTrue,
+        );
+        expect(scopedAction.coreRunningCalls, [false]);
+        routes.complete(const <String>[]);
+        expect(await starting, isFalse);
+        expect(scopedAction.coreRunningCalls, [false]);
+        expect(scoped.read(runTimeProvider), isNull);
+        expect(scoped.read(runningVpnOptionsProvider), isNull);
+      } finally {
+        if (!routes.isCompleted) routes.complete(const <String>[]);
+        await starting;
+        await stopping;
+        globalState.container = container;
+      }
+    });
+
     test('a start the core rejects keeps nothing', () async {
       markInitialized();
       action.coreRunningError = StateError('listener refused');

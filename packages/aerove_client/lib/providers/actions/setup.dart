@@ -204,6 +204,7 @@ class SetupAction extends _$SetupAction {
   }
 
   final _listenerScheduler = SerialTaskScheduler();
+  Completer<VpnOptions?>? _pendingListenerOptions;
   final _updateScheduler = SerialTaskScheduler();
   _RunRequest? _latestRunRequest;
   ValueNotifier<bool>? _proxyRecoveryCancellation;
@@ -559,6 +560,8 @@ class SetupAction extends _$SetupAction {
       previousStartTime: _startTime,
     );
     _latestRunRequest = request;
+    _pendingListenerOptions?.complete(null);
+    _pendingListenerOptions = null;
     _setLocalRunning(running);
     if (initialize) {
       globalState.needInitStatus = false;
@@ -691,8 +694,11 @@ class SetupAction extends _$SetupAction {
   }
 
   Future<bool> _adoptListening(ServiceRunTime runTime) async {
-    final vpnOptions =
-        runTime.vpnOptions ?? await ref.read(vpnOptionsProvider.future);
+    final request = _latestRunRequest;
+    final vpnOptions = runTime.vpnOptions ?? await _readListenerStartOptions();
+    if (vpnOptions == null || !identical(_latestRunRequest, request)) {
+      return true;
+    }
     final answered = runTime.parked
         ? await setCoreRunning(true)
         : await adoptCoreRunning();
@@ -708,10 +714,29 @@ class SetupAction extends _$SetupAction {
     return answered;
   }
 
+  Future<VpnOptions?> _readListenerStartOptions() async {
+    final cancelled = Completer<VpnOptions?>();
+    _pendingListenerOptions = cancelled;
+    try {
+      // New intent must reach the listener even if route computation is stuck.
+      return await Future.any<VpnOptions?>([
+        cancelled.future,
+        ref.read(vpnOptionsProvider.future),
+      ]);
+    } finally {
+      if (identical(_pendingListenerOptions, cancelled)) {
+        _pendingListenerOptions = null;
+      }
+    }
+  }
+
   Future<bool> _setListening(bool running) async {
-    final vpnOptions = running
-        ? await ref.read(vpnOptionsProvider.future)
-        : null;
+    final request = _latestRunRequest;
+    final vpnOptions = running ? await _readListenerStartOptions() : null;
+    if (running &&
+        (vpnOptions == null || !identical(_latestRunRequest, request))) {
+      return true;
+    }
     final answered = await setCoreRunning(running);
     ref.read(runningVpnOptionsProvider.notifier).value = answered
         ? vpnOptions
