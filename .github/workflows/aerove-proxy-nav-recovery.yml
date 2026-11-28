@@ -44,6 +44,11 @@ jobs:
         working-directory: apps/aerove
         run: |
           flutter test --no-pub --concurrency 1 test/pages/home_test.dart --name 'proxy recovery stays in navigation'
+      - name: Proxy page Retry interaction
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
+        working-directory: apps/aerove
+        run: |
+          flutter test --no-pub --concurrency 1 test/views/proxies_read_failure_test.dart
       - name: Dashboard pending start interaction
         if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.fixture_font.outcome == 'success' }}
         working-directory: apps/aerove

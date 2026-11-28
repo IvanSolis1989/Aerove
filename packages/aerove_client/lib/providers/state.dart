@@ -18,6 +18,7 @@ import 'app.dart';
 import 'config.dart';
 import 'core.dart';
 import 'database.dart';
+import 'proxy_read.dart';
 
 part 'generated/state.g.dart';
 part 'state/proxies.dart';
