@@ -923,9 +923,9 @@ void main() {
       expect(find.byTooltip('Stop'), findsOneWidget);
     });
 
-    for (final cancel in [false, true]) {
+    for (final outcome in ['confirms', 'cancels', 'rejects']) {
       testWidgets(
-        'a staged start ${cancel ? 'can be stopped' : 'waits for confirmation'}',
+        'a staged start $outcome without premature running status',
         (tester) async {
           final action = _StagedSetupAction();
           container = containerWith(staged: action);
@@ -943,16 +943,17 @@ void main() {
           expect(find.byTooltip(labels.stop), findsOneWidget);
           expect(action.transitions, isEmpty);
 
-          if (cancel) {
+          if (outcome == 'cancels') {
             await tester.tap(startButton());
             await tester.pump();
           }
-          action.profileReady.complete(true);
+          action.profileReady.complete(outcome != 'rejects');
           await tester.pumpAndSettle();
           expect(find.text(labels.connecting), findsNothing);
-          expect(action.transitions, [!cancel]);
+          final confirmed = outcome == 'confirms';
+          expect(action.transitions, [confirmed]);
           expect(
-            find.text(cancel ? labels.notRunning : labels.running),
+            find.text(confirmed ? labels.running : labels.notRunning),
             findsOneWidget,
           );
         },
