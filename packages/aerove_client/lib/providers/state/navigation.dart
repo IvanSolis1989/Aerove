@@ -9,11 +9,12 @@ NavigationItemsState navigationItemsState(Ref ref) {
   final hasProxies = ref.watch(
     currentGroupsStateProvider.select((state) => state.value.isNotEmpty),
   );
+  final groupsUnavailable = ref.watch(groupsReadFailedProvider);
   return NavigationItemsState(
     value:
         navigationPort?.getItems(
           openLogs: openLogs,
-          hasProxies: hasProfiles || hasProxies,
+          hasProxies: hasProfiles || hasProxies || groupsUnavailable,
         ) ??
         const [],
   );

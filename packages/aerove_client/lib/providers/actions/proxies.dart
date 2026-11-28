@@ -249,8 +249,13 @@ class ProxiesAction extends _$ProxiesAction {
         retryIf: (res) => res == null && current(),
       );
       if (current()) {
-        ref.read(groupsProvider.notifier).value = groups ?? [];
-        ref.read(groupsReadFailedProvider.notifier).value = groups == null;
+        if (groups == null) {
+          ref.read(groupsReadFailedProvider.notifier).value = true;
+          ref.read(groupsProvider.notifier).value = [];
+        } else {
+          ref.read(groupsProvider.notifier).value = groups;
+          ref.read(groupsReadFailedProvider.notifier).value = false;
+        }
         return (
           succeeded: groups != null,
           runtimeUnavailable:

@@ -229,6 +229,28 @@ void main() {
     addTearDown(() => navigationPort = null);
   });
 
+  for (final width in [500.0, 1200.0]) {
+    test('proxy recovery stays in navigation at width $width', () {
+      final container = ProviderContainer(
+        overrides: [profilesProvider.overrideWith(TestProfiles.new)],
+      );
+      addTearDown(container.dispose);
+      container.read(viewSizeProvider.notifier).value = Size(width, 800);
+      final failed = container.read(groupsReadFailedProvider.notifier);
+
+      bool showsProxyPage() => container
+          .read(currentNavigationItemsStateProvider)
+          .value
+          .any((item) => item.label == PageLabel.proxies);
+
+      expect(showsProxyPage(), isFalse);
+      failed.value = true;
+      expect(showsProxyPage(), isTrue);
+      failed.value = false;
+      expect(showsProxyPage(), isFalse);
+    });
+  }
+
   testWidgets('initial desktop layout does not animate mobile navigation out', (
     tester,
   ) async {
